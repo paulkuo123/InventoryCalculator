@@ -3,8 +3,6 @@
 ## 簡介
 庫存計算機
 
-## 數據爬取來源
-* [yfinance](https://pypi.org/project/yfinance/)
 
 ## 環境搭建
 
