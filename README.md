@@ -1,4 +1,4 @@
-# StockPortfolioAnalyzer
+# InventoryCalculator
 
 ## 簡介
 庫存計算機
@@ -28,4 +28,4 @@ python main.py
 
 ## Demo
 
-![image](images/demo.png)
+![image](images/demo_v2.png)
