@@ -28,4 +28,4 @@ python main.py
 
 ## Demo
 
-![image](images/demo_v2.png)
+![image](images/demo_v3.png)
