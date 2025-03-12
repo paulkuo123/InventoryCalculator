@@ -11,7 +11,7 @@ import tempfile
 import signal
 import psutil  # 需要安裝: pip install psutil
 
-PORT = 8000
+PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
 FILE_NAME = "index.html"
 current_crawler_process = None
 
@@ -196,7 +196,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         
         try:
             # 準備命令行參數
-            cmd = ['python', 'crawler.py', keyword, temp_output]
+            cmd = ['python3', 'crawler.py', keyword, temp_output]
             if not showBrowser:  # 注意這裡的邏輯反轉
                 cmd.append('--headless')
             
@@ -282,7 +282,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
 # 啟動 HTTP 伺服器
 def start_server():
+    global PORT  # 將 global 聲明移到函數開頭
     with socketserver.TCPServer(("", PORT), CustomHandler) as httpd:
+        # 獲取實際分配的端口
+        actual_port = httpd.server_address[1]
         print(f"✅ 伺服器啟動於 http://localhost:{PORT}")
         httpd.serve_forever()
 
