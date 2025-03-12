@@ -102,86 +102,6 @@ class ShopeeCrawler:
             print(f"轉換銷售數字時出錯: {e}")
         return sales_text
 
-    def get_product_info(self, product_row):
-        """
-        從商品行中提取商品資訊
-        """
-        try:
-            # 獲取商品名稱
-            product_name = self._get_text_safely(product_row, By.CSS_SELECTOR, ".item-title")
-            
-            # 獲取商品ID
-            item_subtitle = self._get_text_safely(product_row, By.CSS_SELECTOR, ".item-subtitle")
-            product_id_match = re.search(r'商品ID:\s*(\d+)', item_subtitle)
-            product_id = product_id_match.group(1) if product_id_match else "未知ID"
-            
-            # 獲取商品圖片
-            product_image = self._get_image_url(product_row, ".product-item__image img")
-            
-            # 獲取已售出總數量
-            sold_count = "0"
-            try:
-                sold_element = product_row.find_element(By.CSS_SELECTOR, ".sold-count")
-                sold_text = sold_element.text.strip()
-                sold_count = self.convert_sales_number(sold_text)
-            except:
-                pass
-            
-            # 創建商品資訊字典
-            product_info = {
-                "商品名稱": product_name,
-                "已售出總數量": sold_count,
-                "商品圖片網址": product_image,
-                "商品ID": product_id,
-                "型號": {}  # 使用字典而非列表
-            }
-            
-            # 獲取型號資訊
-            model_rows = []
-            try:
-                # 找到展開按鈕並點擊
-                expand_icon = product_row.find_element(By.CSS_SELECTOR, ".el-table__expand-icon")
-                if "el-table__expand-icon--expanded" not in expand_icon.get_attribute("class"):
-                    expand_icon.click()
-                    time.sleep(0.5)
-                
-                # 獲取型號行
-                parent_row = product_row.find_element(By.XPATH, "./..")
-                model_rows = parent_row.find_elements(By.CSS_SELECTOR, ".el-table__row--level-1")
-            except:
-                pass
-            
-            # 處理每個型號
-            for model_row in model_rows:
-                try:
-                    # 獲取型號名稱
-                    model_name = self._get_text_safely(model_row, By.CSS_SELECTOR, ".model-name")
-                    
-                    # 獲取型號圖片
-                    model_image = self._get_image_url(model_row, ".model-image img")
-                    
-                    # 獲取型號庫存
-                    stock = self._get_text_safely(model_row, By.CSS_SELECTOR, ".stock-count")
-                    
-                    # 獲取型號已售出數量
-                    model_sold = self._get_text_safely(model_row, By.CSS_SELECTOR, ".model-sold-count")
-                    model_sold = self.convert_sales_number(model_sold)
-                    
-                    # 將型號資訊添加到商品資訊中
-                    product_info["型號"][model_name] = {
-                        "已售出數量": model_sold,
-                        "商品庫存": stock,
-                        "型號圖片網址": model_image
-                    }
-                except Exception as e:
-                    print(f"處理型號時出錯: {e}")
-                    continue
-            
-            return product_info
-        
-        except Exception as e:
-            print(f"獲取商品資訊時出錯: {e}")
-            return None
 
     def find_more_items_buttons(self):
         try:
@@ -595,7 +515,7 @@ class ShopeeCrawler:
                 
                 # 展開所有表格行
                 print("展開所有表格行...")
-                self.expand_all_rows()
+                self.expand_all_rows_svg()
                 
                 # 提取月銷量數據
                 monthly_sales_data = self.extract_monthly_sales_data()
@@ -632,7 +552,7 @@ class ShopeeCrawler:
                     
                     # 展開所有表格行
                     print("展開所有表格行...")
-                    self.expand_all_rows()
+                    self.expand_all_rows_svg()
                     
                     # 提取月銷量數據
                     monthly_sales_data = self.extract_monthly_sales_data()
@@ -730,10 +650,10 @@ class ShopeeCrawler:
             print("已獲取所有商品基本資訊")
             
             # 如果有搜尋關鍵字，則進行月銷量查詢
-            # if self.search_keyword:
-            #     print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
-            #     self.get_monthly_sales(self.search_keyword)
-            #     print("月銷量查詢完成")
+            if self.search_keyword:
+                print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
+                self.get_monthly_sales(self.search_keyword)
+                print("月銷量查詢完成")
             
             # 完成所有資料收集後，一次性儲存 JSON 檔案
             self.save_to_file(self.products_data)
@@ -957,8 +877,8 @@ class ShopeeCrawler:
 
     def find_expand_icons(self):
         """
-        尋找所有表格展開圖標，包括 SVG 圖標，但排除 checkbox
-        
+        尋找所有表格展開圖標（class="el-table__expand-icon"），確保未展開且排除 checkbox。
+
         Returns:
             list: 找到的展開圖標元素列表
         """
@@ -967,114 +887,41 @@ class ShopeeCrawler:
             
             # 尋找所有帶有 el-table__expand-icon 類的元素
             el_table_icons = self.driver.find_elements(By.CSS_SELECTOR, ".el-table__expand-icon:not(.el-table__expand-icon--expanded)")
-            if el_table_icons:
-                expand_icons.extend(el_table_icons)
-                print(f"找到 {len(el_table_icons)} 個 el-table__expand-icon 類型的展開圖標")
             
-            # 尋找所有 el-icon 類的元素，但排除 checkbox 相關元素
-            el_icons = self.driver.find_elements(By.CSS_SELECTOR, ".el-icon:not(.el-table__expand-icon--expanded):not(.el-checkbox__inner):not(.el-checkbox)")
-            # 過濾掉可能是 checkbox 的元素
-            filtered_el_icons = []
-            for icon in el_icons:
-                # 檢查父元素是否包含 checkbox 相關類名
-                parent = self.driver.execute_script("return arguments[0].parentNode;", icon)
-                if parent:
-                    parent_class = parent.get_attribute("class") or ""
-                    if "checkbox" not in parent_class.lower() and "select" not in parent_class.lower():
-                        filtered_el_icons.append(icon)
-            
-            if filtered_el_icons:
-                expand_icons.extend(filtered_el_icons)
-                print(f"找到 {len(filtered_el_icons)} 個 el-icon 類型的展開圖標")
-            
-            # 尋找特定 SVG 圖標 - 使用更精確的選擇器匹配您提供的 SVG
-            svg_icons = self.driver.find_elements(By.CSS_SELECTOR, "svg[viewBox='0 0 1024 1024']")
-            # 過濾掉可能是 checkbox 的 SVG
-            filtered_svg_icons = []
-            for icon in svg_icons:
-                # 檢查是否已展開
-                if self._is_expanded_svg(icon):
-                    continue
-                
-                # 檢查父元素是否包含 checkbox 相關類名
-                parent = self.driver.execute_script("return arguments[0].parentNode;", icon)
-                if parent:
-                    parent_class = parent.get_attribute("class") or ""
-                    if "checkbox" not in parent_class.lower() and "select" not in parent_class.lower():
-                        filtered_svg_icons.append(icon)
-            
-            if filtered_svg_icons:
-                expand_icons.extend(filtered_svg_icons)
-                print(f"找到 {len(filtered_svg_icons)} 個 SVG 類型的展開圖標")
-            
-            # 尋找包含特定路徑的 SVG 元素，但排除 checkbox
-            svg_path_icons = self.driver.find_elements(By.XPATH, "//svg[contains(@viewBox, '0 0 1024 1024')]/path[contains(@d, 'M340.864')]/.. | //svg[contains(@viewBox, '0 0 1024 1024')]/path[contains(@d, 'M340.864')]/..")
-            # 過濾掉已經在前面找到的、已經展開的和可能是 checkbox 的
-            new_svg_path_icons = []
-            for icon in svg_path_icons:
-                if icon in expand_icons or self._is_expanded_svg(icon):
-                    continue
-                
-                # 檢查父元素是否包含 checkbox 相關類名
-                parent = self.driver.execute_script("return arguments[0].parentNode;", icon)
-                if parent:
-                    parent_class = parent.get_attribute("class") or ""
-                    if "checkbox" not in parent_class.lower() and "select" not in parent_class.lower():
-                        new_svg_path_icons.append(icon)
-            
-            if new_svg_path_icons:
-                expand_icons.extend(new_svg_path_icons)
-                print(f"找到 {len(new_svg_path_icons)} 個包含特定路徑的 SVG 展開圖標")
-            
-            # 尋找包含 SVG 的父元素，但排除 checkbox
-            svg_parent_icons = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'cell')]//*[name()='svg']/..")
-            # 過濾掉已經展開的圖標、已經在列表中的元素和可能是 checkbox 的
-            new_svg_parent_icons = []
-            for icon in svg_parent_icons:
-                if self._is_expanded_svg_parent(icon):
-                    continue
-                
-                # 檢查是否已經在列表中
-                is_duplicate = False
-                for existing_icon in expand_icons:
-                    if self.driver.execute_script("return arguments[0] === arguments[1] || arguments[0].contains(arguments[1]) || arguments[1].contains(arguments[0])", icon, existing_icon):
-                        is_duplicate = True
-                        break
-                
-                if is_duplicate:
-                    continue
-                
-                # 檢查是否包含 checkbox 相關類名
-                icon_class = icon.get_attribute("class") or ""
-                if "checkbox" not in icon_class.lower() and "select" not in icon_class.lower():
-                    new_svg_parent_icons.append(icon)
-            
-            if new_svg_parent_icons:
-                expand_icons.extend(new_svg_parent_icons)
-                print(f"找到 {len(new_svg_parent_icons)} 個包含 SVG 的父元素")
-            
-            # 如果還是找不到，嘗試更寬泛的選擇器，但排除 checkbox
-            if not expand_icons:
-                cell_icons = self.driver.find_elements(By.CSS_SELECTOR, "div.cell i.el-icon:not(.el-checkbox__inner):not(.el-checkbox)")
-                # 過濾掉可能是 checkbox 的元素
-                filtered_cell_icons = []
-                for icon in cell_icons:
-                    # 檢查父元素是否包含 checkbox 相關類名
+            for icon in el_table_icons:
+                try:
+                    # 檢查是否為目標 SVG 結構
+                    svg = icon.find_element(By.TAG_NAME, "svg")
+                    if svg.get_attribute("viewBox") != "0 0 1024 1024":
+                        continue
+                    
+                    path = svg.find_element(By.TAG_NAME, "path")
+                    path_d = path.get_attribute("d")
+                    expected_d = "M340.864 149.312a30.592 30.592 0 0 0 0 42.752L652.736 512 340.864 831.872a30.592 30.592 0 0 0 0 42.752 29.12 29.12 0 0 0 41.728 0L714.24 534.336a32 32 0 0 0 0-44.672L382.592 149.376a29.12 29.12 0 0 0-41.728 0z"
+                    if path_d != expected_d:
+                        continue
+                    
+                    # 檢查是否已展開（通過樣式或父元素）
+                    if self._is_expanded_svg(svg):
+                        continue
+                    
+                    # 排除 checkbox 相關元素
                     parent = self.driver.execute_script("return arguments[0].parentNode;", icon)
-                    if parent:
-                        parent_class = parent.get_attribute("class") or ""
-                        if "checkbox" not in parent_class.lower() and "select" not in parent_class.lower():
-                            filtered_cell_icons.append(icon)
+                    parent_class = parent.get_attribute("class") or ""
+                    if "checkbox" in parent_class.lower() or "select" in parent_class.lower():
+                        continue
+                    
+                    expand_icons.append(icon)
+                    
+                except Exception as e:
+                    print(f"檢查展開圖標時發生錯誤: {e}")
+                    continue
             
-                if filtered_cell_icons:
-                    expand_icons.extend(filtered_cell_icons)
-                    print(f"找到 {len(filtered_cell_icons)} 個 div.cell i.el-icon 類型的展開圖標")
-            
-            print(f"總共找到 {len(expand_icons)} 個表格展開圖標")
+            print(f"找到 {len(expand_icons)} 個符合條件的展開圖標")
             return expand_icons
         
         except Exception as e:
-            print(f"尋找表格展開圖標時發生錯誤: {e}")
+            print(f"尋找展開圖標時發生錯誤: {e}")
             return []
 
     def _is_expanded_svg(self, svg_element):
@@ -1088,7 +935,7 @@ class ShopeeCrawler:
             bool: 如果已展開則返回 True，否則返回 False
         """
         try:
-            # 檢查 SVG 是否已旋轉 90 度（表示已展開）
+            # 檢查 SVG 是否旋轉 90 度（表示已展開）
             transform = svg_element.get_attribute("style")
             if transform and "rotate(90deg)" in transform:
                 return True
@@ -1104,586 +951,32 @@ class ShopeeCrawler:
         except:
             return False
 
-    def _is_expanded_svg_parent(self, parent_element):
+    def expand_all_rows_svg(self):
         """
-        檢查包含 SVG 的父元素是否已經展開
-        
-        Args:
-            parent_element: 包含 SVG 的父元素
-            
-        Returns:
-            bool: 如果已展開則返回 True，否則返回 False
+        展開所有表格行，點擊找到的展開圖標。
         """
         try:
-            # 檢查父元素是否有展開標記
-            parent_class = parent_element.get_attribute("class") or ""
-            if "expanded" in parent_class.lower():
-                return True
-            
-            # 檢查 SVG 是否已旋轉 90 度
-            svg = parent_element.find_element(By.TAG_NAME, "svg")
-            if svg:
-                transform = svg.get_attribute("style")
-                if transform and "rotate(90deg)" in transform:
-                    return True
-            
-            return False
-        except:
-            return False
-
-    def expand_all_rows(self):
-        """
-        展開所有表格行，處理 stale element 問題，避免點擊 checkbox
-        """
-        try:
-            # 初始化計數器
+            expand_icons = self.find_expand_icons()
             total_expanded = 0
-            max_attempts = 3
-            previously_found_count = -1  # 用於追蹤上一次找到的展開圖標數量
             
-            # 進行多次嘗試，確保所有可展開的行都被展開
-            for attempt in range(max_attempts):
-                print(f"\n===== 第 {attempt+1}/{max_attempts} 次嘗試展開表格行 =====")
-                
-                # 每次重新獲取展開圖標
-                expand_icons = self.find_expand_icons()
-                
-                if not expand_icons:
-                    print("未找到可展開的表格行")
-                    break
-                
-                current_count = len(expand_icons)
-                print(f"找到 {current_count} 個可展開的表格行")
-                
-                # 如果沒有找到新的可展開圖標，或者找到的數量與上次相同，則結束循環
-                if current_count == 0 or current_count == previously_found_count:
-                    print("沒有更多可展開的表格行或找到的展開圖標數量未變化")
-                    break
-                
-                # 更新上次找到的數量
-                previously_found_count = current_count
-                
-                # 批次處理，每次處理一部分以避免頁面卡頓
-                batch_size = 3  # 減小批次大小，提高成功率
-                expanded_in_current_attempt = 0
-                
-                for i in range(0, len(expand_icons), batch_size):
-                    batch_end = min(i + batch_size, len(expand_icons))
-                    batch = expand_icons[i:batch_end]
-                    
-                    print(f"正在展開第 {i+1} 到 {batch_end} 個表格行")
-                    
-                    for j, icon in enumerate(batch, 1):
-                        try:
-                            # 檢查元素是否仍然存在於 DOM 中
-                            try:
-                                is_connected = self.driver.execute_script("return arguments[0].isConnected", icon)
-                                if not is_connected:
-                                    print(f"  - 第 {i+j} 個表格行元素已不存在，跳過")
-                                    continue
-                            except Exception as e:
-                                print(f"  - 檢查元素是否存在時出錯: {str(e)[:100]}...，跳過")
-                                continue
-                            
-                            # 檢查元素是否為 checkbox 或其相關元素 - 更嚴格的檢查
-                            try:
-                                # 檢查元素本身的類名和屬性
-                                class_attr = icon.get_attribute("class") or ""
-                                role_attr = icon.get_attribute("role") or ""
-                                aria_attr = icon.get_attribute("aria-checked") or ""
-                                
-                                # 更全面的檢查條件
-                                if ("checkbox" in class_attr.lower() or 
-                                    "select" in class_attr.lower() or 
-                                    "checkbox" in role_attr.lower() or 
-                                    aria_attr != ""):
-                                    print(f"  - 第 {i+j} 個元素是 checkbox 或相關元素，跳過")
-                                    continue
-                                
-                                # 檢查父元素的類名
-                                parent = self.driver.execute_script("return arguments[0].parentNode;", icon)
-                                if parent:
-                                    parent_class = parent.get_attribute("class") or ""
-                                    parent_role = parent.get_attribute("role") or ""
-                                    if ("checkbox" in parent_class.lower() or 
-                                        "select" in parent_class.lower() or 
-                                        "checkbox" in parent_role.lower()):
-                                        print(f"  - 第 {i+j} 個元素的父元素是 checkbox 或相關元素，跳過")
-                                        continue
-                                
-                                # 檢查是否在表格中 - 只展開表格中的元素
-                                is_in_table = self.driver.execute_script("""
-                                    var element = arguments[0];
-                                    var parent = element;
-                                    while (parent && parent.tagName) {
-                                        if (parent.tagName.toLowerCase() === 'table' || 
-                                            parent.classList.contains('eds-table') ||
-                                            parent.classList.contains('el-table')) {
-                                            return true;
-                                        }
-                                        parent = parent.parentNode;
-                                    }
-                                    return false;
-                                """, icon)
-                                
-                                if not is_in_table:
-                                    print(f"  - 第 {i+j} 個元素不在表格中，跳過")
-                                    continue
-                                    
-                            except Exception as e:
-                                print(f"  - 檢查元素是否為 checkbox 時出錯: {str(e)[:100]}...，嘗試繼續")
-                            
-                            # 檢查元素是否已經展開
-                            try:
-                                is_expanded = False
-                                
-                                # 檢查是否為 SVG 元素
-                                if icon.tag_name.lower() == "svg":
-                                    is_expanded = self._is_expanded_svg(icon)
-                                # 檢查是否為包含 SVG 的父元素
-                                elif icon.find_elements(By.TAG_NAME, "svg"):
-                                    is_expanded = self._is_expanded_svg_parent(icon)
-                                # 檢查一般元素
-                                else:
-                                    class_attr = icon.get_attribute("class") or ""
-                                    is_expanded = "expanded" in class_attr.lower()
-                                
-                                if is_expanded:
-                                    print(f"  - 第 {i+j} 個表格行已經展開，跳過")
-                                    continue
-                            except Exception as e:
-                                print(f"  - 檢查元素是否展開時出錯: {str(e)[:100]}...，嘗試點擊")
-                            
-                            # 滾動到元素位置
-                            try:
-                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
-                                time.sleep(0.5)  # 增加等待時間，確保元素可見且滾動完成
-                            except Exception as e:
-                                print(f"  - 滾動到元素位置時出錯: {str(e)[:100]}...，嘗試繼續點擊")
-                            
-                            # 嘗試點擊 - 首先使用 JavaScript 點擊，這通常更可靠
-                            try:
-                                # 對於 SVG 元素，找到其父元素並點擊
-                                if icon.tag_name.lower() == "svg":
-                                    # 使用 JavaScript 獲取父元素並點擊
-                                    self.driver.execute_script("arguments[0].parentNode.click();", icon)
-                                else:
-                                    # 直接使用 JavaScript 點擊元素
-                                    self.driver.execute_script("arguments[0].click();", icon)
-                                
-                                # 點擊成功
-                                print(f"  - 已展開第 {i+j} 個表格行 (使用 JavaScript)")
-                                expanded_in_current_attempt += 1
-                                total_expanded += 1
-                                
-                                # 等待展開動畫完成
-                                time.sleep(0.8)  # 增加等待時間
-                            except Exception as js_error:
-                                print(f"  - JavaScript 點擊失敗: {str(js_error)[:100]}...，嘗試直接點擊")
-                                try:
-                                    # 如果 JavaScript 點擊失敗，嘗試直接點擊
-                                    icon.click()
-                                    print(f"  - 已展開第 {i+j} 個表格行 (使用直接點擊)")
-                                    expanded_in_current_attempt += 1
-                                    total_expanded += 1
-                                    time.sleep(0.8)
-                                except Exception as click_error:
-                                    print(f"  - 直接點擊也失敗: {str(click_error)[:100]}...")
-                            
-                        except Exception as e:
-                            print(f"  - 展開第 {i+j} 個表格行時出錯: {str(e)[:100]}...")
-                    
-                    # 每批次處理後等待，避免頁面卡頓
-                    time.sleep(1.5)  # 增加批次間的等待時間
-                    
-                    # 在每個批次後重新獲取頁面狀態，避免 stale element
-                    if i + batch_size < len(expand_icons):
-                        print("  - 重新整理頁面狀態...")
-                        # 可以添加一些操作來刷新頁面狀態，例如滾動
-                        self.driver.execute_script("window.scrollBy(0, 50);")
-                        time.sleep(0.5)
-                        self.driver.execute_script("window.scrollBy(0, -50);")
-                        time.sleep(0.5)
-                
-                print(f"本次嘗試共展開了 {expanded_in_current_attempt} 個表格行")
-                
-                # 如果本次嘗試沒有展開任何行，則結束循環
-                if expanded_in_current_attempt == 0:
-                    print("本次嘗試未能展開任何表格行，結束展開過程")
-                    break
-                
-                # 等待頁面更新
-                time.sleep(2.0)
+            for i, icon in enumerate(expand_icons, 1):
+                try:
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
+                    time.sleep(0.5)
+                    self.driver.execute_script("arguments[0].click();", icon)
+                    print(f"已展開第 {i} 個表格行")
+                    total_expanded += 1
+                    time.sleep(0.8)
+                except Exception as e:
+                    print(f"展開第 {i} 個表格行失敗: {e}")
             
-            print(f"總共成功展開了 {total_expanded} 個表格行")
+            print(f"總共成功展開 {total_expanded} 個表格行")
             return total_expanded
-            
+        
         except Exception as e:
             print(f"展開表格行時發生錯誤: {e}")
-            import traceback
-            traceback.print_exc()
             return 0
-
-    def expand_all_buttons(self):
-        """
-        展開所有表格行的一般按鈕（非 SVG 圖標）
-        """
-        try:
-            # 初始化計數器
-            total_expanded = 0
-            max_attempts = 3
-            previously_found_count = -1
             
-            # 進行多次嘗試，確保所有可展開的行都被展開
-            for attempt in range(max_attempts):
-                print(f"\n===== 第 {attempt+1}/{max_attempts} 次嘗試展開表格行（按鈕模式）=====")
-                
-                # 尋找展開按鈕（非 SVG 圖標）
-                expand_buttons = self.find_expand_buttons()
-                
-                if not expand_buttons:
-                    print("未找到可展開的按鈕")
-                    break
-                
-                current_count = len(expand_buttons)
-                print(f"找到 {current_count} 個可展開的按鈕")
-                
-                # 如果沒有找到新的可展開按鈕，或者找到的數量與上次相同，則結束循環
-                if current_count == 0 or current_count == previously_found_count:
-                    print("沒有更多可展開的按鈕或找到的按鈕數量未變化")
-                    break
-                
-                # 更新上次找到的數量
-                previously_found_count = current_count
-                
-                # 批次處理，每次處理一部分以避免頁面卡頓
-                batch_size = 3
-                expanded_in_current_attempt = 0
-                
-                for i in range(0, len(expand_buttons), batch_size):
-                    batch_end = min(i + batch_size, len(expand_buttons))
-                    batch = expand_buttons[i:batch_end]
-                    
-                    print(f"正在展開第 {i+1} 到 {batch_end} 個按鈕")
-                    
-                    for j, button in enumerate(batch, 1):
-                        try:
-                            # 檢查元素是否仍然存在於 DOM 中
-                            try:
-                                is_connected = self.driver.execute_script("return arguments[0].isConnected", button)
-                                if not is_connected:
-                                    print(f"  - 第 {i+j} 個按鈕元素已不存在，跳過")
-                                    continue
-                            except Exception as e:
-                                print(f"  - 檢查元素是否存在時出錯: {str(e)[:100]}...，跳過")
-                                continue
-                            
-                            # 檢查元素是否為 checkbox 或其相關元素
-                            try:
-                                class_attr = button.get_attribute("class") or ""
-                                role_attr = button.get_attribute("role") or ""
-                                aria_attr = button.get_attribute("aria-checked") or ""
-                                
-                                if ("checkbox" in class_attr.lower() or 
-                                    "select" in class_attr.lower() or 
-                                    "checkbox" in role_attr.lower() or 
-                                    aria_attr != ""):
-                                    print(f"  - 第 {i+j} 個元素是 checkbox 或相關元素，跳過")
-                                    continue
-                            except Exception as e:
-                                print(f"  - 檢查元素是否為 checkbox 時出錯: {str(e)[:100]}...，嘗試繼續")
-                            
-                            # 檢查元素是否已經展開
-                            try:
-                                class_attr = button.get_attribute("class") or ""
-                                if "expanded" in class_attr.lower():
-                                    print(f"  - 第 {i+j} 個按鈕已經展開，跳過")
-                                    continue
-                            except Exception as e:
-                                print(f"  - 檢查元素是否展開時出錯: {str(e)[:100]}...，嘗試點擊")
-                            
-                            # 滾動到元素位置
-                            try:
-                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-                                time.sleep(0.5)
-                            except Exception as e:
-                                print(f"  - 滾動到元素位置時出錯: {str(e)[:100]}...，嘗試繼續點擊")
-                            
-                            # 嘗試點擊
-                            try:
-                                self.driver.execute_script("arguments[0].click();", button)
-                                print(f"  - 已展開第 {i+j} 個按鈕 (使用 JavaScript)")
-                                expanded_in_current_attempt += 1
-                                total_expanded += 1
-                                time.sleep(0.8)
-                            except Exception as js_error:
-                                print(f"  - JavaScript 點擊失敗: {str(js_error)[:100]}...，嘗試直接點擊")
-                                try:
-                                    button.click()
-                                    print(f"  - 已展開第 {i+j} 個按鈕 (使用直接點擊)")
-                                    expanded_in_current_attempt += 1
-                                    total_expanded += 1
-                                    time.sleep(0.8)
-                                except Exception as click_error:
-                                    print(f"  - 直接點擊也失敗: {str(click_error)[:100]}...")
-                            
-                        except Exception as e:
-                            print(f"  - 展開第 {i+j} 個按鈕時出錯: {str(e)[:100]}...")
-                    
-                    # 每批次處理後等待
-                    time.sleep(1.5)
-                    
-                    # 在每個批次後重新獲取頁面狀態
-                    if i + batch_size < len(expand_buttons):
-                        print("  - 重新整理頁面狀態...")
-                        self.driver.execute_script("window.scrollBy(0, 50);")
-                        time.sleep(0.5)
-                        self.driver.execute_script("window.scrollBy(0, -50);")
-                        time.sleep(0.5)
-                
-                print(f"本次嘗試共展開了 {expanded_in_current_attempt} 個按鈕")
-                
-                # 如果本次嘗試沒有展開任何按鈕，則結束循環
-                if expanded_in_current_attempt == 0:
-                    print("本次嘗試未能展開任何按鈕，結束展開過程")
-                    break
-                
-                # 等待頁面更新
-                time.sleep(2.0)
-            
-            print(f"總共成功展開了 {total_expanded} 個按鈕")
-            return total_expanded
-            
-        except Exception as e:
-            print(f"展開按鈕時發生錯誤: {e}")
-            import traceback
-            traceback.print_exc()
-            return 0
-
-    def expand_all_svg_icons(self):
-        """
-        展開所有表格行的 SVG 圖標（用於爬取月銷量）
-        """
-        try:
-            # 初始化計數器
-            total_expanded = 0
-            max_attempts = 3
-            previously_found_count = -1
-            
-            # 進行多次嘗試，確保所有可展開的行都被展開
-            for attempt in range(max_attempts):
-                print(f"\n===== 第 {attempt+1}/{max_attempts} 次嘗試展開表格行（SVG 圖標模式）=====")
-                
-                # 尋找 SVG 展開圖標
-                expand_icons = self.find_svg_expand_icons()
-                
-                if not expand_icons:
-                    print("未找到可展開的 SVG 圖標")
-                    break
-                
-                current_count = len(expand_icons)
-                print(f"找到 {current_count} 個可展開的 SVG 圖標")
-                
-                # 如果沒有找到新的可展開圖標，或者找到的數量與上次相同，則結束循環
-                if current_count == 0 or current_count == previously_found_count:
-                    print("沒有更多可展開的 SVG 圖標或找到的圖標數量未變化")
-                    break
-                
-                # 更新上次找到的數量
-                previously_found_count = current_count
-                
-                # 批次處理，每次處理一部分以避免頁面卡頓
-                batch_size = 3
-                expanded_in_current_attempt = 0
-                
-                for i in range(0, len(expand_icons), batch_size):
-                    batch_end = min(i + batch_size, len(expand_icons))
-                    batch = expand_icons[i:batch_end]
-                    
-                    print(f"正在展開第 {i+1} 到 {batch_end} 個 SVG 圖標")
-                    
-                    for j, icon in enumerate(batch, 1):
-                        try:
-                            # 檢查元素是否仍然存在於 DOM 中
-                            try:
-                                is_connected = self.driver.execute_script("return arguments[0].isConnected", icon)
-                                if not is_connected:
-                                    print(f"  - 第 {i+j} 個 SVG 圖標元素已不存在，跳過")
-                                    continue
-                            except Exception as e:
-                                print(f"  - 檢查元素是否存在時出錯: {str(e)[:100]}...，跳過")
-                                continue
-                            
-                            # 檢查元素是否已經展開
-                            try:
-                                is_expanded = False
-                                
-                                # 檢查是否為 SVG 元素
-                                if icon.tag_name.lower() == "svg":
-                                    is_expanded = self._is_expanded_svg(icon)
-                                # 檢查是否為包含 SVG 的父元素
-                                elif icon.find_elements(By.TAG_NAME, "svg"):
-                                    is_expanded = self._is_expanded_svg_parent(icon)
-                                
-                                if is_expanded:
-                                    print(f"  - 第 {i+j} 個 SVG 圖標已經展開，跳過")
-                                    continue
-                            except Exception as e:
-                                print(f"  - 檢查 SVG 圖標是否展開時出錯: {str(e)[:100]}...，嘗試點擊")
-                            
-                            # 滾動到元素位置
-                            try:
-                                self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
-                                time.sleep(0.5)
-                            except Exception as e:
-                                print(f"  - 滾動到 SVG 圖標位置時出錯: {str(e)[:100]}...，嘗試繼續點擊")
-                            
-                            # 嘗試點擊
-                            try:
-                                # 對於 SVG 元素，找到其父元素並點擊
-                                if icon.tag_name.lower() == "svg":
-                                    self.driver.execute_script("arguments[0].parentNode.click();", icon)
-                                else:
-                                    self.driver.execute_script("arguments[0].click();", icon)
-                                
-                                print(f"  - 已展開第 {i+j} 個 SVG 圖標 (使用 JavaScript)")
-                                expanded_in_current_attempt += 1
-                                total_expanded += 1
-                                time.sleep(0.8)
-                            except Exception as js_error:
-                                print(f"  - JavaScript 點擊 SVG 圖標失敗: {str(js_error)[:100]}...，嘗試直接點擊")
-                                try:
-                                    icon.click()
-                                    print(f"  - 已展開第 {i+j} 個 SVG 圖標 (使用直接點擊)")
-                                    expanded_in_current_attempt += 1
-                                    total_expanded += 1
-                                    time.sleep(0.8)
-                                except Exception as click_error:
-                                    print(f"  - 直接點擊 SVG 圖標也失敗: {str(click_error)[:100]}...")
-                            
-                        except Exception as e:
-                            print(f"  - 展開第 {i+j} 個 SVG 圖標時出錯: {str(e)[:100]}...")
-                    
-                    # 每批次處理後等待
-                    time.sleep(1.5)
-                    
-                    # 在每個批次後重新獲取頁面狀態
-                    if i + batch_size < len(expand_icons):
-                        print("  - 重新整理頁面狀態...")
-                        self.driver.execute_script("window.scrollBy(0, 50);")
-                        time.sleep(0.5)
-                        self.driver.execute_script("window.scrollBy(0, -50);")
-                        time.sleep(0.5)
-                
-                print(f"本次嘗試共展開了 {expanded_in_current_attempt} 個 SVG 圖標")
-                
-                # 如果本次嘗試沒有展開任何圖標，則結束循環
-                if expanded_in_current_attempt == 0:
-                    print("本次嘗試未能展開任何 SVG 圖標，結束展開過程")
-                    break
-                
-                # 等待頁面更新
-                time.sleep(2.0)
-            
-            print(f"總共成功展開了 {total_expanded} 個 SVG 圖標")
-            return total_expanded
-            
-        except Exception as e:
-            print(f"展開 SVG 圖標時發生錯誤: {e}")
-            import traceback
-            traceback.print_exc()
-            return 0
-
-    def find_expand_buttons(self):
-        """
-        尋找頁面中的展開按鈕（非 SVG 圖標）
-        
-        Returns:
-            list: 展開按鈕元素列表
-        """
-        try:
-            # 尋找常見的展開按鈕選擇器
-            expand_buttons = []
-            
-            # 尋找帶有展開相關類名或屬性的按鈕
-            selectors = [
-                "button.expand-button", 
-                "button[aria-expanded='false']",
-                ".expandable-row:not(.expanded) .expand-button",
-                ".collapse-button:not(.expanded)",
-                "tr.expandable:not(.expanded) button",
-                ".el-table__expand-icon:not(.el-table__expand-icon--expanded)",
-                "eds-button eds-button--link eds-button--normal",
-                "button.eds-button--link"
-            ]
-            
-            for selector in selectors:
-                try:
-                    buttons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if buttons:
-                        for button in buttons:
-                            span_text = button.find_element(By.TAG_NAME, "span").text
-                            if "展開全部" in span_text or "顯示全部" in span_text:
-                                expand_buttons.append(button)
-                except:
-                    pass
-            
-            return expand_buttons
-        except Exception as e:
-            print(f"尋找展開按鈕時出錯: {e}")
-            return []
-
-    def find_svg_expand_icons(self):
-        """
-        尋找頁面中的 SVG 展開圖標（用於爬取月銷量）
-        
-        Returns:
-            list: SVG 展開圖標元素列表
-        """
-        try:
-            # 尋找 SVG 圖標
-            expand_icons = []
-            
-            # 尋找 SVG 圖標的選擇器
-            selectors = [
-                "svg.expand-icon", 
-                "svg[class*='expand']",
-                "svg[class*='arrow']",
-                ".expand-icon svg",
-                ".el-table__expand-icon svg",
-                "td svg[style*='transform']"
-            ]
-            
-            for selector in selectors:
-                try:
-                    icons = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                    if icons:
-                        print(f"使用選擇器 '{selector}' 找到 {len(icons)} 個 SVG 圖標")
-                        expand_icons.extend(icons)
-                except:
-                    pass
-            
-            # 過濾已展開的圖標
-            filtered_icons = []
-            for icon in expand_icons:
-                try:
-                    is_expanded = False
-                    if icon.tag_name.lower() == "svg":
-                        is_expanded = self._is_expanded_svg(icon)
-                    elif icon.find_elements(By.TAG_NAME, "svg"):
-                        is_expanded = self._is_expanded_svg_parent(icon)
-                    
-                    if not is_expanded:
-                        filtered_icons.append(icon)
-                except:
-                    pass
-            
-            print(f"找到 {len(filtered_icons)} 個未展開的 SVG 圖標")
-            return filtered_icons
-        except Exception as e:
-            print(f"尋找 SVG 展開圖標時出錯: {e}")
-            return []
-
     # 原始的 expand_all_rows 函數可以保留為兼容性，調用新的函數
     def expand_all_rows(self):
         """
@@ -1692,43 +985,244 @@ class ShopeeCrawler:
         print("使用兼容模式展開所有表格行")
         return self.expand_all_buttons()
 
-    def get_all_products_info(self):
+    def find_expand_buttons(self):
         """
-        獲取所有商品的資訊
+        尋找頁面中標有「展開全部」的按鈕
+        Returns:
+            list: 包含「展開全部」文字的按鈕元素列表
         """
-        page = 1
-        has_next_page = True
-        
-        while has_next_page:
-            print(f"正在處理第 {page} 頁")
+        try:
+            # 使用 XPath 查找按鈕
+            expand_buttons = self.driver.find_elements(By.XPATH, "//button[.//span[contains(., '展開全部')]]")
             
-            # 獲取當前頁面的所有商品行
-            product_rows = self.driver.find_elements(By.CSS_SELECTOR, ".product-item")
-            print(f"找到 {len(product_rows)} 個商品")
+            # 過濾出可見的按鈕
+            visible_buttons = [button for button in expand_buttons if button.is_displayed()]
             
-            # 處理每個商品
-            for product_row in product_rows:
+            print(f"總共找到 {len(visible_buttons)} 個標有「展開全部」的按鈕")
+            return visible_buttons
+        except Exception as e:
+            print(f"尋找「展開全部」按鈕時出錯: {e}")
+            return []
+
+    def expand_all_buttons(self):
+        """
+        點擊所有標有「展開全部」的按鈕
+        Returns:
+            int: 成功點擊的按鈕數量
+        """
+        try:
+            total_expanded = 0
+            expand_buttons = self.find_expand_buttons()
+            
+            if not expand_buttons:
+                print("未找到標有「展開全部」的按鈕")
+                return 0
+            
+            for i, button in enumerate(expand_buttons, 1):
                 try:
-                    product_info = self.get_product_info(product_row)
-                    if product_info and self.is_valid_product(product_info):
-                        # 將商品資訊加入到 products_data 字典中
-                        product_id = product_info.pop("商品ID")  # 取出並移除商品ID
-                        if product_id:
-                            self.products_data[product_id] = product_info
+                    # 滾動到按鈕位置
+                    self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
+                    
+                    # 等待按鈕可見
+                    WebDriverWait(self.driver, 5).until(EC.visibility_of(button))
+                    
+                    # 點擊按鈕
+                    button.click()
+                    print(f"  - 已點擊第 {i} 個「展開全部」按鈕")
+                    total_expanded += 1
+                    time.sleep(1)  # 等待展開動畫完成
                 except Exception as e:
-                    print(f"處理商品時出錯: {e}")
+                    print(f"  - 點擊第 {i} 個「展開全部」按鈕失敗: {e}")
                     continue
             
-            # 檢查是否有下一頁
-            has_next_page = self.go_to_next_page()
-            if has_next_page:
-                page += 1
+            print(f"總共成功點擊了 {total_expanded} 個「展開全部」按鈕")
+            return total_expanded
+        except Exception as e:
+            print(f"點擊「展開全部」按鈕時發生錯誤: {e}")
+            return 0
+    
+    def get_product_info(self, product_row):
+        try:
+            # 滾動到商品行位置，確保元素可見並被加載
+            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});", product_row)
+            time.sleep(0.5)  # 等待頁面加載
+        except Exception as e:
+            print(f"滾動到商品位置時出錯: {e}")
+
+        # 提取商品 ID
+        try:
+            item_id_container = product_row.find_element(By.CLASS_NAME, 'item-id')
+            item_id_text = item_id_container.find_element(By.CLASS_NAME, 'text-overflow2').text
+            item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
+            item_id = item_id_match.group(1) if item_id_match else "未找到"
+        except:
+            item_id = "未找到"
+
+        # 提取商品名稱
+        try:
+            product_name = product_row.find_element(By.CLASS_NAME, 'product-name-wrap').text
+        except:
+            product_name = "未找到"
+
+        # 提取總銷量
+        try:
+            total_sales = product_row.find_element(By.CLASS_NAME, 'list-view-sales').text
+            total_sales = self.convert_sales_number(total_sales)  # 假設此方法將文本轉為數字
+        except:
+            total_sales = "未找到"
+
+        # 提取商品圖片網址
+        try:
+            image_container = product_row.find_element(By.CLASS_NAME, 'product-image')
+            product_image_url = image_container.find_element(By.TAG_NAME, 'img').get_attribute('src')
+            if not product_image_url.startswith('http'):
+                product_image_url = "https:" + product_image_url
+        except:
+            product_image_url = "未找到"
+
+        # 提取型號資訊
+        models = []
+        try:
+            variation_list = product_row.find_elements(By.CLASS_NAME, 'model-list-item')
+            for variation in variation_list:
+                model_info = {
+                    '型號名稱': '未找到',
+                    '已售出數量': '未找到',
+                    '商品庫存': '未找到',
+                    '型號圖片網址': '未找到'
+                }
+
+                # 提取型號名稱
+                try:
+                    name_elements = variation.find_elements(By.CLASS_NAME, 'variation-name-info-name')
+                    if name_elements:
+                        model_info['型號名稱'] = name_elements[0].text
+                except:
+                    pass
+
+                # 提取已售出數量
+                try:
+                    sales_elements = variation.find_elements(By.CLASS_NAME, 'list-view-model-sales')
+                    if sales_elements:
+                        sales_text = sales_elements[0].text
+                        model_info['已售出數量'] = self.convert_sales_number(sales_text)
+                except:
+                    pass
+
+                # 提取商品庫存
+                try:
+                    stock_elements = variation.find_elements(By.CLASS_NAME, 'stock-text')
+                    if stock_elements:
+                        stock_text = stock_elements[0].text
+                        if stock_text == "已售完":
+                            model_info['商品庫存'] = "0"
+                        else:
+                            model_info['商品庫存'] = self.convert_sales_number(stock_text)
+                except:
+                    pass
+
+                # 提取型號圖片網址
+                try:
+                    image_container = variation.find_element(By.CLASS_NAME, 'variation-name-image')
+                    image_url = image_container.find_element(By.TAG_NAME, 'img').get_attribute('src')
+                    if not image_url.startswith('http'):
+                        image_url = "https:" + image_url
+                    model_info['型號圖片網址'] = image_url
+                except:
+                    pass
+
+                # 僅當型號資訊有效時加入列表
+                if not all(value == '未找到' for value in model_info.values()):
+                    models.append(model_info)
+                else:
+                    print("跳過一個所有欄位都是「未找到」的型號")
+
+        except Exception as e:
+            print(f"處理型號資訊時出錯: {e}")
+
+        # 構建商品資訊字典
+        product_info = {
+            '商品ID': item_id,
+            '商品名稱': product_name,
+            '已售出總數量': total_sales,
+            '商品圖片網址': product_image_url,
+            '型號': models
+        }
+
+        return product_info
+
+    def get_all_products_info(self):
+        try:
+            page = 1
+            has_next_page = True
+            total_products = 0
+            self.products_data = {}  # 初始化儲存商品資訊的字典
+
+            while has_next_page:
+                print(f"\n===== 正在處理第 {page} 頁 =====")
+
                 # 等待頁面加載
-                time.sleep(3)
-                # 展開所有行
-                self.expand_all_rows()
-        
-        print(f"共處理了 {page} 頁，收集了 {len(self.products_data)} 個商品資訊")
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, 'eds-table__row'))
+                    )
+                    print("頁面已加載")
+                except:
+                    print("等待頁面加載超時，嘗試繼續處理")
+
+                # 嘗試展開所有行
+                try:
+                    self.expand_all_buttons()  # 假設此方法展開型號資訊
+                    time.sleep(2)
+                except:
+                    print("展開所有行失敗，繼續處理")
+
+                # 獲取當前頁面的所有商品行
+                product_rows = []
+                try:
+                    product_rows = self.driver.find_elements(By.CLASS_NAME, 'eds-table__row')
+                    print(f"找到 {len(product_rows)} 個商品行")
+                except:
+                    print("未找到商品行，嘗試捲動頁面...")
+                    self.driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+                    time.sleep(2)
+                    try:
+                        product_rows = self.driver.find_elements(By.CLASS_NAME, 'eds-table__row')
+                        print(f"捲動後找到 {len(product_rows)} 個商品行")
+                    except:
+                        print("仍未找到商品行，跳過此頁")
+
+                # 處理每個商品
+                for i, product_row in enumerate(product_rows):
+                    print(f"\n處理第 {i+1}/{len(product_rows)} 個商品")
+                    try:
+                        product_info = self.get_product_info(product_row)
+                        if product_info and self.is_valid_product(product_info):  # 假設此方法驗證資訊有效性
+                            product_id = product_info.pop('商品ID')
+                            self.products_data[product_id] = product_info
+                            total_products += 1
+                            print(f"成功添加商品 ID: {product_id}")
+                        else:
+                            print("商品資訊無效，跳過")
+                    except Exception as e:
+                        print(f"處理商品時出錯: {e}")
+                    time.sleep(0.5)  # 避免過快請求
+
+                # 檢查是否有下一頁
+                has_next_page = self.go_to_next_page()  # 假設此方法檢查並跳轉到下一頁
+                if has_next_page:
+                    page += 1
+                    time.sleep(3)
+                else:
+                    print("已到達最後一頁")
+
+            print(f"\n===== 爬蟲完成 =====")
+            print(f"共處理了 {page} 頁，成功收集了 {total_products} 個商品資訊")
+            return self.products_data
+
+        except Exception as e:
+            print(f"獲取所有商品資訊時出錯: {e}")
+            return {}
 
 if __name__ == "__main__":
     import sys
