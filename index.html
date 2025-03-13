@@ -200,6 +200,25 @@
                 font-size: 20px;
             }
             
+            .header-actions {
+                align-self: stretch;
+                justify-content: flex-end;
+            }
+            
+            .stats-badge {
+                padding: 6px 10px;
+                font-size: 12px;
+            }
+            
+            .logo-circle {
+                width: 40px;
+                height: 40px;
+            }
+            
+            .logo-circle i {
+                font-size: 20px;
+            }
+            
             h1 {
                 font-size: 20px;
             }
@@ -621,6 +640,44 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #a8a8a8;
         }
+
+        .stock-month-option {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background-color: white;
+            padding: 8px 15px;
+            border-radius: var(--border-radius);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+        }
+        
+        .stock-month-option label {
+            font-weight: 500;
+            color: var(--dark-gray);
+        }
+        
+        .stock-month-option input {
+            width: 60px;
+            padding: 6px 10px;
+            border: 1px solid var(--medium-gray);
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+            transition: var(--transition);
+        }
+        
+        .stock-month-option input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+            outline: none;
+        }
+        
+        @media (max-width: 768px) {
+            .stock-month-option {
+                margin-left: 0;
+                justify-content: center;
+            }
+        }
     </style>
 </head>
 <body>
@@ -663,6 +720,10 @@
                         <span class="toggle-slider"></span>
                     </label>
                     <span>Filter</span>
+                </div>
+                <div class="stock-month-option">
+                    <label for="stockMonths">庫存月份:</label>
+                    <input type="number" id="stockMonths" min="1" max="12" value="4">
                 </div>
                 <button id="searchButton" class="btn-primary">
                     <i class="fas fa-search"></i>
@@ -754,6 +815,7 @@
             function performSearch() {
                 const keyword = searchInput.value.trim();
                 const showBrowser = document.getElementById('headlessMode').checked;
+                const stockMonths = document.getElementById('stockMonths').value;
                 
                 if (keyword) {
                     // 顯示載入中
@@ -763,8 +825,8 @@
                     // 開始進度模擬
                     const progressInterval = startProgressSimulation();
                     
-                    // 發送請求到API，包含顯示瀏覽器參數
-                    fetch(`/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}`)
+                    // 發送請求到API，包含顯示瀏覽器參數和庫存月份
+                    fetch(`/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&stockMonths=${stockMonths}`)
                         .then(response => response.json())
                         .then(data => {
                             // 停止進度模擬
@@ -983,6 +1045,7 @@
             // 綁定重設按鈕點擊事件
             resetButton.addEventListener('click', function() {
                 searchInput.value = '';
+                document.getElementById('stockMonths').value = '4'; // 重設庫存月份為預設值
                 productList.innerHTML = '';
                 
                 // 如果爬蟲正在運行，則中斷爬蟲
