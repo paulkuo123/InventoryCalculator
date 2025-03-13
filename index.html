@@ -555,6 +555,11 @@
             color: var(--warning-color);
         }
 
+        .badge-info {
+            background-color: #e3f2fd;
+            color: #0288d1;
+        }
+
         .empty-state {
             text-align: center;
             padding: 40px 20px;
@@ -780,9 +785,11 @@
             
             // 顯示商品資料
             function displayProducts(products) {
+                const productList = document.getElementById('productList');
                 productList.innerHTML = '';
-                
-                if (products.length === 0) {
+
+                // 檢查 products 是否有效
+                if (!products || typeof products !== 'object' || Object.keys(products).length === 0) {
                     productList.innerHTML = `
                         <tr>
                             <td colspan="4">
@@ -790,141 +797,147 @@
                                     <i class="fas fa-search"></i>
                                     <p>沒有找到符合的商品</p>
                                 </div>
-                </td>
-            </tr>
+                            </td>
+                        </tr>
                     `;
+                    console.log('無商品資料或資料格式錯誤');
                     return;
                 }
-                
-                products.forEach(product => {
-                    const row = document.createElement('tr');
-                    
-                    // 商品名稱和圖片
-                    const nameCell = document.createElement('td');
-                    const nameDiv = document.createElement('div');
-                    nameDiv.className = 'product-name';
-                    
-                    if (product.商品圖片網址 && product.商品圖片網址 !== "未找到") {
+
+                // 遍歷商品，key 是商品ID
+                Object.entries(products).forEach(([productId, product]) => {
+                    try {
+                        const row = document.createElement('tr');
+
+                        // 商品名稱和圖片
+                        const nameCell = document.createElement('td');
+                        const nameDiv = document.createElement('div');
+                        nameDiv.className = 'product-name';
+
                         const img = document.createElement('img');
-                        img.src = product.商品圖片網址;
                         img.className = 'product-image';
-                        img.alt = product.商品名稱;
+                        img.src = product.商品圖片網址 && product.商品圖片網址 !== '未找到' 
+                            ? product.商品圖片網址 
+                            : 'https://via.placeholder.com/60?text=無圖片';
+                        img.alt = product.商品名稱 || '未知商品';
                         img.onerror = function() { 
-                            console.log('圖片載入失敗:', this.src);
                             this.src = 'https://via.placeholder.com/60?text=無圖片'; 
-                            this.onerror = null; // 防止無限循環
+                            this.onerror = null; 
                         };
                         nameDiv.appendChild(img);
-                    } else {
-                        const img = document.createElement('img');
-                        img.src = 'https://via.placeholder.com/60?text=無圖片';
-                        img.className = 'product-image';
-                        nameDiv.appendChild(img);
-                    }
-                    
-                    const nameText = document.createElement('span');
-                    nameText.textContent = product.商品名稱 || '未知商品名稱';
-                    nameDiv.appendChild(nameText);
-                    nameCell.appendChild(nameDiv);
-                    
-                    // 如果有型號，顯示所有型號資訊
-                    if (product.型號 && product.型號.length > 0) {
-                        const modelsDiv = document.createElement('div');
-                        modelsDiv.className = 'model-info';
-                        
-                        // 顯示所有型號，不限制數量
-                        product.型號.forEach(model => {
-                            const modelItem = document.createElement('div');
-                            modelItem.className = 'model-item';
-                            
-                            if (model.型號圖片網址 && model.型號圖片網址 !== "未找到") {
-                                const modelImg = document.createElement('img');
-                                modelImg.src = model.型號圖片網址;
-                                modelImg.className = 'model-image';
-                                modelImg.onerror = function() { 
-                                    console.log('型號圖片載入失敗:', this.src);
-                                    // 檢查是否為 base64 圖片
-                                    if (this.src.startsWith('data:')) {
-                                        console.log('這是 base64 圖片，可能格式不支援');
+
+                        const nameText = document.createElement('span');
+                        nameText.textContent = product.商品名稱 || '未知商品名稱';
+                        nameDiv.appendChild(nameText);
+                        nameCell.appendChild(nameDiv);
+
+                        // 型號資訊 - 處理數組形式的型號數據
+                        if (product.型號 && Array.isArray(product.型號) && product.型號.length > 0) {
+                            const modelsDiv = document.createElement('div');
+                            modelsDiv.className = 'model-info';
+
+                            product.型號.forEach((modelData, index) => {
+                                try {
+                                    const modelItem = document.createElement('div');
+                                    modelItem.className = 'model-item';
+
+                                    // 型號圖片
+                                    if (modelData.型號圖片網址 && modelData.型號圖片網址 !== '未找到') {
+                                        const modelImg = document.createElement('img');
+                                        modelImg.src = modelData.型號圖片網址;
+                                        modelImg.className = 'model-image';
+                                        modelImg.onerror = function() { 
+                                            this.src = 'https://via.placeholder.com/30?text=無圖片'; 
+                                            this.onerror = null; 
+                                        };
+                                        modelItem.appendChild(modelImg);
                                     }
-                                    this.src = 'https://via.placeholder.com/30?text=無圖片'; 
-                                    this.onerror = null; // 防止無限循環
-                                };
-                                modelItem.appendChild(modelImg);
-                            }
+
+                                    // 型號文字信息
+                                    const modelText = document.createElement('span');
+                                    modelText.textContent = modelData.型號名稱 || `型號 ${index + 1}`;
+                                    
+                                    // 添加換行
+                                    modelText.appendChild(document.createElement('br'));
+                                    
+                                    // 庫存標籤
+                                    const stock = modelData.商品庫存 !== undefined ? modelData.商品庫存 : '未知';
+                                    const stockNum = parseInt(stock, 10);
+                                    const stockBadge = document.createElement('span');
+                                    stockBadge.className = 'badge ' + (isNaN(stockNum) || stockNum > 10 ? 'badge-success' : 'badge-warning');
+                                    stockBadge.textContent = `庫存: ${stock}`;
+                                    modelText.appendChild(stockBadge);
+                                    
+                                    // 添加空格
+                                    modelText.appendChild(document.createTextNode(' '));
+                                    
+                                    // 銷售量標籤
+                                    const salesBadge = document.createElement('span');
+                                    salesBadge.className = 'badge badge-primary';
+                                    salesBadge.textContent = `已售: ${modelData.已售出數量 || '0'}`;
+                                    modelText.appendChild(salesBadge);
+
+                                    modelItem.appendChild(modelText);
+                                    modelsDiv.appendChild(modelItem);
+                                } catch (modelError) {
+                                    console.error(`處理商品 ${productId} 的型號 ${index} 時出錯:`, modelError);
+                                }
+                            });
                             
-                            const modelText = document.createElement('span');
-                            
-                            // 創建庫存和銷售的徽章
-                            const stockBadge = document.createElement('span');
-                            stockBadge.className = 'badge ' + (parseInt(model.商品庫存) > 10 ? 'badge-success' : 'badge-warning');
-                            stockBadge.textContent = `庫存: ${model.商品庫存 || '未知'}`;
-                            
-                            const salesBadge = document.createElement('span');
-                            salesBadge.className = 'badge badge-primary';
-                            salesBadge.textContent = `已售: ${model.已售出數量 || '0'}`;
-                            
-                            modelText.textContent = `${model.型號名稱 || '未知型號'} `;
-                            modelText.appendChild(document.createElement('br'));
-                            modelText.appendChild(stockBadge);
-                            modelText.appendChild(document.createTextNode(' '));
-                            modelText.appendChild(salesBadge);
-                            
-                            modelItem.appendChild(modelText);
-                            modelsDiv.appendChild(modelItem);
-                        });
+                            nameCell.appendChild(modelsDiv);
+                        }
+
+                        row.appendChild(nameCell);
+
+                        // 已售出總數量
+                        const salesCell = document.createElement('td');
+                        const salesBadge = document.createElement('span');
+                        salesBadge.className = 'badge badge-primary';
+                        salesBadge.textContent = product.已售出總數量 || '0';
+                        salesCell.appendChild(salesBadge);
+                        row.appendChild(salesCell);
+
+                        // 型號數量
+                        const modelCountCell = document.createElement('td');
+                        const countBadge = document.createElement('span');
+                        countBadge.className = 'badge badge-success';
+                        countBadge.textContent = product.型號 && Array.isArray(product.型號) ? product.型號.length : 0;
+                        modelCountCell.appendChild(countBadge);
+                        row.appendChild(modelCountCell);
+
+                        // 操作按鈕
+                        const actionsCell = document.createElement('td');
+                        actionsCell.className = 'actions';
                         
-                        nameCell.appendChild(modelsDiv);
+                        const editLink = document.createElement('a');
+                        editLink.href = '#';
+                        editLink.className = 'action-btn edit-btn';
+                        editLink.innerHTML = '<i class="fas fa-edit"></i> 編輯';
+                        editLink.onclick = function(e) { 
+                            e.preventDefault(); 
+                            alert('編輯功能尚未實現'); 
+                        };
+                        actionsCell.appendChild(editLink);
+
+                        const detailsLink = document.createElement('a');
+                        detailsLink.href = '#';
+                        detailsLink.className = 'action-btn details-btn';
+                        detailsLink.innerHTML = '<i class="fas fa-info-circle"></i> 詳情';
+                        detailsLink.dataset.productId = productId;
+                        detailsLink.onclick = function(e) { 
+                            e.preventDefault(); 
+                            alert(`商品ID: ${this.dataset.productId} 的詳情功能尚未實現`); 
+                        };
+                        actionsCell.appendChild(detailsLink);
+
+                        row.appendChild(actionsCell);
+
+                        productList.appendChild(row);
+                    } catch (error) {
+                        console.error(`處理商品 ${productId} 時出錯:`, error);
                     }
-                    
-                    row.appendChild(nameCell);
-                    
-                    // 已售出
-                    const salesCell = document.createElement('td');
-                    const salesBadge = document.createElement('span');
-                    salesBadge.className = 'badge badge-primary';
-                    salesBadge.textContent = product.已售出總數量 || '0';
-                    salesCell.appendChild(salesBadge);
-                    row.appendChild(salesCell);
-                    
-                    // 型號數量
-                    const modelCountCell = document.createElement('td');
-                    const countBadge = document.createElement('span');
-                    countBadge.className = 'badge badge-success';
-                    countBadge.textContent = product.型號 ? product.型號.length : 0;
-                    modelCountCell.appendChild(countBadge);
-                    row.appendChild(modelCountCell);
-                    
-                    // 操作
-                    const actionsCell = document.createElement('td');
-                    actionsCell.className = 'actions';
-                    
-                    const editLink = document.createElement('a');
-                    editLink.href = '#';
-                    editLink.className = 'action-btn edit-btn';
-                    editLink.innerHTML = '<i class="fas fa-edit"></i> 編輯';
-                    editLink.onclick = function(e) { 
-                        e.preventDefault(); 
-                        alert('編輯功能尚未實現'); 
-                    };
-                    actionsCell.appendChild(editLink);
-                    
-                    const detailsLink = document.createElement('a');
-                    detailsLink.href = '#';
-                    detailsLink.className = 'action-btn details-btn';
-                    detailsLink.innerHTML = '<i class="fas fa-info-circle"></i> 詳情';
-                    detailsLink.onclick = function(e) { 
-                        e.preventDefault(); 
-                        alert('詳情功能尚未實現'); 
-                    };
-                    actionsCell.appendChild(detailsLink);
-                    
-                    row.appendChild(actionsCell);
-                    
-                    productList.appendChild(row);
                 });
             }
-            
             // 綁定搜尋按鈕點擊事件
             searchButton.addEventListener('click', performSearch);
             
