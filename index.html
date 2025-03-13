@@ -649,13 +649,7 @@
     <div class="container">
         <div class="card">
             <div class="search-container">
-                <input type="text" id="searchInput" placeholder="輸入商品關鍵字搜尋...">
-                <button id="searchButton" class="btn-primary">
-                    <i class="fas fa-search"></i> 搜尋
-                </button>
-                <button id="resetButton" class="btn-secondary">
-                    <i class="fas fa-redo"></i> 重設
-                </button>
+                <input type="text" id="searchInput" placeholder="輸入商品關鍵字...">
                 <div class="headless-option">
                     <label class="toggle-switch">
                         <input type="checkbox" id="headlessMode">
@@ -663,6 +657,21 @@
                     </label>
                     <span>顯示瀏覽器</span>
                 </div>
+                <div class="headless-option">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="filterMode">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span>Filter</span>
+                </div>
+                <button id="searchButton" class="btn-primary">
+                    <i class="fas fa-search"></i>
+                    搜尋
+                </button>
+                <button id="resetButton" class="btn-secondary">
+                    <i class="fas fa-undo"></i>
+                    重設
+                </button>
             </div>
         </div>
 
