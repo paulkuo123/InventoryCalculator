@@ -10,6 +10,7 @@ import subprocess
 import tempfile
 import signal
 import psutil  # 需要安裝: pip install psutil
+import atexit
 
 PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
 FILE_NAME = "index.html"
@@ -144,8 +145,18 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
         print("正在關閉伺服器並釋放端口...")
 
-        # 使用 os._exit 強制結束程序
-        os._exit(0)
+        # 嘗試正常關閉伺服器
+        try:
+            # 使用 threading.Timer 延遲關閉，確保回應已發送
+            def delayed_exit():
+                # 使用 sys.exit 代替 os._exit 以允許正常的清理
+                import sys
+                sys.exit(0)
+
+            threading.Timer(1.0, delayed_exit).start()
+        except:
+            # 如果正常關閉失敗，使用強制關閉
+            os._exit(0)
 
     def stop_running_crawler(self):
         """中斷正在運行的爬蟲進程及其所有子進程"""
@@ -346,5 +357,35 @@ except KeyboardInterrupt:
         import urllib.request
         urllib.request.urlopen(f"http://localhost:{PORT}/shutdown")
     except:
-        # 如果無法發送請求，直接退出
-        os._exit(0)
+        pass
+except Exception as e:
+    print(f"發生未預期的錯誤: {e}")
+finally:
+    # 確保所有資源都被釋放
+    print("正在清理資源...")
+    # 嘗試終止所有爬蟲進程
+    try:
+        # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
+        handler = CustomHandler(None, None, None)
+        handler.stop_running_crawler()
+    except:
+        pass
+    # 如果還有其他需要清理的資源，在這裡添加
+
+
+# 註冊退出時的清理函數
+def cleanup_resources():
+    print("程式退出，正在清理資源...")
+    # 嘗試終止所有爬蟲進程
+    try:
+        if 'current_crawler_process' in globals(
+        ) and current_crawler_process is not None:
+            # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
+            handler = CustomHandler(None, None, None)
+            handler.stop_running_crawler()
+    except:
+        pass
+    # 如果還有其他需要清理的資源，在這裡添加
+
+
+atexit.register(cleanup_resources)
