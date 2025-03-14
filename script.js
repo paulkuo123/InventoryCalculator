@@ -9,9 +9,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const progressText = document.getElementById('progressText');
     const statusMessage = document.getElementById('statusMessage');
     
-    // 定義爬蟲運行狀態變數
-    let crawlerRunning = false;
-    
     // 模擬進度更新
     function startProgressSimulation() {
         let progress = 0;
@@ -48,12 +45,8 @@ document.addEventListener('DOMContentLoaded', function() {
     function performSearch() {
         const keyword = searchInput.value.trim();
         const showBrowser = document.getElementById('headlessMode').checked;
-        const stockMonths = document.getElementById('stockMonths').value;
         
         if (keyword) {
-            // 設置爬蟲運行狀態
-            crawlerRunning = true;
-            
             // 顯示載入中
             loading.style.display = 'block';
             productList.innerHTML = '';
@@ -61,8 +54,8 @@ document.addEventListener('DOMContentLoaded', function() {
             // 開始進度模擬
             const progressInterval = startProgressSimulation();
             
-            // 發送請求到API，包含顯示瀏覽器參數和庫存月份
-            fetch(`/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&stockMonths=${stockMonths}`)
+            // 發送請求到API，包含顯示瀏覽器參數
+            fetch(`/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}`)
                 .then(response => response.json())
                 .then(data => {
                     // 停止進度模擬
@@ -73,9 +66,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     progressText.textContent = '100%';
                     statusMessage.textContent = '爬取完成！';
                     
-                    // 更新爬蟲運行狀態
-                    crawlerRunning = false;
-                    
                     // 短暫延遲後隱藏載入提示
                     setTimeout(() => {
                         loading.style.display = 'none';
@@ -85,9 +75,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 .catch(error => {
                     // 停止進度模擬
                     clearInterval(progressInterval);
-                    
-                    // 更新爬蟲運行狀態
-                    crawlerRunning = false;
                     
                     loading.style.display = 'none';
                     console.error('搜尋出錯:', error);
@@ -177,11 +164,127 @@ document.addEventListener('DOMContentLoaded', function() {
                             const stock = modelData.商品庫存 !== undefined ? modelData.商品庫存 : '未知';
                             const stockNum = parseInt(stock, 10);
                             const stockBadge = document.createElement('span');
-                            stockBadge.className = 
+                            stockBadge.className = 'badge ' + (isNaN(stockNum) || stockNum > 10 ? 'badge-success' : 'badge-warning');
+                            stockBadge.textContent = `庫存: ${stock}`;
+                            modelText.appendChild(stockBadge);
+                            
+                            // 添加空格
+                            modelText.appendChild(document.createTextNode(' '));
+                            
+                            // 銷售量標籤
+                            const salesBadge = document.createElement('span');
+                            salesBadge.className = 'badge badge-primary';
+                            salesBadge.textContent = `已售: ${modelData.已售出數量 || '0'}`;
+                            modelText.appendChild(salesBadge);
+
+                            modelItem.appendChild(modelText);
+                            modelsDiv.appendChild(modelItem);
+                        } catch (modelError) {
+                            console.error(`處理商品 ${productId} 的型號 ${index} 時出錯:`, modelError);
                         }
                     });
+                    
+                    nameCell.appendChild(modelsDiv);
                 }
+
+                row.appendChild(nameCell);
+
+                // 已售出總數量
+                const salesCell = document.createElement('td');
+                const salesBadge = document.createElement('span');
+                salesBadge.className = 'badge badge-primary';
+                salesBadge.textContent = product.已售出總數量 || '0';
+                salesCell.appendChild(salesBadge);
+                row.appendChild(salesCell);
+
+                // 型號數量
+                const modelCountCell = document.createElement('td');
+                const countBadge = document.createElement('span');
+                countBadge.className = 'badge badge-success';
+                countBadge.textContent = product.型號 && Array.isArray(product.型號) ? product.型號.length : 0;
+                modelCountCell.appendChild(countBadge);
+                row.appendChild(modelCountCell);
+
+                // 操作按鈕
+                const actionsCell = document.createElement('td');
+                actionsCell.className = 'actions';
+                
+                const editLink = document.createElement('a');
+                editLink.href = '#';
+                editLink.className = 'action-btn edit-btn';
+                editLink.innerHTML = '<i class="fas fa-edit"></i> 編輯';
+                editLink.onclick = function(e) { 
+                    e.preventDefault(); 
+                    alert('編輯功能尚未實現'); 
+                };
+                actionsCell.appendChild(editLink);
+
+                const detailsLink = document.createElement('a');
+                detailsLink.href = '#';
+                detailsLink.className = 'action-btn details-btn';
+                detailsLink.innerHTML = '<i class="fas fa-info-circle"></i> 詳情';
+                detailsLink.dataset.productId = productId;
+                detailsLink.onclick = function(e) { 
+                    e.preventDefault(); 
+                    alert(`商品ID: ${this.dataset.productId} 的詳情功能尚未實現`); 
+                };
+                actionsCell.appendChild(detailsLink);
+
+                row.appendChild(actionsCell);
+
+                productList.appendChild(row);
+            } catch (error) {
+                console.error(`處理商品 ${productId} 時出錯:`, error);
             }
         });
     }
-}); 
+    // 綁定搜尋按鈕點擊事件
+    searchButton.addEventListener('click', performSearch);
+    
+    // 綁定輸入框按下Enter鍵事件
+    searchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault(); // 防止表單提交
+            performSearch();
+        }
+    });
+    
+    // 中斷爬蟲功能
+    function stopCrawler() {
+        if (crawlerRunning) {
+            // 顯示中斷中的消息
+            statusMessage.textContent = '正在中斷爬蟲...';
+            
+            // 發送中斷請求
+            fetch('/stop_crawler')
+                .then(response => response.json())
+                .then(data => {
+                    console.log('爬蟲中斷結果:', data);
+                    crawlerRunning = false;
+                    loading.style.display = 'none';
+                    alert('爬蟲已中斷');
+                })
+                .catch(error => {
+                    console.error('中斷爬蟲出錯:', error);
+                    alert('中斷爬蟲時出錯');
+                });
+        }
+    }
+    
+    // 綁定重設按鈕點擊事件
+    resetButton.addEventListener('click', function() {
+        searchInput.value = '';
+        productList.innerHTML = '';
+        
+        // 如果爬蟲正在運行，則中斷爬蟲
+        if (crawlerRunning) {
+            stopCrawler();
+        }
+    });
+    
+    // 添加頁面關閉事件
+    window.addEventListener('beforeunload', function() {
+        // 發送關閉請求到伺服器
+        navigator.sendBeacon('/shutdown');
+    });
+});
