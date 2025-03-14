@@ -43,19 +43,53 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 搜尋功能
     function performSearch() {
+        console.log('執行搜尋...(全局函數)');
+        
+        const searchInput = document.getElementById('searchInput');
+        if (!searchInput) {
+            console.error('找不到搜尋輸入框元素');
+            return;
+        }
+        
         const keyword = searchInput.value.trim();
-        const showBrowser = document.getElementById('headlessMode').checked;
+        const headlessModeElement = document.getElementById('headlessMode');
+        const filterValueElement = document.getElementById('filterValue');
+        
+        if (!headlessModeElement) {
+            console.error('找不到 headlessMode 元素');
+            return;
+        }
+        
+        const showBrowser = headlessModeElement.checked;
+        const filterValue = filterValueElement ? filterValueElement.value : 'all';
+        
+        console.log(`搜尋關鍵字: ${keyword}, 顯示瀏覽器: ${showBrowser}, 過濾值: ${filterValue}`);
         
         if (keyword) {
+            // 設置爬蟲運行狀態
+            crawlerRunning = true;
+            console.log('設置爬蟲運行狀態為: true');
+            
             // 顯示載入中
-            loading.style.display = 'block';
-            productList.innerHTML = '';
+            if (loading) {
+                loading.style.display = 'block';
+                console.log('顯示載入中元素');
+            }
+            
+            if (productList) {
+                productList.innerHTML = '';
+                console.log('清空商品列表');
+            }
             
             // 開始進度模擬
             const progressInterval = startProgressSimulation();
+            console.log('開始進度模擬');
             
-            // 發送請求到API，包含顯示瀏覽器參數
-            fetch(`/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}`)
+            // 發送請求到API，包含顯示瀏覽器參數和過濾值
+            const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&filterValue=${filterValue}`;
+            console.log(`發送請求到: ${searchUrl}`);
+            
+            fetch(searchUrl)
                 .then(response => response.json())
                 .then(data => {
                     // 停止進度模擬
@@ -272,15 +306,24 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     
     // 綁定重設按鈕點擊事件
-    resetButton.addEventListener('click', function() {
-        searchInput.value = '';
-        productList.innerHTML = '';
-        
-        // 如果爬蟲正在運行，則中斷爬蟲
-        if (crawlerRunning) {
-            stopCrawler();
-        }
-    });
+    if (resetButton) {
+        console.log('綁定重設按鈕點擊事件');
+        resetButton.addEventListener('click', function(event) {
+            event.preventDefault(); // 防止表單提交
+            console.log('重設按鈕被點擊');
+            if (searchInput) searchInput.value = '';
+            const filterValueElement = document.getElementById('filterValue');
+            if (filterValueElement) {
+                filterValueElement.value = '4'; // 重設過濾器為預設值
+            }
+            if (productList) productList.innerHTML = '';
+            
+            // 如果爬蟲正在運行，則中斷爬蟲
+            if (crawlerRunning) {
+                stopCrawler();
+            }
+        });
+    }
     
     // 添加頁面關閉事件
     window.addEventListener('beforeunload', function() {

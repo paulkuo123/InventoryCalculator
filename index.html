@@ -33,13 +33,7 @@
     <div class="container">
         <div class="card">
             <div class="search-container">
-                <input type="text" id="searchInput" placeholder="輸入商品關鍵字搜尋...">
-                <button id="searchButton" class="btn-primary">
-                    <i class="fas fa-search"></i> 搜尋
-                </button>
-                <button id="resetButton" class="btn-secondary">
-                    <i class="fas fa-redo"></i> 重設
-                </button>
+                <input type="text" id="searchInput" placeholder="輸入商品關鍵字...">
                 <div class="headless-option">
                     <label class="toggle-switch">
                         <input type="checkbox" id="headlessMode">
@@ -47,6 +41,30 @@
                     </label>
                     <span>顯示瀏覽器</span>
                 </div>
+                <div class="filter-option">
+                    <label for="filterValue"><i class="fas fa-filter"></i> 過濾器:</label>
+                    <select id="filterValue">
+                        <option value="all">全部</option>
+                        <option value="1">1</option>
+                        <option value="2">2</option>
+                        <option value="3">3</option>
+                        <option value="4" selected>4</option>
+                        <option value="5">5</option>
+                        <option value="6">6</option>
+                        <option value="7">7</option>
+                        <option value="8">8</option>
+                        <option value="9">9</option>
+                        <option value="10">10</option>
+                    </select>
+                </div>
+                <button id="searchButton" class="btn-primary">
+                    <i class="fas fa-search"></i>
+                    搜尋
+                </button>
+                <button id="resetButton" class="btn-secondary">
+                    <i class="fas fa-undo"></i>
+                    重設
+                </button>
             </div>
         </div>
 

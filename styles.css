@@ -650,4 +650,42 @@ input:checked + .toggle-slider:before {
         margin-left: 0;
         justify-content: center;
     }
+}
+
+/* 過濾器選項樣式 */
+.filter-option {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background-color: white;
+    padding: 8px 15px;
+    border-radius: var(--border-radius);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+}
+
+.filter-option label {
+    font-weight: 500;
+    color: var(--dark-gray);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.filter-option label i {
+    color: var(--accent-color);
+}
+
+.filter-option select {
+    padding: 6px 10px;
+    border: 1px solid var(--medium-gray);
+    border-radius: 4px;
+    font-size: 14px;
+    transition: var(--transition);
+    background-color: white;
+}
+
+.filter-option select:focus {
+    border-color: var(--accent-color);
+    box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
+    outline: none;
 } 
