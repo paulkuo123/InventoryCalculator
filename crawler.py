@@ -50,7 +50,7 @@ class ShopeeCrawler:
             # 使用 WebDriverWait 等待任意一個按鈕可見（最長等待 2 秒）
             button = WebDriverWait(self.driver, 2).until(
                 lambda driver: next(
-                    (driver.find_element(By.CSS_SELECTOR, selector) for selector in selectors 
+                    (driver.find_element(By.CSS_SELECTOR, selector) for selector in selectors
                     if driver.find_elements(By.CSS_SELECTOR, selector)), None
                 )
             )
@@ -79,7 +79,7 @@ class ShopeeCrawler:
         except Exception as e:
             print(f"點擊按鈕時出錯: {e}")
             print("未找到指定按鈕或不需要點擊")
-            
+
     def convert_sales_number(self, sales_text):
         """
         將銷售數字從 "4.2K" 或 "4.2k" 格式轉換為 "4200" 格式
@@ -108,11 +108,11 @@ class ShopeeCrawler:
             buttons = self.driver.find_elements(By.XPATH, "//div[contains(@class, 'product-more-models__content')]//button[contains(@class, 'eds-button--link')]")
             print(f"找到 {len(buttons)} 個展開更多型號按鈕")
             return buttons
-        
+
         except Exception as e:
             print(f"尋找展開按鈕時發生錯誤: {e}")
             return []
-   
+
     def click_matched_buttons(self, buttons):
         total_buttons = len(buttons)
         print(f"準備點擊 {total_buttons} 個按鈕")
@@ -122,10 +122,10 @@ class ShopeeCrawler:
             try:
                 # 直接滾動到按鈕位置（移除 smooth 行為以加快速度）
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-                
+
                 # 最小化等待時間，僅確保元素可見
                 WebDriverWait(self.driver, 2).until(EC.visibility_of(button))  # 改為 visibility_of 代替 element_to_be_clickable
-                
+
                 # 優先嘗試直接點擊
                 try:
                     button.click()
@@ -225,7 +225,7 @@ class ShopeeCrawler:
 
             # 等待登入成功跳轉
             WebDriverWait(self.driver, 20).until(
-                EC.url_contains("portal/product") or 
+                EC.url_contains("portal/product") or
                 EC.url_contains("seller.shopee.tw")
             )
 
@@ -257,10 +257,10 @@ class ShopeeCrawler:
         """
         try:
             image_element = element.find_element(By.CLASS_NAME, class_name)
-            
+
             # 首先嘗試獲取 src 屬性
             image_url = image_element.get_attribute('src')
-            
+
             # 如果 src 為空，嘗試從 style 屬性中提取
             if not image_url:
                 style = image_element.get_attribute('style')
@@ -271,11 +271,11 @@ class ShopeeCrawler:
                         image_url = url_match.group(1)
                     else:
                         image_url = "未找到"
-            
+
             return image_url
         except Exception:
             return "未找到"
-        
+
     def get_monthly_sales(self, product_name):
         """
         爬取商品的月銷量數據
@@ -288,53 +288,53 @@ class ShopeeCrawler:
         """
         try:
             print(f"\n===== 開始爬取「{product_name}」的月銷量數據 =====\n")
-            
+
             # 前往數據中心頁面
             data_center_url = "https://seller.shopee.tw/datacenter/product/performance"
             print(f"正在前往數據中心頁面: {data_center_url}")
             self.driver.get(data_center_url)
-            
+
             # 等待頁面加載
             WebDriverWait(self.driver, 20).until(
                 EC.presence_of_element_located((By.CLASS_NAME, "eds-icon.bi-date-input-icon"))
             )
             print("數據中心頁面加載完成")
-            
+
             # 點擊日期選擇圖標
             try:
                 date_icon = self.driver.find_element(By.CLASS_NAME, "eds-icon.bi-date-input-icon")
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", date_icon)
                 date_icon.click()
                 print("已點擊日期選擇圖標")
-                
+
                 # 等待日期選擇面板出現
                 WebDriverWait(self.driver, 10).until(
                     EC.presence_of_element_located((By.CLASS_NAME, "eds-date-shortcut-item__text"))
                 )
-                
-                # 尋找並點擊「過去 30 天」選項 - 修正選擇器
+
+                # 尋找並點擊「過去 30 天」選項
                 past_30_days_option = None
                 date_options = self.driver.find_elements(By.CLASS_NAME, "eds-date-shortcut-item__text")
-                
+
                 for option in date_options:
                     if "過去 30 天" in option.text:
                         past_30_days_option = option
                         break
-                
+
                 if past_30_days_option:
                     # 滾動到選項位置確保可見
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", past_30_days_option)
                     time.sleep(0.5)  # 確保元素可見
                     past_30_days_option.click()
                     print("已選擇「過去 30 天」")
-                    
+
                     # 等待日期選擇面板消失或更新
                     time.sleep(2)
                 else:
-                    # 如果找不到特定文字，嘗試直接點擊第四個選項（根據截圖，過去 30 天是第四個選項）
+                    # 如果找不到特定文字，嘗試直接點擊第四個選項
                     try:
                         if len(date_options) >= 4:
-                            fourth_option = date_options[3]  # 索引從0開始，所以第四個是索引3
+                            fourth_option = date_options[3]
                             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", fourth_option)
                             time.sleep(0.5)
                             fourth_option.click()
@@ -343,32 +343,34 @@ class ShopeeCrawler:
                             print("日期選項數量不足，無法選擇第四個選項")
                     except Exception as e:
                         print(f"嘗試點擊第四個日期選項時出錯: {e}")
-                
+
             except Exception as e:
                 print(f"選擇日期範圍時出錯: {e}")
-            
+
             # 在搜尋框中輸入商品名稱
             try:
-                # 點擊 class="eds-button eds-button--primary eds-button--normal eds-button--outline" 的按鈕
+                # 點擊篩選按鈕
                 try:
-                    search_button = self.driver.find_element(By.CSS_SELECTOR, 
+                    search_button = self.driver.find_element(By.CSS_SELECTOR,
                         "button.eds-button.eds-button--primary.eds-button--normal.eds-button--outline")
-                    
+
                     # 滾動到按鈕位置
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_button)
-                    
+
                     # 點擊按鈕
                     search_button.click()
                     print("已點擊搜尋按鈕")
-            
-            # 等待頁面加載
-                    time.sleep(0.5)  # 確保按鈕可見
-                    
-                    # 遍歷每個 multi-selector__section，尋找「可出貨訂單」
+
+                    # 等待篩選面板出現
+                    time.sleep(0.5)
+
+                    # 初始化 selected_item 變數
                     selected_item = None
+
+                    # 遍歷每個 multi-selector__section，尋找「可出貨訂單」
                     sections = self.driver.find_elements(By.CSS_SELECTOR, ".multi-selector__section")
                     print(f"找到 {len(sections)} 個 multi-selector__section")
-                    
+
                     # 第一次遍歷：找到「可出貨訂單」並勾選其下的商品數 checkbox
                     for section in sections:
                         try:
@@ -376,18 +378,18 @@ class ShopeeCrawler:
                             section_name_element = section.find_element(By.CSS_SELECTOR, ".multi-selector__name")
                             section_name = section_name_element.text.strip()
                             print(f"檢查 section: {section_name}")
-                            
+
                             # 如果是「可出貨訂單」section
                             if "可出貨訂單" in section_name:
                                 print(f"找到「可出貨訂單」section")
-                                
+
                                 # 尋找該 section 下的 multi-selector__list
                                 selector_list = section.find_element(By.CSS_SELECTOR, ".multi-selector__list")
-                                
+
                                 # 先取得所有項目文字，找出「商品數」的索引
                                 list_items = selector_list.find_elements(By.CSS_SELECTOR, ".multi-selector__item")
                                 product_count_index = -1
-                                
+
                                 for index, item in enumerate(list_items):
                                     try:
                                         item_text = item.text.strip()
@@ -398,7 +400,7 @@ class ShopeeCrawler:
                                     except Exception as e:
                                         print(f"讀取項目文字時出錯: {e}")
                                         continue
-                                
+
                                 # 如果找到商品數的索引，直接處理對應的 checkbox
                                 if product_count_index >= 0:
                                     try:
@@ -406,11 +408,11 @@ class ShopeeCrawler:
                                         checkbox_items = selector_list.find_elements(By.CSS_SELECTOR, ".multi-selector__item.mb-16")
                                         if len(checkbox_items) > product_count_index:
                                             target_item = checkbox_items[product_count_index]
-                                            
+
                                             # 檢查是否已勾選
                                             is_checked = "selected" in target_item.get_attribute("class")
                                             print(f"商品數 checkbox 勾選狀態: {is_checked}")
-                                            
+
                                             # 如果未勾選，則點擊勾選
                                             if not is_checked:
                                                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", target_item)
@@ -421,18 +423,18 @@ class ShopeeCrawler:
                                                     target_item
                                                 )
                                                 print("已勾選商品數 checkbox")
-                                            
+
                                             # 記錄這個 checkbox item
                                             selected_item = target_item
                                     except Exception as checkbox_error:
                                         print(f"處理 checkbox 時出錯: {checkbox_error}")
                                 else:
                                     print("未找到商品數項目")
-                                
+
                                 break  # 找到「可出貨訂單」section 後跳出循環
                         except Exception as section_error:
                             print(f"處理 section 時出錯: {section_error}")
-                    
+
                     # 第二次遍歷：取消勾選其他所有 checkbox
                     if selected_item:
                         print("開始取消勾選其他 checkbox")
@@ -440,15 +442,15 @@ class ShopeeCrawler:
                             try:
                                 # 尋找該 section 下的所有 checkbox items
                                 checkbox_items = section.find_elements(By.CSS_SELECTOR, ".multi-selector__item.mb-16")
-                                
+
                                 for item in checkbox_items:
                                     # 跳過已選中的 checkbox
                                     if item == selected_item:
                                         continue
-                                    
+
                                     # 檢查是否已勾選
                                     is_checked = "selected" in item.get_attribute("class")
-                                    
+
                                     # 如果已勾選，則取消勾選
                                     if is_checked:
                                         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", item)
@@ -461,25 +463,25 @@ class ShopeeCrawler:
                                         print("已取消勾選一個 checkbox")
                             except Exception as checkbox_error:
                                 print(f"處理 checkbox 時出錯: {checkbox_error}")
-                    
+
                     # 等待頁面更新
                     time.sleep(2)
-                    
+
                 except Exception as e:
                     print(f"處理 checkbox 時出錯: {e}")
 
-                # 等待搜尋框出現 - 使用更精確的選擇器
+                # 等待搜尋框出現
                 search_input = WebDriverWait(self.driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[data-v-b306c891][placeholder='搜尋商品']"))
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "input[placeholder='搜尋商品']"))
                 )
-                
+
                 # 確保輸入框可見並可交互
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", search_input)
                 time.sleep(0.5)
 
                 # 清空搜尋框
                 search_input.clear()
-                
+
                 # 使用 JavaScript 設置值並觸發事件
                 self.driver.execute_script("""
                     const input = arguments[0];
@@ -496,47 +498,60 @@ class ShopeeCrawler:
                     const changeEvent = new Event('change', { bubbles: true });
                     input.dispatchEvent(changeEvent);
                 """, search_input, product_name)
-                
+
                 print(f"已在搜尋框中輸入商品名稱: {product_name}")
-                
+
                 # 如果 JavaScript 方式失敗，嘗試直接輸入
                 actual_value = search_input.get_attribute('value')
                 if not actual_value:
                     search_input.send_keys(product_name)
                     time.sleep(0.5)
-                
+
                 # 按下 Enter 鍵
                 search_input.send_keys(Keys.RETURN)
                 print("已按下 Enter 鍵進行搜尋")
-                
+
                 # 等待搜尋結果加載
                 print("等待搜尋結果加載...")
                 time.sleep(3)
-                
-                # 展開所有表格行
-                print("展開所有表格行...")
-                self.expand_all_rows_svg()
-                
-                # 提取月銷量數據
-                monthly_sales_data = self.extract_monthly_sales_data()
-                
-                return monthly_sales_data
-                
+            
+                page = 1
+                has_next_page = True
+
+                while has_next_page:
+                    print(f"\n===== 正在處理第 {page} 頁 =====")
+                    # 展開所有表格行
+                    print("展開所有表格行...")
+                    self.expand_all_rows_svg()
+
+                    # 提取月銷量數據
+                    self.extract_monthly_sales_data()
+
+                    # 檢查是否有下一頁
+                    has_next_page = self.go_to_next_page()  # 假設此方法檢查並跳轉到下一頁
+                    if has_next_page:
+                        page += 1
+                        time.sleep(3)
+                    else:
+                        print("已到達最後一頁")
+
+                return self.products_data
+
             except Exception as e:
                 print(f"搜尋商品時出錯: {e}")
                 import traceback
                 traceback.print_exc()
-                
+
                 # 嘗試使用更直接的方法
                 try:
                     print("嘗試使用替代方法輸入搜尋關鍵字...")
                     # 嘗試使用 XPath 定位輸入框
                     search_input = self.driver.find_element(By.XPATH, "//input[@placeholder='搜尋商品']")
-                    
+
                     # 清空並輸入
                     search_input.clear()
                     search_input.send_keys(product_name)
-                    
+
                     # 嘗試點擊搜尋圖標
                     try:
                         search_icon = self.driver.find_element(By.XPATH, "//i[contains(@class, 'eds-input__suffix-icon')]")
@@ -546,84 +561,105 @@ class ShopeeCrawler:
                         # 如果找不到圖標，嘗試按 Enter 鍵
                         search_input.send_keys(Keys.ENTER)
                         print("已按下 Enter 鍵進行搜尋")
-                    
+
                     # 等待搜尋結果加載
                     time.sleep(5)
-                    
+
                     # 展開所有表格行
                     print("展開所有表格行...")
                     self.expand_all_rows_svg()
-                    
+
                     # 提取月銷量數據
-                    monthly_sales_data = self.extract_monthly_sales_data()
-                    
-                    return monthly_sales_data
+                    self.extract_monthly_sales_data()
+
+                    return self.products_data
                 except Exception as e2:
                     print(f"替代搜尋方法也失敗: {e2}")
-                
-                return {}
-                
+
+                return self.products_data
+
         except Exception as e:
             print(f"爬取月銷量數據時出錯: {e}")
             import traceback
             traceback.print_exc()
-            return {}
+            return self.products_data
 
     def extract_monthly_sales_data(self):
         """
         從頁面提取月銷量數據，並更新 self.products_data 中的型號資訊
         """
         try:
-            # 等待數據表格加載
-            WebDriverWait(self.driver, 10).until(
-                EC.presence_of_element_located((By.CLASS_NAME, "eds-table__body"))
-            )
-            
             # 獲取所有表格行
-            table_rows = self.driver.find_elements(By.CSS_SELECTOR, ".eds-table__body .eds-table__row")
+            table_rows = self.driver.find_elements(By.CSS_SELECTOR, ".el-table__row")
             print(f"找到 {len(table_rows)} 行數據")
-            
+
             current_product_id = None
-            
-            for row in table_rows:
+            i = 0
+
+            while i < len(table_rows):
                 try:
-                    # 檢查是否為主商品行（level-0）或型號行（level-1）
+                    row = table_rows[i]
+                    # 檢查是否為主商品行（level-0）
                     is_main_product = "el-table__row--level-0" in row.get_attribute("class")
-                    
+
                     if is_main_product:
                         # 獲取商品 ID
-                        item_subtitle = row.find_element(By.CSS_SELECTOR, ".item-subtitle").text
-                        product_id_match = re.search(r'商品ID:\s*(\d+)', item_subtitle)
-                    if product_id_match:
-                            current_product_id = product_id_match.group(1)
-                            print(f"\n處理商品 ID: {current_product_id}")
-                    else:
-                        # 處理型號行
+                        try:
+                            item_subtitle = row.find_element(By.CSS_SELECTOR, ".item-subtitle").text
+                            product_id_match = re.search(r'商品ID:\s*(\d+)', item_subtitle)
+                            if product_id_match:
+                                current_product_id = product_id_match.group(1)
+                                print(f"\n處理商品 ID: {current_product_id}")
+
+                        except Exception as e:
+                            print(f"獲取商品ID時出錯: {e}")
+                            current_product_id = None
+
+                    else:  # 處理型號行 (level-1)
                         if current_product_id and current_product_id in self.products_data:
                             try:
                                 # 獲取型號名稱
-                                model_name = row.find_element(By.CSS_SELECTOR, ".product-model span").text
+                                model_name_element = row.find_element(By.CSS_SELECTOR, ".product-model span")
+                                model_name = model_name_element.text.strip()
+
                                 # 獲取商品件數（可出貨訂單）
                                 sales_value = row.find_element(By.CSS_SELECTOR, ".currency-value").text.strip()
                                 print(f"型號: {model_name}, 商品件數: {sales_value}")
-                                
+
                                 # 更新型號的月銷量
-                                if model_name in self.products_data[current_product_id]["型號"]:
-                                    self.products_data[current_product_id]["型號"][model_name]["月銷量"] = sales_value
-                                    print(f"已更新 {model_name} 的月銷量為 {sales_value}")
+                                # 檢查型號資料結構是數組還是字典
+                                if isinstance(self.products_data[current_product_id]["型號"], list):
+                                    # 如果是數組，遍歷查找匹配的型號
+                                    for model in self.products_data[current_product_id]["型號"]:
+                                        if model["型號名稱"] == model_name:
+                                            model["月銷量"] = sales_value
+                                            print(f"已更新型號 {model_name} 的月銷量為 {sales_value}")
+                                            break
+                                    else:
+                                        print(f"警告：在商品 {current_product_id} 中找不到型號 {model_name}")
+                                elif isinstance(self.products_data[current_product_id]["型號"], dict):
+                                    # 如果是字典，直接用型號名稱作為鍵
+                                    if model_name in self.products_data[current_product_id]["型號"]:
+                                        self.products_data[current_product_id]["型號"][model_name]["月銷量"] = sales_value
+                                        print(f"已更新型號 {model_name} 的月銷量為 {sales_value}")
+                                    else:
+                                        print(f"警告：在商品 {current_product_id} 中找不到型號 {model_name}")
                                 else:
-                                    print(f"警告：找不到型號 {model_name} 在商品 {current_product_id} 中")
-                                
+                                    print(f"警告：商品 {current_product_id} 的型號資料結構不是數組也不是字典")
+
                             except Exception as model_error:
                                 print(f"處理型號資料時出錯: {model_error}")
-                                continue
-                    
+
+                    # 移動到下一行
+                    i += 1
+
                 except Exception as row_error:
                     print(f"處理表格行時出錯: {row_error}")
+                    i += 1  # 確保即使出錯也能繼續處理下一行
                     continue
-            
+
             print("月銷量數據更新完成")
-            
+
         except Exception as e:
             print(f"提取月銷量數據時出錯: {e}")
             import traceback
@@ -636,41 +672,41 @@ class ShopeeCrawler:
         try:
             # 初始化產品資料字典
             self.products_data = {}
-            
+
             # 登入蝦皮
             self.login()
             print("登入成功")
-            
+
             # 展開所有行
             self.expand_all_rows()
             print("已展開所有行")
-            
+
             # 獲取所有商品資訊
             self.get_all_products_info()
             print("已獲取所有商品基本資訊")
-            
+
             # 如果有搜尋關鍵字，則進行月銷量查詢
             if self.search_keyword:
                 print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
                 self.get_monthly_sales(self.search_keyword)
                 print("月銷量查詢完成")
-            
+
             # 完成所有資料收集後，一次性儲存 JSON 檔案
             self.save_to_file(self.products_data)
             print(f"所有資料已儲存至 {self.output_path}")
-            
+
             return self.products_data
-            
+
         except Exception as e:
             print(f"爬蟲執行過程中出錯: {e}")
             import traceback
             traceback.print_exc()
-            
+
             # 即使出錯，也嘗試儲存已收集的資料
             if hasattr(self, 'products_data') and self.products_data:
                 self.save_to_file(self.products_data)
                 print(f"已儲存部分收集的資料至 {self.output_path}")
-            
+
             return None
         finally:
             # 關閉瀏覽器
@@ -694,7 +730,7 @@ class ShopeeCrawler:
                 "//li[contains(@class, 'next')]/button",
                 "//div[contains(@class, 'pagination')]//button[contains(text(), '下一頁') or contains(text(), '›')]"
             ]
-            
+
             next_button = None
             for selector in next_page_selectors:
                 buttons = self.driver.find_elements(By.XPATH, selector)
@@ -706,17 +742,17 @@ class ShopeeCrawler:
                         break
                     else:
                         print(f"找到下一頁按鈕，但已被禁用: {buttons[0].get_attribute('class')}")
-            
+
             if not next_button:
                 print("未找到下一頁按鈕或已到達最後一頁")
                 return False
-            
+
             # 滾動到按鈕位置
             self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", next_button)
-            
+
             # 確保按鈕可見
             WebDriverWait(self.driver, 2).until(EC.visibility_of(next_button))
-            
+
             # 獲取當前頁面的某些特徵以便檢查是否成功跳轉
             current_url = self.driver.current_url
             current_page_text = ""
@@ -728,7 +764,7 @@ class ShopeeCrawler:
                     print(f"當前頁碼: {current_page_text}")
             except:
                 pass
-            
+
             # 嘗試點擊
             try:
                 print("嘗試直接點擊下一頁按鈕")
@@ -737,11 +773,11 @@ class ShopeeCrawler:
                 print(f"直接點擊失敗: {click_error}，嘗試使用 JavaScript 點擊")
                 # 如果直接點擊失敗，使用 JavaScript 點擊
                 self.driver.execute_script("arguments[0].click();", next_button)
-            
+
             # 等待頁面加載
             print("等待頁面加載...")
             time.sleep(3)
-            
+
             # 檢查是否成功跳轉到新頁面
             try:
                 # 使用多種方式檢查頁面是否變化
@@ -750,7 +786,7 @@ class ShopeeCrawler:
                         driver.current_url != current_url or  # URL 變化
                         EC.staleness_of(next_button)(driver) or  # 按鈕元素已過時
                         (  # 頁碼變化
-                            current_page_text and 
+                            current_page_text and
                             driver.find_elements(By.XPATH, "//div[contains(@class, 'eds-pager__page-indicator')]") and
                             driver.find_elements(By.XPATH, "//div[contains(@class, 'eds-pager__page-indicator')]")[0].text != current_page_text
                         )
@@ -762,7 +798,7 @@ class ShopeeCrawler:
                 return True
             except Exception as wait_error:
                 print(f"等待頁面變化超時: {wait_error}")
-                
+
                 # 再次檢查頁面是否有變化
                 new_page_text = ""
                 try:
@@ -774,10 +810,10 @@ class ShopeeCrawler:
                             return True
                 except:
                     pass
-                
+
                 print("跳轉到下一頁失敗或已到達最後一頁")
                 return False
-                
+
         except Exception as e:
             print(f"嘗試跳轉到下一頁時出錯: {e}")
             import traceback
@@ -790,16 +826,16 @@ class ShopeeCrawler:
         :param file_paths: 要刪除的檔案路徑列表
         """
         import os
-        
+
         print(f"開始刪除 {len(file_paths)} 個暫存檔...")
-        
+
         for file_path in file_paths:
             try:
                 os.remove(file_path)
                 print(f"已刪除暫存檔: {file_path}")
             except Exception as e:
                 print(f"刪除暫存檔 {file_path} 時出錯: {e}")
-        
+
         print("暫存檔刪除完成")
 
     def is_valid_product(self, product_info):
@@ -814,11 +850,11 @@ class ShopeeCrawler:
             product_info['商品ID'] == "未找到" and
             product_info['商品名稱'] == "未找到" and
             product_info['已售出總數量'] == "未找到"
-        ) 
-        
+        )
+
         # 檢查型號列表是否為空
         models_empty = len(product_info['型號']) == 0
-        
+
         # 如果主要欄位都是「未找到」且型號列表為空，則商品無效
         return not (main_fields_invalid and models_empty)
 
@@ -838,31 +874,31 @@ class ShopeeCrawler:
             try:
                 # 嘗試找到 img 標籤
                 img_element = element.find_element(By.TAG_NAME, 'img')
-                
+
                 # 等待圖片加載完成
                 is_image_loaded = self.driver.execute_script(
-                    "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0", 
+                    "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
                     img_element
                 )
-                
+
                 # 如果圖片尚未加載完成，等待一段時間
                 if not is_image_loaded:
                     print(f"圖片尚未加載完成，等待中... (嘗試 {attempt+1}/{max_retries})")
                     time.sleep(wait_time)
                     continue
-                
+
                 # 獲取圖片 URL
                 image_url = img_element.get_attribute('src')
                 if image_url:
                     print(f"成功獲取圖片 URL (嘗試 {attempt+1}/{max_retries})")
                     return image_url
-                
+
             except Exception as e:
                 print(f"獲取圖片時出錯 (嘗試 {attempt+1}/{max_retries}): {e}")
-            
+
             # 如果失敗，等待後重試
             time.sleep(wait_time)
-        
+
         # 如果所有嘗試都失敗，嘗試從 style 屬性中提取
         try:
             style = element.get_attribute('style')
@@ -872,7 +908,7 @@ class ShopeeCrawler:
                     return url_match.group(1)
         except:
             pass
-        
+
         return "未找到"
 
     def find_expand_icons(self):
@@ -884,18 +920,18 @@ class ShopeeCrawler:
         """
         try:
             expand_icons = []
-            
+
             # 尋找所有帶有 el-table__expand-icon 類的元素，不過濾展開狀態
             el_table_icons = self.driver.find_elements(By.CSS_SELECTOR, ".el-table__expand-icon")
             print(f"找到 {len(el_table_icons)} 個 el-table__expand-icon 元素")
-            
+
             for icon in el_table_icons:
                 try:
-                # 檢查是否已展開
+                    # 檢查是否已展開
                     is_expanded = "el-table__expand-icon--expanded" in icon.get_attribute("class")
                     if is_expanded:
                         continue
-                
+
                     # 檢查是否包含 SVG 元素
                     try:
                         # 先嘗試直接找 SVG
@@ -908,11 +944,11 @@ class ShopeeCrawler:
                         except:
                             # 如果還找不到，跳過此元素
                             print("此元素不包含 SVG")
-                    continue
-                
+                            continue
+
                     # 檢查 SVG 是否為目標結構（不再檢查 viewBox 和 path 的具體值）
                     # 只要確認它是展開圖標即可
-                    
+
                     # 排除 checkbox 相關元素
                     parent_element = self.driver.execute_script("""
                         let element = arguments[0];
@@ -929,11 +965,11 @@ class ShopeeCrawler:
                         }
                         return null;
                     """, icon)
-                    
+
                     if parent_element:
                         # 如果找到了 checkbox 相關的父元素，跳過此圖標
                         continue
-                
+
                     # 檢查是否在可見區域內
                     is_visible = self.driver.execute_script("""
                         const elem = arguments[0];
@@ -945,22 +981,22 @@ class ShopeeCrawler:
                             rect.right <= (window.innerWidth || document.documentElement.clientWidth)
                         );
                     """, icon)
-                    
+
                     if not is_visible:
                         # 如果不在可見區域內，嘗試滾動到該元素
                         self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
                         time.sleep(0.2)  # 等待滾動完成
-                    
+
                     # 添加到結果列表
                     expand_icons.append(icon)
-                    
+
                 except Exception as e:
                     print(f"檢查展開圖標時發生錯誤: {e}")
                     continue
-            
+
             print(f"找到 {len(expand_icons)} 個符合條件的展開圖標")
             return expand_icons
-        
+
         except Exception as e:
             print(f"尋找展開圖標時發生錯誤: {e}")
             return []
@@ -980,14 +1016,14 @@ class ShopeeCrawler:
             transform = svg_element.get_attribute("style")
             if transform and "rotate(90deg)" in transform:
                 return True
-            
+
             # 檢查父元素是否有展開標記
             parent = self.driver.execute_script("return arguments[0].parentNode;", svg_element)
             if parent:
                 parent_class = parent.get_attribute("class") or ""
                 if "expanded" in parent_class.lower():
                     return True
-            
+
             return False
         except:
             return False
@@ -999,7 +1035,7 @@ class ShopeeCrawler:
         try:
             expand_icons = self.find_expand_icons()
             total_expanded = 0
-            
+
             for i, icon in enumerate(expand_icons, 1):
                 self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", icon)
                 time.sleep(0.5)
@@ -1007,15 +1043,14 @@ class ShopeeCrawler:
                 print(f"已展開第 {i} 個表格行")
                 total_expanded += 1
                 time.sleep(0.8)
-                print(f"展開第 {i} 個表格行失敗: {e}")
-            
+
             print(f"總共成功展開 {total_expanded} 個表格行")
             return total_expanded
-        
+
         except Exception as e:
             print(f"展開表格行時發生錯誤: {e}")
             return 0
-            
+
     # 原始的 expand_all_rows 函數可以保留為兼容性，調用新的函數
     def expand_all_rows(self):
         """
@@ -1033,10 +1068,10 @@ class ShopeeCrawler:
         try:
             # 使用 XPath 查找按鈕
             expand_buttons = self.driver.find_elements(By.XPATH, "//button[.//span[contains(., '展開全部')]]")
-            
+
             # 過濾出可見的按鈕
             visible_buttons = [button for button in expand_buttons if button.is_displayed()]
-            
+
             print(f"總共找到 {len(visible_buttons)} 個標有「展開全部」的按鈕")
             return visible_buttons
         except Exception as e:
@@ -1052,19 +1087,19 @@ class ShopeeCrawler:
         try:
             total_expanded = 0
             expand_buttons = self.find_expand_buttons()
-                
+
             if not expand_buttons:
                 print("未找到標有「展開全部」的按鈕")
                 return 0
-            
+
             for i, button in enumerate(expand_buttons, 1):
                 try:
                     # 滾動到按鈕位置
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-                    
+
                     # 等待按鈕可見
                     WebDriverWait(self.driver, 5).until(EC.visibility_of(button))
-                    
+
                     # 點擊按鈕
                     button.click()
                     print(f"  - 已點擊第 {i} 個「展開全部」按鈕")
@@ -1073,13 +1108,13 @@ class ShopeeCrawler:
                 except Exception as e:
                     print(f"  - 點擊第 {i} 個「展開全部」按鈕失敗: {e}")
                     continue
-                            
+
             print(f"總共成功點擊了 {total_expanded} 個「展開全部」按鈕")
             return total_expanded
         except Exception as e:
             print(f"點擊「展開全部」按鈕時發生錯誤: {e}")
             return 0
-    
+
     def get_product_info(self, product_row):
         try:
             # 滾動到商品行位置，確保元素可見並被加載
@@ -1175,7 +1210,7 @@ class ShopeeCrawler:
                     models.append(model_info)
                 else:
                     print("跳過一個所有欄位都是「未找到」的型號")
-            
+
         except Exception as e:
             print(f"處理型號資訊時出錯: {e}")
 
@@ -1267,22 +1302,22 @@ class ShopeeCrawler:
 
 if __name__ == "__main__":
     import sys
-    
+
     # 檢查命令行參數
     headless_mode = '--headless' in sys.argv
     if headless_mode:
         sys.argv.remove('--headless')
-    
+
     # 檢查其他命令行參數
     if len(sys.argv) > 1:
         # 獲取關鍵字和輸出路徑
         keyword = sys.argv[1]
         output_path = sys.argv[2] if len(sys.argv) > 2 else "shopee_products.json"
-        
+
         # 設定參數
         shopee_url = "https://shopee.tw"
         cookies_path = "cookies.json"  # 請確保此檔案存在並包含有效的 cookies
-        
+
         # 根據使用者輸入決定搜尋網址
         base_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
         if keyword.strip():
@@ -1293,15 +1328,15 @@ if __name__ == "__main__":
             # 如果沒有輸入，使用預設網址
             my_products_url = base_products_url
             print("將搜尋全部商品")
-        
+
         if os.name == 'nt':  # Windows
             driver_path = "chromedriver.exe"
         else:  # Mac/Linux
             driver_path = "/opt/homebrew/bin/chromedriver"
-        
+
         # 創建爬蟲實例，傳遞搜尋關鍵字
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url, driver_path, output_path, keyword.strip())
-        
+
         # 如果是無頭模式，修改 Chrome 選項
         if headless_mode:
             crawler.driver.quit()  # 先關閉原來的瀏覽器
@@ -1313,19 +1348,19 @@ if __name__ == "__main__":
             chrome_options.add_argument("--disable-gpu")  # 禁用 GPU 加速
             chrome_options.add_argument("--no-sandbox")  # 禁用沙盒
             chrome_options.add_argument("--disable-dev-shm-usage")  # 禁用共享內存
-            
+
             service = Service(executable_path=driver_path)
             crawler.driver = webdriver.Chrome(service=service, options=chrome_options)
-        
+
         # 運行爬蟲
         products = crawler.run()
-        
+
         # 確保瀏覽器關閉
         try:
             crawler.driver.quit()
         except:
             pass
-        
+
         print("程式執行完畢。")
         sys.exit(0)  # 確保程式正常退出
     else:
@@ -1333,10 +1368,10 @@ if __name__ == "__main__":
         # 設定參數
         shopee_url = "https://shopee.tw"
         cookies_path = "cookies.json"  # 請確保此檔案存在並包含有效的 cookies
-        
+
         # 獲取使用者輸入
         user_input = input("請輸入要搜尋的關鍵字（直接按 Enter 則搜尋全部商品）：")
-        
+
         # 根據使用者輸入決定搜尋網址
         base_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
         if user_input.strip():
@@ -1347,7 +1382,7 @@ if __name__ == "__main__":
             # 如果沒有輸入，使用預設網址
             my_products_url = base_products_url
             print("將搜尋全部商品")
-        
+
         if os.name == 'nt':  # Windows
             driver_path = "chromedriver.exe"
         else:  # Mac/Linux
@@ -1357,6 +1392,6 @@ if __name__ == "__main__":
         # 創建爬蟲實例並運行，傳遞搜尋關鍵字
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url, driver_path, output_path, user_input.strip())
         products = crawler.run()
-        
+
         # 這裡可以進一步處理爬取到的資料
         print("程式執行完畢。")
