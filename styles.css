@@ -689,3 +689,18 @@ input:checked + .toggle-slider:before {
     box-shadow: 0 0 0 2px rgba(33, 150, 243, 0.2);
     outline: none;
 } 
+
+/* 補貨數量樣式 */
+.restock-amount {
+    font-weight: bold;
+    color: var(--accent-color);
+}
+
+/* 需要補貨的行樣式 */
+.restock-needed {
+    background-color: rgba(33, 150, 243, 0.05);
+}
+
+.restock-needed:hover {
+    background-color: rgba(33, 150, 243, 0.1) !important;
+}
