@@ -11,6 +11,8 @@ from datetime import datetime
 import re
 import sys
 import os
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.action_chains import ActionChains
 
 
 class ShopeeCrawler:
@@ -501,15 +503,73 @@ class ShopeeCrawler:
 
                                     # 如果已勾選，則取消勾選
                                     if is_checked:
+                                        # 滾動到元素，確保可見
                                         self.driver.execute_script(
                                             "arguments[0].scrollIntoView({block: 'center'});",
                                             item)
-                                        time.sleep(0.3)
-                                        # 使用 JavaScript 移除 selected class
-                                        self.driver.execute_script(
-                                            "arguments[0].className = 'multi-selector__item mb-16';",
-                                            item)
-                                        print("已取消勾選一個 checkbox")
+                                        time.sleep(0.5)  # 給足夠時間讓元素完全可見
+
+                                        # 使用 JavaScript 點擊元素
+                                        try:
+                                            self.driver.execute_script(
+                                                "arguments[0].click();", item)
+                                            time.sleep(0.5)  # 等待點擊響應
+
+                                            # 檢查是否成功取消勾選
+                                            is_still_checked = "selected" in item.get_attribute(
+                                                "class")
+                                            if not is_still_checked:
+                                                print(
+                                                    "已成功取消勾選一個 checkbox (使用 JavaScript 點擊)"
+                                                )
+                                            else:
+                                                # 如果 JavaScript 點擊失敗，嘗試使用 Selenium 點擊
+                                                try:
+                                                    item.click()
+                                                    time.sleep(0.5)
+
+                                                    # 再次檢查
+                                                    is_still_checked = "selected" in item.get_attribute(
+                                                        "class")
+                                                    if not is_still_checked:
+                                                        print(
+                                                            "已成功取消勾選一個 checkbox (使用 Selenium 點擊)"
+                                                        )
+                                                    else:
+                                                        # 如果直接點擊也失敗，嘗試使用 ActionChains
+                                                        actions = ActionChains(
+                                                            self.driver)
+                                                        actions.move_to_element(
+                                                            item).click(
+                                                            ).perform()
+                                                        time.sleep(0.5)
+
+                                                        is_still_checked = "selected" in item.get_attribute(
+                                                            "class")
+                                                        if not is_still_checked:
+                                                            print(
+                                                                "已成功取消勾選一個 checkbox (使用 ActionChains)"
+                                                            )
+                                                        else:
+                                                            print(
+                                                                "警告：無法取消勾選 checkbox，已嘗試多種方法"
+                                                            )
+                                                except Exception as selenium_click_error:
+                                                    print(
+                                                        f"Selenium 點擊失敗: {selenium_click_error}"
+                                                    )
+                                        except Exception as js_click_error:
+                                            print(
+                                                f"JavaScript 點擊失敗: {js_click_error}"
+                                            )
+                                            # 嘗試使用 Selenium 點擊
+                                            try:
+                                                item.click()
+                                                print("已使用 Selenium 點擊取消勾選")
+                                            except Exception as selenium_click_error:
+                                                print(
+                                                    f"Selenium 點擊也失敗: {selenium_click_error}"
+                                                )
                             except Exception as checkbox_error:
                                 print(f"處理 checkbox 時出錯: {checkbox_error}")
 
@@ -683,10 +743,31 @@ class ShopeeCrawler:
                                 model_name = model_name_element.text.strip()
 
                                 # 獲取商品件數（可出貨訂單）
-                                sales_value = row.find_element(
-                                    By.CSS_SELECTOR,
-                                    ".currency-value").text.strip()
-                                print(f"型號: {model_name}, 商品件數: {sales_value}")
+                                try:
+                                    # 尋找包含月銷量的元素
+                                    sales_element = row.find_element(
+                                        By.CSS_SELECTOR, ".number.nest-item")
+
+                                    # 從該元素中找到 currency-value 元素
+                                    currency_value_element = sales_element.find_element(
+                                        By.CSS_SELECTOR, ".currency-value")
+
+                                    # 獲取文本並去除空白
+                                    sales_text = currency_value_element.text.strip(
+                                    )
+
+                                    # 處理逗點符號，例如將 "1,324" 轉換為 "1324"
+                                    sales_value = sales_text.replace(",", "")
+
+                                    print(
+                                        f"爬取到的月銷量: {sales_text} -> 處理後: {sales_value}"
+                                    )
+                                except NoSuchElementException:
+                                    print("找不到月銷量元素")
+                                    sales_value = "0"
+                                except Exception as e:
+                                    print(f"爬取月銷量時出錯: {e}")
+                                    sales_value = "0"
 
                                 # 更新型號的月銷量
                                 # 檢查型號資料結構是數組還是字典
