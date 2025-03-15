@@ -1030,23 +1030,40 @@ class ShopeeCrawler:
 
         print("暫存檔刪除完成")
 
+
     def is_valid_product(self, product_info):
         """
-        檢查商品是否有效（不是所有欄位都是「未找到」）
+        Check if a product is valid based on essential fields.
         
-        :param product_info: 商品資訊字典
-        :return: 如果商品有效則返回 True，否則返回 False
+        Args:
+            product_info (dict): Product information dictionary
+        
+        Returns:
+            bool: True if valid, False otherwise
         """
-        # 檢查主要欄位
-        main_fields_invalid = (product_info['商品ID'] == "未找到"
-                               and product_info['商品名稱'] == "未找到"
-                               and product_info['已售出總數量'] == "未找到")
+        if not product_info:
+            return False
 
-        # 檢查型號列表是否為空
-        models_empty = len(product_info['型號']) == 0
+        # Essential fields must not be "未找到" or empty
+        essential_fields = ['商品ID', '商品名稱', '已售出總數量']
+        for field in essential_fields:
+            value = product_info.get(field, "未找到")
+            if value == "未找到" or not str(value).strip():
+                print(f"商品無效：缺少或無效的 {field}")
+                return False
 
-        # 如果主要欄位都是「未找到」且型號列表為空，則商品無效
-        return not (main_fields_invalid and models_empty)
+        # At least one model should have meaningful data if models exist
+        if product_info['型號']:
+            has_valid_model = False
+            for model in product_info['型號']:
+                if not all(value in ['未找到', '未知型號'] for value in model.values()):
+                    has_valid_model = True
+                    break
+            if not has_valid_model:
+                print("商品無效：所有型號數據無效")
+                return False
+
+        return True
 
     def get_image_with_retry(self, element, max_retries=3, wait_time=1):
         """
@@ -1324,198 +1341,140 @@ class ShopeeCrawler:
             print(f"點擊「展開全部」按鈕時發生錯誤: {e}")
             return 0
 
+
     def get_product_info(self, product_row):
-        """
-        從商品行中提取商品資訊，增強識別有效商品的能力
-        
-        Args:
-            product_row: 商品行元素
-            
-        Returns:
-            dict: 商品資訊字典，如果是無效商品則返回 None
-        """
         try:
-            # 首先檢查是否為有效的商品行
-            # 1. 檢查是否包含商品 ID 元素
-            item_id_containers = product_row.find_elements(
-                By.CLASS_NAME, 'item-id')
-            if not item_id_containers:
-                print("跳過無效行：未找到商品 ID 元素")
-                return None
-
-            # 2. 檢查是否包含商品名稱元素
-            product_name_elements = product_row.find_elements(
-                By.CLASS_NAME, 'product-name-wrap')
-            if not product_name_elements:
-                print("跳過無效行：未找到商品名稱元素")
-                return None
-
-            # 3. 檢查是否包含商品圖片元素
-            product_image_elements = product_row.find_elements(
-                By.CLASS_NAME, 'product-image')
-            if not product_image_elements:
-                print("跳過無效行：未找到商品圖片元素")
-                return None
-
-            # 滾動到商品行位置，確保元素可見並被加載
+            # Scroll to the row
             self.driver.execute_script(
-                "arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});",
+                "arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});",
                 product_row)
-            time.sleep(0.3)  # 減少等待時間以提高效率
-
-            # 提取商品 ID
-            try:
-                item_id_text = item_id_containers[0].find_element(
-                    By.CLASS_NAME, 'text-overflow2').text
-                item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
-                item_id = item_id_match.group(1) if item_id_match else None
-
-                # 如果無法提取有效的商品 ID，則視為無效商品
-                if not item_id or not item_id.isdigit():
-                    print("跳過無效行：商品 ID 格式不正確")
-                    return None
-            except Exception as e:
-                print(f"提取商品 ID 時出錯: {e}")
-                return None
-
-            # 提取商品名稱
-            try:
-                product_name = product_name_elements[0].text
-                if not product_name or product_name == "未找到":
-                    print("跳過無效行：商品名稱為空")
-                    return None
-            except Exception as e:
-                print(f"提取商品名稱時出錯: {e}")
-                return None
-
-            # 提取總銷量
-            try:
-                sales_elements = product_row.find_elements(
-                    By.CLASS_NAME, 'list-view-sales')
-                total_sales = sales_elements[0].text if sales_elements else "0"
-                total_sales = self.convert_sales_number(total_sales)
-            except Exception as e:
-                print(f"提取總銷量時出錯: {e}，使用預設值 0")
-                total_sales = "0"
-
-            # 提取商品圖片網址
-            try:
-                image_container = product_image_elements[0]
-                img_element = image_container.find_element(By.TAG_NAME, 'img')
-                product_image_url = img_element.get_attribute('src')
-                if not product_image_url:
-                    print("跳過無效行：商品圖片 URL 為空")
-                    return None
-
-                if not product_image_url.startswith('http'):
-                    product_image_url = "https:" + product_image_url
-            except Exception as e:
-                print(f"提取商品圖片時出錯: {e}")
-                product_image_url = "未找到"
-
-            # 提取型號資訊
-            models = []
-            try:
-                variation_list = product_row.find_elements(
-                    By.CLASS_NAME, 'model-list-item')
-                for variation in variation_list:
-                    model_info = {
-                        '型號名稱': '未知型號',
-                        '已售出數量': '未找到',
-                        '商品庫存': '未找到',
-                        '型號圖片網址': '未找到',
-                        '月銷量': '0'  # 添加月銷量欄位，預設為 0
-                    }
-
-                    # 提取型號名稱
-                    try:
-                        name_elements = variation.find_elements(
-                            By.CLASS_NAME, 'variation-name-info-name')
-                        if name_elements:
-                            model_info['型號名稱'] = name_elements[0].text
-                    except:
-                        pass
-
-                    # 提取已售出數量
-                    try:
-                        sales_elements = variation.find_elements(
-                            By.CLASS_NAME, 'list-view-model-sales')
-                        if sales_elements:
-                            sales_text = sales_elements[0].text
-                            model_info['已售出數量'] = self.convert_sales_number(
-                                sales_text)
-                    except:
-                        pass
-
-                    # 提取商品庫存
-                    try:
-                        stock_elements = variation.find_elements(
-                            By.CLASS_NAME, 'stock-text')
-                        if stock_elements:
-                            stock_text = stock_elements[0].text
-                            if stock_text == "已售完":
-                                model_info['商品庫存'] = "0"
-                            else:
-                                model_info['商品庫存'] = self.convert_sales_number(
-                                    stock_text)
-                    except:
-                        pass
-
-                    # 提取型號圖片網址
-                    try:
-                        image_container = variation.find_element(
-                            By.CLASS_NAME, 'variation-name-image')
-                        image_url = image_container.find_element(
-                            By.TAG_NAME, 'img').get_attribute('src')
-                        if not image_url.startswith('http'):
-                            image_url = "https:" + image_url
-                        model_info['型號圖片網址'] = image_url
-                    except:
-                        pass
-
-                    # 僅當型號資訊有效時加入列表
-                    if model_info['型號名稱'] != '未知型號' and model_info[
-                            '型號名稱'] != '未找到':
-                        models.append(model_info)
-
-            except Exception as e:
-                print(f"處理型號資訊時出錯: {e}")
-
-            # 構建商品資訊字典
-            product_info = {
-                '商品ID': item_id,
-                '商品名稱': product_name,
-                '已售出總數量': total_sales,
-                '商品圖片網址': product_image_url,
-                '型號': models
-            }
-
-            # 最終檢查：確保至少有一個有效的型號或基本資訊完整
-            if not models and (not product_name or not product_image_url
-                               or not item_id):
-                print(f"跳過商品 ID {item_id}：沒有有效型號且基本資訊不完整")
-                return None
-
-            return product_info
-
+            time.sleep(0.5)
         except Exception as e:
-            print(f"處理商品資訊時發生未預期錯誤: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"滾動到商品位置時出錯: {e}")
             return None
+
+        # Extract product ID (mandatory field)
+        try:
+            item_id_container = product_row.find_element(By.CLASS_NAME, 'item-id')
+            item_id_text = item_id_container.find_element(By.CLASS_NAME,
+                                                        'text-overflow2').text
+            item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
+            item_id = item_id_match.group(1) if item_id_match else "未找到"
+            if item_id == "未找到":
+                print("缺少有效商品 ID，跳過此行")
+                return None
+        except:
+            print("無法找到商品 ID 元素，跳過此行")
+            return None
+
+        # Extract product name
+        try:
+            product_name = product_row.find_element(By.CLASS_NAME,
+                                                    'product-name-wrap').text
+            if not product_name.strip():
+                product_name = "未找到"
+        except:
+            product_name = "未找到"
+
+        # Extract total sales
+        try:
+            total_sales = product_row.find_element(By.CLASS_NAME,
+                                                'list-view-sales').text
+            total_sales = self.convert_sales_number(total_sales)
+        except:
+            total_sales = "未找到"
+
+        # Extract product image URL
+        try:
+            image_container = product_row.find_element(By.CLASS_NAME,
+                                                    'product-image')
+            product_image_url = image_container.find_element(
+                By.TAG_NAME, 'img').get_attribute('src')
+            if not product_image_url.startswith('http'):
+                product_image_url = "https:" + product_image_url
+        except:
+            product_image_url = "未找到"
+
+        # Extract model info
+        models = []
+        try:
+            variation_list = product_row.find_elements(By.CLASS_NAME,
+                                                    'model-list-item')
+            for variation in variation_list:
+                model_info = {
+                    '型號名稱': '未知型號',
+                    '已售出數量': '未找到',
+                    '商品庫存': '未找到',
+                    '型號圖片網址': '未找到'
+                }
+
+                try:
+                    name_elements = variation.find_elements(
+                        By.CLASS_NAME, 'variation-name-info-name')
+                    if name_elements:
+                        model_info['型號名稱'] = name_elements[0].text
+                except:
+                    pass
+
+                try:
+                    sales_elements = variation.find_elements(
+                        By.CLASS_NAME, 'list-view-model-sales')
+                    if sales_elements:
+                        model_info['已售出數量'] = self.convert_sales_number(
+                            sales_elements[0].text)
+                except:
+                    pass
+
+                try:
+                    stock_elements = variation.find_elements(
+                        By.CLASS_NAME, 'stock-text')
+                    if stock_elements:
+                        stock_text = stock_elements[0].text
+                        model_info[
+                            '商品庫存'] = "0" if stock_text == "已售完" else self.convert_sales_number(
+                                stock_text)
+                except:
+                    pass
+
+                try:
+                    image_container = variation.find_element(
+                        By.CLASS_NAME, 'variation-name-image')
+                    image_url = image_container.find_element(
+                        By.TAG_NAME, 'img').get_attribute('src')
+                    if not image_url.startswith('http'):
+                        image_url = "https:" + image_url
+                    model_info['型號圖片網址'] = image_url
+                except:
+                    pass
+
+                if not all(value in ['未找到', '未知型號']
+                        for value in model_info.values()):
+                    models.append(model_info)
+        except Exception as e:
+            print(f"處理型號資訊時出錯: {e}")
+
+        # Build product info dictionary
+        product_info = {
+            '商品ID': item_id,
+            '商品名稱': product_name,
+            '已售出總數量': total_sales,
+            '商品圖片網址': product_image_url,
+            '型號': models
+        }
+
+        return product_info
 
     def get_all_products_info(self):
         try:
             page = 1
             has_next_page = True
             total_products = 0
-            valid_products = 0
-            self.products_data = {}  # 初始化儲存商品資訊的字典
+            self.products_data = {}  # Initialize storage for product info
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
 
-                # 等待頁面加載
+                # Wait for page to load
                 try:
                     WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located(
@@ -1524,66 +1483,85 @@ class ShopeeCrawler:
                 except:
                     print("等待頁面加載超時，嘗試繼續處理")
 
-                # 嘗試展開所有行
+                # Expand all rows
                 try:
                     self.expand_all_buttons()
-                    time.sleep(1.5)  # 減少等待時間
+                    time.sleep(2)
                 except:
                     print("展開所有行失敗，繼續處理")
 
-                # 獲取當前頁面的所有商品行
+                # Get valid product rows only
                 product_rows = []
                 try:
-                    # 使用更精確的選擇器來識別商品行
-                    product_rows = self.driver.find_elements(
-                        By.CSS_SELECTOR, ".eds-table__row.valign-top")
-                    print(f"找到 {len(product_rows)} 個潛在商品行")
+                    all_rows = self.driver.find_elements(By.CLASS_NAME,
+                                                        'eds-table__row')
+                    print(f"找到 {len(all_rows)} 個潛在商品行")
+
+                    # Filter rows with valid item-id
+                    for row in all_rows:
+                        try:
+                            item_id_container = row.find_element(
+                                By.CLASS_NAME, 'item-id')
+                            item_id_text = item_id_container.find_element(
+                                By.CLASS_NAME, 'text-overflow2').text
+                            if item_id_text and "商品 ID:" in item_id_text:
+                                product_rows.append(row)
+                        except:
+                            continue  # Skip rows without item-id
+
+                    print(f"過濾後找到 {len(product_rows)} 個有效商品行")
                 except:
                     print("未找到商品行，嘗試捲動頁面...")
                     self.driver.execute_script(
                         "window.scrollTo(0, document.body.scrollHeight/2);")
-                    time.sleep(1.5)
-                    try:
-                        product_rows = self.driver.find_elements(
-                            By.CSS_SELECTOR, ".eds-table__row.valign-top")
-                        print(f"捲動後找到 {len(product_rows)} 個潛在商品行")
-                    except:
-                        print("仍未找到商品行，跳過此頁")
+                    time.sleep(2)
+                    all_rows = self.driver.find_elements(By.CLASS_NAME,
+                                                        'eds-table__row')
+                    for row in all_rows:
+                        try:
+                            item_id_container = row.find_element(
+                                By.CLASS_NAME, 'item-id')
+                            item_id_text = item_id_container.find_element(
+                                By.CLASS_NAME, 'text-overflow2').text
+                            if item_id_text and "商品 ID:" in item_id_text:
+                                product_rows.append(row)
+                        except:
+                            continue
+                    print(f"捲動後找到 {len(product_rows)} 個有效商品行")
 
-                # 處理每個商品
-                for i, product_row in enumerate(product_rows):
-                    print(f"\n處理第 {i+1}/{len(product_rows)} 個潛在商品行")
+                # Process each valid product
+                for i, product_row in enumerate(product_rows, 1):
+                    print(f"\n處理第 {i}/{len(product_rows)} 個商品")
                     try:
                         product_info = self.get_product_info(product_row)
-                        if product_info:  # 只處理有效的商品資訊
-                            # 將商品資訊加入到 products_data 字典中
-                            product_id = product_info.pop('商品ID')  # 取出並移除商品ID
-                            self.products_data[product_id] = product_info
-                            valid_products += 1
-                            print(f"成功添加商品 ID: {product_id}")
-                        total_products += 1
+                        if product_info and self.is_valid_product(product_info):
+                            product_id = product_info.pop('商品ID')
+                            if product_id != "未找到":
+                                self.products_data[product_id] = product_info
+                                total_products += 1
+                                print(f"成功添加商品 ID: {product_id}")
+                            else:
+                                print("商品 ID 無效，跳過")
+                        else:
+                            print("商品資訊無效，跳過")
                     except Exception as e:
                         print(f"處理商品時出錯: {e}")
-                    time.sleep(0.3)  # 減少等待時間以提高效率
+                    time.sleep(0.5)
 
-                # 檢查是否有下一頁
+                # Check for next page
                 has_next_page = self.go_to_next_page()
                 if has_next_page:
                     page += 1
-                    time.sleep(2)  # 減少等待時間
+                    time.sleep(3)
                 else:
                     print("已到達最後一頁")
 
             print(f"\n===== 爬蟲完成 =====")
-            print(
-                f"共處理了 {page} 頁，檢查了 {total_products} 個潛在商品，成功收集了 {valid_products} 個有效商品資訊"
-            )
+            print(f"共處理了 {page} 頁，成功收集了 {total_products} 個商品資訊")
             return self.products_data
 
         except Exception as e:
             print(f"獲取所有商品資訊時出錯: {e}")
-            import traceback
-            traceback.print_exc()
             return {}
 
     def find_element_safely(self, by, value, parent=None, wait_time=10):
