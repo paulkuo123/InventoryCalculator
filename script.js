@@ -384,25 +384,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // 綁定重設按鈕點擊事件
-    if (resetButton) {
-        console.log('綁定重設按鈕點擊事件');
-        resetButton.addEventListener('click', function(event) {
-            event.preventDefault(); // 防止表單提交
-            console.log('重設按鈕被點擊');
-            if (searchInput) searchInput.value = '';
-            const inventoryMonthElement = document.getElementById('inventoryMonth');
-            if (inventoryMonthElement) {
-                inventoryMonthElement.value = '4'; // 重設庫存月份為預設值
-            }
-            if (productList) productList.innerHTML = '';
-            
-            // 如果爬蟲正在運行，則中斷爬蟲
-            if (crawlerRunning) {
-                stopCrawler();
-            }
-        });
-    }
+    // 重設按鈕相關代碼已移除
     
     // 添加頁面關閉事件
     window.addEventListener('beforeunload', function() {

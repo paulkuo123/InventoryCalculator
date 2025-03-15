@@ -42,6 +42,13 @@
                     <span>顯示瀏覽器</span>
                 </div>
                 <div class="filter-option">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="filterMode">
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span>僅顯示需補貨型號</span>
+                </div>
+                <div class="filter-option">
                     <label for="inventoryMonth"><i class="fas fa-filter"></i> 庫存月份:</label>
                     <select id="inventoryMonth">
                         <option value="1">1個月</option>
@@ -56,20 +63,9 @@
                         <option value="10">10個月</option>
                     </select>
                 </div>
-                <div class="filter-option">
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="filterMode">
-                        <span class="toggle-slider"></span>
-                    </label>
-                    <span>僅顯示需補貨型號</span>
-                </div>
                 <button id="searchButton" class="btn-primary">
                     <i class="fas fa-search"></i>
                     搜尋
-                </button>
-                <button id="resetButton" class="btn-secondary">
-                    <i class="fas fa-undo"></i>
-                    重設
                 </button>
             </div>
         </div>
