@@ -321,18 +321,30 @@ class ShopeeCrawler:
 
             # 點擊日期選擇圖標
             try:
+                # 先等待一下確保頁面已完全加載
+                time.sleep(1)  # 從2秒減少到1秒
+
                 date_icon = self.driver.find_element(
                     By.CLASS_NAME, "eds-icon.bi-date-input-icon")
                 self.driver.execute_script(
                     "arguments[0].scrollIntoView({block: 'center'});",
                     date_icon)
+
+                # 等待元素可交互
+                time.sleep(0.5)  # 從1秒減少到0.5秒
                 date_icon.click()
                 print("已點擊日期選擇圖標")
 
+                # 確保日期選擇面板完全顯示
+                time.sleep(1.5)  # 從3秒減少到1.5秒
+
                 # 等待日期選擇面板出現
-                WebDriverWait(self.driver, 10).until(
+                WebDriverWait(self.driver, 12).until(  # 從15秒減少到12秒
                     EC.presence_of_element_located(
                         (By.CLASS_NAME, "eds-date-shortcut-item__text")))
+
+                # 再等待一下確保所有選項都已加載
+                time.sleep(1)  # 從2秒減少到1秒
 
                 # 尋找並點擊「過去 30 天」選項
                 past_30_days_option = None
@@ -349,12 +361,12 @@ class ShopeeCrawler:
                     self.driver.execute_script(
                         "arguments[0].scrollIntoView({block: 'center'});",
                         past_30_days_option)
-                    time.sleep(0.5)  # 確保元素可見
+                    time.sleep(1)  # 從2秒減少到1秒
                     past_30_days_option.click()
                     print("已選擇「過去 30 天」")
 
                     # 等待日期選擇面板消失或更新
-                    time.sleep(2)
+                    time.sleep(1.5)  # 從3秒減少到1.5秒
                 else:
                     # 如果找不到特定文字，嘗試直接點擊第四個選項
                     try:
@@ -363,9 +375,12 @@ class ShopeeCrawler:
                             self.driver.execute_script(
                                 "arguments[0].scrollIntoView({block: 'center'});",
                                 fourth_option)
-                            time.sleep(0.5)
+                            time.sleep(1)  # 從2秒減少到1秒
                             fourth_option.click()
                             print(f"已點擊第四個日期選項: {fourth_option.text}")
+
+                            # 等待選擇生效
+                            time.sleep(1.5)  # 從3秒減少到1.5秒
                         else:
                             print("日期選項數量不足，無法選擇第四個選項")
                     except Exception as e:
