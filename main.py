@@ -13,6 +13,25 @@ import psutil  # 需要安裝: pip install psutil
 import atexit
 import socket
 import sys
+import logging
+import datetime
+
+# 設置日誌記錄
+LOG_FILE = "debug.log"
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8'),
+        logging.StreamHandler()  # 同時輸出到控制台
+    ])
+logger = logging.getLogger(__name__)
+
+# 記錄啟動信息
+logger.info(
+    f"===== 程序啟動於 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ====="
+)
+logger.info(f"操作系統: {os.name}, Python版本: {sys.version}")
 
 PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
 FILE_NAME = "index.html"
@@ -22,6 +41,7 @@ current_crawler_process = None
 if not os.path.exists(FILE_NAME):
     with open(FILE_NAME, "w", encoding="utf-8") as f:
         f.write("<h1>伺服器運行中！</h1>")
+    logger.info(f"創建了 {FILE_NAME} 文件")
 
 
 # 自定義處理器
@@ -145,18 +165,20 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         # 嘗試終止所有爬蟲進程
         self.stop_running_crawler()
 
-        print("正在關閉伺服器並釋放端口...")
+        logger.info("正在關閉伺服器並釋放端口...")
 
         # 嘗試正常關閉伺服器
         try:
             # 使用 threading.Timer 延遲關閉，確保回應已發送
             def delayed_exit():
+                logger.info("程序正常退出")
                 # 使用 sys.exit 代替 os._exit 以允許正常的清理
                 import sys
                 sys.exit(0)
 
             threading.Timer(1.0, delayed_exit).start()
-        except:
+        except Exception as e:
+            logger.exception(f"關閉伺服器時出錯: {e}")
             # 如果正常關閉失敗，使用強制關閉
             os._exit(0)
 
@@ -167,7 +189,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if current_crawler_process is not None and current_crawler_process.poll(
         ) is None:
             try:
-                print(f"嘗試中斷爬蟲進程 (PID: {current_crawler_process.pid})")
+                logger.info(f"嘗試中斷爬蟲進程 (PID: {current_crawler_process.pid})")
 
                 # 使用 psutil 獲取進程及其所有子進程
                 parent = psutil.Process(current_crawler_process.pid)
@@ -176,10 +198,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 # 先終止所有子進程
                 for child in children:
                     try:
-                        print(f"終止子進程 PID: {child.pid}")
+                        logger.info(f"終止子進程 PID: {child.pid}")
                         child.terminate()
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.error(f"終止子進程 {child.pid} 時出錯: {e}")
 
                 # 等待子進程終止
                 gone, alive = psutil.wait_procs(children, timeout=3)
@@ -187,48 +209,64 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 # 強制終止仍然存活的子進程
                 for p in alive:
                     try:
-                        print(f"強制終止子進程 PID: {p.pid}")
+                        logger.info(f"強制終止子進程 PID: {p.pid}")
                         p.kill()
-                    except:
-                        pass
+                    except Exception as e:
+                        logger.error(f"強制終止子進程 {p.pid} 時出錯: {e}")
 
                 # 終止主進程
                 try:
                     parent.terminate()
                     parent.wait(timeout=3)
-                except:
+                    logger.info(f"已終止主進程 PID: {parent.pid}")
+                except Exception as e:
+                    logger.error(f"終止主進程時出錯: {e}")
                     try:
                         parent.kill()
-                    except:
-                        pass
+                        logger.info(f"已強制終止主進程 PID: {parent.pid}")
+                    except Exception as e:
+                        logger.error(f"強制終止主進程時出錯: {e}")
 
                 # 確保進程已終止
                 if current_crawler_process.poll() is None:
                     if os.name == 'nt':
+                        logger.info(
+                            f"使用taskkill終止進程樹 PID: {current_crawler_process.pid}"
+                        )
                         os.system(
                             f"taskkill /F /PID {current_crawler_process.pid} /T"
                         )
                     else:
+                        logger.info(
+                            f"使用SIGKILL終止進程 PID: {current_crawler_process.pid}"
+                        )
                         os.kill(current_crawler_process.pid, signal.SIGKILL)
 
-                print(f"爬蟲進程已成功中斷")
+                logger.info(f"爬蟲進程已成功中斷")
                 current_crawler_process = None
                 return True
 
             except Exception as e:
-                print(f"中斷爬蟲進程時出錯: {e}")
+                logger.exception(f"中斷爬蟲進程時出錯: {e}")
                 import traceback
                 traceback.print_exc()
                 return False
         else:
-            print("沒有正在運行的爬蟲進程")
+            logger.info("沒有正在運行的爬蟲進程")
             return False
 
     def run_crawler(self, keyword, show_browser=False, inventory_month=4):
         """執行爬蟲程序"""
+        global current_crawler_process  # 全局變量聲明必須在函數開頭
+
         try:
             # 使用固定的輸出路徑
             output_path = "shopee_products.json"
+
+            logger.info(f"===== 開始執行爬蟲 =====")
+            logger.info(f"搜尋關鍵字: {keyword}")
+            logger.info(f"顯示瀏覽器: {show_browser}")
+            logger.info(f"庫存月份: {inventory_month}")
 
             # 設定爬蟲命令
             cmd = [
@@ -237,6 +275,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 str(not show_browser).lower(), "--inventory-month",
                 str(inventory_month)
             ]
+
+            logger.info(f"爬蟲命令: {' '.join(cmd)}")
 
             # 執行爬蟲腳本，並實時顯示輸出
             process = subprocess.Popen(
@@ -253,10 +293,15 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             # 保存當前爬蟲進程的引用
             current_crawler_process = process
 
-            # 創建線程來實時讀取和顯示輸出
+            logger.info(f"爬蟲進程已啟動，PID: {process.pid}")
+
+            # 創建線程來實時讀取和顯示輸出，並記錄到日誌文件
             def read_output(pipe, prefix):
                 for line in pipe:
-                    print(f"{prefix}: {line.strip()}")
+                    line_text = line.strip()
+                    print(f"{prefix}: {line_text}")
+                    # 同時記錄到日誌文件
+                    logger.info(f"{prefix}: {line_text}")
 
             # 啟動輸出讀取線程
             stdout_thread = threading.Thread(target=read_output,
@@ -268,12 +313,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             stdout_thread.start()
             stderr_thread.start()
 
+            logger.info("爬蟲輸出讀取線程已啟動")
+
             # 等待爬蟲完成，設置超時
             try:
                 process.wait(timeout=3600)
             except subprocess.TimeoutExpired:
                 self.stop_running_crawler()
-                print("爬蟲執行超時，已強制終止")
+                logger.error("爬蟲執行超時，已強制終止")
                 return {"error": "爬蟲執行超時，已強制終止"}
 
             # 確保輸出讀取線程完成
@@ -283,12 +330,15 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             # 清除當前爬蟲進程的引用
             current_crawler_process = None
 
+            logger.info(f"爬蟲進程已完成，返回碼: {process.returncode}")
+
             if process.returncode != 0:
-                print(f"爬蟲執行失敗，返回碼: {process.returncode}")
+                logger.error(f"爬蟲執行失敗，返回碼: {process.returncode}")
                 return {"error": "爬蟲執行失敗"}
 
             # 檢查結果文件是否存在
             if not os.path.exists(output_path):
+                logger.error("爬蟲未生成結果文件")
                 return {"error": "爬蟲未生成結果文件"}
 
             # 讀取爬蟲結果
@@ -296,13 +346,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 with open(output_path, 'r', encoding='utf-8') as f:
                     result = json.load(f)
 
-                print(f"爬取完成，找到 {len(result)} 個商品")
+                logger.info(f"爬取完成，找到 {len(result)} 個商品")
                 return result
             except json.JSONDecodeError:
+                logger.error("爬蟲結果不是有效的 JSON 格式")
                 return {"error": "爬蟲結果不是有效的 JSON 格式"}
 
         except Exception as e:
-            print(f"執行爬蟲時出錯: {e}")
+            logger.exception(f"執行爬蟲時出錯: {e}")
             return {"error": f"執行爬蟲時出錯: {e}"}
 
 
@@ -333,17 +384,17 @@ def start_server():
         with TCPServerReuse(("", PORT), CustomHandler) as httpd:
             # 獲取實際分配的端口
             actual_port = httpd.server_address[1]
-            print(f"✅ 伺服器啟動於 http://localhost:{PORT}")
+            logger.info(f"✅ 伺服器啟動於 http://localhost:{PORT}")
 
             try:
                 httpd.serve_forever()
             except KeyboardInterrupt:
-                print("接收到鍵盤中斷，正在關閉伺服器...")
+                logger.info("接收到鍵盤中斷，正在關閉伺服器...")
             finally:
                 httpd.server_close()
-                print("伺服器已關閉，端口已釋放")
+                logger.info("伺服器已關閉，端口已釋放")
     except Exception as e:
-        print(f"伺服器啟動失敗: {e}")
+        logger.exception(f"伺服器啟動失敗: {e}")
 
 
 # 全局變量
@@ -358,6 +409,7 @@ time.sleep(2)
 
 # 嘗試開啟瀏覽器
 webbrowser.open(f"http://localhost:{PORT}")
+logger.info(f"已嘗試在瀏覽器中打開 http://localhost:{PORT}")
 
 # 主線程等待
 try:
@@ -365,31 +417,33 @@ try:
     while server_thread.is_alive():
         time.sleep(1)
 except KeyboardInterrupt:
-    print("接收到鍵盤中斷，程式即將結束...")
+    logger.info("接收到鍵盤中斷，程式即將結束...")
     # 發送關閉請求
     try:
         import urllib.request
         urllib.request.urlopen(f"http://localhost:{PORT}/shutdown")
-    except:
-        pass
+    except Exception as e:
+        logger.error(f"發送關閉請求時出錯: {e}")
 except Exception as e:
-    print(f"發生未預期的錯誤: {e}")
+    logger.exception(f"發生未預期的錯誤: {e}")
 finally:
     # 確保所有資源都被釋放
-    print("正在清理資源...")
+    logger.info("正在清理資源...")
     # 嘗試終止所有爬蟲進程
     try:
         # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
         handler = CustomHandler(None, None, None)
         handler.stop_running_crawler()
-    except:
-        pass
+    except Exception as e:
+        logger.exception(f"清理資源時出錯: {e}")
     # 如果還有其他需要清理的資源，在這裡添加
+    logger.info("===== 程序結束於 %s =====" %
+                datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 
 # 註冊退出時的清理函數
 def cleanup_resources():
-    print("程式退出，正在清理資源...")
+    logger.info("程式退出，正在清理資源...")
     # 嘗試終止所有爬蟲進程
     try:
         if 'current_crawler_process' in globals(
@@ -397,9 +451,11 @@ def cleanup_resources():
             # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
             handler = CustomHandler(None, None, None)
             handler.stop_running_crawler()
-    except:
-        pass
+    except Exception as e:
+        logger.exception(f"退出時清理資源出錯: {e}")
     # 如果還有其他需要清理的資源，在這裡添加
+    logger.info("===== 程序結束於 %s =====" %
+                datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
 
 
 atexit.register(cleanup_resources)
