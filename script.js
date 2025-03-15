@@ -64,6 +64,59 @@ document.addEventListener('DOMContentLoaded', function() {
         return progressInterval;
     }
     
+    // 添加處理蝦皮圖片URL的函數
+    function processShopeeImageUrl(url) {
+        if (!url || url === 'undefined' || url === '未找到') {
+            return 'https://via.placeholder.com/60?text=無圖片';
+        }
+        
+        // 清理URL
+        url = url.trim();
+        
+        // 如果URL不是以http或https開頭，添加https前綴
+        if (!url.startsWith('http://') && !url.startsWith('https://')) {
+            // 移除開頭的 //（如果有）
+            if (url.startsWith('//')) {
+                url = url.substring(2);
+            }
+            url = 'https://' + url;
+        }
+        
+        // 特殊處理蝦皮圖片URL
+        if (url.includes('shopee.tw/file/')) {
+            // 確保URL不包含多餘的參數
+            const urlParts = url.split('?');
+            url = urlParts[0];
+            
+            // 確保URL包含正確的圖片尺寸標記（如果沒有_tn後綴，添加它）
+            if (!url.endsWith('_tn')) {
+                url += '_tn';
+            }
+        }
+        
+        return url;
+    }
+    
+    // 添加圖片預加載函數
+    function preloadImage(url, callback) {
+        const processedUrl = processShopeeImageUrl(url);
+        
+        if (processedUrl === 'https://via.placeholder.com/60?text=無圖片') {
+            callback(false);
+            return;
+        }
+        
+        const img = new Image();
+        img.onload = function() {
+            callback(true, processedUrl);
+        };
+        img.onerror = function() {
+            console.error('圖片預加載失敗:', processedUrl);
+            callback(false);
+        };
+        img.src = processedUrl;
+    }
+    
     // 顯示商品資料
     function displayProducts(products) {
         const productList = document.getElementById('productList');
@@ -108,14 +161,30 @@ document.addEventListener('DOMContentLoaded', function() {
 
                 const img = document.createElement('img');
                 img.className = 'product-image';
-                img.src = product.商品圖片網址 && product.商品圖片網址 !== '未找到' 
-                    ? product.商品圖片網址 
-                    : 'https://via.placeholder.com/60?text=無圖片';
+                
+                // 修正圖片URL處理邏輯
+                let imgSrc = processShopeeImageUrl(product.商品圖片網址);
+                
+                img.src = imgSrc;
                 img.alt = product.商品名稱 || '未知商品';
+                img.crossOrigin = "anonymous"; // 添加跨域屬性
                 img.onerror = function() { 
+                    console.error('圖片載入失敗:', this.src);
                     this.src = 'https://via.placeholder.com/60?text=無圖片'; 
                     this.onerror = null; 
                 };
+                
+                // 預加載圖片以確保顯示
+                if (imgSrc !== 'https://via.placeholder.com/60?text=無圖片') {
+                    preloadImage(product.商品圖片網址, function(success, url) {
+                        if (success) {
+                            img.src = url; // 使用預加載成功的URL
+                        } else {
+                            img.src = 'https://via.placeholder.com/60?text=無圖片';
+                        }
+                    });
+                }
+                
                 nameDiv.appendChild(img);
 
                 const nameText = document.createElement('span');
@@ -158,12 +227,31 @@ document.addEventListener('DOMContentLoaded', function() {
                             // 型號圖片
                             if (modelData.型號圖片網址 && modelData.型號圖片網址 !== '未找到') {
                                 const modelImg = document.createElement('img');
-                                modelImg.src = modelData.型號圖片網址;
+                                
+                                // 修正型號圖片URL處理邏輯
+                                let modelImgSrc = processShopeeImageUrl(modelData.型號圖片網址);
+                                
+                                modelImg.src = modelImgSrc;
                                 modelImg.className = 'model-image';
+                                modelImg.crossOrigin = "anonymous"; // 添加跨域屬性
                                 modelImg.onerror = function() { 
+                                    console.error('型號圖片載入失敗:', this.src);
                                     this.src = 'https://via.placeholder.com/30?text=無圖片'; 
                                     this.onerror = null; 
                                 };
+                                
+                                // 預加載型號圖片以確保顯示
+                                if (modelImgSrc !== 'https://via.placeholder.com/30?text=無圖片') {
+                                    preloadImage(modelData.型號圖片網址, function(success, url) {
+                                        if (success) {
+                                            modelImg.src = url; // 使用預加載成功的URL
+                                        } else {
+                                            modelImg.src = 'https://via.placeholder.com/30?text=無圖片';
+                                        }
+                                    });
+                                }
+                                
+                                // 添加圖片到DOM
                                 modelItem.appendChild(modelImg);
                             }
 

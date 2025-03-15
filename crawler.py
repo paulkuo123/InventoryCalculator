@@ -297,6 +297,19 @@ class ShopeeCrawler:
                     else:
                         image_url = "未找到"
 
+            # 確保URL格式正確
+            if image_url and image_url != "未找到":
+                # 移除URL中的多餘空格
+                image_url = image_url.strip()
+                # 如果URL不是以http或https開頭，添加https前綴
+                if not image_url.startswith(
+                        'http://') and not image_url.startswith('https://'):
+                    # 移除開頭的 //（如果有）
+                    if image_url.startswith('//'):
+                        image_url = image_url[2:]
+                    image_url = 'https://' + image_url
+                print(f"提取到圖片URL: {image_url}")
+
             return image_url
         except Exception:
             return "未找到"
@@ -1030,7 +1043,6 @@ class ShopeeCrawler:
 
         print("暫存檔刪除完成")
 
-
     def is_valid_product(self, product_info):
         """
         Check if a product is valid based on essential fields.
@@ -1056,7 +1068,8 @@ class ShopeeCrawler:
         if product_info['型號']:
             has_valid_model = False
             for model in product_info['型號']:
-                if not all(value in ['未找到', '未知型號'] for value in model.values()):
+                if not all(value in ['未找到', '未知型號']
+                           for value in model.values()):
                     has_valid_model = True
                     break
             if not has_valid_model:
@@ -1096,7 +1109,19 @@ class ShopeeCrawler:
                 # 獲取圖片 URL
                 image_url = img_element.get_attribute('src')
                 if image_url:
-                    print(f"成功獲取圖片 URL (嘗試 {attempt+1}/{max_retries})")
+                    # 確保URL格式正確
+                    image_url = image_url.strip()
+                    # 如果URL不是以http或https開頭，添加https前綴
+                    if not image_url.startswith(
+                            'http://') and not image_url.startswith(
+                                'https://'):
+                        # 移除開頭的 //（如果有）
+                        if image_url.startswith('//'):
+                            image_url = image_url[2:]
+                        image_url = 'https://' + image_url
+                    print(
+                        f"成功獲取圖片 URL (嘗試 {attempt+1}/{max_retries}): {image_url}"
+                    )
                     return image_url
 
             except Exception as e:
@@ -1111,7 +1136,16 @@ class ShopeeCrawler:
             if style and 'background-image' in style:
                 url_match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
                 if url_match:
-                    return url_match.group(1)
+                    image_url = url_match.group(1).strip()
+                    # 如果URL不是以http或https開頭，添加https前綴
+                    if not image_url.startswith(
+                            'http://') and not image_url.startswith(
+                                'https://'):
+                        # 移除開頭的 //（如果有）
+                        if image_url.startswith('//'):
+                            image_url = image_url[2:]
+                        image_url = 'https://' + image_url
+                    return image_url
         except:
             pass
 
@@ -1341,7 +1375,6 @@ class ShopeeCrawler:
             print(f"點擊「展開全部」按鈕時發生錯誤: {e}")
             return 0
 
-
     def get_product_info(self, product_row):
         try:
             # Scroll to the row
@@ -1355,9 +1388,10 @@ class ShopeeCrawler:
 
         # Extract product ID (mandatory field)
         try:
-            item_id_container = product_row.find_element(By.CLASS_NAME, 'item-id')
-            item_id_text = item_id_container.find_element(By.CLASS_NAME,
-                                                        'text-overflow2').text
+            item_id_container = product_row.find_element(
+                By.CLASS_NAME, 'item-id')
+            item_id_text = item_id_container.find_element(
+                By.CLASS_NAME, 'text-overflow2').text
             item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
             item_id = item_id_match.group(1) if item_id_match else "未找到"
             if item_id == "未找到":
@@ -1379,7 +1413,7 @@ class ShopeeCrawler:
         # Extract total sales
         try:
             total_sales = product_row.find_element(By.CLASS_NAME,
-                                                'list-view-sales').text
+                                                   'list-view-sales').text
             total_sales = self.convert_sales_number(total_sales)
         except:
             total_sales = "未找到"
@@ -1387,19 +1421,45 @@ class ShopeeCrawler:
         # Extract product image URL
         try:
             image_container = product_row.find_element(By.CLASS_NAME,
-                                                    'product-image')
-            product_image_url = image_container.find_element(
-                By.TAG_NAME, 'img').get_attribute('src')
-            if not product_image_url.startswith('http'):
-                product_image_url = "https:" + product_image_url
-        except:
+                                                       'product-image')
+            img_element = image_container.find_element(By.TAG_NAME, 'img')
+
+            # 等待圖片加載完成
+            wait_time = 2  # 設置等待時間（秒）
+            is_image_loaded = self.driver.execute_script(
+                "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
+                img_element)
+
+            if not is_image_loaded:
+                print(f"等待圖片加載完成...")
+                time.sleep(wait_time)
+
+            # 獲取圖片URL
+            product_image_url = img_element.get_attribute('src')
+
+            # 確保URL格式正確
+            if product_image_url:
+                product_image_url = product_image_url.strip()
+                # 如果URL不是以http或https開頭，添加https前綴
+                if not product_image_url.startswith(
+                        'http://') and not product_image_url.startswith(
+                            'https://'):
+                    # 移除開頭的 //（如果有）
+                    if product_image_url.startswith('//'):
+                        product_image_url = product_image_url[2:]
+                    product_image_url = 'https://' + product_image_url
+                print(f"成功獲取商品圖片URL: {product_image_url}")
+            else:
+                product_image_url = "未找到"
+        except Exception as e:
+            print(f"獲取商品圖片時出錯: {e}")
             product_image_url = "未找到"
 
         # Extract model info
         models = []
         try:
             variation_list = product_row.find_elements(By.CLASS_NAME,
-                                                    'model-list-item')
+                                                       'model-list-item')
             for variation in variation_list:
                 model_info = {
                     '型號名稱': '未知型號',
@@ -1448,7 +1508,7 @@ class ShopeeCrawler:
                     pass
 
                 if not all(value in ['未找到', '未知型號']
-                        for value in model_info.values()):
+                           for value in model_info.values()):
                     models.append(model_info)
         except Exception as e:
             print(f"處理型號資訊時出錯: {e}")
@@ -1493,8 +1553,8 @@ class ShopeeCrawler:
                 # Get valid product rows only
                 product_rows = []
                 try:
-                    all_rows = self.driver.find_elements(By.CLASS_NAME,
-                                                        'eds-table__row')
+                    all_rows = self.driver.find_elements(
+                        By.CLASS_NAME, 'eds-table__row')
                     print(f"找到 {len(all_rows)} 個潛在商品行")
 
                     # Filter rows with valid item-id
@@ -1515,8 +1575,8 @@ class ShopeeCrawler:
                     self.driver.execute_script(
                         "window.scrollTo(0, document.body.scrollHeight/2);")
                     time.sleep(2)
-                    all_rows = self.driver.find_elements(By.CLASS_NAME,
-                                                        'eds-table__row')
+                    all_rows = self.driver.find_elements(
+                        By.CLASS_NAME, 'eds-table__row')
                     for row in all_rows:
                         try:
                             item_id_container = row.find_element(
@@ -1534,7 +1594,8 @@ class ShopeeCrawler:
                     print(f"\n處理第 {i}/{len(product_rows)} 個商品")
                     try:
                         product_info = self.get_product_info(product_row)
-                        if product_info and self.is_valid_product(product_info):
+                        if product_info and self.is_valid_product(
+                                product_info):
                             product_id = product_info.pop('商品ID')
                             if product_id != "未找到":
                                 self.products_data[product_id] = product_info
