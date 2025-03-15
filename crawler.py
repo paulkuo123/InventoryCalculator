@@ -1507,46 +1507,61 @@ class ShopeeCrawler:
 
 if __name__ == "__main__":
     import sys
+    import argparse
+    import os
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    # 假設 ShopeeCrawler 是已定義的類別
+    # from crawler import ShopeeCrawler
 
-    # 檢查命令行參數
-    headless_mode = '--headless' in sys.argv
-    if headless_mode:
-        sys.argv.remove('--headless')
-
-    # 檢查其他命令行參數
     if len(sys.argv) > 1:
-        # 獲取關鍵字和輸出路徑
-        keyword = sys.argv[1]
-        output_path = sys.argv[2] if len(
-            sys.argv) > 2 else "shopee_products.json"
+        # 使用 argparse 解析命令行參數
+        parser = argparse.ArgumentParser(description='Shopee Crawler')
+        parser.add_argument('keyword', nargs='?', default='', help='搜尋關鍵字')
+        parser.add_argument('--output',
+                            default='shopee_products.json',
+                            help='輸出檔案路徑')
+        parser.add_argument('--headless',
+                            type=str,
+                            default='true',
+                            help='是否使用無頭模式 (true/false)')
+        parser.add_argument('--inventory-month',
+                            type=int,
+                            default=4,
+                            help='庫存月份')
 
-        # 設定參數
+        args = parser.parse_args()
+
+        # 將 headless 參數轉換為布林值
+        headless_mode = args.headless.lower() == 'true'
+
+        # 設定基本參數
         shopee_url = "https://shopee.tw"
         cookies_path = "cookies.json"  # 請確保此檔案存在並包含有效的 cookies
 
-        # 根據使用者輸入決定搜尋網址
+        # 根據關鍵字決定搜尋網址
         base_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
-        if keyword.strip():
-            # 如果有輸入關鍵字，則添加到 URL 中
-            my_products_url = f"{base_products_url}?keyword={keyword.strip()}"
-            print(f"將搜尋關鍵字：{keyword.strip()}")
+        if args.keyword.strip():
+            my_products_url = f"{base_products_url}?keyword={args.keyword.strip()}"
+            print(f"將搜尋關鍵字：{args.keyword.strip()}")
         else:
-            # 如果沒有輸入，使用預設網址
             my_products_url = base_products_url
             print("將搜尋全部商品")
 
+        # 根據作業系統設置 chromedriver 路徑
         if os.name == 'nt':  # Windows
             driver_path = "chromedriver.exe"
         else:  # Mac/Linux
             driver_path = "/opt/homebrew/bin/chromedriver"
 
-        # 創建爬蟲實例，傳遞搜尋關鍵字
+        # 創建爬蟲實例
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
-                                driver_path, output_path, keyword.strip())
+                                driver_path, args.output, args.keyword.strip())
 
-        # 如果是無頭模式，修改 Chrome 選項
+        # 如果啟用無頭模式，修改 Chrome 選項
         if headless_mode:
-            crawler.driver.quit()  # 先關閉原來的瀏覽器
+            crawler.driver.quit()  # 先關閉原有的瀏覽器
             chrome_options = Options()
             chrome_options.add_argument(
                 "--disable-blink-features=AutomationControlled")
@@ -1574,9 +1589,9 @@ if __name__ == "__main__":
 
         print("程式執行完畢。")
         sys.exit(0)  # 確保程式正常退出
+
     else:
-        # 如果沒有提供命令行參數，則使用原有的交互式方式
-        # 設定參數
+        # 保留原本的交互式方式
         shopee_url = "https://shopee.tw"
         cookies_path = "cookies.json"  # 請確保此檔案存在並包含有效的 cookies
 
@@ -1586,24 +1601,28 @@ if __name__ == "__main__":
         # 根據使用者輸入決定搜尋網址
         base_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
         if user_input.strip():
-            # 如果有輸入關鍵字，則添加到 URL 中
             my_products_url = f"{base_products_url}?keyword={user_input.strip()}"
             print(f"將搜尋關鍵字：{user_input.strip()}")
         else:
-            # 如果沒有輸入，使用預設網址
             my_products_url = base_products_url
             print("將搜尋全部商品")
 
+        # 根據作業系統設置 chromedriver 路徑
         if os.name == 'nt':  # Windows
             driver_path = "chromedriver.exe"
         else:  # Mac/Linux
             driver_path = "/opt/homebrew/bin/chromedriver"
         output_path = "shopee_products.json"  # 輸出檔案路徑
 
-        # 創建爬蟲實例並運行，傳遞搜尋關鍵字
+        # 創建爬蟲實例並運行
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
                                 driver_path, output_path, user_input.strip())
         products = crawler.run()
 
-        # 這裡可以進一步處理爬取到的資料
+        # 確保瀏覽器關閉
+        try:
+            crawler.driver.quit()
+        except:
+            pass
+
         print("程式執行完畢。")
