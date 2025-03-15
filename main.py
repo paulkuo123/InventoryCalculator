@@ -1,398 +1,414 @@
-import sys
-from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
-                             QPushButton, QGraphicsDropShadowEffect, QGridLayout, QFrame, 
-                             QSizePolicy, QSpacerItem, QProgressBar, QShortcut)
-from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QFontDatabase, QValidator, QKeySequence
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QPoint
+import http.server
+import socketserver
+import webbrowser
+import threading
+import os
+import time
+import json
+import urllib.parse
+import subprocess
+import tempfile
+import signal
+import psutil  # 需要安裝: pip install psutil
+import atexit
+import socket
 
-# 定義深色主題樣式
-dark_theme_stylesheet = """
-    QWidget {
-        background-color: #121826;
-        color: #E6F0FF;
-        font-family: 'Roboto', 'Arial';
-        font-size: 14px;
-    }
-    QLineEdit {
-        background-color: #1E2739;
-        border: 1px solid #2E3B55;
-        border-radius: 8px;
-        padding: 10px 15px;
-        color: #E6F0FF;
-        font-size: 15px;
-        selection-color: #FFFFFF;
-        selection-background-color: #3274d9;
-    }
-    QLineEdit:focus {
-        border: 2px solid #3274d9;
-        background-color: #283347;
-    }
-    QLineEdit::placeholder {
-        color: #4A5568;
-    }
-    QLabel {
-        font-weight: bold;
-        font-size: 16px;
-        color: #B0C4FF;
-    }
-    QFrame#card {
-        background-color: #1A2334;
-        border-radius: 12px;
-        border: 1px solid #2D3648;
-    }
-"""
+PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
+FILE_NAME = "index.html"
+current_crawler_process = None
 
-class NumberValidator(QValidator):
-    def validate(self, input_str, pos):
-        if not input_str or input_str.replace('.', '').isdigit():
-            return (QValidator.Acceptable, input_str, pos)
-        return (QValidator.Invalid, input_str, pos)
+# 確保 index.html 存在
+if not os.path.exists(FILE_NAME):
+    with open(FILE_NAME, "w", encoding="utf-8") as f:
+        f.write("<h1>伺服器運行中！</h1>")
 
-class HoverButton(QPushButton):
-    def __init__(self, text, parent=None):
-        super().__init__(text, parent)
-        self.setMouseTracking(True)
-        self.original_text = text
-        self.original_geometry = None
-        
-        # 設置動畫效果
-        self.animation = QPropertyAnimation(self, b"geometry")
-        self.animation.setDuration(100)
-        self.animation.setEasingCurve(QEasingCurve.OutCubic)
-        
-        # 添加陰影效果
-        self.shadow = QGraphicsDropShadowEffect()
-        self.shadow.setBlurRadius(15)
-        self.shadow.setColor(QColor(0, 0, 0, 80))
-        self.shadow.setOffset(0, 5)
-        self.setGraphicsEffect(self.shadow)
-        
-    def enterEvent(self, event):
-        self.shadow.setBlurRadius(25)
-        self.shadow.setColor(QColor(0, 0, 0, 120))
-        if self.original_geometry is None:
-            self.original_geometry = self.geometry()
-        self.animation.setEndValue(self.original_geometry.adjusted(-2, -2, 2, 2))  # 輕微放大
-        self.animation.start()
-        
-    def leaveEvent(self, event):
-        self.shadow.setBlurRadius(15)
-        self.shadow.setColor(QColor(0, 0, 0, 80))
-        if self.original_geometry is not None:
-            self.animation.setEndValue(self.original_geometry)  # 恢復原始大小
-            self.animation.start()
 
-class ModernLineEdit(QLineEdit):
-    def __init__(self, placeholder="", parent=None):
-        super().__init__(parent)
-        self.setPlaceholderText(placeholder)
-        self.setMinimumHeight(45)
-        
-        # 添加陰影效果
-        self.shadow = QGraphicsDropShadowEffect()
-        self.shadow.setBlurRadius(10)
-        self.shadow.setColor(QColor(0, 0, 0, 50))
-        self.shadow.setOffset(0, 2)
-        self.setGraphicsEffect(self.shadow)
-        
-    def focusInEvent(self, event):
-        self.shadow.setBlurRadius(15)
-        self.shadow.setColor(QColor(74, 144, 226, 100))
-        super().focusInEvent(event)
-        
-    def focusOutEvent(self, event):
-        self.shadow.setBlurRadius(10)
-        self.shadow.setColor(QColor(0, 0, 0, 50))
-        super().focusOutEvent(event)
+# 自定義處理器
+class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
-class InventoryCalculator:
-    @staticmethod
-    def calculate_inventory(product_sold, total_sold, monthly_sales, current_inventory, expected_months):
-        if total_sold == 0:
-            raise ValueError("賣出總數不能為零")
-        expected_inventory = (product_sold / total_sold) * monthly_sales * expected_months
-        restock = expected_inventory - current_inventory
-        return expected_inventory, restock
+    def do_GET(self):
+        # 處理搜尋請求
+        if self.path.startswith('/search'):
+            try:
+                # 解析查詢參數
+                query = urllib.parse.urlparse(self.path).query
+                params = urllib.parse.parse_qs(query)
+                keyword = params.get('keyword', [''])[0]
+                showBrowser = params.get('showBrowser',
+                                         ['false'])[0].lower() == 'true'
 
-class SalesCalculator(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.initUI()
-        
-    def initUI(self):
-        self.setWindowTitle('智能庫存預測系統')
-        self.setMinimumSize(600, 700)
-        self.setGeometry(100, 100, 900, 850)
-        
-        # 加載字體（可選，若無字體則移除）
-        # QFontDatabase.addApplicationFont(":/fonts/Roboto-Regular.ttf")
-        # QFontDatabase.addApplicationFont(":/fonts/Roboto-Bold.ttf")
-        
-        # 使用深色主題
-        self.setStyleSheet(dark_theme_stylesheet)
-        
-        # 主佈局
-        main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(30, 30, 30, 30)
-        main_layout.setSpacing(25)
-        
-        # 標題部分
-        title_layout = QHBoxLayout()
-        app_title = QLabel("莉莉安庫存系統")
-        app_title.setFont(QFont('Arial', 24, QFont.Bold))  # 若無 Roboto，使用 Arial
-        app_title.setStyleSheet("color: #4A90E2; margin-bottom: 5px;")
-        title_layout.addWidget(app_title)
-        title_layout.addStretch()
-        
-        # 創建卡片式容器
-        card = QFrame()
-        card.setObjectName("card")
-        card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(25, 25, 25, 25)
-        card_layout.setSpacing(20)
-        
-        # 卡片陰影效果
-        card_shadow = QGraphicsDropShadowEffect()
-        card_shadow.setBlurRadius(20)
-        card_shadow.setColor(QColor(0, 0, 0, 80))
-        card_shadow.setOffset(0, 10)
-        card.setGraphicsEffect(card_shadow)
-        
-        # 輸入欄位使用網格佈局
-        input_layout = QGridLayout()
-        input_layout.setVerticalSpacing(20)
-        input_layout.setHorizontalSpacing(15)
-        
-        # 創建現代風格的輸入欄位
-        self.product_sold = ModernLineEdit("輸入已賣出的商品數量 (單位：個)")
-        self.total_sold = ModernLineEdit("輸入總共賣出的數量 (單位：個)")
-        self.monthly_sales = ModernLineEdit("輸入每月的平均銷量 (單位：個)")
-        self.current_inventory = ModernLineEdit("輸入目前的庫存數量 (單位：個)")
-        self.expected_months = ModernLineEdit("輸入期望維持的庫存月數 (單位：月)")
-        self.expected_months.setText('4')
-        
-        # 添加輸入驗證和工具提示
-        validator = NumberValidator()
-        for widget in [self.product_sold, self.total_sold, self.monthly_sales, self.current_inventory, self.expected_months]:
-            widget.setValidator(validator)
-            widget.setToolTip(f"{widget.placeholderText()}, 需為正數")
-        
-        # 添加標籤和輸入欄位到網格佈局
-        labels = ['商品賣出數量', '賣出總數', '月銷量', '現有庫存', '預期庫存月數']
-        inputs = [self.product_sold, self.total_sold, self.monthly_sales, self.current_inventory, self.expected_months]
-        icons = ["📊", "📈", "📉", "🗃️", "📆"]
-        
-        for i, (label_text, input_widget) in enumerate(zip(labels, inputs)):
-            label = QLabel(f"{label_text}:")
-            label.setFixedWidth(150)
-            icon_label = QLabel(icons[i])
-            icon_label.setFont(QFont('Segoe UI Emoji', 16))
-            icon_label.setFixedWidth(30)
-            row_layout = QHBoxLayout()
-            row_layout.addWidget(icon_label)
-            row_layout.addWidget(label)
-            row_layout.addWidget(input_widget)
-            input_layout.addLayout(row_layout, i, 0)
-        
-        card_layout.addLayout(input_layout)
-        
-        # 按鈕區域，使用水平佈局
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(15)
-        
-        # 計算按鈕
-        self.calc_button = HoverButton('計 算 預 期 庫 存')  # 改為 self.calc_button 以便後續綁定
-        self.calc_button.clicked.connect(self.calculate)
-        self.calc_button.setFont(QFont('Arial', 16, QFont.Bold))
-        self.calc_button.setMinimumHeight(55)
-        self.calc_button.setStyleSheet("""
-            QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                                           stop:0 #3274d9, stop:1 #1a4fa0);
-                color: #FFFFFF;
-                padding: 12px 25px;
-                border: none;
-                border-radius: 8px;
-                font-size: 16px;
-                font-weight: bold;
+                if keyword:
+                    # 執行爬蟲並獲取結果
+                    result = self.run_crawler(keyword, showBrowser)
+
+                    # 設置響應頭
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+
+                    # 發送JSON響應
+                    self.wfile.write(
+                        json.dumps(result, ensure_ascii=False).encode('utf-8'))
+                else:
+                    # 如果沒有關鍵字，返回空結果
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(
+                        json.dumps([], ensure_ascii=False).encode('utf-8'))
+
+                return
+            except Exception as e:
+                # 處理錯誤
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({
+                        "error": str(e)
+                    }, ensure_ascii=False).encode('utf-8'))
+                return
+
+        # 處理中斷爬蟲請求
+        if self.path == '/stop_crawler':
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self.end_headers()
+
+            # 嘗試中斷爬蟲
+            success = self.stop_running_crawler()
+
+            # 發送JSON響應
+            response = {
+                "status": "success" if success else "failed",
+                "message": "爬蟲已中斷" if success else "中斷爬蟲失敗"
             }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                                          stop:0 #4285F4, stop:1 #2563EB);
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
-                                          stop:0 #1a4fa0, stop:1 #0d2b5e);
-            }
-        """)
-        self.calc_button.setCursor(Qt.PointingHandCursor)
-        self.calc_button.setToolTip("點擊計算預期庫存和補貨量")
-        
-        # 清除按鈕
-        clear_button = HoverButton('清 除')
-        clear_button.clicked.connect(self.clear_fields)
-        clear_button.setFont(QFont('Arial', 16, QFont.Bold))
-        clear_button.setMinimumHeight(55)
-        clear_button.setStyleSheet("""
-            QPushButton {
-                background-color: #2E3B55;
-                color: #D9E6FF;
-                padding: 12px 25px;
-                border: none;
-                border-radius: 8px;
-                font-size: 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #3A4A70;
-            }
-            QPushButton:pressed {
-                background-color: #1E2739;
-            }
-        """)
-        clear_button.setCursor(Qt.PointingHandCursor)
-        clear_button.setToolTip("清除所有輸入欄位")
-        
-        # 添加按鈕到佈局
-        button_layout.addWidget(self.calc_button, 2)
-        button_layout.addWidget(clear_button, 1)
-        card_layout.addLayout(button_layout)
-        
-        # 創建結果顯示卡片
-        result_card = QFrame()
-        result_card.setObjectName("card")
-        result_layout = QVBoxLayout(result_card)
-        result_layout.setContentsMargins(20, 20, 20, 20)
-        
-        # 結果標籤
-        result_title = QLabel("分析結果")
-        result_title.setFont(QFont('Arial', 16, QFont.Bold))
-        result_title.setStyleSheet("color: #4A90E2;")
-        result_layout.addWidget(result_title)
-        
-        # 創建結果顯示標籤
-        self.result_label = QLabel('等待計算...')
-        self.result_label.setFont(QFont('Arial', 16))
-        self.result_label.setStyleSheet("""
-            QLabel {
-                background-color: #1E2739;
-                color: #66B3FF;
-                padding: 15px;
-                border-radius: 8px;
-                font-size: 16px;
-                border-left: 4px solid #3274d9;
-            }
-        """)
-        self.result_label.setAlignment(Qt.AlignCenter)
-        self.result_label.setWordWrap(True)
-        result_layout.addWidget(self.result_label)
-        
-        # 添加庫存進度條
-        self.inventory_bar = QProgressBar()
-        self.inventory_bar.setMaximum(100)
-        self.inventory_bar.setValue(0)
-        result_layout.addWidget(self.inventory_bar)
-        
-        # 結果卡片陰影
-        result_shadow = QGraphicsDropShadowEffect()
-        result_shadow.setBlurRadius(20)
-        result_shadow.setColor(QColor(0, 0, 0, 80))
-        result_shadow.setOffset(0, 10)
-        result_card.setGraphicsEffect(result_shadow)
-        
-        # 添加所有元素到主佈局
-        main_layout.addLayout(title_layout)
-        main_layout.addWidget(card)
-        main_layout.addWidget(result_card)
-        main_layout.addStretch()  # 添加彈性空間，使內容靠上
-        
-        self.setLayout(main_layout)
-        
-        # 添加快捷鍵
-        QShortcut(QKeySequence("Ctrl+Enter"), self, self.calculate)
-        QShortcut(QKeySequence("Esc"), self, self.clear_fields)
-        QShortcut(QKeySequence("Return"), self, self.calc_button.click)  # Enter 鍵觸發計算按鈕
-        
-    def calculate(self):
+            self.wfile.write(
+                json.dumps(response, ensure_ascii=False).encode('utf-8'))
+            return
+
+        # 處理關閉請求
+        if self.path == '/shutdown':
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b"Server shutting down...")
+            print("收到關閉請求，程式即將結束...")
+            # 使用線程在回應後關閉伺服器
+            threading.Thread(target=self.shutdown_server, daemon=True).start()
+            return
+
+        # 處理其他請求
+        if self.path == '/':
+            self.path = FILE_NAME
+        return http.server.SimpleHTTPRequestHandler.do_GET(self)
+
+    def do_POST(self):
+        # 處理中斷爬蟲請求
+        if self.path == '/stop_crawler':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length).decode('utf-8')
+
+            try:
+                data = json.loads(post_data)
+                if data.get('action') == 'stop':
+                    # 嘗試中斷爬蟲
+                    success = self.stop_running_crawler()
+
+                    self.send_response(200)
+                    self.send_header('Content-type', 'application/json')
+                    self.end_headers()
+
+                    response = {
+                        "status": "success" if success else "failed",
+                        "message": "爬蟲已中斷" if success else "中斷爬蟲失敗"
+                    }
+                    self.wfile.write(
+                        json.dumps(response,
+                                   ensure_ascii=False).encode('utf-8'))
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({
+                        "error": str(e)
+                    }, ensure_ascii=False).encode('utf-8'))
+            return
+
+    def shutdown_server(self):
+        """關閉伺服器並釋放端口"""
+        # 等待一小段時間確保回應已發送
+        time.sleep(0.5)
+
+        # 嘗試終止所有爬蟲進程
+        self.stop_running_crawler()
+
+        print("正在關閉伺服器並釋放端口...")
+
+        # 嘗試正常關閉伺服器
         try:
-            if not all([self.product_sold.text(), self.total_sold.text(), 
-                       self.monthly_sales.text(), self.current_inventory.text(), 
-                       self.expected_months.text()]):
-                raise ValueError("所有欄位都必須填寫")
-            
-            product_sold = float(self.product_sold.text())
-            total_sold = float(self.total_sold.text())
-            monthly_sales = float(self.monthly_sales.text())
-            current_inventory = float(self.current_inventory.text())
-            expected_months = float(self.expected_months.text())
-            
-            if any(x < 0 for x in [product_sold, total_sold, monthly_sales, current_inventory, expected_months]):
-                raise ValueError("所有數值必須為正數")
-            
-            expected_inventory, restock = InventoryCalculator.calculate_inventory(
-                product_sold, total_sold, monthly_sales, current_inventory, expected_months
-            )
-            
-            self.result_label.setText(f'預期庫存: {expected_inventory:.2f} 單位 | 建議補貨: {restock:.2f} 單位')
-            if restock <= 0:
-                self.result_label.setStyleSheet("""
-                    QLabel {
-                        background-color: #132C1E;
-                        color: #4ADE80;
-                        padding: 15px;
-                        border-radius: 8px;
-                        font-size: 16px;
-                        border-left: 4px solid #22C55E;
-                    }
-                """)
-            else:
-                self.result_label.setStyleSheet("""
-                    QLabel {
-                        background-color: #1E2739;
-                        color: #3B82F6;
-                        padding: 15px;
-                        border-radius: 8px;
-                        font-size: 16px;
-                        border-left: 4px solid #3274d9;
-                    }
-                """)
-            
-            self.inventory_bar.setValue(min(100, int((current_inventory / expected_inventory) * 100)))
-            
-        except ValueError as e:
-            self.result_label.setText(f'錯誤：{str(e)}')
-            self.result_label.setStyleSheet("""
-                QLabel {
-                    background-color: #2D1A22;
-                    color: #F87171;
-                    padding: 15px;
-                    border-radius: 8px;
-                    font-size: 16px;
-                    border-left: 4px solid #EF4444;
-                }
-            """)
-            
-    def clear_fields(self):
-        self.product_sold.clear()
-        self.total_sold.clear()
-        self.monthly_sales.clear()
-        self.current_inventory.clear()
-        self.expected_months.setText('4')
-        self.result_label.setText('等待計算...')
-        self.result_label.setStyleSheet("""
-            QLabel {
-                background-color: #1E2739;
-                color: #66B3FF;
-                padding: 15px;
-                border-radius: 8px;
-                font-size: 16px;
-                border-left: 4px solid #3274d9;
-            }
-        """)
-        self.inventory_bar.setValue(0)
+            # 使用 threading.Timer 延遲關閉，確保回應已發送
+            def delayed_exit():
+                # 使用 sys.exit 代替 os._exit 以允許正常的清理
+                import sys
+                sys.exit(0)
 
-if __name__ == '__main__':
-    app = QApplication(sys.argv)
-    calculator = SalesCalculator()
-    calculator.show()
-    sys.exit(app.exec_())
+            threading.Timer(1.0, delayed_exit).start()
+        except:
+            # 如果正常關閉失敗，使用強制關閉
+            os._exit(0)
+
+    def stop_running_crawler(self):
+        """中斷正在運行的爬蟲進程及其所有子進程"""
+        global current_crawler_process
+
+        if current_crawler_process is not None and current_crawler_process.poll(
+        ) is None:
+            try:
+                print(f"嘗試中斷爬蟲進程 (PID: {current_crawler_process.pid})")
+
+                # 使用 psutil 獲取進程及其所有子進程
+                parent = psutil.Process(current_crawler_process.pid)
+                children = parent.children(recursive=True)
+
+                # 先終止所有子進程
+                for child in children:
+                    try:
+                        print(f"終止子進程 PID: {child.pid}")
+                        child.terminate()
+                    except:
+                        pass
+
+                # 等待子進程終止
+                gone, alive = psutil.wait_procs(children, timeout=3)
+
+                # 強制終止仍然存活的子進程
+                for p in alive:
+                    try:
+                        print(f"強制終止子進程 PID: {p.pid}")
+                        p.kill()
+                    except:
+                        pass
+
+                # 終止主進程
+                try:
+                    parent.terminate()
+                    parent.wait(timeout=3)
+                except:
+                    try:
+                        parent.kill()
+                    except:
+                        pass
+
+                # 確保進程已終止
+                if current_crawler_process.poll() is None:
+                    if os.name == 'nt':
+                        os.system(
+                            f"taskkill /F /PID {current_crawler_process.pid} /T"
+                        )
+                    else:
+                        os.kill(current_crawler_process.pid, signal.SIGKILL)
+
+                print(f"爬蟲進程已成功中斷")
+                current_crawler_process = None
+                return True
+
+            except Exception as e:
+                print(f"中斷爬蟲進程時出錯: {e}")
+                import traceback
+                traceback.print_exc()
+                return False
+        else:
+            print("沒有正在運行的爬蟲進程")
+            return False
+
+    def run_crawler(self, keyword, showBrowser=False):
+        """執行爬蟲並返回結果"""
+        global current_crawler_process
+
+        print(f"開始爬取關鍵字: {keyword}, 顯示瀏覽器: {showBrowser}")
+
+        # 創建臨時文件來存儲爬蟲結果
+        temp_output = tempfile.NamedTemporaryFile(delete=False,
+                                                  suffix='.json').name
+
+        try:
+            # 準備命令行參數
+            cmd = ['python3', 'crawler.py', keyword, temp_output]
+            if not showBrowser:  # 注意這裡的邏輯反轉
+                cmd.append('--headless')
+
+            # 執行爬蟲腳本，並實時顯示輸出
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding='utf-8',
+                errors='replace',
+                bufsize=1,  # 行緩衝，確保輸出及時顯示
+                # 在 Unix/Linux 上創建新進程組，以便於後續終止
+                preexec_fn=None if os.name == 'nt' else os.setsid)
+
+            # 保存當前爬蟲進程的引用
+            current_crawler_process = process
+
+            # 創建線程來實時讀取和顯示輸出
+            def read_output(pipe, prefix):
+                for line in pipe:
+                    print(f"{prefix}: {line.strip()}")
+
+            # 啟動輸出讀取線程
+            stdout_thread = threading.Thread(target=read_output,
+                                             args=(process.stdout, "爬蟲輸出"),
+                                             daemon=True)
+            stderr_thread = threading.Thread(target=read_output,
+                                             args=(process.stderr, "爬蟲錯誤"),
+                                             daemon=True)
+            stdout_thread.start()
+            stderr_thread.start()
+
+            # 等待爬蟲完成，設置超時
+            try:
+                process.wait(timeout=300)
+            except subprocess.TimeoutExpired:
+                self.stop_running_crawler()
+                print("爬蟲執行超時，已強制終止")
+                return {"error": "爬蟲執行超時，已強制終止"}
+
+            # 確保輸出讀取線程完成
+            stdout_thread.join(timeout=1)
+            stderr_thread.join(timeout=1)
+
+            # 清除當前爬蟲進程的引用
+            current_crawler_process = None
+
+            if process.returncode != 0:
+                print(f"爬蟲執行失敗，返回碼: {process.returncode}")
+                return {"error": "爬蟲執行失敗"}
+
+            # 檢查結果文件是否存在
+            if not os.path.exists(temp_output):
+                return {"error": "爬蟲未生成結果文件"}
+
+            # 讀取爬蟲結果
+            try:
+                with open(temp_output, 'r', encoding='utf-8') as f:
+                    result = json.load(f)
+
+                print(f"爬取完成，找到 {len(result)} 個商品")
+                return result
+            except json.JSONDecodeError:
+                return {"error": "爬蟲結果不是有效的 JSON 格式"}
+
+        except Exception as e:
+            print(f"執行爬蟲時出錯: {e}")
+            return {"error": f"執行爬蟲時出錯: {e}"}
+
+        finally:
+            # 清理臨時文件
+            if os.path.exists(temp_output):
+                try:
+                    os.remove(temp_output)
+                except:
+                    pass
+
+
+def find_free_port(start_port):
+    port = start_port
+    max_port = start_port + 100  # 嘗試 100 個端口
+
+    while port < max_port:
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.bind(("", port))
+                return port
+        except OSError:
+            port += 1
+
+    raise RuntimeError("無法找到可用的端口")
+
+
+# 啟動 HTTP 伺服器
+def start_server():
+    global httpd  # 將 httpd 設為全局變量，以便其他函數可以訪問
+
+    try:
+
+        class TCPServerReuse(socketserver.TCPServer):
+            allow_reuse_address = True
+
+        with TCPServerReuse(("", PORT), CustomHandler) as httpd:
+            # 獲取實際分配的端口
+            actual_port = httpd.server_address[1]
+            print(f"✅ 伺服器啟動於 http://localhost:{PORT}")
+
+            try:
+                httpd.serve_forever()
+            except KeyboardInterrupt:
+                print("接收到鍵盤中斷，正在關閉伺服器...")
+            finally:
+                httpd.server_close()
+                print("伺服器已關閉，端口已釋放")
+    except Exception as e:
+        print(f"伺服器啟動失敗: {e}")
+
+
+# 全局變量
+httpd = None
+
+# 先啟動伺服器
+server_thread = threading.Thread(target=start_server, daemon=True)
+server_thread.start()
+
+# 等待 2 秒，確保伺服器已啟動
+time.sleep(2)
+
+# 嘗試開啟瀏覽器
+webbrowser.open(f"http://localhost:{PORT}")
+
+# 主線程等待
+try:
+    # 使用 server_thread.join() 而不是無限循環
+    while server_thread.is_alive():
+        time.sleep(1)
+except KeyboardInterrupt:
+    print("接收到鍵盤中斷，程式即將結束...")
+    # 發送關閉請求
+    try:
+        import urllib.request
+        urllib.request.urlopen(f"http://localhost:{PORT}/shutdown")
+    except:
+        pass
+except Exception as e:
+    print(f"發生未預期的錯誤: {e}")
+finally:
+    # 確保所有資源都被釋放
+    print("正在清理資源...")
+    # 嘗試終止所有爬蟲進程
+    try:
+        # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
+        handler = CustomHandler(None, None, None)
+        handler.stop_running_crawler()
+    except:
+        pass
+    # 如果還有其他需要清理的資源，在這裡添加
+
+
+# 註冊退出時的清理函數
+def cleanup_resources():
+    print("程式退出，正在清理資源...")
+    # 嘗試終止所有爬蟲進程
+    try:
+        if 'current_crawler_process' in globals(
+        ) and current_crawler_process is not None:
+            # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
+            handler = CustomHandler(None, None, None)
+            handler.stop_running_crawler()
+    except:
+        pass
+    # 如果還有其他需要清理的資源，在這裡添加
+
+
+atexit.register(cleanup_resources)

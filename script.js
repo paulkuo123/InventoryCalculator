@@ -53,7 +53,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         const keyword = searchInput.value.trim();
         const headlessModeElement = document.getElementById('headlessMode');
-        const filterValueElement = document.getElementById('filterValue');
+        const inventoryMonthElement = document.getElementById('inventoryMonth');
         
         if (!headlessModeElement) {
             console.error('找不到 headlessMode 元素');
@@ -61,9 +61,9 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         const showBrowser = headlessModeElement.checked;
-        const filterValue = filterValueElement ? filterValueElement.value : 'all';
+        const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
         
-        console.log(`搜尋關鍵字: ${keyword}, 顯示瀏覽器: ${showBrowser}, 過濾值: ${filterValue}`);
+        console.log(`搜尋關鍵字: ${keyword}, 顯示瀏覽器: ${showBrowser}, 庫存月份: ${inventoryMonth}`);
         
         if (keyword) {
             // 設置爬蟲運行狀態
@@ -85,8 +85,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const progressInterval = startProgressSimulation();
             console.log('開始進度模擬');
             
-            // 發送請求到API，包含顯示瀏覽器參數和過濾值
-            const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&filterValue=${filterValue}`;
+            // 發送請求到API，包含顯示瀏覽器參數和庫存月份
+            const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&inventoryMonth=${inventoryMonth}`;
             console.log(`發送請求到: ${searchUrl}`);
             
             fetch(searchUrl)
@@ -121,12 +121,16 @@ document.addEventListener('DOMContentLoaded', function() {
     function displayProducts(products) {
         const productList = document.getElementById('productList');
         productList.innerHTML = '';
+        
+        // 獲取當前庫存月份
+        const inventoryMonthElement = document.getElementById('inventoryMonth');
+        const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
 
         // 檢查 products 是否有效
         if (!products || typeof products !== 'object' || Object.keys(products).length === 0) {
             productList.innerHTML = `
                 <tr>
-                    <td colspan="4">
+                    <td colspan="3">
                         <div class="empty-state">
                             <i class="fas fa-search"></i>
                             <p>沒有找到符合的商品</p>
@@ -210,6 +214,50 @@ document.addEventListener('DOMContentLoaded', function() {
                             salesBadge.className = 'badge badge-primary';
                             salesBadge.textContent = `已售: ${modelData.已售出數量 || '0'}`;
                             modelText.appendChild(salesBadge);
+                            
+                            // 添加空格
+                            modelText.appendChild(document.createTextNode(' '));
+                            
+                            // 月銷量標籤
+                            const monthlySalesBadge = document.createElement('span');
+                            monthlySalesBadge.className = 'badge badge-info';
+                            monthlySalesBadge.textContent = `月銷: ${modelData.月銷量 || '0'}`;
+                            modelText.appendChild(monthlySalesBadge);
+                            
+                            // 顯示預期庫存和建議補貨
+                            if (modelData.月銷量) {
+                                // 添加空格
+                                modelText.appendChild(document.createTextNode(' '));
+                                
+                                // 計算預期庫存 = 月銷量 * 庫存月份
+                                const monthlyRate = parseInt(modelData.月銷量, 10) || 0;
+                                const months = parseInt(inventoryMonth, 10) || 0;
+                                const expectedStock = monthlyRate * months;
+                                
+                                // 預期庫存標籤
+                                const expectedStockBadge = document.createElement('span');
+                                expectedStockBadge.className = 'badge badge-secondary';
+                                expectedStockBadge.textContent = `預期庫存: ${expectedStock}`;
+                                modelText.appendChild(expectedStockBadge);
+                                
+                                // 計算建議補貨 = 預期庫存 - 當前庫存
+                                const currentStock = parseInt(stock, 10) || 0;
+                                const suggestedRestock = expectedStock - currentStock;
+                                
+                                // 只有當建議補貨為正數時才顯示
+                                if (suggestedRestock > 0) {
+                                    // 添加空格
+                                    modelText.appendChild(document.createTextNode(' '));
+                                    
+                                    // 建議補貨標籤
+                                    const restockBadge = document.createElement('span');
+                                    restockBadge.className = 'badge badge-danger';
+                                    restockBadge.textContent = `建議補貨: ${suggestedRestock}`;
+                                    restockBadge.style.color = 'red';
+                                    restockBadge.style.fontWeight = 'bold';
+                                    modelText.appendChild(restockBadge);
+                                }
+                            }
 
                             modelItem.appendChild(modelText);
                             modelsDiv.appendChild(modelItem);
@@ -238,33 +286,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 countBadge.textContent = product.型號 && Array.isArray(product.型號) ? product.型號.length : 0;
                 modelCountCell.appendChild(countBadge);
                 row.appendChild(modelCountCell);
-
-                // 操作按鈕
-                const actionsCell = document.createElement('td');
-                actionsCell.className = 'actions';
-                
-                const editLink = document.createElement('a');
-                editLink.href = '#';
-                editLink.className = 'action-btn edit-btn';
-                editLink.innerHTML = '<i class="fas fa-edit"></i> 編輯';
-                editLink.onclick = function(e) { 
-                    e.preventDefault(); 
-                    alert('編輯功能尚未實現'); 
-                };
-                actionsCell.appendChild(editLink);
-
-                const detailsLink = document.createElement('a');
-                detailsLink.href = '#';
-                detailsLink.className = 'action-btn details-btn';
-                detailsLink.innerHTML = '<i class="fas fa-info-circle"></i> 詳情';
-                detailsLink.dataset.productId = productId;
-                detailsLink.onclick = function(e) { 
-                    e.preventDefault(); 
-                    alert(`商品ID: ${this.dataset.productId} 的詳情功能尚未實現`); 
-                };
-                actionsCell.appendChild(detailsLink);
-
-                row.appendChild(actionsCell);
 
                 productList.appendChild(row);
             } catch (error) {
@@ -312,9 +333,9 @@ document.addEventListener('DOMContentLoaded', function() {
             event.preventDefault(); // 防止表單提交
             console.log('重設按鈕被點擊');
             if (searchInput) searchInput.value = '';
-            const filterValueElement = document.getElementById('filterValue');
-            if (filterValueElement) {
-                filterValueElement.value = '4'; // 重設過濾器為預設值
+            const inventoryMonthElement = document.getElementById('inventoryMonth');
+            if (inventoryMonthElement) {
+                inventoryMonthElement.value = '4'; // 重設庫存月份為預設值
             }
             if (productList) productList.innerHTML = '';
             
