@@ -18,11 +18,21 @@ import datetime
 
 # 設置日誌記錄
 LOG_FILE = "debug.log"
+# 檢查是否存在舊的日誌文件，如果存在則刪除
+if os.path.exists(LOG_FILE):
+    try:
+        os.remove(LOG_FILE)
+        print(f"已刪除舊的日誌文件: {LOG_FILE}")
+    except Exception as e:
+        print(f"刪除舊日誌文件時出錯: {e}")
+
+# 設置日誌配置，使用 'w' 模式創建新文件
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(LOG_FILE, mode='a', encoding='utf-8'),
+        logging.FileHandler(LOG_FILE, mode='w',
+                            encoding='utf-8'),  # 使用 'w' 模式而不是 'a'
         logging.StreamHandler()  # 同時輸出到控制台
     ])
 logger = logging.getLogger(__name__)
