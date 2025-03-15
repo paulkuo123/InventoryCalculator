@@ -270,7 +270,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
             # 等待爬蟲完成，設置超時
             try:
-                process.wait(timeout=300)
+                process.wait(timeout=3600)
             except subprocess.TimeoutExpired:
                 self.stop_running_crawler()
                 print("爬蟲執行超時，已強制終止")
