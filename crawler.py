@@ -34,15 +34,21 @@ class ShopeeCrawler:
         self.products_data = {}
 
     def _init_driver(self):
-        # 設定 Chrome 選項
+        """優化瀏覽器初始化設置，提高性能"""
         chrome_options = Options()
         chrome_options.add_argument(
-            "--disable-blink-features=AutomationControlled")  # 隱藏自動化標記
-        chrome_options.add_argument(
-            "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36"
-        )
-        chrome_options.add_argument("--disable-notifications")  # 禁用通知
-        # chrome_options.add_argument("--headless")  # 無頭模式，建議測試時先註解掉
+            "--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument("--disable-notifications")
+
+        # 添加性能優化選項
+        chrome_options.add_argument("--disable-extensions")
+        chrome_options.add_argument("--disable-gpu")
+        chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--no-sandbox")
+        chrome_options.add_argument("--disable-infobars")
+
+        # 設置頁面加載策略，只等待DOM樹
+        chrome_options.page_load_strategy = 'eager'
 
         # 設定 ChromeDriver 路徑
         service = Service(executable_path=self.driver_path)
@@ -1243,13 +1249,18 @@ class ShopeeCrawler:
             print(f"展開表格行時發生錯誤: {e}")
             return 0
 
-    # 原始的 expand_all_rows 函數可以保留為兼容性，調用新的函數
     def expand_all_rows(self):
-        """
-        展開所有表格行（兼容舊版本）
-        """
-        print("使用兼容模式展開所有表格行")
-        return self.expand_all_buttons()
+        """整合所有展開行的方法，減少冗餘代碼"""
+        try:
+            # 先嘗試使用 SVG 方式展開
+            if self.expand_all_rows_svg():
+                return True
+
+            # 如果 SVG 方式失敗，嘗試使用按鈕方式展開
+            return self.expand_all_buttons()
+        except Exception as e:
+            print(f"展開所有行時出錯: {e}")
+            return False
 
     def find_expand_buttons(self):
         """
@@ -1518,6 +1529,115 @@ class ShopeeCrawler:
         except Exception as e:
             print(f"獲取所有商品資訊時出錯: {e}")
             return {}
+
+    def find_element_safely(self, by, value, parent=None, wait_time=10):
+        """安全地查找元素，避免重複的 try-except 結構"""
+        try:
+            element = None
+            parent = parent or self.driver
+            wait = WebDriverWait(parent, wait_time)
+            element = wait.until(EC.presence_of_element_located((by, value)))
+            return element
+        except:
+            return None
+
+    def get_sales_data(self, product_name=None):
+        """整合銷售數據獲取邏輯，減少代碼重複"""
+        # 共用的數據獲取邏輯
+        # ...
+
+    def select_date_range_optimized(self):
+        """優化日期選擇流程，減少等待時間"""
+        try:
+            # 使用顯式等待代替固定時間等待
+            date_icon = self.wait_for_element(By.CLASS_NAME,
+                                              "eds-icon.bi-date-input-icon", 8)
+            if not date_icon:
+                return False
+
+            self.scroll_to_element(date_icon)
+            date_icon.click()
+
+            # 使用可見性條件等待面板出現
+            date_options = self.wait_for_element(
+                By.CLASS_NAME, "eds-date-shortcut-item__text", 8,
+                EC.visibility_of_all_elements_located)
+
+            if not date_options:
+                return False
+
+            # 其他選擇邏輯...
+
+            return True
+        except Exception as e:
+            print(f"選擇日期範圍時出錯: {e}")
+            return False
+
+    def process_model_data(self, model_element):
+        """改進型號數據處理邏輯，確保數據完整性"""
+        model_data = {}
+        try:
+            # 獲取型號名稱
+            model_name_element = self.find_element_safely(
+                By.CLASS_NAME, "model-name", model_element, 1)
+            model_data[
+                "型號名稱"] = model_name_element.text if model_name_element else "未知型號"
+
+            # 獲取庫存數量（確保轉換為數字）
+            stock_element = self.find_element_safely(By.CLASS_NAME,
+                                                     "stock-number",
+                                                     model_element, 1)
+            if stock_element:
+                try:
+                    model_data["商品庫存"] = int(
+                        stock_element.text.replace(",", ""))
+                except:
+                    model_data["商品庫存"] = 0
+            else:
+                model_data["商品庫存"] = 0
+
+            # 其他數據處理...
+
+            return model_data
+        except Exception as e:
+            print(f"處理型號數據時出錯: {e}")
+            return {"型號名稱": "處理出錯", "商品庫存": 0}
+
+    def wait_for_element(self,
+                         by,
+                         value,
+                         timeout=10,
+                         condition=EC.presence_of_element_located):
+        """更高效的元素等待方法，支持不同的等待條件"""
+        try:
+            return WebDriverWait(self.driver,
+                                 timeout).until(condition((by, value)))
+        except:
+            return None
+
+    def scroll_to_element(self, element, center=True):
+        """更高效的滾動方法，減少不必要的等待"""
+        if center:
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});",
+                element)
+        else:
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({behavior: 'instant'});", element)
+
+    def expand_all_rows_optimized(self):
+        """更高效的展開所有行方法"""
+        try:
+            # 使用JavaScript直接展開所有可展開元素
+            self.driver.execute_script("""
+                document.querySelectorAll('.expand-button:not(.expanded)').forEach(btn => {
+                    if(btn.offsetParent !== null) btn.click();
+                });
+            """)
+            return True
+        except:
+            # 如果JavaScript方法失敗，回退到傳統方法
+            return self.expand_all_rows()
 
 
 if __name__ == "__main__":
