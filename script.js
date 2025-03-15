@@ -9,34 +9,57 @@ document.addEventListener('DOMContentLoaded', function() {
     const progressText = document.getElementById('progressText');
     const statusMessage = document.getElementById('statusMessage');
     
-    // 模擬進度更新
+    // 修改狀態消息更新邏輯，加入爬取月銷量的階段
+    function updateStatusMessage(progress) {
+        if (progress < 15) {
+            statusMessage.textContent = '正在載入頁面...';
+        } else if (progress < 30) {
+            statusMessage.textContent = '正在展開商品型號...';
+        } else if (progress < 45) {
+            statusMessage.textContent = '正在提取商品資訊...';
+        } else if (progress < 60) {
+            statusMessage.textContent = '正在處理商品圖片...';
+        } else if (progress < 75) {
+            statusMessage.textContent = '正在爬取月銷量數據...';
+        } else if (progress < 85) {
+            statusMessage.textContent = '正在分析銷售趨勢...';
+        } else {
+            statusMessage.textContent = '即將完成...';
+        }
+    }
+    
+    // 修改進度模擬函數，使其更準確地反映爬蟲過程
     function startProgressSimulation() {
         let progress = 0;
         progressBar.style.width = '0%';
         progressText.textContent = '0%';
         
+        // 使用更平滑的進度增長算法，考慮到爬取月銷量的時間
         const progressInterval = setInterval(() => {
-            // 緩慢增加進度，但不到100%
             if (progress < 90) {
-                progress += Math.random() * 2;
+                // 調整進度增長速度，在60%-75%區間放慢速度，模擬爬取月銷量的耗時過程
+                let increment;
+                if (progress < 60) {
+                    // 前期進度增長較快
+                    increment = (60 - progress) / 12;
+                } else if (progress < 75) {
+                    // 爬取月銷量階段進度增長較慢
+                    increment = (75 - progress) / 25;
+                } else {
+                    // 後期進度增長恢復正常
+                    increment = (90 - progress) / 15;
+                }
+                
+                progress += Math.max(0.3, increment);
                 progress = Math.min(progress, 90);
+                
                 progressBar.style.width = progress + '%';
                 progressText.textContent = Math.round(progress) + '%';
                 
-                // 根據進度更新狀態消息
-                if (progress < 20) {
-                    statusMessage.textContent = '正在載入頁面...';
-                } else if (progress < 40) {
-                    statusMessage.textContent = '正在展開商品型號...';
-                } else if (progress < 60) {
-                    statusMessage.textContent = '正在提取商品資訊...';
-                } else if (progress < 80) {
-                    statusMessage.textContent = '正在處理商品圖片...';
-                } else {
-                    statusMessage.textContent = '即將完成...';
-                }
+                // 更新狀態消息
+                updateStatusMessage(progress);
             }
-        }, 1000);
+        }, 800);
         
         return progressInterval;
     }
@@ -46,14 +69,10 @@ document.addEventListener('DOMContentLoaded', function() {
         const productList = document.getElementById('productList');
         productList.innerHTML = '';
         
-        // 獲取當前庫存月份
-        const inventoryMonthElement = document.getElementById('inventoryMonth');
-        const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
+        // 獲取過濾條件
+        const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
+        const filterMode = document.getElementById('filterMode')?.checked || false;
         
-        // 獲取過濾模式狀態
-        const filterModeElement = document.getElementById('filterMode');
-        const filterMode = filterModeElement ? filterModeElement.checked : false;
-
         // 檢查 products 是否有效
         if (!products || typeof products !== 'object' || Object.keys(products).length === 0) {
             productList.innerHTML = `
@@ -66,13 +85,20 @@ document.addEventListener('DOMContentLoaded', function() {
                     </td>
                 </tr>
             `;
-            console.log('無商品資料或資料格式錯誤');
+            console.error('無商品資料或資料格式錯誤', products);
             return;
         }
-
+        
+        console.log('顯示商品數據:', Object.keys(products).length, '個商品');
+        
+        // 使用文檔片段減少DOM重繪
+        const fragment = document.createDocumentFragment();
+        let totalVisibleProducts = 0;
+        
         // 遍歷商品，key 是商品ID
         Object.entries(products).forEach(([productId, product]) => {
             try {
+                // 創建行元素
                 const row = document.createElement('tr');
 
                 // 商品名稱和圖片
@@ -239,14 +265,18 @@ document.addEventListener('DOMContentLoaded', function() {
                 modelCountCell.appendChild(countBadge);
                 row.appendChild(modelCountCell);
 
-                productList.appendChild(row);
+                fragment.appendChild(row);
+                totalVisibleProducts++;
             } catch (error) {
                 console.error(`處理商品 ${productId} 時出錯:`, error);
             }
         });
         
-        // 如果過濾後沒有商品顯示，顯示提示信息
-        if (productList.children.length === 0) {
+        // 一次性更新DOM
+        if (totalVisibleProducts > 0) {
+            productList.appendChild(fragment);
+            console.log(`成功顯示 ${totalVisibleProducts} 個商品`);
+        } else {
             productList.innerHTML = `
                 <tr>
                     <td colspan="3">
@@ -257,6 +287,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </td>
                 </tr>
             `;
+            console.log('沒有符合過濾條件的商品');
         }
     }
     
@@ -298,30 +329,34 @@ document.addEventListener('DOMContentLoaded', function() {
         
         if (keyword) {
             // 設置爬蟲運行狀態
-            crawlerRunning = true;
+            window.crawlerRunning = true;
             console.log('設置爬蟲運行狀態為: true');
             
             // 顯示載入中
+            const loading = document.getElementById('loading');
             if (loading) {
                 loading.style.display = 'block';
                 console.log('顯示載入中元素');
             }
             
+            const productList = document.getElementById('productList');
             if (productList) {
                 productList.innerHTML = '';
                 console.log('清空商品列表');
             }
             
-            // 開始進度模擬
+            // 開始進度模擬，使用改進的進度模擬函數
             const progressInterval = startProgressSimulation();
-            console.log('開始進度模擬');
             
             // 發送請求到API，包含顯示瀏覽器參數和庫存月份
             const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&inventoryMonth=${inventoryMonth}`;
             console.log(`發送請求到: ${searchUrl}`);
             
             fetch(searchUrl)
-                .then(response => response.json())
+                .then(response => {
+                    console.log('收到API回應:', response.status);
+                    return response.json();
+                })
                 .then(data => {
                     // 停止進度模擬
                     clearInterval(progressInterval);
@@ -331,12 +366,15 @@ document.addEventListener('DOMContentLoaded', function() {
                     progressText.textContent = '100%';
                     statusMessage.textContent = '爬取完成！';
                     
+                    console.log('API回傳數據類型:', typeof data);
+                    console.log('API回傳數據結構:', data ? Object.keys(data).length : 'null');
+                    
                     // 保存最後的搜尋結果
                     window.lastSearchResults = data;
                     
                     // 短暫延遲後隱藏載入提示
                     setTimeout(() => {
-                        loading.style.display = 'none';
+                        if (loading) loading.style.display = 'none';
                         displayProducts(data);
                     }, 500);
                 })
@@ -344,9 +382,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     // 停止進度模擬
                     clearInterval(progressInterval);
                     
-                    loading.style.display = 'none';
                     console.error('搜尋出錯:', error);
+                    if (loading) loading.style.display = 'none';
                     alert('搜尋時發生錯誤，請稍後再試');
+                })
+                .finally(() => {
+                    window.crawlerRunning = false;
                 });
         }
     }
