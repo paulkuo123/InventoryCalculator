@@ -12,6 +12,7 @@ import signal
 import psutil  # 需要安裝: pip install psutil
 import atexit
 import socket
+import sys
 
 PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
 FILE_NAME = "index.html"
@@ -223,21 +224,19 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             print("沒有正在運行的爬蟲進程")
             return False
 
-    def run_crawler(self, keyword, showBrowser=False):
-        """執行爬蟲並返回結果"""
-        global current_crawler_process
-
-        print(f"開始爬取關鍵字: {keyword}, 顯示瀏覽器: {showBrowser}")
-
-        # 創建臨時文件來存儲爬蟲結果
-        temp_output = tempfile.NamedTemporaryFile(delete=False,
-                                                  suffix='.json').name
-
+    def run_crawler(self, keyword, show_browser=False, inventory_month=4):
+        """執行爬蟲程序"""
         try:
-            # 準備命令行參數
-            cmd = ['python3', 'crawler.py', keyword, temp_output]
-            if not showBrowser:  # 注意這裡的邏輯反轉
-                cmd.append('--headless')
+            # 使用固定的輸出路徑
+            output_path = "shopee_products.json"
+
+            # 設定爬蟲命令
+            cmd = [
+                sys.executable, "crawler.py", keyword, "--output", output_path,
+                "--headless",
+                str(not show_browser).lower(), "--inventory-month",
+                str(inventory_month)
+            ]
 
             # 執行爬蟲腳本，並實時顯示輸出
             process = subprocess.Popen(
@@ -289,12 +288,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 return {"error": "爬蟲執行失敗"}
 
             # 檢查結果文件是否存在
-            if not os.path.exists(temp_output):
+            if not os.path.exists(output_path):
                 return {"error": "爬蟲未生成結果文件"}
 
             # 讀取爬蟲結果
             try:
-                with open(temp_output, 'r', encoding='utf-8') as f:
+                with open(output_path, 'r', encoding='utf-8') as f:
                     result = json.load(f)
 
                 print(f"爬取完成，找到 {len(result)} 個商品")
@@ -305,14 +304,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         except Exception as e:
             print(f"執行爬蟲時出錯: {e}")
             return {"error": f"執行爬蟲時出錯: {e}"}
-
-        finally:
-            # 清理臨時文件
-            if os.path.exists(temp_output):
-                try:
-                    os.remove(temp_output)
-                except:
-                    pass
 
 
 def find_free_port(start_port):
