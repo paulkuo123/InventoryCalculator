@@ -977,47 +977,8 @@ class ShopeeCrawler:
 
             # 等待頁面加載
             print("等待頁面加載...")
-            time.sleep(3)
-
-            # 檢查是否成功跳轉到新頁面
-            try:
-                # 使用多種方式檢查頁面是否變化
-                WebDriverWait(self.driver, 10).until(lambda driver: (
-                    driver.current_url != current_url or  # URL 變化
-                    EC.staleness_of(next_button)(driver) or  # 按鈕元素已過時
-                    (  # 頁碼變化
-                        current_page_text and driver.find_elements(
-                            By.XPATH,
-                            "//div[contains(@class, 'eds-pager__page-indicator')]"
-                        ) and driver.find_elements(
-                            By.XPATH,
-                            "//div[contains(@class, 'eds-pager__page-indicator')]"
-                        )[0].text != current_page_text)))
-                print("成功跳轉到下一頁")
-                # 額外等待確保頁面完全加載
-                time.sleep(2)
-                return True
-            except Exception as wait_error:
-                print(f"等待頁面變化超時: {wait_error}")
-
-                # 再次檢查頁面是否有變化
-                new_page_text = ""
-                try:
-                    page_indicators = self.driver.find_elements(
-                        By.XPATH,
-                        "//div[contains(@class, 'eds-pager__page-indicator')]")
-                    if page_indicators:
-                        new_page_text = page_indicators[0].text
-                        if new_page_text != current_page_text:
-                            print(
-                                f"檢測到頁碼變化: {current_page_text} -> {new_page_text}"
-                            )
-                            return True
-                except:
-                    pass
-
-                print("跳轉到下一頁失敗或已到達最後一頁")
-                return False
+            time.sleep(5)
+            return True
 
         except Exception as e:
             print(f"嘗試跳轉到下一頁時出錯: {e}")
@@ -1349,22 +1310,29 @@ class ShopeeCrawler:
                 print("未找到標有「展開全部」的按鈕")
                 return 0
 
+            # 批量處理按鈕，減少單獨滾動次數
             for i, button in enumerate(expand_buttons, 1):
                 try:
-                    # 滾動到按鈕位置
+                    # 使用更高效的滾動方式，不使用平滑滾動以節省時間
                     self.driver.execute_script(
-                        "arguments[0].scrollIntoView({block: 'center'});",
+                        "arguments[0].scrollIntoView({block: 'center', behavior: 'auto'});",
                         button)
 
-                    # 等待按鈕可見
-                    WebDriverWait(self.driver,
-                                  5).until(EC.visibility_of(button))
+                    # 減少等待時間，使用更短的超時
+                    try:
+                        WebDriverWait(self.driver, 2).until(
+                            EC.element_to_be_clickable(button))
+                    except:
+                        # 如果等待超時，直接嘗試點擊
+                        pass
 
-                    # 點擊按鈕
-                    button.click()
+                    # 使用JavaScript點擊，避免可能的元素遮擋問題
+                    self.driver.execute_script("arguments[0].click();", button)
                     print(f"  - 已點擊第 {i} 個「展開全部」按鈕")
                     total_expanded += 1
-                    time.sleep(1)  # 等待展開動畫完成
+
+                    # 減少等待時間，只等待必要的時間
+                    time.sleep(0.3)  # 從1秒減少到0.3秒
                 except Exception as e:
                     print(f"  - 點擊第 {i} 個「展開全部」按鈕失敗: {e}")
                     continue
@@ -1376,15 +1344,56 @@ class ShopeeCrawler:
             return 0
 
     def get_product_info(self, product_row):
+        # Extract product image URL
         try:
-            # Scroll to the row
+            image_container = product_row.find_element(By.CLASS_NAME,
+                                                       'product-image')
+
+            # 使用更高效的滾動方式，不使用平滑滾動
             self.driver.execute_script(
-                "arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});",
-                product_row)
-            time.sleep(0.5)
+                "arguments[0].scrollIntoView({block: 'center', behavior: 'auto'});",
+                image_container)
+
+            # 減少等待時間
+            time.sleep(0.2)  # 從0.5秒減少到0.2秒
+
+            img_element = image_container.find_element(By.TAG_NAME, 'img')
+
+            # 等待圖片加載完成，但使用更短的等待時間和更少的重試
+            wait_time = 0.5  # 從2秒減少到0.5秒
+            max_retries = 2  # 從3次減少到2次
+
+            for retry in range(max_retries):
+                is_image_loaded = self.driver.execute_script(
+                    "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
+                    img_element)
+
+                if is_image_loaded:
+                    break
+
+                if retry < max_retries - 1:  # 只在非最後一次重試時打印
+                    print(f"等待圖片加載完成...（嘗試 {retry+1}/{max_retries}）")
+                    time.sleep(wait_time)
+
+            # 獲取圖片URL，即使未完全加載也嘗試獲取
+            product_image_url = img_element.get_attribute('src')
+
+            # 確保URL格式正確
+            if product_image_url:
+                product_image_url = product_image_url.strip()
+                # 如果URL不是以http或https開頭，添加https前綴
+                if not product_image_url.startswith(
+                        'http://') and not product_image_url.startswith(
+                            'https://'):
+                    # 移除開頭的 //（如果有）
+                    if product_image_url.startswith('//'):
+                        product_image_url = product_image_url[2:]
+                    product_image_url = 'https://' + product_image_url
+            else:
+                product_image_url = "未找到"
         except Exception as e:
-            print(f"滾動到商品位置時出錯: {e}")
-            return None
+            print(f"獲取商品圖片時出錯: {e}")
+            product_image_url = "未找到"
 
         # Extract product ID (mandatory field)
         try:
@@ -1418,43 +1427,6 @@ class ShopeeCrawler:
         except:
             total_sales = "未找到"
 
-        # Extract product image URL
-        try:
-            image_container = product_row.find_element(By.CLASS_NAME,
-                                                       'product-image')
-            img_element = image_container.find_element(By.TAG_NAME, 'img')
-
-            # 等待圖片加載完成
-            wait_time = 2  # 設置等待時間（秒）
-            is_image_loaded = self.driver.execute_script(
-                "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
-                img_element)
-
-            if not is_image_loaded:
-                print(f"等待圖片加載完成...")
-                time.sleep(wait_time)
-
-            # 獲取圖片URL
-            product_image_url = img_element.get_attribute('src')
-
-            # 確保URL格式正確
-            if product_image_url:
-                product_image_url = product_image_url.strip()
-                # 如果URL不是以http或https開頭，添加https前綴
-                if not product_image_url.startswith(
-                        'http://') and not product_image_url.startswith(
-                            'https://'):
-                    # 移除開頭的 //（如果有）
-                    if product_image_url.startswith('//'):
-                        product_image_url = product_image_url[2:]
-                    product_image_url = 'https://' + product_image_url
-                print(f"成功獲取商品圖片URL: {product_image_url}")
-            else:
-                product_image_url = "未找到"
-        except Exception as e:
-            print(f"獲取商品圖片時出錯: {e}")
-            product_image_url = "未找到"
-
         # Extract model info
         models = []
         try:
@@ -1467,6 +1439,51 @@ class ShopeeCrawler:
                     '商品庫存': '未找到',
                     '型號圖片網址': '未找到'
                 }
+
+                try:
+                    # 找到圖片容器和圖片元素
+                    image_container = variation.find_element(
+                        By.CLASS_NAME, 'variation-name-image')
+                    img_element = image_container.find_element(
+                        By.TAG_NAME, 'img')
+
+                    # 滾動到圖片位置
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView(true);", img_element)
+                    print("已滾動到型號圖片位置")
+
+                    # 等待圖片加載完成
+                    wait_time = 5  # 最大等待時間（秒）
+                    start_time = time.time()
+                    is_image_loaded = False
+
+                    while not is_image_loaded and (time.time() -
+                                                   start_time) < wait_time:
+                        is_image_loaded = self.driver.execute_script(
+                            "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
+                            img_element)
+                        if not is_image_loaded:
+                            print("型號圖片尚未加載完成，等待中...")
+                            time.sleep(1)  # 每秒檢查一次
+
+                    if is_image_loaded:
+                        print("型號圖片加載完成")
+                    else:
+                        print("等待超時，型號圖片可能未加載完成")
+
+                    # 獲取圖片URL並格式化
+                    image_url = img_element.get_attribute('src')
+                    if image_url:
+                        image_url = image_url.strip()
+                        if not image_url.startswith('http'):
+                            image_url = "https:" + image_url
+                        model_info['型號圖片網址'] = image_url
+                        print(f"成功獲取型號圖片URL")
+                    else:
+                        model_info['型號圖片網址'] = "未找到"
+                except Exception as e:
+                    print(f"獲取型號圖片時出錯: {e}")
+                    model_info['型號圖片網址'] = "未找到"
 
                 try:
                     name_elements = variation.find_elements(
@@ -1493,17 +1510,6 @@ class ShopeeCrawler:
                         model_info[
                             '商品庫存'] = "0" if stock_text == "已售完" else self.convert_sales_number(
                                 stock_text)
-                except:
-                    pass
-
-                try:
-                    image_container = variation.find_element(
-                        By.CLASS_NAME, 'variation-name-image')
-                    image_url = image_container.find_element(
-                        By.TAG_NAME, 'img').get_attribute('src')
-                    if not image_url.startswith('http'):
-                        image_url = "https:" + image_url
-                    model_info['型號圖片網址'] = image_url
                 except:
                     pass
 
