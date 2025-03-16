@@ -266,7 +266,15 @@ document.addEventListener('DOMContentLoaded', function() {
                             const stock = modelData.商品庫存 !== undefined ? modelData.商品庫存 : '未知';
                             const stockNum = parseInt(stock, 10);
                             const stockBadge = document.createElement('span');
-                            stockBadge.className = 'badge ' + (isNaN(stockNum) || stockNum > 10 ? 'badge-success' : 'badge-warning');
+                            if (isNaN(stockNum)) {
+                            stockBadge.className = 'badge badge-secondary'; // 未知庫存，使用灰色
+                            } else if (stockNum > 10) {
+                                stockBadge.className = 'badge badge-success'; // 庫存大於 10，使用綠色
+                            } else if (stockNum === 0) {
+                                stockBadge.className = 'badge badge-danger'; // 庫存為 0，使用紅色
+                            } else {
+                                stockBadge.className = 'badge badge-warning'; // 庫存 1-10，使用橘色
+                            }
                             stockBadge.textContent = `庫存: ${stock}`;
                             modelText.appendChild(stockBadge);
                             

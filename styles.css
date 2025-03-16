@@ -714,3 +714,8 @@ input:checked + .toggle-slider:before {
 .restock-needed:hover {
     background-color: rgba(33, 150, 243, 0.1) !important;
 }
+
+.badge-danger {
+    background-color: #ffebee;
+    color: var(--danger-color);
+}
