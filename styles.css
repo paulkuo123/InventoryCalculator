@@ -773,3 +773,85 @@ input:checked + .toggle-slider:before {
         width: 100%;
     }
 }
+
+/* 按鈕組樣式 */
+.button-group {
+    display: flex;
+    gap: 10px;
+}
+
+/* 搜尋選項樣式 */
+.search-option {
+    flex: 1;
+}
+
+.radio-group {
+    display: flex;
+    gap: 15px;
+    margin-top: 5px;
+}
+
+.radio-group label {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    cursor: pointer;
+    transition: var(--transition);
+}
+
+.radio-group label:hover {
+    color: var(--accent-color);
+}
+
+.radio-group input[type="radio"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+/* 清除按鈕樣式 */
+.btn-outline {
+    background-color: transparent;
+    color: var(--dark-gray);
+    border: 1px solid var(--medium-gray);
+    padding: 12px 20px;
+    font-size: 16px;
+    font-weight: 500;
+    border-radius: var(--border-radius);
+    cursor: pointer;
+    transition: var(--transition);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.btn-outline:hover {
+    background-color: #f1f1f1;
+    border-color: var(--dark-gray);
+    transform: translateY(-2px);
+}
+
+/* 進階搜尋相關樣式 - 修改響應式設計 */
+@media (max-width: 768px) {
+    #advancedSearchCard .search-container {
+        flex-direction: column;
+        align-items: stretch;
+    }
+    
+    #advancedSearchInput {
+        width: 100%;
+    }
+    
+    .button-group {
+        width: 100%;
+    }
+
+    .button-group button {
+        flex: 1;
+    }
+    
+    .radio-group {
+        flex-direction: column;
+        gap: 8px;
+    }
+}

@@ -7,6 +7,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const advancedSearchCard = document.getElementById('advancedSearchCard');
     const advancedSearchInput = document.getElementById('advancedSearchInput');
     const advancedSearchButton = document.getElementById('advancedSearchButton');
+    const clearAdvancedSearchButton = document.getElementById('clearAdvancedSearchButton');
+    const searchOptionProduct = document.getElementById('searchOptionProduct');
+    const searchOptionModel = document.getElementById('searchOptionModel');
+    const searchOptionBoth = document.getElementById('searchOptionBoth');
     
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
@@ -15,6 +19,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // 保存當前狀態變量
     window.currentSearchResults = null; // 保存原始搜尋結果
     window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
+    window.currentSearchOption = 'product'; // 預設搜尋選項為商品名稱
     
     // 修改狀態消息更新邏輯，加入爬取月銷量的階段
     function updateStatusMessage(progress) {
@@ -124,8 +129,8 @@ document.addEventListener('DOMContentLoaded', function() {
         img.src = processedUrl;
     }
     
-    // 顯示商品資料（修改為支持進階搜尋）
-    function displayProducts(products, advancedKeyword = '') {
+    // 顯示商品資料（修改為支持進階搜尋和搜尋選項）
+    function displayProducts(products, advancedKeyword = '', searchOption = 'product') {
         const productList = document.getElementById('productList');
         productList.innerHTML = '';
         
@@ -160,8 +165,29 @@ document.addEventListener('DOMContentLoaded', function() {
             filteredProducts = {};
             
             Object.entries(products).forEach(([productId, product]) => {
-                // 檢查商品名稱是否包含關鍵字
-                if (product.商品名稱 && product.商品名稱.toLowerCase().includes(keyword)) {
+                let shouldInclude = false;
+                
+                // 根據搜尋選項過濾
+                if (searchOption === 'product' || searchOption === 'both') {
+                    // 檢查商品名稱是否包含關鍵字
+                    if (product.商品名稱 && product.商品名稱.toLowerCase().includes(keyword)) {
+                        shouldInclude = true;
+                    }
+                }
+                
+                if ((searchOption === 'model' || searchOption === 'both') && !shouldInclude) {
+                    // 檢查型號名稱是否包含關鍵字
+                    if (product.型號 && Array.isArray(product.型號)) {
+                        for (const model of product.型號) {
+                            if (model.型號名稱 && model.型號名稱.toLowerCase().includes(keyword)) {
+                                shouldInclude = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (shouldInclude) {
                     filteredProducts[productId] = product;
                 }
             });
@@ -180,9 +206,20 @@ document.addEventListener('DOMContentLoaded', function() {
             // 添加新的結果信息
             const resultsInfo = document.createElement('div');
             resultsInfo.className = 'search-results-info';
+            
+            // 根據搜尋選項顯示不同的搜尋範圍描述
+            let searchScopeText = '';
+            if (searchOption === 'product') {
+                searchScopeText = '商品名稱';
+            } else if (searchOption === 'model') {
+                searchScopeText = '型號名稱';
+            } else {
+                searchScopeText = '商品和型號名稱';
+            }
+            
             resultsInfo.innerHTML = `
                 <i class="fas fa-filter"></i>
-                <span>進階搜尋「${advancedKeyword}」: 找到 ${filteredProductCount} 個符合的商品，共 ${Object.keys(products).length} 個</span>
+                <span>進階搜尋「${advancedKeyword}」(${searchScopeText}): 找到 ${filteredProductCount} 個符合的商品，共 ${Object.keys(products).length} 個</span>
             `;
             
             tableContainer.insertBefore(resultsInfo, tableContainer.firstChild);
@@ -410,7 +447,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 fragment.appendChild(row);
                 totalVisibleProducts++;
             } catch (error) {
-                console.error(`處理商品 ${productId} 時出錯:`, error);
+                console.error('處理產品時出錯:', error, product);
             }
         });
         
@@ -461,15 +498,53 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        // 保存當前進階搜尋關鍵字
-        window.currentAdvancedKeyword = keyword;
+        // 獲取當前選擇的搜尋選項
+        let searchOption = 'product'; // 預設為商品名稱
+        if (searchOptionModel.checked) {
+            searchOption = 'model';
+        } else if (searchOptionBoth.checked) {
+            searchOption = 'both';
+        }
         
-        // 使用原始搜尋結果和進階搜尋關鍵字重新顯示商品
-        displayProducts(window.lastSearchResults, keyword);
+        // 保存當前進階搜尋關鍵字和選項
+        window.currentAdvancedKeyword = keyword;
+        window.currentSearchOption = searchOption;
+        
+        // 使用原始搜尋結果、進階搜尋關鍵字和搜尋選項重新顯示商品
+        displayProducts(window.lastSearchResults, keyword, searchOption);
+    }
+    
+    // 清除進階搜尋功能
+    function clearAdvancedSearch() {
+        console.log('清除進階搜尋...');
+        
+        // 清空進階搜尋輸入框
+        advancedSearchInput.value = '';
+        
+        // 重置搜尋選項到預設值（商品名稱）
+        searchOptionProduct.checked = true;
+        
+        // 清除當前進階搜尋關鍵字和選項
+        window.currentAdvancedKeyword = '';
+        window.currentSearchOption = 'product';
+        
+        // 如果有搜尋結果，則顯示原始結果
+        if (window.lastSearchResults) {
+            displayProducts(window.lastSearchResults);
+            
+            // 移除舊的搜尋結果信息（如果有）
+            const oldInfo = document.querySelector('.search-results-info');
+            if (oldInfo) {
+                oldInfo.remove();
+            }
+        }
     }
     
     // 綁定進階搜尋按鈕點擊事件
     advancedSearchButton.addEventListener('click', performAdvancedSearch);
+    
+    // 綁定清除進階搜尋按鈕點擊事件
+    clearAdvancedSearchButton.addEventListener('click', clearAdvancedSearch);
     
     // 綁定進階搜尋輸入框按下Enter鍵事件
     advancedSearchInput.addEventListener('keypress', function(e) {
@@ -506,7 +581,9 @@ document.addEventListener('DOMContentLoaded', function() {
         if (keyword) {
             // 重置進階搜尋
             window.currentAdvancedKeyword = '';
+            window.currentSearchOption = 'product';
             advancedSearchInput.value = '';
+            searchOptionProduct.checked = true;
             
             // 隱藏進階搜尋區塊
             advancedSearchCard.style.display = 'none';

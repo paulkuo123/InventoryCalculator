@@ -75,13 +75,36 @@
             <div class="search-container">
                 <div class="filter-info">
                     <i class="fas fa-filter"></i>
-                    <span>進階篩選商品名稱</span>
+                    <span>進階篩選</span>
                 </div>
-                <input type="text" id="advancedSearchInput" placeholder="輸入商品名稱關鍵字...">
-                <button id="advancedSearchButton" class="btn-secondary">
-                    <i class="fas fa-search-plus"></i>
-                    篩選
-                </button>
+                <input type="text" id="advancedSearchInput" placeholder="輸入關鍵字...">
+                <div class="filter-option search-option">
+                    <span>搜尋範圍:</span>
+                    <div class="radio-group">
+                        <label>
+                            <input type="radio" name="searchOption" id="searchOptionProduct" value="product" checked>
+                            <span>商品名稱</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="searchOption" id="searchOptionModel" value="model">
+                            <span>型號名稱</span>
+                        </label>
+                        <label>
+                            <input type="radio" name="searchOption" id="searchOptionBoth" value="both">
+                            <span>全部</span>
+                        </label>
+                    </div>
+                </div>
+                <div class="button-group">
+                    <button id="advancedSearchButton" class="btn-secondary">
+                        <i class="fas fa-search-plus"></i>
+                        篩選
+                    </button>
+                    <button id="clearAdvancedSearchButton" class="btn-outline">
+                        <i class="fas fa-times"></i>
+                        清除篩選
+                    </button>
+                </div>
             </div>
         </div>
 
