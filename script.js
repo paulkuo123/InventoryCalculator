@@ -4,10 +4,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const resetButton = document.getElementById('resetButton');
     const productList = document.getElementById('productList');
     const loading = document.getElementById('loading');
+    const advancedSearchCard = document.getElementById('advancedSearchCard');
+    const advancedSearchInput = document.getElementById('advancedSearchInput');
+    const advancedSearchButton = document.getElementById('advancedSearchButton');
     
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
     const statusMessage = document.getElementById('statusMessage');
+    
+    // 保存當前狀態變量
+    window.currentSearchResults = null; // 保存原始搜尋結果
+    window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
     
     // 修改狀態消息更新邏輯，加入爬取月銷量的階段
     function updateStatusMessage(progress) {
@@ -117,8 +124,8 @@ document.addEventListener('DOMContentLoaded', function() {
         img.src = processedUrl;
     }
     
-    // 顯示商品資料
-    function displayProducts(products) {
+    // 顯示商品資料（修改為支持進階搜尋）
+    function displayProducts(products, advancedKeyword = '') {
         const productList = document.getElementById('productList');
         productList.innerHTML = '';
         
@@ -142,14 +149,53 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         
-        console.log('顯示商品數據:', Object.keys(products).length, '個商品');
+        // 如果有進階搜尋關鍵字，則對商品進行過濾
+        let filteredProducts = products;
+        let filteredProductCount = Object.keys(products).length;
+        
+        if (advancedKeyword && advancedKeyword.trim() !== '') {
+            const keyword = advancedKeyword.trim().toLowerCase();
+            
+            // 過濾符合關鍵字的商品
+            filteredProducts = {};
+            
+            Object.entries(products).forEach(([productId, product]) => {
+                // 檢查商品名稱是否包含關鍵字
+                if (product.商品名稱 && product.商品名稱.toLowerCase().includes(keyword)) {
+                    filteredProducts[productId] = product;
+                }
+            });
+            
+            filteredProductCount = Object.keys(filteredProducts).length;
+            
+            // 顯示進階搜尋結果信息
+            const tableContainer = document.querySelector('.table-container');
+            
+            // 移除舊的結果信息（如果有）
+            const oldInfo = document.querySelector('.search-results-info');
+            if (oldInfo) {
+                oldInfo.remove();
+            }
+            
+            // 添加新的結果信息
+            const resultsInfo = document.createElement('div');
+            resultsInfo.className = 'search-results-info';
+            resultsInfo.innerHTML = `
+                <i class="fas fa-filter"></i>
+                <span>進階搜尋「${advancedKeyword}」: 找到 ${filteredProductCount} 個符合的商品，共 ${Object.keys(products).length} 個</span>
+            `;
+            
+            tableContainer.insertBefore(resultsInfo, tableContainer.firstChild);
+        }
+        
+        console.log('顯示商品數據:', filteredProductCount, '個商品');
         
         // 使用文檔片段減少DOM重繪
         const fragment = document.createDocumentFragment();
         let totalVisibleProducts = 0;
         
-        // 遍歷商品，key 是商品ID
-        Object.entries(products).forEach(([productId, product]) => {
+        // 遍歷過濾後的商品
+        Object.entries(filteredProducts).forEach(([productId, product]) => {
             try {
                 // 創建行元素
                 const row = document.createElement('tr');
@@ -399,7 +445,41 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // 修改 performSearch 函數，保存最後的搜尋結果
+    // 添加進階搜尋功能
+    function performAdvancedSearch() {
+        console.log('執行進階搜尋...');
+        
+        const keyword = advancedSearchInput.value.trim();
+        
+        if (!keyword) {
+            alert('請輸入進階搜尋關鍵字');
+            return;
+        }
+        
+        if (!window.lastSearchResults) {
+            alert('請先執行基本搜尋');
+            return;
+        }
+        
+        // 保存當前進階搜尋關鍵字
+        window.currentAdvancedKeyword = keyword;
+        
+        // 使用原始搜尋結果和進階搜尋關鍵字重新顯示商品
+        displayProducts(window.lastSearchResults, keyword);
+    }
+    
+    // 綁定進階搜尋按鈕點擊事件
+    advancedSearchButton.addEventListener('click', performAdvancedSearch);
+    
+    // 綁定進階搜尋輸入框按下Enter鍵事件
+    advancedSearchInput.addEventListener('keypress', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault(); // 防止表單提交
+            performAdvancedSearch();
+        }
+    });
+    
+    // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
         console.log('執行搜尋...(全局函數)');
         
@@ -424,6 +504,19 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log(`搜尋關鍵字: ${keyword}, 顯示瀏覽器: ${showBrowser}, 庫存月份: ${inventoryMonth}`);
         
         if (keyword) {
+            // 重置進階搜尋
+            window.currentAdvancedKeyword = '';
+            advancedSearchInput.value = '';
+            
+            // 隱藏進階搜尋區塊
+            advancedSearchCard.style.display = 'none';
+            
+            // 移除舊的搜尋結果信息（如果有）
+            const oldInfo = document.querySelector('.search-results-info');
+            if (oldInfo) {
+                oldInfo.remove();
+            }
+            
             // 設置爬蟲運行狀態
             window.crawlerRunning = true;
             console.log('設置爬蟲運行狀態為: true');
@@ -472,6 +565,11 @@ document.addEventListener('DOMContentLoaded', function() {
                     setTimeout(() => {
                         if (loading) loading.style.display = 'none';
                         displayProducts(data);
+                        
+                        // 顯示進階搜尋區塊
+                        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+                            advancedSearchCard.style.display = 'block';
+                        }
                     }, 500);
                 })
                 .catch(error => {
