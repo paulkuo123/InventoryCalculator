@@ -475,9 +475,33 @@ document.addEventListener('DOMContentLoaded', function() {
     if (filterModeElement) {
         filterModeElement.addEventListener('change', function() {
             // 如果已經有搜尋結果，則重新顯示
-            const searchInput = document.getElementById('searchInput');
-            if (searchInput && searchInput.value.trim() && window.lastSearchResults) {
-                displayProducts(window.lastSearchResults);
+            if (window.lastSearchResults) {
+                // 檢查是否有進階搜尋狀態
+                if (window.currentAdvancedKeyword && window.currentAdvancedKeyword.trim() !== '') {
+                    // 有進階搜尋，使用進階搜尋的關鍵字和選項進行過濾
+                    displayProducts(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
+                } else {
+                    // 沒有進階搜尋，使用原始搜尋結果
+                    displayProducts(window.lastSearchResults);
+                }
+            }
+        });
+    }
+    
+    // 綁定庫存月份下拉框變更事件
+    const inventoryMonthElement = document.getElementById('inventoryMonth');
+    if (inventoryMonthElement) {
+        inventoryMonthElement.addEventListener('change', function() {
+            // 如果已經有搜尋結果，則重新顯示
+            if (window.lastSearchResults) {
+                // 檢查是否有進階搜尋狀態
+                if (window.currentAdvancedKeyword && window.currentAdvancedKeyword.trim() !== '') {
+                    // 有進階搜尋，使用進階搜尋的關鍵字和選項進行過濾
+                    displayProducts(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
+                } else {
+                    // 沒有進階搜尋，使用原始搜尋結果
+                    displayProducts(window.lastSearchResults);
+                }
             }
         });
     }
@@ -528,7 +552,7 @@ document.addEventListener('DOMContentLoaded', function() {
         window.currentAdvancedKeyword = '';
         window.currentSearchOption = 'product';
         
-        // 如果有搜尋結果，則顯示原始結果
+        // 如果有搜尋結果，則顯示原始結果，但保持當前的過濾模式設置
         if (window.lastSearchResults) {
             displayProducts(window.lastSearchResults);
             
