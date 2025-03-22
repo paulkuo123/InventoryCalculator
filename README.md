@@ -17,11 +17,6 @@ pip install selenium
 pip install psutil
 ```
 
-### Chrome驅動程式
-本程式使用Selenium控制Chrome瀏覽器進行爬蟲，請確保您已安裝：
-1. Google Chrome瀏覽器
-2. 與您Chrome版本相符的ChromeDriver (可從 https://chromedriver.chromium.org/downloads 下載)
-
 ## 使用方法
 
 ### 下載專案
@@ -33,6 +28,12 @@ git clone https://github.com/paulkuo123/InventoryCalculator.git
 ```
 cd InventoryCalculator
 ```
+
+### 下載Chrome驅動程式
+本程式使用Selenium控制Chrome瀏覽器進行爬蟲，請確保您已安裝：
+1. Google Chrome瀏覽器
+2. 與您Chrome版本相符的ChromeDriver (可從 https://chromedriver.chromium.org/downloads 下載)
+3. 將下載的chromedriver.exe 放在InventoryCalculator資料夾
 
 ### 設置 Cookies
 1. 至Chrome線上應用程式商店安裝Cookies-Editors (https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-TW&utm_source=ext_sidebar)
