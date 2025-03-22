@@ -67,26 +67,19 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 keyword = params.get('keyword', [''])[0]
                 showBrowser = params.get('showBrowser',
                                          ['false'])[0].lower() == 'true'
+                inventoryMonth = int(params.get('inventoryMonth', ['4'])[0])
 
-                if keyword:
-                    # 執行爬蟲並獲取結果
-                    result = self.run_crawler(keyword, showBrowser)
+                # 執行爬蟲並獲取結果，無論關鍵字是否為空
+                result = self.run_crawler(keyword, showBrowser, inventoryMonth)
 
-                    # 設置響應頭
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
+                # 設置響應頭
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
 
-                    # 發送JSON響應
-                    self.wfile.write(
-                        json.dumps(result, ensure_ascii=False).encode('utf-8'))
-                else:
-                    # 如果沒有關鍵字，返回空結果
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(
-                        json.dumps([], ensure_ascii=False).encode('utf-8'))
+                # 發送JSON響應
+                self.wfile.write(
+                    json.dumps(result, ensure_ascii=False).encode('utf-8'))
 
                 return
             except Exception as e:

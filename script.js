@@ -602,89 +602,88 @@ document.addEventListener('DOMContentLoaded', function() {
         
         console.log(`搜尋關鍵字: ${keyword}, 顯示瀏覽器: ${showBrowser}, 庫存月份: ${inventoryMonth}`);
         
-        if (keyword) {
-            // 重置進階搜尋
-            window.currentAdvancedKeyword = '';
-            window.currentSearchOption = 'product';
-            advancedSearchInput.value = '';
-            searchOptionProduct.checked = true;
-            
-            // 隱藏進階搜尋區塊
-            advancedSearchCard.style.display = 'none';
-            
-            // 移除舊的搜尋結果信息（如果有）
-            const oldInfo = document.querySelector('.search-results-info');
-            if (oldInfo) {
-                oldInfo.remove();
-            }
-            
-            // 設置爬蟲運行狀態
-            window.crawlerRunning = true;
-            console.log('設置爬蟲運行狀態為: true');
-            
-            // 顯示載入中
-            const loading = document.getElementById('loading');
-            if (loading) {
-                loading.style.display = 'block';
-                console.log('顯示載入中元素');
-            }
-            
-            const productList = document.getElementById('productList');
-            if (productList) {
-                productList.innerHTML = '';
-                console.log('清空商品列表');
-            }
-            
-            // 開始進度模擬，使用改進的進度模擬函數
-            const progressInterval = startProgressSimulation();
-            
-            // 發送請求到API，包含顯示瀏覽器參數和庫存月份
-            const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&inventoryMonth=${inventoryMonth}`;
-            console.log(`發送請求到: ${searchUrl}`);
-            
-            fetch(searchUrl)
-                .then(response => {
-                    console.log('收到API回應:', response.status);
-                    return response.json();
-                })
-                .then(data => {
-                    // 停止進度模擬
-                    clearInterval(progressInterval);
-                    
-                    // 設置進度為100%
-                    progressBar.style.width = '100%';
-                    progressText.textContent = '100%';
-                    statusMessage.textContent = '爬取完成！';
-                    
-                    console.log('API回傳數據類型:', typeof data);
-                    console.log('API回傳數據結構:', data ? Object.keys(data).length : 'null');
-                    
-                    // 保存最後的搜尋結果
-                    window.lastSearchResults = data;
-                    
-                    // 短暫延遲後隱藏載入提示
-                    setTimeout(() => {
-                        if (loading) loading.style.display = 'none';
-                        displayProducts(data);
-                        
-                        // 顯示進階搜尋區塊
-                        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-                            advancedSearchCard.style.display = 'block';
-                        }
-                    }, 500);
-                })
-                .catch(error => {
-                    // 停止進度模擬
-                    clearInterval(progressInterval);
-                    
-                    console.error('搜尋出錯:', error);
-                    if (loading) loading.style.display = 'none';
-                    alert('搜尋時發生錯誤，請稍後再試');
-                })
-                .finally(() => {
-                    window.crawlerRunning = false;
-                });
+        // 移除關鍵字檢查，無論是否有關鍵字都執行以下代碼
+        // 重置進階搜尋
+        window.currentAdvancedKeyword = '';
+        window.currentSearchOption = 'product';
+        advancedSearchInput.value = '';
+        searchOptionProduct.checked = true;
+        
+        // 隱藏進階搜尋區塊
+        advancedSearchCard.style.display = 'none';
+        
+        // 移除舊的搜尋結果信息（如果有）
+        const oldInfo = document.querySelector('.search-results-info');
+        if (oldInfo) {
+            oldInfo.remove();
         }
+        
+        // 設置爬蟲運行狀態
+        window.crawlerRunning = true;
+        console.log('設置爬蟲運行狀態為: true');
+        
+        // 顯示載入中
+        const loading = document.getElementById('loading');
+        if (loading) {
+            loading.style.display = 'block';
+            console.log('顯示載入中元素');
+        }
+        
+        const productList = document.getElementById('productList');
+        if (productList) {
+            productList.innerHTML = '';
+            console.log('清空商品列表');
+        }
+        
+        // 開始進度模擬，使用改進的進度模擬函數
+        const progressInterval = startProgressSimulation();
+        
+        // 發送請求到API，包含顯示瀏覽器參數和庫存月份
+        const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&inventoryMonth=${inventoryMonth}`;
+        console.log(`發送請求到: ${searchUrl}`);
+        
+        fetch(searchUrl)
+            .then(response => {
+                console.log('收到API回應:', response.status);
+                return response.json();
+            })
+            .then(data => {
+                // 停止進度模擬
+                clearInterval(progressInterval);
+                
+                // 設置進度為100%
+                progressBar.style.width = '100%';
+                progressText.textContent = '100%';
+                statusMessage.textContent = '爬取完成！';
+                
+                console.log('API回傳數據類型:', typeof data);
+                console.log('API回傳數據結構:', data ? Object.keys(data).length : 'null');
+                
+                // 保存最後的搜尋結果
+                window.lastSearchResults = data;
+                
+                // 短暫延遲後隱藏載入提示
+                setTimeout(() => {
+                    if (loading) loading.style.display = 'none';
+                    displayProducts(data);
+                    
+                    // 顯示進階搜尋區塊
+                    if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+                        advancedSearchCard.style.display = 'block';
+                    }
+                }, 500);
+            })
+            .catch(error => {
+                // 停止進度模擬
+                clearInterval(progressInterval);
+                
+                console.error('搜尋出錯:', error);
+                if (loading) loading.style.display = 'none';
+                alert('搜尋時發生錯誤，請稍後再試');
+            })
+            .finally(() => {
+                window.crawlerRunning = false;
+            });
     }
     
     // 綁定搜尋按鈕點擊事件

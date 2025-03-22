@@ -880,11 +880,9 @@ class ShopeeCrawler:
             self.get_all_products_info()
             print("已獲取所有商品基本資訊")
 
-            # 如果有搜尋關鍵字，則進行月銷量查詢
-            if self.search_keyword:
-                print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
-                self.get_monthly_sales(self.search_keyword)
-                print("月銷量查詢完成")
+            print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
+            self.get_monthly_sales(self.search_keyword)
+            print("月銷量查詢完成")
 
             # 完成所有資料收集後，一次性儲存 JSON 檔案
             self.save_to_file(self.products_data)
