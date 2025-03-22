@@ -31,8 +31,8 @@ cd InventoryCalculator
 
 ### 下載Chrome驅動程式
 本程式使用Selenium控制Chrome瀏覽器進行爬蟲，請確保您已安裝：
-1. Google Chrome瀏覽器
-2. 與您Chrome版本相符的ChromeDriver (可從 https://chromedriver.chromium.org/downloads 下載)
+1. Google Chrome瀏覽器 (建議更新至最新版)
+2. 與您Chrome版本相符的ChromeDriver (最新版) (可從 https://chromedriver.chromium.org/downloads 下載)
 3. 將下載的chromedriver.exe 放在InventoryCalculator資料夾
 
 ### 設置 Cookies
