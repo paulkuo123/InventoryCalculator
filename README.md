@@ -34,6 +34,13 @@ git clone https://github.com/paulkuo123/InventoryCalculator.git
 cd InventoryCalculator
 ```
 
+### 設置 Cookies
+1. 至Chrome線上應用程式商店安裝Cookies-Editors (https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-TW&utm_source=ext_sidebar)
+2. 登入蝦皮賣家中心
+3. 點擊Cookies-Editors 
+4. Export輸出json格式
+5. 複製內容貼到cookies.json
+
 ### 執行主程式
 ```
 python main.py
