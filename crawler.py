@@ -355,7 +355,7 @@ class ShopeeCrawler:
                 print("已點擊日期選擇圖標")
 
                 # 確保日期選擇面板完全顯示
-                time.sleep(1.5)  # 從3秒減少到1.5秒
+                time.sleep(1)  # 從3秒減少到1秒
 
                 # 等待日期選擇面板出現
                 WebDriverWait(self.driver, 12).until(  # 從15秒減少到12秒
@@ -1329,8 +1329,6 @@ class ShopeeCrawler:
                     print(f"  - 已點擊第 {i} 個「展開全部」按鈕")
                     total_expanded += 1
 
-                    # 減少等待時間，只等待必要的時間
-                    time.sleep(0.3)  # 從1秒減少到0.3秒
                 except Exception as e:
                     print(f"  - 點擊第 {i} 個「展開全部」按鈕失敗: {e}")
                     continue
