@@ -14,6 +14,8 @@ import os
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.action_chains import ActionChains
 
+if os.name == 'nt':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 class ShopeeCrawler:
 
@@ -1350,43 +1352,8 @@ class ShopeeCrawler:
                 "arguments[0].scrollIntoView({block: 'center', behavior: 'auto'});",
                 image_container)
 
-            # 減少等待時間
-            time.sleep(0.2)  # 從0.5秒減少到0.2秒
-
-            img_element = image_container.find_element(By.TAG_NAME, 'img')
-
-            # 等待圖片加載完成，但使用更短的等待時間和更少的重試
-            wait_time = 0.5  # 從2秒減少到0.5秒
-            max_retries = 2  # 從3次減少到2次
-
-            for retry in range(max_retries):
-                is_image_loaded = self.driver.execute_script(
-                    "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
-                    img_element)
-
-                if is_image_loaded:
-                    break
-
-                if retry < max_retries - 1:  # 只在非最後一次重試時打印
-                    print(f"等待圖片加載完成...（嘗試 {retry+1}/{max_retries}）")
-                    time.sleep(wait_time)
-
-            # 獲取圖片URL，即使未完全加載也嘗試獲取
-            product_image_url = img_element.get_attribute('src')
-
-            # 確保URL格式正確
-            if product_image_url:
-                product_image_url = product_image_url.strip()
-                # 如果URL不是以http或https開頭，添加https前綴
-                if not product_image_url.startswith(
-                        'http://') and not product_image_url.startswith(
-                            'https://'):
-                    # 移除開頭的 //（如果有）
-                    if product_image_url.startswith('//'):
-                        product_image_url = product_image_url[2:]
-                    product_image_url = 'https://' + product_image_url
-            else:
-                product_image_url = "未找到"
+            # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
+            product_image_url = self.get_image_with_retry(image_container, max_retries=3, wait_time=1)
         except Exception as e:
             print(f"獲取商品圖片時出錯: {e}")
             product_image_url = "未找到"
@@ -1437,46 +1404,17 @@ class ShopeeCrawler:
                 }
 
                 try:
-                    # 找到圖片容器和圖片元素
+                    # 找到圖片容器
                     image_container = variation.find_element(
                         By.CLASS_NAME, 'variation-name-image')
-                    img_element = image_container.find_element(
-                        By.TAG_NAME, 'img')
-
+                    
                     # 滾動到圖片位置
                     self.driver.execute_script(
-                        "arguments[0].scrollIntoView(true);", img_element)
-                    print("已滾動到型號圖片位置")
-
-                    # 等待圖片加載完成
-                    wait_time = 5  # 最大等待時間（秒）
-                    start_time = time.time()
-                    is_image_loaded = False
-
-                    while not is_image_loaded and (time.time() -
-                                                   start_time) < wait_time:
-                        is_image_loaded = self.driver.execute_script(
-                            "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
-                            img_element)
-                        if not is_image_loaded:
-                            print("型號圖片尚未加載完成，等待中...")
-                            time.sleep(1)  # 每秒檢查一次
-
-                    if is_image_loaded:
-                        print("型號圖片加載完成")
-                    else:
-                        print("等待超時，型號圖片可能未加載完成")
-
-                    # 獲取圖片URL並格式化
-                    image_url = img_element.get_attribute('src')
-                    if image_url:
-                        image_url = image_url.strip()
-                        if not image_url.startswith('http'):
-                            image_url = "https:" + image_url
-                        model_info['型號圖片網址'] = image_url
-                        print(f"成功獲取型號圖片URL")
-                    else:
-                        model_info['型號圖片網址'] = "未找到"
+                        "arguments[0].scrollIntoView({block: 'center'});", image_container)
+                    
+                    # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
+                    image_url = self.get_image_with_retry(image_container, max_retries=3, wait_time=1)
+                    model_info['型號圖片網址'] = image_url
                 except Exception as e:
                     print(f"獲取型號圖片時出錯: {e}")
                     model_info['型號圖片網址'] = "未找到"
@@ -1776,10 +1714,10 @@ if __name__ == "__main__":
         base_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
         if args.keyword.strip():
             my_products_url = f"{base_products_url}?keyword={args.keyword.strip()}"
-            print(f"將搜尋關鍵字：{args.keyword.strip()}")
+            print(f"將搜尋關鍵字：{args.keyword.strip()}", flush=True)
         else:
             my_products_url = base_products_url
-            print("將搜尋全部商品")
+            print("將搜尋全部商品", flush=True)
 
         # 根據作業系統設置 chromedriver 路徑
         if os.name == 'nt':  # Windows
