@@ -1362,8 +1362,7 @@ class ShopeeCrawler:
         try:
             item_id_container = product_row.find_element(
                 By.CLASS_NAME, 'item-id')
-            item_id_text = item_id_container.find_element(
-                By.CLASS_NAME, 'text-overflow2').text
+            item_id_text = item_id_container.text
             item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
             item_id = item_id_match.group(1) if item_id_match else "未找到"
             if item_id == "未找到":
@@ -1500,13 +1499,14 @@ class ShopeeCrawler:
                     # Filter rows with valid item-id
                     for row in all_rows:
                         try:
+                            # 直接從 item-id class 獲取文本
                             item_id_container = row.find_element(
                                 By.CLASS_NAME, 'item-id')
-                            item_id_text = item_id_container.find_element(
-                                By.CLASS_NAME, 'text-overflow2').text
+                            item_id_text = item_id_container.text
                             if item_id_text and "商品 ID:" in item_id_text:
                                 product_rows.append(row)
-                        except:
+                        except Exception as e:
+                            print(f"過濾商品行時出錯: {e}")
                             continue  # Skip rows without item-id
 
                     print(f"過濾後找到 {len(product_rows)} 個有效商品行")
@@ -1521,8 +1521,7 @@ class ShopeeCrawler:
                         try:
                             item_id_container = row.find_element(
                                 By.CLASS_NAME, 'item-id')
-                            item_id_text = item_id_container.find_element(
-                                By.CLASS_NAME, 'text-overflow2').text
+                            item_id_text = item_id_container.text
                             if item_id_text and "商品 ID:" in item_id_text:
                                 product_rows.append(row)
                         except:
