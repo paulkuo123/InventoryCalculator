@@ -35,6 +35,12 @@ cd InventoryCalculator
 2. 與您Chrome版本相符的ChromeDriver (最新版) (可從 https://chromedriver.chromium.org/downloads 下載)
 3. 將下載的chromedriver.exe 放在InventoryCalculator資料夾
 
+MacOS
+如果遇到Mac將chromedriver視為惡意軟體的提示，請在終端執行以下指令：
+```
+xattr -d com.apple.quarantine /opt/homebrew/bin/chromedriver
+```
+
 ### 設置 Cookies
 1. 至Chrome線上應用程式商店安裝Cookies-Editors (https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-TW&utm_source=ext_sidebar)
 2. 登入蝦皮賣家中心
