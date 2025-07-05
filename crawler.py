@@ -780,20 +780,43 @@ class ShopeeCrawler:
 
                                 # 獲取商品件數（可出貨訂單）
                                 try:
+                                    print(f"正在處理型號 {model_name} 的月銷量數據")
                                     # 尋找包含月銷量的元素
-                                    sales_element = row.find_element(
-                                        By.CSS_SELECTOR, ".number.nest-item")
-
-                                    # 從該元素中找到 currency-value 元素
-                                    currency_value_element = sales_element.find_element(
-                                        By.CSS_SELECTOR, ".currency-value")
+                                    # 根據最新的 HTML 結構調整選擇器
+                                    try:
+                                        # 先嘗試找 label 元素
+                                        sales_element = row.find_element(
+                                            By.CSS_SELECTOR, "label.nest-item")
+                                        
+                                        # 從該元素中找到 number 元素，然後找到 currency-value 元素
+                                        number_element = sales_element.find_element(
+                                            By.CSS_SELECTOR, ".number")
+                                        currency_value_element = number_element.find_element(
+                                            By.CSS_SELECTOR, ".currency-value")
+                                    except NoSuchElementException:
+                                        try:
+                                            # 如果找不到，嘗試直接找 number 元素，然後找 currency-value
+                                            number_element = row.find_element(
+                                                By.CSS_SELECTOR, ".number")
+                                            currency_value_element = number_element.find_element(
+                                                By.CSS_SELECTOR, ".currency-value")
+                                        except NoSuchElementException:
+                                            # 如果還是找不到，嘗試直接找 currency-value
+                                            currency_value_element = row.find_element(
+                                                By.CSS_SELECTOR, ".currency-value")
+                                            print("直接找到 currency-value 元素")
 
                                     # 獲取文本並去除空白
-                                    sales_text = currency_value_element.text.strip(
-                                    )
-
+                                    sales_text = currency_value_element.text.strip()
+                                    print(f"原始 currency-value 文本: '{sales_text}'")
+                                    
                                     # 處理逗點符號，例如將 "1,324" 轉換為 "1324"
                                     sales_value = sales_text.replace(",", "")
+                                    
+                                    # 如果文本為空，設為 0
+                                    if not sales_value:
+                                        print("警告: currency-value 文本為空")
+                                        sales_value = "0"
 
                                     print(
                                         f"爬取到的月銷量: {sales_text} -> 處理後: {sales_value}"
