@@ -224,17 +224,87 @@ class ShopeeCrawler:
         """
         # 強制使用固定的輸出路徑，忽略 custom_path
         output_path = "shopee_products.json"
-
+        
+        # 計算每個商品的總月銷量並添加到商品數據中
+        print("開始計算每個商品的總月銷量...")
+        for product_id, product_info in data.items():
+            total_monthly_sales = 0
+            model_sales_details = []
+            
+            if "型號" in product_info and isinstance(product_info["型號"], list):
+                for model in product_info["型號"]:
+                    model_name = model.get('型號名稱', '未知')
+                    if "月銷量" in model:
+                        try:
+                            # 將月銷量轉換為整數並累加
+                            sales_text = model["月銷量"].strip()
+                            monthly_sales = 0
+                            
+                            # 處理可能包含 K 或 k 的情況 (例如 1.2K)
+                            if 'K' in sales_text.upper() or 'k' in sales_text:
+                                # 移除 K 或 k 並轉換為浮點數，然後乘以 1000
+                                sales_value = float(sales_text.lower().replace('k', '')) * 1000
+                                monthly_sales = int(sales_value)
+                                model_sales_details.append(f"{model_name}: {sales_text} -> {monthly_sales}")
+                            else:
+                                # 處理可能包含逗號的情況 (例如 1,234)
+                                sales_value = sales_text.replace(",", "")
+                                if sales_value.isdigit():
+                                    monthly_sales = int(sales_value)
+                                    model_sales_details.append(f"{model_name}: {sales_text} -> {monthly_sales}")
+                                else:
+                                    print(f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量 '{sales_text}' 不是有效數字，設為 0")
+                                    model_sales_details.append(f"{model_name}: {sales_text} -> 0 (無效數字)")
+                            
+                            total_monthly_sales += monthly_sales
+                        except (ValueError, TypeError) as e:
+                            print(f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量格式不正確: {e}")
+                            model_sales_details.append(f"{model_name}: 格式錯誤")
+                    else:
+                        model_sales_details.append(f"{model_name}: 無月銷量數據")
+            
+            # 將總月銷量添加到商品數據中
+            product_info["總月銷量"] = str(total_monthly_sales)
+            
+            # 輸出詳細的計算過程
+            product_name = product_info.get("商品名稱", "未知商品")
+            print(f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}")
+            if model_sales_details:
+                print("  詳細月銷量: " + ", ".join(model_sales_details))
+        
+        # 按總月銷量從大到小排序
+        print("開始按總月銷量從大到小排序...")
+        sorted_data = {}
+        
+        # 定義排序鍵函數，處理可能的異常情況
+        def get_monthly_sales(item):
+            try:
+                return int(item[1].get("總月銷量", "0"))
+            except (ValueError, TypeError):
+                print(f"警告: 商品 {item[0]} 的總月銷量格式不正確，排序時視為 0")
+                return 0
+        
+        # 將字典轉換為列表，按總月銷量排序，然後轉回字典
+        sorted_items = sorted(data.items(), key=get_monthly_sales, reverse=True)
+        sorted_data = {k: v for k, v in sorted_items}
+        
+        # 輸出排序結果的前幾項
+        print("排序結果的前 5 項:")
+        for i, (product_id, product_info) in enumerate(sorted_items[:5], 1):
+            product_name = product_info.get("商品名稱", "未知商品")
+            total_sales = product_info.get("總月銷量", "0")
+            print(f"{i}. 商品 {product_id} ({product_name}): 總月銷量 {total_sales}")
+        
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
-            print(f"資料已成功保存到 {output_path}")
+                json.dump(sorted_data, f, ensure_ascii=False, indent=4)
+            print(f"資料已成功保存到 {output_path}，並按總月銷量從大到小排序")
         except Exception as e:
             print(f"保存資料時發生錯誤: {e}")
             # 備份到臨時文件
             backup_path = f"shopee_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
             with open(backup_path, 'w', encoding='utf-8') as f:
-                json.dump(data, f, ensure_ascii=False, indent=4)
+                json.dump(sorted_data, f, ensure_ascii=False, indent=4)
             print(f"已備份資料到 {backup_path}")
 
     def login(self):
