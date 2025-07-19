@@ -59,46 +59,41 @@ class ShopeeCrawler:
         return webdriver.Chrome(service=service, options=chrome_options)
 
     def click_init_button(self):
-        # 定義所有可能的選擇器
-        selectors = [
-            "button[data-v-48c0fcda][data-v-152206df]",
-            "button.eds-button.eds-button--primary",
-            "div[data-v-152206df].bottom-row button"
-        ]
-
         try:
-            # 使用 WebDriverWait 等待任意一個按鈕可見（最長等待 2 秒）
-            button = WebDriverWait(self.driver, 2).until(lambda driver: next(
-                (driver.find_element(By.CSS_SELECTOR, selector)
-                 for selector in selectors
-                 if driver.find_elements(By.CSS_SELECTOR, selector)), None))
+            # 假設目標按鈕有更具體的選擇器，例如包含特定類或屬性
+            specific_selector = "button.close-btn"  # 請替換為實際的唯一選擇器
+
+            # 等待特定按鈕可見
+            button = WebDriverWait(self.driver, 2).until(
+                EC.visibility_of_element_located((By.CSS_SELECTOR, specific_selector))
+            )
 
             if button:
-                # 找到按鈕後打印訊息（可選）
-                print(f"找到按鈕: {button.text}")
+                # 輸出按鈕資訊以確認
+                print(f"找到按鈕: {button.text}，位置: {button.location}")
 
-                # 滾動到按鈕位置（直接滾動，無動畫）
+                # 滾動到按鈕位置
                 self.driver.execute_script(
-                    "arguments[0].scrollIntoView({block: 'center'});", button)
+                    "arguments[0].scrollIntoView({block: 'center'});", button
+                )
 
                 # 確保按鈕可點擊
-                WebDriverWait(self.driver,
-                              1).until(EC.element_to_be_clickable(button))
+                WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable(button))
 
                 # 嘗試點擊
                 try:
                     button.click()
+                    print("已成功點擊按鈕")
                 except:
-                    # 如果直接點擊失敗，使用 JavaScript 點擊
+                    # 如果失敗，使用 JavaScript 點擊
                     self.driver.execute_script("arguments[0].click();", button)
-
-                print("已點擊按鈕")
+                    print("已通過 JavaScript 點擊按鈕")
             else:
-                print("未找到指定按鈕或不需要點擊")
+                print("未找到指定按鈕")
 
         except Exception as e:
             print(f"點擊按鈕時出錯: {e}")
-            print("未找到指定按鈕或不需要點擊")
+            print("未找到指定按鈕或無法點擊")
 
     def convert_sales_number(self, sales_text):
         """
