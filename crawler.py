@@ -13,6 +13,7 @@ import sys
 import os
 from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.action_chains import ActionChains
+from webdriver_manager.chrome import ChromeDriverManager
 
 if os.name == 'nt':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -52,8 +53,15 @@ class ShopeeCrawler:
         # 設置頁面加載策略，只等待DOM樹
         chrome_options.page_load_strategy = 'eager'
 
-        # 設定 ChromeDriver 路徑
-        service = Service(executable_path=self.driver_path)
+        # 使用 ChromeDriverManager 自動下載與當前 Chrome 瀏覽器版本匹配的 ChromeDriver
+        try:
+            # 嘗試使用 ChromeDriverManager 自動管理 ChromeDriver
+            service = Service(ChromeDriverManager().install())
+            print("使用 ChromeDriverManager 自動管理 ChromeDriver")
+        except Exception as e:
+            print(f"ChromeDriverManager 失敗: {e}，使用指定的 ChromeDriver 路徑")
+            # 如果自動管理失敗，則使用指定的 ChromeDriver 路徑
+            service = Service(executable_path=self.driver_path)
 
         # 啟動 Chrome 瀏覽器
         return webdriver.Chrome(service=service, options=chrome_options)
@@ -1831,7 +1839,15 @@ if __name__ == "__main__":
             chrome_options.add_argument("--no-sandbox")  # 禁用沙盒
             chrome_options.add_argument("--disable-dev-shm-usage")  # 禁用共享內存
 
-            service = Service(executable_path=driver_path)
+            try:
+                # 嘗試使用 ChromeDriverManager 自動管理 ChromeDriver
+                service = Service(ChromeDriverManager().install())
+                print("使用 ChromeDriverManager 自動管理 ChromeDriver（無頭模式）")
+            except Exception as e:
+                print(f"ChromeDriverManager 失敗: {e}，使用指定的 ChromeDriver 路徑")
+                # 如果自動管理失敗，則使用指定的 ChromeDriver 路徑
+                service = Service(executable_path=driver_path)
+                
             crawler.driver = webdriver.Chrome(service=service,
                                               options=chrome_options)
 

@@ -15,7 +15,10 @@
 pip install PyQt5
 pip install selenium
 pip install psutil
+pip install webdriver-manager
 ```
+
+> **注意**: webdriver-manager 套件可以自動下載與當前 Chrome 瀏覽器版本匹配的 ChromeDriver，避免版本不匹配的問題。
 
 ## 使用方法
 
@@ -29,16 +32,20 @@ git clone https://github.com/paulkuo123/InventoryCalculator.git
 cd InventoryCalculator
 ```
 
-### 下載Chrome驅動程式
+### Chrome瀏覽器設置
 本程式使用Selenium控制Chrome瀏覽器進行爬蟲，請確保您已安裝：
 1. Google Chrome瀏覽器 (建議更新至最新版)
-2. 與您Chrome版本相符的ChromeDriver (最新版) (可從 https://chromedriver.chromium.org/downloads 下載)
-3. 將下載的chromedriver.exe 放在InventoryCalculator資料夾
+
+> **注意**: 安裝 webdriver-manager 套件後，系統會自動下載與您的 Chrome 瀏覽器版本匹配的 ChromeDriver，無需手動下載和安裝。
+
+如果您仍然希望手動管理 ChromeDriver：
+1. 可從 https://chromedriver.chromium.org/downloads 下載與您 Chrome 版本相符的 ChromeDriver
+2. 將下載的 chromedriver.exe (Windows) 或 chromedriver (Mac/Linux) 放在適當位置
 
 MacOS
 如果遇到Mac將chromedriver視為惡意軟體的提示，請在終端執行以下指令：
 ```
-xattr -d com.apple.quarantine /opt/homebrew/bin/chromedriver
+xattr -d com.apple.quarantine /path/to/chromedriver
 ```
 
 ### 設置 Cookies
