@@ -481,12 +481,25 @@ document.addEventListener('DOMContentLoaded', function() {
         
         console.log('顯示商品數據:', filteredProductCount, '個商品');
         
+        // 按總月銷量從大到小排序商品
+        const sortedProducts = Object.entries(filteredProducts).sort(([, productA], [, productB]) => {
+            const salesA = parseInt(productA.總月銷量 || '0', 10);
+            const salesB = parseInt(productB.總月銷量 || '0', 10);
+            return salesB - salesA; // 從大到小排序
+        });
+        
+        console.log('商品排序結果:', sortedProducts.map(([id, product]) => ({
+            id,
+            name: product.商品名稱,
+            totalSales: product.總月銷量
+        })));
+        
         // 使用文檔片段減少DOM重繪
         const fragment = document.createDocumentFragment();
         let totalVisibleProducts = 0;
         
-        // 遍歷過濾後的商品
-        Object.entries(filteredProducts).forEach(([productId, product]) => {
+        // 遍歷排序後的商品
+        sortedProducts.forEach(([productId, product]) => {
             try {
                 // 創建行元素
                 const row = document.createElement('tr');
