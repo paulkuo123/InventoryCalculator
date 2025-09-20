@@ -18,6 +18,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 if os.name == 'nt':
     sys.stdout.reconfigure(encoding='utf-8')
 
+
 class ShopeeCrawler:
 
     def __init__(self,
@@ -73,8 +74,8 @@ class ShopeeCrawler:
 
             # 等待特定按鈕可見
             button = WebDriverWait(self.driver, 2).until(
-                EC.visibility_of_element_located((By.CSS_SELECTOR, specific_selector))
-            )
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, specific_selector)))
 
             if button:
                 # 輸出按鈕資訊以確認
@@ -82,11 +83,11 @@ class ShopeeCrawler:
 
                 # 滾動到按鈕位置
                 self.driver.execute_script(
-                    "arguments[0].scrollIntoView({block: 'center'});", button
-                )
+                    "arguments[0].scrollIntoView({block: 'center'});", button)
 
                 # 確保按鈕可點擊
-                WebDriverWait(self.driver, 1).until(EC.element_to_be_clickable(button))
+                WebDriverWait(self.driver,
+                              1).until(EC.element_to_be_clickable(button))
 
                 # 嘗試點擊
                 try:
@@ -227,13 +228,13 @@ class ShopeeCrawler:
         """
         # 強制使用固定的輸出路徑，忽略 custom_path
         output_path = "shopee_products.json"
-        
+
         # 計算每個商品的總月銷量並添加到商品數據中
         print("開始計算每個商品的總月銷量...")
         for product_id, product_info in data.items():
             total_monthly_sales = 0
             model_sales_details = []
-            
+
             if "型號" in product_info and isinstance(product_info["型號"], list):
                 for model in product_info["型號"]:
                     model_name = model.get('型號名稱', '未知')
@@ -242,43 +243,56 @@ class ShopeeCrawler:
                             # 將月銷量轉換為整數並累加
                             sales_text = model["月銷量"].strip()
                             monthly_sales = 0
-                            
+
                             # 處理可能包含 K 或 k 的情況 (例如 1.2K)
                             if 'K' in sales_text.upper() or 'k' in sales_text:
                                 # 移除 K 或 k 並轉換為浮點數，然後乘以 1000
-                                sales_value = float(sales_text.lower().replace('k', '')) * 1000
+                                sales_value = float(sales_text.lower().replace(
+                                    'k', '')) * 1000
                                 monthly_sales = int(sales_value)
-                                model_sales_details.append(f"{model_name}: {sales_text} -> {monthly_sales}")
+                                model_sales_details.append(
+                                    f"{model_name}: {sales_text} -> {monthly_sales}"
+                                )
                             else:
                                 # 處理可能包含逗號的情況 (例如 1,234)
                                 sales_value = sales_text.replace(",", "")
                                 if sales_value.isdigit():
                                     monthly_sales = int(sales_value)
-                                    model_sales_details.append(f"{model_name}: {sales_text} -> {monthly_sales}")
+                                    model_sales_details.append(
+                                        f"{model_name}: {sales_text} -> {monthly_sales}"
+                                    )
                                 else:
-                                    print(f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量 '{sales_text}' 不是有效數字，設為 0")
-                                    model_sales_details.append(f"{model_name}: {sales_text} -> 0 (無效數字)")
-                            
+                                    print(
+                                        f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量 '{sales_text}' 不是有效數字，設為 0"
+                                    )
+                                    model_sales_details.append(
+                                        f"{model_name}: {sales_text} -> 0 (無效數字)"
+                                    )
+
                             total_monthly_sales += monthly_sales
                         except (ValueError, TypeError) as e:
-                            print(f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量格式不正確: {e}")
+                            print(
+                                f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量格式不正確: {e}"
+                            )
                             model_sales_details.append(f"{model_name}: 格式錯誤")
                     else:
                         model_sales_details.append(f"{model_name}: 無月銷量數據")
-            
+
             # 將總月銷量添加到商品數據中
             product_info["總月銷量"] = str(total_monthly_sales)
-            
+
             # 輸出詳細的計算過程
             product_name = product_info.get("商品名稱", "未知商品")
-            print(f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}")
+            print(
+                f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}"
+            )
             if model_sales_details:
                 print("  詳細月銷量: " + ", ".join(model_sales_details))
-        
+
         # 按總月銷量從大到小排序
         print("開始按總月銷量從大到小排序...")
         sorted_data = {}
-        
+
         # 定義排序鍵函數，處理可能的異常情況
         def get_monthly_sales(item):
             try:
@@ -286,18 +300,20 @@ class ShopeeCrawler:
             except (ValueError, TypeError):
                 print(f"警告: 商品 {item[0]} 的總月銷量格式不正確，排序時視為 0")
                 return 0
-        
+
         # 將字典轉換為列表，按總月銷量排序，然後轉回字典
-        sorted_items = sorted(data.items(), key=get_monthly_sales, reverse=True)
+        sorted_items = sorted(data.items(),
+                              key=get_monthly_sales,
+                              reverse=True)
         sorted_data = {k: v for k, v in sorted_items}
-        
+
         # 輸出排序結果的前幾項
         print("排序結果的前 5 項:")
         for i, (product_id, product_info) in enumerate(sorted_items[:5], 1):
             product_name = product_info.get("商品名稱", "未知商品")
             total_sales = product_info.get("總月銷量", "0")
             print(f"{i}. 商品 {product_id} ({product_name}): 總月銷量 {total_sales}")
-        
+
         try:
             with open(output_path, 'w', encoding='utf-8') as f:
                 json.dump(sorted_data, f, ensure_ascii=False, indent=4)
@@ -860,7 +876,7 @@ class ShopeeCrawler:
                                         # 先嘗試找 label 元素
                                         sales_element = row.find_element(
                                             By.CSS_SELECTOR, "label.nest-item")
-                                        
+
                                         # 從該元素中找到 number 元素，然後找到 currency-value 元素
                                         number_element = sales_element.find_element(
                                             By.CSS_SELECTOR, ".number")
@@ -872,20 +888,25 @@ class ShopeeCrawler:
                                             number_element = row.find_element(
                                                 By.CSS_SELECTOR, ".number")
                                             currency_value_element = number_element.find_element(
-                                                By.CSS_SELECTOR, ".currency-value")
+                                                By.CSS_SELECTOR,
+                                                ".currency-value")
                                         except NoSuchElementException:
                                             # 如果還是找不到，嘗試直接找 currency-value
                                             currency_value_element = row.find_element(
-                                                By.CSS_SELECTOR, ".currency-value")
+                                                By.CSS_SELECTOR,
+                                                ".currency-value")
                                             print("直接找到 currency-value 元素")
 
                                     # 獲取文本並去除空白
-                                    sales_text = currency_value_element.text.strip()
-                                    print(f"原始 currency-value 文本: '{sales_text}'")
-                                    
+                                    sales_text = currency_value_element.text.strip(
+                                    )
+                                    print(
+                                        f"原始 currency-value 文本: '{sales_text}'"
+                                    )
+
                                     # 處理逗點符號，例如將 "1,324" 轉換為 "1324"
                                     sales_value = sales_text.replace(",", "")
-                                    
+
                                     # 如果文本為空，設為 0
                                     if not sales_value:
                                         print("警告: currency-value 文本為空")
@@ -1135,9 +1156,10 @@ class ShopeeCrawler:
 
         return True
 
-    def get_image_with_retry(self, element, max_retries=3, wait_time=1):
+    def get_image_with_retry(self, element, max_retries=5, wait_time=2):
         """
         嘗試多次獲取圖片 URL，直到成功或達到最大重試次數
+        改進版本：正確識別和過濾 base64 格式的圖片URL
         
         Args:
             element: 包含圖片的元素
@@ -1147,66 +1169,177 @@ class ShopeeCrawler:
         Returns:
             str: 圖片 URL 或 "未找到"
         """
+        print(f"開始獲取圖片URL，最大重試次數: {max_retries}")
+
         for attempt in range(max_retries):
             try:
-                # 嘗試找到 img 標籤
-                img_element = element.find_element(By.TAG_NAME, 'img')
+                print(f"第 {attempt+1}/{max_retries} 次嘗試獲取圖片...")
 
-                # 等待圖片加載完成
+                # 方法1: 嘗試找到 img 標籤
+                img_url = self._try_get_img_tag_url(element, attempt,
+                                                    wait_time)
+                if img_url and img_url != "未找到":
+                    return img_url
+
+                # 方法2: 嘗試從 style 屬性中提取 background-image
+                style_url = self._try_get_style_url(element, attempt)
+                if style_url and style_url != "未找到":
+                    return style_url
+
+                # 方法3: 嘗試從 data 屬性中獲取
+                data_url = self._try_get_data_url(element, attempt)
+                if data_url and data_url != "未找到":
+                    return data_url
+
+                # 如果所有方法都失敗，等待後重試
+                if attempt < max_retries - 1:
+                    print(f"第 {attempt+1} 次嘗試失敗，等待 {wait_time} 秒後重試...")
+                    time.sleep(wait_time)
+
+                    # 嘗試滾動到元素位置，確保可見
+                    try:
+                        self.driver.execute_script(
+                            "arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});",
+                            element)
+                        time.sleep(0.5)
+                    except:
+                        pass
+
+            except Exception as e:
+                print(f"獲取圖片時發生異常 (嘗試 {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(wait_time)
+
+        print("所有重試嘗試都失敗，返回 '未找到'")
+        return "未找到"
+
+    def _try_get_img_tag_url(self, element, attempt, wait_time):
+        """嘗試從 img 標籤獲取 URL"""
+        try:
+            # 嘗試找到 img 標籤
+            img_element = element.find_element(By.TAG_NAME, 'img')
+
+            # 等待圖片加載完成，增加更詳細的檢查
+            for wait_attempt in range(3):
                 is_image_loaded = self.driver.execute_script(
                     "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
                     img_element)
 
-                # 如果圖片尚未加載完成，等待一段時間
-                if not is_image_loaded:
-                    print(f"圖片尚未加載完成，等待中... (嘗試 {attempt+1}/{max_retries})")
-                    time.sleep(wait_time)
-                    continue
+                if is_image_loaded:
+                    break
 
-                # 獲取圖片 URL
-                image_url = img_element.get_attribute('src')
-                if image_url:
-                    # 確保URL格式正確
-                    image_url = image_url.strip()
-                    # 如果URL不是以http或https開頭，添加https前綴
-                    if not image_url.startswith(
-                            'http://') and not image_url.startswith(
-                                'https://'):
-                        # 移除開頭的 //（如果有）
-                        if image_url.startswith('//'):
-                            image_url = image_url[2:]
-                        image_url = 'https://' + image_url
-                    print(
-                        f"成功獲取圖片 URL (嘗試 {attempt+1}/{max_retries}): {image_url}"
-                    )
+                print(f"  圖片尚未加載完成，等待中... (等待嘗試 {wait_attempt+1}/3)")
+                time.sleep(wait_time)
+
+            # 獲取圖片 URL
+            image_url = img_element.get_attribute('src')
+            if image_url and image_url.strip():
+                image_url = self._normalize_url(image_url)
+                if self._is_valid_image_url(image_url):
+                    print(f"  成功從 img 標籤獲取圖片 URL: {image_url}")
                     return image_url
+                else:
+                    print(f"  獲取到無效的圖片URL (base64格式): {image_url[:50]}...")
 
-            except Exception as e:
-                print(f"獲取圖片時出錯 (嘗試 {attempt+1}/{max_retries}): {e}")
+        except Exception as e:
+            print(f"  從 img 標籤獲取圖片失敗: {e}")
 
-            # 如果失敗，等待後重試
-            time.sleep(wait_time)
+        return "未找到"
 
-        # 如果所有嘗試都失敗，嘗試從 style 屬性中提取
+    def _try_get_style_url(self, element, attempt):
+        """嘗試從 style 屬性中提取 background-image URL"""
         try:
             style = element.get_attribute('style')
             if style and 'background-image' in style:
                 url_match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
                 if url_match:
                     image_url = url_match.group(1).strip()
-                    # 如果URL不是以http或https開頭，添加https前綴
-                    if not image_url.startswith(
-                            'http://') and not image_url.startswith(
-                                'https://'):
-                        # 移除開頭的 //（如果有）
-                        if image_url.startswith('//'):
-                            image_url = image_url[2:]
-                        image_url = 'https://' + image_url
-                    return image_url
-        except:
-            pass
+                    if image_url:
+                        image_url = self._normalize_url(image_url)
+                        if self._is_valid_image_url(image_url):
+                            print(f"  成功從 style 屬性獲取圖片 URL: {image_url}")
+                            return image_url
+                        else:
+                            print(
+                                f"  從style獲取到無效的圖片URL (base64格式): {image_url[:50]}..."
+                            )
+        except Exception as e:
+            print(f"  從 style 屬性獲取圖片失敗: {e}")
 
         return "未找到"
+
+    def _try_get_data_url(self, element, attempt):
+        """嘗試從 data 屬性中獲取圖片 URL"""
+        try:
+            # 檢查常見的 data 屬性
+            data_attrs = [
+                'data-src', 'data-lazy', 'data-original', 'data-srcset'
+            ]
+            for attr in data_attrs:
+                try:
+                    image_url = element.get_attribute(attr)
+                    if image_url and image_url.strip():
+                        image_url = self._normalize_url(image_url)
+                        if self._is_valid_image_url(image_url):
+                            print(f"  成功從 {attr} 屬性獲取圖片 URL: {image_url}")
+                            return image_url
+                        else:
+                            print(
+                                f"  從{attr}獲取到無效的圖片URL (base64格式): {image_url[:50]}..."
+                            )
+                except:
+                    continue
+        except Exception as e:
+            print(f"  從 data 屬性獲取圖片失敗: {e}")
+
+        return "未找到"
+
+    def _normalize_url(self, url):
+        """標準化 URL 格式"""
+        if not url or url == "未找到":
+            return "未找到"
+
+        # 移除URL中的多餘空格
+        url = url.strip()
+
+        # 如果URL不是以http或https開頭，添加https前綴
+        if not url.startswith('http://') and not url.startswith('https://'):
+            # 移除開頭的 //（如果有）
+            if url.startswith('//'):
+                url = url[2:]
+            url = 'https://' + url
+
+        return url
+
+    def _is_valid_image_url(self, url):
+        """
+        驗證圖片URL是否有效
+        正確的URL應該是真實的圖片URL，而不是base64格式的佔位符
+        """
+        if not url or url == "未找到":
+            return False
+
+        # 檢查是否為base64格式的圖片（這些是無效的佔位符）
+        if url.startswith('data:image/'):
+            print(f"  檢測到base64格式的佔位符圖片: {url[:50]}...")
+            return False
+
+        # 檢查是否包含基本的圖片文件擴展名
+        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']
+        url_lower = url.lower()
+
+        # 檢查是否包含圖片擴展名或常見的圖片服務域名
+        has_image_extension = any(ext in url_lower for ext in image_extensions)
+        has_image_domain = any(domain in url_lower for domain in [
+            'shopee.tw', 'cf.shopee.tw', 'imgur.com', 'amazonaws.com',
+            'cloudfront.net', 'cdn.shopee.tw'
+        ])
+
+        # 檢查URL長度（base64圖片通常很長）
+        is_reasonable_length = len(url) < 500  # 真實的圖片URL通常不會太長
+
+        return (has_image_extension
+                or has_image_domain) and is_reasonable_length
 
     def find_expand_icons(self):
         """
@@ -1449,7 +1582,9 @@ class ShopeeCrawler:
                 image_container)
 
             # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
-            product_image_url = self.get_image_with_retry(image_container, max_retries=3, wait_time=1)
+            product_image_url = self.get_image_with_retry(image_container,
+                                                          max_retries=5,
+                                                          wait_time=2)
         except Exception as e:
             print(f"獲取商品圖片時出錯: {e}")
             product_image_url = "未找到"
@@ -1502,13 +1637,16 @@ class ShopeeCrawler:
                     # 找到圖片容器
                     image_container = variation.find_element(
                         By.CLASS_NAME, 'variation-name-image')
-                    
+
                     # 滾動到圖片位置
                     self.driver.execute_script(
-                        "arguments[0].scrollIntoView({block: 'center'});", image_container)
-                    
+                        "arguments[0].scrollIntoView({block: 'center'});",
+                        image_container)
+
                     # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
-                    image_url = self.get_image_with_retry(image_container, max_retries=3, wait_time=1)
+                    image_url = self.get_image_with_retry(image_container,
+                                                          max_retries=5,
+                                                          wait_time=2)
                     model_info['型號圖片網址'] = image_url
                 except Exception as e:
                     print(f"獲取型號圖片時出錯: {e}")
@@ -1847,7 +1985,7 @@ if __name__ == "__main__":
                 print(f"ChromeDriverManager 失敗: {e}，使用指定的 ChromeDriver 路徑")
                 # 如果自動管理失敗，則使用指定的 ChromeDriver 路徑
                 service = Service(executable_path=driver_path)
-                
+
             crawler.driver = webdriver.Chrome(service=service,
                                               options=chrome_options)
 
