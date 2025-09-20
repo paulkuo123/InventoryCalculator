@@ -20,6 +20,260 @@ document.addEventListener('DOMContentLoaded', function() {
     window.currentSearchResults = null; // 保存原始搜尋結果
     window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
     window.currentSearchOption = 'product'; // 預設搜尋選項為商品名稱
+    window.isPieChartVisible = false; // 圓餅圖顯示狀態
+    
+    // 整體庫存水位統計計算函數
+    function calculateInventoryStatistics(products, advancedKeyword = '', searchOption = 'product') {
+        if (!products || typeof products !== 'object' || Object.keys(products).length === 0) {
+            return {
+                totalProducts: 0,
+                totalModels: 0,
+                totalStock: 0,
+                totalMonthlySales: 0,
+                inventoryLevels: [],
+                avgLevel: 0,
+                stdDev: 0,
+                minLevel: 0,
+                maxLevel: 0,
+                overallLevel: 0,
+                levelDistribution: { low: 0, medium: 0, high: 0 }
+            };
+        }
+        
+        // 過濾商品（如果有進階搜尋）
+        let filteredProducts = products;
+        if (advancedKeyword && advancedKeyword.trim() !== '') {
+            const keyword = advancedKeyword.trim().toLowerCase();
+            filteredProducts = {};
+            
+            Object.entries(products).forEach(([productId, product]) => {
+                let shouldInclude = false;
+                
+                if (searchOption === 'product' || searchOption === 'both') {
+                    if (product.商品名稱 && product.商品名稱.toLowerCase().includes(keyword)) {
+                        shouldInclude = true;
+                    }
+                }
+                
+                if ((searchOption === 'model' || searchOption === 'both') && !shouldInclude) {
+                    if (product.型號 && Array.isArray(product.型號)) {
+                        for (const model of product.型號) {
+                            if (model.型號名稱 && model.型號名稱.toLowerCase().includes(keyword)) {
+                                shouldInclude = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (shouldInclude) {
+                    filteredProducts[productId] = product;
+                }
+            });
+        }
+        
+        // 獲取過濾條件
+        const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
+        const filterMode = document.getElementById('filterMode')?.checked || false;
+        
+        let totalProducts = 0;
+        let totalModels = 0;
+        let totalStock = 0;
+        let totalMonthlySales = 0;
+        let inventoryLevels = [];
+        
+        // 計算統計數據
+        Object.entries(filteredProducts).forEach(([productId, product]) => {
+            if (product.型號 && Array.isArray(product.型號)) {
+                let productHasVisibleModels = false;
+                
+                product.型號.forEach((modelData) => {
+                    const monthlyRate = parseInt(modelData.月銷量, 10) || 0;
+                    const months = parseInt(inventoryMonth, 10) || 0;
+                    const expectedStock = monthlyRate * months;
+                    const currentStock = parseInt(modelData.商品庫存, 10) || 0;
+                    
+                    // 如果過濾模式開啟且當前庫存大於等於預期庫存，則跳過此型號
+                    if (filterMode && currentStock >= expectedStock && expectedStock > 0) {
+                        return;
+                    }
+                    
+                    productHasVisibleModels = true;
+                    totalModels++;
+                    totalStock += currentStock;
+                    totalMonthlySales += monthlyRate;
+                    
+                    // 計算此型號的庫存水位（月數）
+                    if (monthlyRate > 0) {
+                        const level = currentStock / monthlyRate;
+                        inventoryLevels.push({
+                            level: level,
+                            weight: monthlyRate, // 以月銷量作為權重
+                            modelName: modelData.型號名稱,
+                            productName: product.商品名稱
+                        });
+                    }
+                });
+                
+                if (productHasVisibleModels) {
+                    totalProducts++;
+                }
+            }
+        });
+        
+        // 計算統計指標
+        let avgLevel = 0;
+        let stdDev = 0;
+        let minLevel = 0;
+        let maxLevel = 0;
+        let overallLevel = 0;
+        let levelDistribution = { low: 0, medium: 0, high: 0 };
+        
+        if (inventoryLevels.length > 0) {
+            // 計算加權平均庫存水位
+            let weightedSum = 0;
+            let totalWeight = 0;
+            
+            inventoryLevels.forEach(item => {
+                weightedSum += item.level * item.weight;
+                totalWeight += item.weight;
+            });
+            
+            avgLevel = totalWeight > 0 ? weightedSum / totalWeight : 0;
+            
+            // 計算標準差
+            let variance = 0;
+            inventoryLevels.forEach(item => {
+                variance += Math.pow(item.level - avgLevel, 2) * item.weight;
+            });
+            stdDev = totalWeight > 0 ? Math.sqrt(variance / totalWeight) : 0;
+            
+            // 計算最小值和最大值
+            const levels = inventoryLevels.map(item => item.level);
+            minLevel = Math.min(...levels);
+            maxLevel = Math.max(...levels);
+            
+            // 計算整體庫存水位（基於總庫存和總月銷量）
+            overallLevel = totalMonthlySales > 0 ? totalStock / totalMonthlySales : 0;
+            
+            // 計算庫存水位分布
+            inventoryLevels.forEach(item => {
+                if (item.level < 3) {
+                    levelDistribution.low += item.weight;
+                } else if (item.level < 6) {
+                    levelDistribution.medium += item.weight;
+                } else {
+                    levelDistribution.high += item.weight;
+                }
+            });
+        }
+        
+        return {
+            totalProducts,
+            totalModels,
+            totalStock,
+            totalMonthlySales,
+            inventoryLevels,
+            avgLevel: Math.round(avgLevel * 10) / 10,
+            stdDev: Math.round(stdDev * 10) / 10,
+            minLevel: Math.round(minLevel * 10) / 10,
+            maxLevel: Math.round(maxLevel * 10) / 10,
+            overallLevel: Math.round(overallLevel * 10) / 10,
+            levelDistribution
+        };
+    }
+    
+    // 更新圓餅圖UI
+    function updatePieChartUI(products, advancedKeyword = '', searchOption = 'product') {
+        const pieChartCard = document.getElementById('inventoryPieChartCard');
+        if (!pieChartCard) return;
+        
+        const stats = calculateInventoryStatistics(products, advancedKeyword, searchOption);
+        
+        // 更新統計數據
+        document.getElementById('totalProductsCount').textContent = stats.totalProducts;
+        document.getElementById('totalModelsCount').textContent = stats.totalModels;
+        document.getElementById('totalStockCount').textContent = stats.totalStock;
+        document.getElementById('totalSalesCount').textContent = stats.totalMonthlySales;
+        
+        // 更新分析數據
+        document.getElementById('avgInventoryLevel').textContent = `${stats.avgLevel} 個月`;
+        document.getElementById('inventoryStdDev').textContent = `${stats.stdDev} 個月`;
+        document.getElementById('minInventoryLevel').textContent = `${stats.minLevel} 個月`;
+        document.getElementById('maxInventoryLevel').textContent = `${stats.maxLevel} 個月`;
+        
+        // 更新圓餅圖中心值
+        const centerValue = document.getElementById('centerValue');
+        centerValue.textContent = stats.overallLevel;
+        
+        // 更新圓餅圖顏色和比例
+        const pieChart = document.getElementById('inventoryPieChart');
+        const totalWeight = stats.levelDistribution.low + stats.levelDistribution.medium + stats.levelDistribution.high;
+        
+        if (totalWeight > 0) {
+            const lowPercentage = (stats.levelDistribution.low / totalWeight) * 100;
+            const mediumPercentage = (stats.levelDistribution.medium / totalWeight) * 100;
+            const highPercentage = (stats.levelDistribution.high / totalWeight) * 100;
+            
+            // 計算角度
+            const lowAngle = (lowPercentage / 100) * 360;
+            const mediumAngle = (mediumPercentage / 100) * 360;
+            const highAngle = (highPercentage / 100) * 360;
+            
+            // 更新圓餅圖背景
+            pieChart.style.background = `conic-gradient(
+                #F44336 0deg ${lowAngle}deg,
+                #FF9800 ${lowAngle}deg ${lowAngle + mediumAngle}deg,
+                #4CAF50 ${lowAngle + mediumAngle}deg ${lowAngle + mediumAngle + highAngle}deg,
+                #e0e0e0 ${lowAngle + mediumAngle + highAngle}deg 360deg
+            )`;
+        } else {
+            pieChart.style.background = 'conic-gradient(#e0e0e0 0deg 360deg)';
+        }
+        
+        // 只有在圓餅圖可見時才顯示
+        if (window.isPieChartVisible) {
+            pieChartCard.style.display = 'block';
+        }
+    }
+    
+    // 切換圓餅圖顯示/隱藏
+    function togglePieChart() {
+        const pieChartCard = document.getElementById('inventoryPieChartCard');
+        const toggleBtn = document.getElementById('togglePieChartBtn');
+        
+        if (!pieChartCard || !toggleBtn) return;
+        
+        window.isPieChartVisible = !window.isPieChartVisible;
+        
+        if (window.isPieChartVisible) {
+            pieChartCard.style.display = 'block';
+            toggleBtn.classList.add('active');
+            toggleBtn.innerHTML = '<i class="fas fa-times"></i><span>關閉分析</span>';
+            
+            // 如果有搜尋結果，重新計算圓餅圖
+            if (window.lastSearchResults) {
+                updatePieChartUI(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
+            }
+        } else {
+            pieChartCard.style.display = 'none';
+            toggleBtn.classList.remove('active');
+            toggleBtn.innerHTML = '<i class="fas fa-chart-pie"></i><span>庫存分析</span>';
+        }
+    }
+    
+    // 關閉圓餅圖
+    function closePieChart() {
+        const pieChartCard = document.getElementById('inventoryPieChartCard');
+        const toggleBtn = document.getElementById('togglePieChartBtn');
+        
+        if (!pieChartCard || !toggleBtn) return;
+        
+        window.isPieChartVisible = false;
+        pieChartCard.style.display = 'none';
+        toggleBtn.classList.remove('active');
+        toggleBtn.innerHTML = '<i class="fas fa-chart-pie"></i><span>庫存分析</span>';
+    }
     
     // 修改狀態消息更新邏輯，加入爬取月銷量的階段
     function updateStatusMessage(progress) {
@@ -468,6 +722,9 @@ document.addEventListener('DOMContentLoaded', function() {
             `;
             console.log('沒有符合過濾條件的商品');
         }
+        
+        // 更新圓餅圖UI
+        updatePieChartUI(products, advancedKeyword, searchOption);
     }
     
     // 綁定過濾模式切換事件 - 當過濾模式改變時重新顯示商品
@@ -482,7 +739,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     displayProducts(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
                 } else {
                     // 沒有進階搜尋，使用原始搜尋結果
-                    displayProducts(window.lastSearchResults);
+                    displayProducts(window.lastSearchResults, '', 'product');
                 }
             }
         });
@@ -500,7 +757,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     displayProducts(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
                 } else {
                     // 沒有進階搜尋，使用原始搜尋結果
-                    displayProducts(window.lastSearchResults);
+                    displayProducts(window.lastSearchResults, '', 'product');
                 }
             }
         });
@@ -554,7 +811,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // 如果有搜尋結果，則顯示原始結果，但保持當前的過濾模式設置
         if (window.lastSearchResults) {
-            displayProducts(window.lastSearchResults);
+            displayProducts(window.lastSearchResults, '', 'product');
             
             // 移除舊的搜尋結果信息（如果有）
             const oldInfo = document.querySelector('.search-results-info');
@@ -577,6 +834,18 @@ document.addEventListener('DOMContentLoaded', function() {
             performAdvancedSearch();
         }
     });
+    
+    // 綁定圓餅圖切換按鈕事件
+    const togglePieChartBtn = document.getElementById('togglePieChartBtn');
+    if (togglePieChartBtn) {
+        togglePieChartBtn.addEventListener('click', togglePieChart);
+    }
+    
+    // 綁定關閉圓餅圖按鈕事件
+    const closePieChartBtn = document.getElementById('closePieChartBtn');
+    if (closePieChartBtn) {
+        closePieChartBtn.addEventListener('click', closePieChart);
+    }
     
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
@@ -665,7 +934,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 短暫延遲後隱藏載入提示
                 setTimeout(() => {
                     if (loading) loading.style.display = 'none';
-                    displayProducts(data);
+                    displayProducts(data, '', 'product'); // 傳遞正確的參數
                     
                     // 顯示進階搜尋區塊
                     if (data && typeof data === 'object' && Object.keys(data).length > 0) {
