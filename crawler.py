@@ -54,18 +54,20 @@ class ShopeeCrawler:
         # 設置頁面加載策略，只等待DOM樹
         chrome_options.page_load_strategy = 'eager'
 
-        # 使用 ChromeDriverManager 自動下載與當前 Chrome 瀏覽器版本匹配的 ChromeDriver
+        # 優先使用 Selenium Manager；失敗回退到 webdriver-manager；再回退到指定路徑
         try:
-            # 嘗試使用 ChromeDriverManager 自動管理 ChromeDriver
-            service = Service(ChromeDriverManager().install())
-            print("使用 ChromeDriverManager 自動管理 ChromeDriver")
+            print("嘗試使用 Selenium Manager 啟動 Chrome")
+            return webdriver.Chrome(options=chrome_options)
         except Exception as e:
-            print(f"ChromeDriverManager 失敗: {e}，使用指定的 ChromeDriver 路徑")
-            # 如果自動管理失敗，則使用指定的 ChromeDriver 路徑
-            service = Service(executable_path=self.driver_path)
-
-        # 啟動 Chrome 瀏覽器
-        return webdriver.Chrome(service=service, options=chrome_options)
+            print(f"使用 Selenium Manager 啟動失敗：{e}")
+            try:
+                print("回退：使用 ChromeDriverManager 管理 ChromeDriver")
+                service = Service(ChromeDriverManager().install())
+                return webdriver.Chrome(service=service, options=chrome_options)
+            except Exception as e2:
+                print(f"ChromeDriverManager 失敗：{e2}，回退使用指定 ChromeDriver 路徑")
+                service = Service(executable_path=self.driver_path)
+                return webdriver.Chrome(service=service, options=chrome_options)
 
     def click_init_button(self):
         try:
