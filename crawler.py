@@ -5,545 +5,2037 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.common.action_chains import ActionChains
-from selenium.common.exceptions import NoSuchElementException, TimeoutException
-from webdriver_manager.chrome import ChromeDriverManager
 import time
 import json
 from datetime import datetime
 import re
 import sys
 import os
-import logging
-
-# 設定日誌
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler(sys.stdout)
-    ]
-)
-logger = logging.getLogger(__name__)
+from selenium.common.exceptions import NoSuchElementException
+from selenium.webdriver.common.action_chains import ActionChains
+from webdriver_manager.chrome import ChromeDriverManager
 
 if os.name == 'nt':
     sys.stdout.reconfigure(encoding='utf-8')
 
-class ShopeePageActions:
-    """Encapsulates Selenium interactions with the Shopee page."""
-    
-    def __init__(self, driver):
-        self.driver = driver
-
-    def wait_for_element(self, by, value, timeout=10, condition=EC.presence_of_element_located):
-        """Generic wait method."""
-        try:
-            return WebDriverWait(self.driver, timeout).until(condition((by, value)))
-        except TimeoutException:
-            return None
-
-    def find_element_safely(self, by, value, parent=None, timeout=5):
-        """Safely find an element, returning None if not found."""
-        try:
-            parent = parent or self.driver
-            if timeout > 0:
-                return WebDriverWait(parent, timeout).until(EC.presence_of_element_located((by, value)))
-            else:
-                return parent.find_element(by, value)
-        except:
-            return None
-
-    def scroll_to_element(self, element, center=True):
-        """Scrolls the element into view."""
-        try:
-            block = 'center' if center else 'nearest'
-            self.driver.execute_script(f"arguments[0].scrollIntoView({{block: '{block}', behavior: 'auto'}});", element)
-        except Exception as e:
-            logger.warning(f"Scroll failed: {e}")
-
-    def click_safely(self, element):
-        """Tries to click an element using multiple methods."""
-        try:
-            element.click()
-            return True
-        except Exception:
-            try:
-                self.driver.execute_script("arguments[0].click();", element)
-                return True
-            except Exception as e:
-                logger.warning(f"Click failed: {e}")
-                return False
-
-    def close_popups(self):
-        """Attempts to close various known popups."""
-        popup_selectors = [
-            "button.close-btn",
-            "div.shopee-popup__close-btn",
-            "div.marketing-popup__close-button",
-            "button.shopee-icon-button--right",
-            # Add more selectors as discovered
-            "//button[contains(@class, 'close')]",
-            "//div[contains(@class, 'close')]"
-        ]
-        
-        logger.info("Checking for popups to close...")
-        for selector in popup_selectors:
-            try:
-                if selector.startswith("//"):
-                    elements = self.driver.find_elements(By.XPATH, selector)
-                else:
-                    elements = self.driver.find_elements(By.CSS_SELECTOR, selector)
-                
-                for btn in elements:
-                    if btn.is_displayed():
-                        logger.info(f"Closing popup with selector: {selector}")
-                        self.click_safely(btn)
-                        time.sleep(0.5)
-            except Exception:
-                pass
-
-class ProductParser:
-    """Encapsulates logic for parsing product data from HTML elements."""
-
-    @staticmethod
-    def convert_sales_number(sales_text):
-        """Converts sales text (e.g., '4.2K') to integer string."""
-        try:
-            if not sales_text:
-                return "0"
-            sales_text = sales_text.strip()
-            if 'K' in sales_text.upper() or 'k' in sales_text:
-                number = float(sales_text.lower().replace('k', ''))
-                return str(int(number * 1000))
-            return str(int(float(sales_text.replace(',', ''))))
-        except Exception:
-            return sales_text
-
-    @staticmethod
-    def normalize_url(url):
-        """Normalizes URL format."""
-        if not url or url == "未找到":
-            return "未找到"
-        url = url.strip()
-        if url.startswith('//'):
-            url = 'https:' + url
-        elif not url.startswith('http'):
-            url = 'https://' + url
-        return url
-
-    @staticmethod
-    def is_valid_image_url(url):
-        """Validates image URL."""
-        if not url or url == "未找到" or url.startswith('data:image/'):
-            return False
-        return True
 
 class ShopeeCrawler:
-    def __init__(self, shopee_url, cookies_path, my_products_url, driver_path, output_path="shopee_products.json", search_keyword=""):
+
+    def __init__(self,
+                 shopee_url,
+                 cookies_path,
+                 my_products_url,
+                 driver_path,
+                 output_path="shopee_products.json",
+                 search_keyword=""):
         self.shopee_url = shopee_url
         self.cookies_path = cookies_path
         self.my_products_url = my_products_url
         self.driver_path = driver_path
         self.output_path = output_path
-        self.search_keyword = search_keyword
+        self.search_keyword = search_keyword  # 保存搜尋關鍵字
         self.driver = self._init_driver()
-        self.actions = ShopeePageActions(self.driver)
         self.products_data = {}
 
     def _init_driver(self):
-        """Initializes the Chrome driver with optimized settings."""
+        """優化瀏覽器初始化設置，提高性能"""
         chrome_options = Options()
-        chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+        chrome_options.add_argument(
+            "--disable-blink-features=AutomationControlled")
         chrome_options.add_argument("--disable-notifications")
+
+        # 添加性能優化選項
         chrome_options.add_argument("--disable-extensions")
         chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-infobars")
+
+        # 設置頁面加載策略，只等待DOM樹
         chrome_options.page_load_strategy = 'eager'
 
+        # 優先使用 Selenium Manager；失敗回退到 webdriver-manager；再回退到指定路徑
         try:
-            logger.info("Attempting to use Selenium Manager...")
+            print("嘗試使用 Selenium Manager 啟動 Chrome")
             return webdriver.Chrome(options=chrome_options)
         except Exception as e:
-            logger.warning(f"Selenium Manager failed: {e}")
+            print(f"使用 Selenium Manager 啟動失敗：{e}")
             try:
-                logger.info("Falling back to ChromeDriverManager...")
+                print("回退：使用 ChromeDriverManager 管理 ChromeDriver")
                 service = Service(ChromeDriverManager().install())
                 return webdriver.Chrome(service=service, options=chrome_options)
             except Exception as e2:
-                logger.warning(f"ChromeDriverManager failed: {e2}")
-                logger.info(f"Falling back to provided driver path: {self.driver_path}")
-                if not os.path.exists(self.driver_path):
-                     # 如果提供的路徑不存在，嘗試在當前目錄尋找
-                    current_dir_driver = os.path.join(os.getcwd(), "chromedriver" + (".exe" if os.name == 'nt' else ""))
-                    if os.path.exists(current_dir_driver):
-                        self.driver_path = current_dir_driver
-                    
+                print(f"ChromeDriverManager 失敗：{e2}，回退使用指定 ChromeDriver 路徑")
                 service = Service(executable_path=self.driver_path)
                 return webdriver.Chrome(service=service, options=chrome_options)
 
-    def load_cookies(self):
-        """Loads cookies from file."""
+    def click_init_button(self):
         try:
-            if not os.path.exists(self.cookies_path):
-                logger.error(f"Cookies file not found: {self.cookies_path}")
-                return
+            # 假設目標按鈕有更具體的選擇器，例如包含特定類或屬性
+            specific_selector = "button.close-btn"  # 請替換為實際的唯一選擇器
 
+            # 等待特定按鈕可見
+            button = WebDriverWait(self.driver, 2).until(
+                EC.visibility_of_element_located(
+                    (By.CSS_SELECTOR, specific_selector)))
+
+            if button:
+                # 輸出按鈕資訊以確認
+                print(f"找到按鈕: {button.text}，位置: {button.location}")
+
+                # 滾動到按鈕位置
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});", button)
+
+                # 確保按鈕可點擊
+                WebDriverWait(self.driver,
+                              1).until(EC.element_to_be_clickable(button))
+
+                # 嘗試點擊
+                try:
+                    button.click()
+                    print("已成功點擊按鈕")
+                except:
+                    # 如果失敗，使用 JavaScript 點擊
+                    self.driver.execute_script("arguments[0].click();", button)
+                    print("已通過 JavaScript 點擊按鈕")
+            else:
+                print("未找到指定按鈕")
+
+        except Exception as e:
+            print(f"點擊按鈕時出錯: {e}")
+            print("未找到指定按鈕或無法點擊")
+
+    def convert_sales_number(self, sales_text):
+        """
+        將銷售數字從 "4.2K" 或 "4.2k" 格式轉換為 "4200" 格式
+        
+        Args:
+            sales_text (str): 原始銷售數字文字
+            
+        Returns:
+            str: 轉換後的銷售數字
+        """
+        try:
+            # 檢查是否包含 "K" 或 "k"
+            if 'K' in sales_text.upper() or 'k' in sales_text:
+                # 移除 "K" 或 "k" 並轉換為浮點數
+                number = float(sales_text.lower().replace('k', ''))
+                # 乘以 1000 並轉換為整數字串
+                return str(int(number * 1000))
+            return sales_text
+        except Exception as e:
+            print(f"轉換銷售數字時出錯: {e}")
+        return sales_text
+
+    def find_more_items_buttons(self):
+        try:
+            buttons = self.driver.find_elements(
+                By.XPATH,
+                "//div[contains(@class, 'product-more-models__content')]//button[contains(@class, 'eds-button--link')]"
+            )
+            print(f"找到 {len(buttons)} 個展開更多型號按鈕")
+            return buttons
+
+        except Exception as e:
+            print(f"尋找展開按鈕時發生錯誤: {e}")
+            return []
+
+    def click_matched_buttons(self, buttons):
+        total_buttons = len(buttons)
+        print(f"準備點擊 {total_buttons} 個按鈕")
+
+        for i, button in enumerate(buttons, 1):
+            print(f"正在點擊第 {i}/{total_buttons} 個按鈕")
+            try:
+                # 直接滾動到按鈕位置（移除 smooth 行為以加快速度）
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});", button)
+
+                # 最小化等待時間，僅確保元素可見
+                WebDriverWait(self.driver, 2).until(EC.visibility_of(
+                    button))  # 改為 visibility_of 代替 element_to_be_clickable
+
+                # 優先嘗試直接點擊
+                try:
+                    button.click()
+                except Exception:
+                    # 如果失敗，使用 JavaScript 點擊
+                    self.driver.execute_script("arguments[0].click();", button)
+
+                # 減少點擊後的等待時間，僅保留必要的最小延遲
+                time.sleep(0.1)  # 最小延遲，確保頁面反應
+
+            except Exception as e:
+                print(f"點擊第 {i}/{total_buttons} 個按鈕時出錯: {e}")
+                try:
+                    # 失敗時再次嘗試 JavaScript 點擊
+                    self.driver.execute_script("arguments[0].click();", button)
+                    time.sleep(0.1)
+                except Exception as e2:
+                    print(f"JavaScript 點擊第 {i}/{total_buttons} 個按鈕也失敗: {e2}")
+
+        print("所有按鈕點擊完成")
+
+    def load_cookies(self):
+        try:
             with open(self.cookies_path, 'r') as f:
                 cookies = json.load(f)
 
+            # 先訪問目標域名，然後才能加載 cookies
             self.driver.get(self.shopee_url)
             time.sleep(2)
 
             for cookie in cookies:
-                # Remove incompatible keys
-                for key in ['storeId', 'sameSite']:
-                    cookie.pop(key, None)
-                
-                # Fix expirationDate type
-                if 'expirationDate' in cookie:
-                    cookie['expiry'] = int(cookie.pop('expirationDate'))
+                # 移除不相容的 cookie 屬性
+                keys_to_remove = ['storeId', 'sameSite']
+                for key in keys_to_remove:
+                    if key in cookie:
+                        cookie.pop(key)
 
+                # 創建適用於 Selenium 的 cookie 格式
+                cookie_for_selenium = {
+                    'name': cookie.get('name', ''),
+                    'value': cookie.get('value', ''),
+                    'domain': cookie.get('domain', ''),
+                    'path': cookie.get('path', '/'),
+                }
+
+                # 添加過期時間（如果有）
+                if 'expirationDate' in cookie and isinstance(
+                        cookie['expirationDate'], (int, float)):
+                    cookie_for_selenium['expiry'] = int(
+                        cookie['expirationDate'])
+
+                # 添加 httpOnly 和 secure 屬性（如果有）
+                if cookie.get('httpOnly', False):
+                    cookie_for_selenium['httpOnly'] = True
+                if cookie.get('secure', False):
+                    cookie_for_selenium['secure'] = True
+
+                # 嘗試添加 cookie
                 try:
-                    self.driver.add_cookie(cookie)
+                    self.driver.add_cookie(cookie_for_selenium)
+                    print(f"成功添加 Cookie: {cookie.get('name', 'unnamed')}")
                 except Exception as e:
-                    logger.debug(f"Failed to add cookie {cookie.get('name')}: {e}")
-            
-            logger.info("Cookies loaded successfully")
+                    print(f"無法添加 Cookie {cookie.get('name', 'unnamed')}: {e}")
         except Exception as e:
-            logger.error(f"Error loading cookies: {e}")
+            print(f"載入 Cookies 時發生錯誤: {e}")
+
+    def save_to_file(self, data, custom_path=None):
+        """
+        保存資料到檔案
+        :param data: 要保存的資料
+        :param custom_path: 自定義檔案路徑，如果為 None 則使用預設路徑
+        """
+        # 強制使用固定的輸出路徑，忽略 custom_path
+        output_path = "shopee_products.json"
+
+        # 計算每個商品的總月銷量並添加到商品數據中
+        print("開始計算每個商品的總月銷量...")
+        for product_id, product_info in data.items():
+            total_monthly_sales = 0
+            model_sales_details = []
+
+            if "型號" in product_info and isinstance(product_info["型號"], list):
+                for model in product_info["型號"]:
+                    model_name = model.get('型號名稱', '未知')
+                    if "月銷量" in model:
+                        try:
+                            # 將月銷量轉換為整數並累加
+                            sales_text = model["月銷量"].strip()
+                            monthly_sales = 0
+
+                            # 處理可能包含 K 或 k 的情況 (例如 1.2K)
+                            if 'K' in sales_text.upper() or 'k' in sales_text:
+                                # 移除 K 或 k 並轉換為浮點數，然後乘以 1000
+                                sales_value = float(sales_text.lower().replace(
+                                    'k', '')) * 1000
+                                monthly_sales = int(sales_value)
+                                model_sales_details.append(
+                                    f"{model_name}: {sales_text} -> {monthly_sales}"
+                                )
+                            else:
+                                # 處理可能包含逗號的情況 (例如 1,234)
+                                sales_value = sales_text.replace(",", "")
+                                if sales_value.isdigit():
+                                    monthly_sales = int(sales_value)
+                                    model_sales_details.append(
+                                        f"{model_name}: {sales_text} -> {monthly_sales}"
+                                    )
+                                else:
+                                    print(
+                                        f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量 '{sales_text}' 不是有效數字，設為 0"
+                                    )
+                                    model_sales_details.append(
+                                        f"{model_name}: {sales_text} -> 0 (無效數字)"
+                                    )
+
+                            total_monthly_sales += monthly_sales
+                        except (ValueError, TypeError) as e:
+                            print(
+                                f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量格式不正確: {e}"
+                            )
+                            model_sales_details.append(f"{model_name}: 格式錯誤")
+                    else:
+                        model_sales_details.append(f"{model_name}: 無月銷量數據")
+
+            # 將總月銷量添加到商品數據中
+            product_info["總月銷量"] = str(total_monthly_sales)
+
+            # 輸出詳細的計算過程
+            product_name = product_info.get("商品名稱", "未知商品")
+            print(
+                f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}"
+            )
+            if model_sales_details:
+                print("  詳細月銷量: " + ", ".join(model_sales_details))
+
+        # 按總月銷量從大到小排序
+        print("開始按總月銷量從大到小排序...")
+        sorted_data = {}
+
+        # 定義排序鍵函數，處理可能的異常情況
+        def get_monthly_sales(item):
+            try:
+                return int(item[1].get("總月銷量", "0"))
+            except (ValueError, TypeError):
+                print(f"警告: 商品 {item[0]} 的總月銷量格式不正確，排序時視為 0")
+                return 0
+
+        # 將字典轉換為列表，按總月銷量排序，然後轉回字典
+        sorted_items = sorted(data.items(),
+                              key=get_monthly_sales,
+                              reverse=True)
+        sorted_data = {k: v for k, v in sorted_items}
+
+        # 輸出排序結果的前幾項
+        print("排序結果的前 5 項:")
+        for i, (product_id, product_info) in enumerate(sorted_items[:5], 1):
+            product_name = product_info.get("商品名稱", "未知商品")
+            total_sales = product_info.get("總月銷量", "0")
+            print(f"{i}. 商品 {product_id} ({product_name}): 總月銷量 {total_sales}")
+
+        try:
+            with open(output_path, 'w', encoding='utf-8') as f:
+                json.dump(sorted_data, f, ensure_ascii=False, indent=4)
+            print(f"資料已成功保存到 {output_path}，並按總月銷量從大到小排序")
+        except Exception as e:
+            print(f"保存資料時發生錯誤: {e}")
+            # 備份到臨時文件
+            backup_path = f"shopee_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(backup_path, 'w', encoding='utf-8') as f:
+                json.dump(sorted_data, f, ensure_ascii=False, indent=4)
+            print(f"已備份資料到 {backup_path}")
 
     def login(self):
-        """Performs login using cookies."""
         try:
-            logger.info("Starting login process...")
+            # 前往蝦皮賣家中心登入頁面
+            self.driver.get(self.shopee_url)
+            print("開始訪問蝦皮網站")
+
+            # 加載 Cookies
             self.load_cookies()
-            
-            logger.info(f"Navigating to: {self.my_products_url}")
+            print("已載入 Cookies")
+
+            # 重新加載頁面，使 Cookies 生效
             self.driver.get(self.my_products_url)
-            
-            # Wait for login to complete
+            print("正在前往賣家中心商品列表")
+
+            # 等待登入成功跳轉
             WebDriverWait(self.driver, 20).until(
-                lambda d: "portal/product" in d.current_url or "seller.shopee.tw" in d.current_url
-            )
+                EC.url_contains("portal/product")
+                or EC.url_contains("seller.shopee.tw"))
+
+            # 等待頁面加載
             time.sleep(5)
-            
-            self.actions.close_popups()
-            logger.info("Login successful")
+
+            # 關閉可能的通知視窗
+            self.click_init_button()
+            print("成功進入賣家中心")
+
         except Exception as e:
-            logger.error(f"Login failed: {e}")
+            print(f"登入過程中發生錯誤: {e}")
             import traceback
             traceback.print_exc()
 
-    def expand_all_rows(self):
-        """Expands all product rows to show models."""
+    def _get_text_safely(self, parent_element, by, class_name):
+        """
+        安全地獲取文本
+        """
         try:
-            logger.info("Expanding all rows...")
-            # Try SVG method first
-            expand_icons = self.actions.driver.find_elements(By.CSS_SELECTOR, ".el-table__expand-icon")
-            count = 0
-            for icon in expand_icons:
-                if "el-table__expand-icon--expanded" not in icon.get_attribute("class"):
-                    self.actions.scroll_to_element(icon)
-                    self.actions.click_safely(icon)
-                    count += 1
-                    time.sleep(0.2)
-            
-            if count == 0:
-                # Try button method
-                buttons = self.actions.driver.find_elements(By.XPATH, "//button[.//span[contains(., '展開全部')]]")
-                for btn in buttons:
-                    if btn.is_displayed():
-                        self.actions.scroll_to_element(btn)
-                        self.actions.click_safely(btn)
-                        count += 1
-            
-            logger.info(f"Expanded {count} rows")
-            return True
-        except Exception as e:
-            logger.error(f"Error expanding rows: {e}")
-            return False
+            element = parent_element.find_element(by, class_name)
+            return element.text.strip()
+        except Exception:
+            return "未找到"
 
-    def get_image_url(self, element):
-        """Extracts image URL from an element with retries."""
-        for _ in range(3):
-            try:
-                # Try img tag
-                img = element.find_element(By.TAG_NAME, 'img')
-                url = img.get_attribute('src')
-                if ProductParser.is_valid_image_url(url):
-                    return ProductParser.normalize_url(url)
-                
-                # Try style attribute
-                style = element.get_attribute('style')
+    def _get_image_url(self, element, class_name):
+        """
+        從元素中提取圖片 URL
+        """
+        try:
+            image_element = element.find_element(By.CLASS_NAME, class_name)
+
+            # 首先嘗試獲取 src 屬性
+            image_url = image_element.get_attribute('src')
+
+            # 如果 src 為空，嘗試從 style 屬性中提取
+            if not image_url:
+                style = image_element.get_attribute('style')
                 if style and 'background-image' in style:
-                    match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
-                    if match:
-                        url = match.group(1)
-                        if ProductParser.is_valid_image_url(url):
-                            return ProductParser.normalize_url(url)
-                
-                time.sleep(1)
-            except:
-                pass
-        return "未找到"
+                    # 從 style="background-image: url('URL')" 中提取 URL
+                    url_match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
+                    if url_match:
+                        image_url = url_match.group(1)
+                    else:
+                        image_url = "未找到"
 
-    def get_product_info(self, row):
-        """Extracts information for a single product row."""
-        try:
-            # Product ID
-            try:
-                item_id_text = row.find_element(By.CLASS_NAME, 'item-id').text
-                item_id = re.search(r'商品 ID: (\d+)', item_id_text).group(1)
-            except:
-                return None
+            # 確保URL格式正確
+            if image_url and image_url != "未找到":
+                # 移除URL中的多餘空格
+                image_url = image_url.strip()
+                # 如果URL不是以http或https開頭，添加https前綴
+                if not image_url.startswith(
+                        'http://') and not image_url.startswith('https://'):
+                    # 移除開頭的 //（如果有）
+                    if image_url.startswith('//'):
+                        image_url = image_url[2:]
+                    image_url = 'https://' + image_url
+                print(f"提取到圖片URL: {image_url}")
 
-            # Product Name
-            try:
-                name = row.find_element(By.CLASS_NAME, 'product-name-wrap').text.strip() or "未找到"
-            except:
-                name = "未找到"
+            return image_url
+        except Exception:
+            return "未找到"
 
-            # Total Sales
-            try:
-                sales = row.find_element(By.CLASS_NAME, 'list-view-sales').text
-                sales = ProductParser.convert_sales_number(sales)
-            except:
-                sales = "0"
-
-            # Image
-            try:
-                img_container = row.find_element(By.CLASS_NAME, 'product-image')
-                self.actions.scroll_to_element(img_container)
-                image_url = self.get_image_url(img_container)
-            except:
-                image_url = "未找到"
-
-            # Models
-            models = []
-            try:
-                variation_items = row.find_elements(By.CLASS_NAME, 'model-list-item')
-                for item in variation_items:
-                    model = {
-                        '型號名稱': '未知型號',
-                        '已售出數量': '0',
-                        '商品庫存': '0',
-                        '型號圖片網址': '未找到'
-                    }
-                    
-                    # Model Name
-                    try:
-                        model['型號名稱'] = item.find_element(By.CLASS_NAME, 'variation-name-info-name').text
-                    except: pass
-                    
-                    # Model Sales
-                    try:
-                        sales_text = item.find_element(By.CLASS_NAME, 'list-view-model-sales').text
-                        model['已售出數量'] = ProductParser.convert_sales_number(sales_text)
-                    except: pass
-                    
-                    # Model Stock
-                    try:
-                        stock_text = item.find_element(By.CLASS_NAME, 'stock-text').text
-                        model['商品庫存'] = "0" if stock_text == "已售完" else ProductParser.convert_sales_number(stock_text)
-                    except: pass
-                    
-                    # Model Image
-                    try:
-                        img_cont = item.find_element(By.CLASS_NAME, 'variation-name-image')
-                        self.actions.scroll_to_element(img_cont)
-                        model['型號圖片網址'] = self.get_image_url(img_cont)
-                    except: pass
-                    
-                    models.append(model)
-            except Exception as e:
-                logger.warning(f"Error parsing models for {item_id}: {e}")
-
-            return {
-                '商品ID': item_id,
-                '商品名稱': name,
-                '已售出總數量': sales,
-                '商品圖片網址': image_url,
-                '型號': models
-            }
-
-        except Exception as e:
-            logger.error(f"Error parsing product row: {e}")
-            return None
-
-    def get_monthly_sales(self, keyword):
-        """Crawls monthly sales data from Data Center."""
-        try:
-            logger.info(f"Starting monthly sales crawl for: {keyword}")
-            self.driver.get("https://seller.shopee.tw/datacenter/product/performance")
+    def get_monthly_sales(self, product_name):
+        """
+        爬取商品的月銷量數據
+        
+        Args:
+            product_name: 要搜尋的商品名稱
             
-            # Wait for date picker
-            date_icon = self.actions.wait_for_element(By.CLASS_NAME, "eds-icon.bi-date-input-icon", timeout=20)
-            if not date_icon:
-                logger.error("Could not find date picker")
-                return
+        Returns:
+            dict: 商品月銷量數據
+        """
+        try:
+            print(f"\n===== 開始爬取「{product_name}」的月銷量數據 =====\n")
 
-            self.actions.scroll_to_element(date_icon)
-            self.actions.click_safely(date_icon)
-            
-            # Select "Past 30 Days"
-            # Try to find by text first
+            # 前往數據中心頁面
+            data_center_url = "https://seller.shopee.tw/datacenter/product/performance"
+            print(f"正在前往數據中心頁面: {data_center_url}")
+            self.driver.get(data_center_url)
+
+            # 等待頁面加載
+            WebDriverWait(self.driver, 20).until(
+                EC.presence_of_element_located(
+                    (By.CLASS_NAME, "eds-icon.bi-date-input-icon")))
+            print("數據中心頁面加載完成")
+
+            # 點擊日期選擇圖標
             try:
-                options = self.actions.wait_for_element(By.CLASS_NAME, "eds-date-shortcut-item__text", timeout=10, condition=EC.visibility_of_all_elements_located)
-                for opt in options:
-                    if "過去 30 天" in opt.text:
-                        self.actions.click_safely(opt)
+                # 先等待一下確保頁面已完全加載
+                time.sleep(1)  # 從2秒減少到1秒
+
+                date_icon = self.driver.find_element(
+                    By.CLASS_NAME, "eds-icon.bi-date-input-icon")
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});",
+                    date_icon)
+
+                # 等待元素可交互
+                time.sleep(0.5)  # 從1秒減少到0.5秒
+                date_icon.click()
+                print("已點擊日期選擇圖標")
+
+                # 確保日期選擇面板完全顯示
+                time.sleep(1)  # 從3秒減少到1秒
+
+                # 等待日期選擇面板出現
+                WebDriverWait(self.driver, 12).until(  # 從15秒減少到12秒
+                    EC.presence_of_element_located(
+                        (By.CLASS_NAME, "eds-date-shortcut-item__text")))
+
+                # 再等待一下確保所有選項都已加載
+                time.sleep(1)  # 從2秒減少到1秒
+
+                # 尋找並點擊「過去 30 天」選項
+                past_30_days_option = None
+                date_options = self.driver.find_elements(
+                    By.CLASS_NAME, "eds-date-shortcut-item__text")
+
+                for option in date_options:
+                    if "過去 30 天" in option.text:
+                        past_30_days_option = option
                         break
+
+                if past_30_days_option:
+                    # 滾動到選項位置確保可見
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block: 'center'});",
+                        past_30_days_option)
+                    time.sleep(1)  # 從2秒減少到1秒
+                    past_30_days_option.click()
+                    print("已選擇「過去 30 天」")
+
+                    # 等待日期選擇面板消失或更新
+                    time.sleep(1.5)  # 從3秒減少到1.5秒
                 else:
-                    # Fallback to 4th option
-                    if len(options) >= 4:
-                        self.actions.click_safely(options[3])
+                    # 如果找不到特定文字，嘗試直接點擊第四個選項
+                    try:
+                        if len(date_options) >= 4:
+                            fourth_option = date_options[3]
+                            self.driver.execute_script(
+                                "arguments[0].scrollIntoView({block: 'center'});",
+                                fourth_option)
+                            time.sleep(1)  # 從2秒減少到1秒
+                            fourth_option.click()
+                            print(f"已點擊第四個日期選項: {fourth_option.text}")
+
+                            # 等待選擇生效
+                            time.sleep(1.5)  # 從3秒減少到1.5秒
+                        else:
+                            print("日期選項數量不足，無法選擇第四個選項")
+                    except Exception as e:
+                        print(f"嘗試點擊第四個日期選項時出錯: {e}")
+
             except Exception as e:
-                logger.error(f"Error selecting date: {e}")
+                print(f"選擇日期範圍時出錯: {e}")
 
-            time.sleep(2)
-
-            # Search for product
+            # 在搜尋框中輸入商品名稱
             try:
-                search_input = self.actions.wait_for_element(By.CSS_SELECTOR, "input[placeholder='搜尋商品']")
-                if search_input:
-                    search_input.clear()
-                    search_input.send_keys(keyword)
-                    search_input.send_keys(Keys.RETURN)
-                    time.sleep(3)
-            except Exception as e:
-                logger.error(f"Error searching product: {e}")
+                # 點擊篩選按鈕
+                try:
+                    search_button = self.driver.find_element(
+                        By.CSS_SELECTOR,
+                        "button.eds-button.eds-button--primary.eds-button--normal.eds-button--outline"
+                    )
 
-            # Process results
-            self.expand_all_rows()
-            self._extract_monthly_sales_from_table()
+                    # 滾動到按鈕位置
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block: 'center'});",
+                        search_button)
 
-        except Exception as e:
-            logger.error(f"Error in get_monthly_sales: {e}")
+                    # 點擊按鈕
+                    search_button.click()
+                    print("已點擊搜尋按鈕")
 
-    def _extract_monthly_sales_from_table(self):
-        """Extracts sales data from the data center table."""
-        try:
-            rows = self.driver.find_elements(By.CSS_SELECTOR, ".el-table__row")
-            current_pid = None
-            
-            for row in rows:
-                if "el-table__row--level-0" in row.get_attribute("class"):
-                    try:
-                        subtitle = row.find_element(By.CSS_SELECTOR, ".item-subtitle").text
-                        match = re.search(r'商品ID:\s*(\d+)', subtitle)
-                        if match:
-                            current_pid = match.group(1)
-                    except:
-                        current_pid = None
-                else:
-                    if current_pid and current_pid in self.products_data:
+                    # 等待篩選面板出現
+                    time.sleep(0.5)
+
+                    # 初始化 selected_item 變數
+                    selected_item = None
+
+                    # 遍歷每個 multi-selector__section，尋找「可出貨訂單」
+                    sections = self.driver.find_elements(
+                        By.CSS_SELECTOR, ".multi-selector__section")
+                    print(f"找到 {len(sections)} 個 multi-selector__section")
+
+                    # 第一次遍歷：找到「可出貨訂單」並勾選其下的商品數 checkbox
+                    for section in sections:
                         try:
-                            model_name = row.find_element(By.CSS_SELECTOR, ".product-model span").text.strip()
-                            # Try to find sales number
+                            # 尋找 section 名稱
+                            section_name_element = section.find_element(
+                                By.CSS_SELECTOR, ".multi-selector__name")
+                            section_name = section_name_element.text.strip()
+                            print(f"檢查 section: {section_name}")
+
+                            # 如果是「可出貨訂單」section
+                            if "可出貨訂單" in section_name:
+                                print(f"找到「可出貨訂單」section")
+
+                                # 尋找該 section 下的 multi-selector__list
+                                selector_list = section.find_element(
+                                    By.CSS_SELECTOR, ".multi-selector__list")
+
+                                # 先取得所有項目文字，找出「商品數」的索引
+                                list_items = selector_list.find_elements(
+                                    By.CSS_SELECTOR, ".multi-selector__item")
+                                product_count_index = -1
+
+                                for index, item in enumerate(list_items):
+                                    try:
+                                        item_text = item.text.strip()
+                                        if "商品數" in item_text:
+                                            print(
+                                                f"找到商品數項目: {item_text}，索引為 {index}"
+                                            )
+                                            product_count_index = index
+                                            break
+                                    except Exception as e:
+                                        print(f"讀取項目文字時出錯: {e}")
+                                        continue
+
+                                # 如果找到商品數的索引，直接處理對應的 checkbox
+                                if product_count_index >= 0:
+                                    try:
+                                        # 取得所有 checkbox items
+                                        checkbox_items = selector_list.find_elements(
+                                            By.CSS_SELECTOR,
+                                            ".multi-selector__item.mb-16")
+                                        if len(checkbox_items
+                                               ) > product_count_index:
+                                            target_item = checkbox_items[
+                                                product_count_index]
+
+                                            # 檢查是否已勾選
+                                            is_checked = "selected" in target_item.get_attribute(
+                                                "class")
+                                            print(
+                                                f"商品數 checkbox 勾選狀態: {is_checked}"
+                                            )
+
+                                            # 如果未勾選，則點擊勾選
+                                            if not is_checked:
+                                                self.driver.execute_script(
+                                                    "arguments[0].scrollIntoView({block: 'center'});",
+                                                    target_item)
+                                                time.sleep(0.5)
+                                                # 使用 JavaScript 設置 class
+                                                self.driver.execute_script(
+                                                    "arguments[0].className = 'multi-selector__item mb-16 selected';",
+                                                    target_item)
+                                                print("已勾選商品數 checkbox")
+
+                                            # 記錄這個 checkbox item
+                                            selected_item = target_item
+                                    except Exception as checkbox_error:
+                                        print(
+                                            f"處理 checkbox 時出錯: {checkbox_error}"
+                                        )
+                                else:
+                                    print("未找到商品數項目")
+
+                                break  # 找到「可出貨訂單」section 後跳出循環
+                        except Exception as section_error:
+                            print(f"處理 section 時出錯: {section_error}")
+
+                    # 第二次遍歷：取消勾選其他所有 checkbox
+                    if selected_item:
+                        print("開始取消勾選其他 checkbox")
+                        for section in sections:
                             try:
-                                sales_elem = row.find_element(By.CSS_SELECTOR, ".currency-value")
-                                sales = ProductParser.convert_sales_number(sales_elem.text)
-                            except:
-                                sales = "0"
-                            
-                            # Update data
-                            models = self.products_data[current_pid]['型號']
-                            for m in models:
-                                if m['型號名稱'] == model_name:
-                                    m['月銷量'] = sales
-                                    break
-                        except:
-                            pass
-        except Exception as e:
-            logger.error(f"Error extracting monthly sales: {e}")
+                                # 尋找該 section 下的所有 checkbox items
+                                checkbox_items = section.find_elements(
+                                    By.CSS_SELECTOR,
+                                    ".multi-selector__item.mb-16")
 
-    def save_data(self):
-        """Saves collected data to JSON."""
-        try:
-            # Calculate total monthly sales for sorting
-            for pid, pdata in self.products_data.items():
-                total = 0
-                for m in pdata['型號']:
+                                for item in checkbox_items:
+                                    # 跳過已選中的 checkbox
+                                    if item == selected_item:
+                                        continue
+
+                                    # 檢查是否已勾選
+                                    is_checked = "selected" in item.get_attribute(
+                                        "class")
+
+                                    # 如果已勾選，則取消勾選
+                                    if is_checked:
+                                        # 滾動到元素，確保可見
+                                        self.driver.execute_script(
+                                            "arguments[0].scrollIntoView({block: 'center'});",
+                                            item)
+                                        time.sleep(0.5)  # 給足夠時間讓元素完全可見
+
+                                        # 使用 JavaScript 點擊元素
+                                        try:
+                                            self.driver.execute_script(
+                                                "arguments[0].click();", item)
+                                            time.sleep(0.5)  # 等待點擊響應
+
+                                            # 檢查是否成功取消勾選
+                                            is_still_checked = "selected" in item.get_attribute(
+                                                "class")
+                                            if not is_still_checked:
+                                                print(
+                                                    "已成功取消勾選一個 checkbox (使用 JavaScript 點擊)"
+                                                )
+                                            else:
+                                                # 如果 JavaScript 點擊失敗，嘗試使用 Selenium 點擊
+                                                try:
+                                                    item.click()
+                                                    time.sleep(0.5)
+
+                                                    # 再次檢查
+                                                    is_still_checked = "selected" in item.get_attribute(
+                                                        "class")
+                                                    if not is_still_checked:
+                                                        print(
+                                                            "已成功取消勾選一個 checkbox (使用 Selenium 點擊)"
+                                                        )
+                                                    else:
+                                                        # 如果直接點擊也失敗，嘗試使用 ActionChains
+                                                        actions = ActionChains(
+                                                            self.driver)
+                                                        actions.move_to_element(
+                                                            item).click(
+                                                            ).perform()
+                                                        time.sleep(0.5)
+
+                                                        is_still_checked = "selected" in item.get_attribute(
+                                                            "class")
+                                                        if not is_still_checked:
+                                                            print(
+                                                                "已成功取消勾選一個 checkbox (使用 ActionChains)"
+                                                            )
+                                                        else:
+                                                            print(
+                                                                "警告：無法取消勾選 checkbox，已嘗試多種方法"
+                                                            )
+                                                except Exception as selenium_click_error:
+                                                    print(
+                                                        f"Selenium 點擊失敗: {selenium_click_error}"
+                                                    )
+                                        except Exception as js_click_error:
+                                            print(
+                                                f"JavaScript 點擊失敗: {js_click_error}"
+                                            )
+                                            # 嘗試使用 Selenium 點擊
+                                            try:
+                                                item.click()
+                                                print("已使用 Selenium 點擊取消勾選")
+                                            except Exception as selenium_click_error:
+                                                print(
+                                                    f"Selenium 點擊也失敗: {selenium_click_error}"
+                                                )
+                            except Exception as checkbox_error:
+                                print(f"處理 checkbox 時出錯: {checkbox_error}")
+
+                    # 等待頁面更新
+                    time.sleep(2)
+
+                except Exception as e:
+                    print(f"處理 checkbox 時出錯: {e}")
+
+                # 等待搜尋框出現
+                search_input = WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, "input[placeholder='搜尋商品']")))
+
+                # 確保輸入框可見並可交互
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});",
+                    search_input)
+                time.sleep(0.5)
+
+                # 清空搜尋框
+                search_input.clear()
+
+                # 使用 JavaScript 設置值並觸發事件
+                self.driver.execute_script(
+                    """
+                    const input = arguments[0];
+                    const value = arguments[1];
+                    
+                    // 設置值
+                    input.value = value;
+                    
+                    // 創建並觸發 input 事件
+                    const inputEvent = new Event('input', { bubbles: true });
+                    input.dispatchEvent(inputEvent);
+                    
+                    // 創建並觸發 change 事件
+                    const changeEvent = new Event('change', { bubbles: true });
+                    input.dispatchEvent(changeEvent);
+                """, search_input, product_name)
+
+                print(f"已在搜尋框中輸入商品名稱: {product_name}")
+
+                # 如果 JavaScript 方式失敗，嘗試直接輸入
+                actual_value = search_input.get_attribute('value')
+                if not actual_value:
+                    search_input.send_keys(product_name)
+                    time.sleep(0.5)
+
+                # 按下 Enter 鍵
+                search_input.send_keys(Keys.RETURN)
+                print("已按下 Enter 鍵進行搜尋")
+
+                # 等待搜尋結果加載
+                print("等待搜尋結果加載...")
+                time.sleep(3)
+
+                page = 1
+                has_next_page = True
+
+                while has_next_page:
+                    print(f"\n===== 正在處理第 {page} 頁 =====")
+                    # 展開所有表格行
+                    print("展開所有表格行...")
+                    self.expand_all_rows_svg()
+
+                    # 提取月銷量數據
+                    self.extract_monthly_sales_data()
+
+                    # 檢查是否有下一頁
+                    has_next_page = self.go_to_next_page()  # 假設此方法檢查並跳轉到下一頁
+                    if has_next_page:
+                        page += 1
+                        time.sleep(3)
+                    else:
+                        print("已到達最後一頁")
+
+                return self.products_data
+
+            except Exception as e:
+                print(f"搜尋商品時出錯: {e}")
+                import traceback
+                traceback.print_exc()
+
+                # 嘗試使用更直接的方法
+                try:
+                    print("嘗試使用替代方法輸入搜尋關鍵字...")
+                    # 嘗試使用 XPath 定位輸入框
+                    search_input = self.driver.find_element(
+                        By.XPATH, "//input[@placeholder='搜尋商品']")
+
+                    # 清空並輸入
+                    search_input.clear()
+                    search_input.send_keys(product_name)
+
+                    # 嘗試點擊搜尋圖標
                     try:
-                        total += int(m.get('月銷量', 0))
-                    except: pass
-                pdata['總月銷量'] = str(total)
+                        search_icon = self.driver.find_element(
+                            By.XPATH,
+                            "//i[contains(@class, 'eds-input__suffix-icon')]")
+                        search_icon.click()
+                        print("已點擊搜尋圖標")
+                    except:
+                        # 如果找不到圖標，嘗試按 Enter 鍵
+                        search_input.send_keys(Keys.ENTER)
+                        print("已按下 Enter 鍵進行搜尋")
 
-            # Sort
-            sorted_items = sorted(
-                self.products_data.items(),
-                key=lambda x: int(x[1].get('總月銷量', 0)),
-                reverse=True
-            )
-            sorted_data = {k: v for k, v in sorted_items}
+                    # 等待搜尋結果加載
+                    time.sleep(5)
 
-            with open(self.output_path, 'w', encoding='utf-8') as f:
-                json.dump(sorted_data, f, ensure_ascii=False, indent=4)
-            logger.info(f"Data saved to {self.output_path}")
+                    # 展開所有表格行
+                    print("展開所有表格行...")
+                    self.expand_all_rows_svg()
+
+                    # 提取月銷量數據
+                    self.extract_monthly_sales_data()
+
+                    return self.products_data
+                except Exception as e2:
+                    print(f"替代搜尋方法也失敗: {e2}")
+
+                return self.products_data
+
         except Exception as e:
-            logger.error(f"Error saving data: {e}")
+            print(f"爬取月銷量數據時出錯: {e}")
+            import traceback
+            traceback.print_exc()
+            return self.products_data
+
+    def extract_monthly_sales_data(self):
+        """
+        從頁面提取月銷量數據，並更新 self.products_data 中的型號資訊
+        """
+        try:
+            # 獲取所有表格行
+            table_rows = self.driver.find_elements(By.CSS_SELECTOR,
+                                                   ".el-table__row")
+            print(f"找到 {len(table_rows)} 行數據")
+
+            current_product_id = None
+            i = 0
+
+            while i < len(table_rows):
+                try:
+                    row = table_rows[i]
+                    # 檢查是否為主商品行（level-0）
+                    is_main_product = "el-table__row--level-0" in row.get_attribute(
+                        "class")
+
+                    if is_main_product:
+                        # 獲取商品 ID
+                        try:
+                            item_subtitle = row.find_element(
+                                By.CSS_SELECTOR, ".item-subtitle").text
+                            product_id_match = re.search(
+                                r'商品ID:\s*(\d+)', item_subtitle)
+                            if product_id_match:
+                                current_product_id = product_id_match.group(1)
+                                print(f"\n處理商品 ID: {current_product_id}")
+
+                        except Exception as e:
+                            print(f"獲取商品ID時出錯: {e}")
+                            current_product_id = None
+
+                    else:  # 處理型號行 (level-1)
+                        if current_product_id and current_product_id in self.products_data:
+                            try:
+                                # 獲取型號名稱
+                                model_name_element = row.find_element(
+                                    By.CSS_SELECTOR, ".product-model span")
+                                model_name = model_name_element.text.strip()
+
+                                # 獲取商品件數（可出貨訂單）
+                                try:
+                                    print(f"正在處理型號 {model_name} 的月銷量數據")
+                                    # 尋找包含月銷量的元素
+                                    # 根據最新的 HTML 結構調整選擇器
+                                    try:
+                                        # 先嘗試找 label 元素
+                                        sales_element = row.find_element(
+                                            By.CSS_SELECTOR, "label.nest-item")
+
+                                        # 從該元素中找到 number 元素，然後找到 currency-value 元素
+                                        number_element = sales_element.find_element(
+                                            By.CSS_SELECTOR, ".number")
+                                        currency_value_element = number_element.find_element(
+                                            By.CSS_SELECTOR, ".currency-value")
+                                    except NoSuchElementException:
+                                        try:
+                                            # 如果找不到，嘗試直接找 number 元素，然後找 currency-value
+                                            number_element = row.find_element(
+                                                By.CSS_SELECTOR, ".number")
+                                            currency_value_element = number_element.find_element(
+                                                By.CSS_SELECTOR,
+                                                ".currency-value")
+                                        except NoSuchElementException:
+                                            # 如果還是找不到，嘗試直接找 currency-value
+                                            currency_value_element = row.find_element(
+                                                By.CSS_SELECTOR,
+                                                ".currency-value")
+                                            print("直接找到 currency-value 元素")
+
+                                    # 獲取文本並去除空白
+                                    sales_text = currency_value_element.text.strip(
+                                    )
+                                    print(
+                                        f"原始 currency-value 文本: '{sales_text}'"
+                                    )
+
+                                    # 處理逗點符號，例如將 "1,324" 轉換為 "1324"
+                                    sales_value = sales_text.replace(",", "")
+
+                                    # 如果文本為空，設為 0
+                                    if not sales_value:
+                                        print("警告: currency-value 文本為空")
+                                        sales_value = "0"
+
+                                    print(
+                                        f"爬取到的月銷量: {sales_text} -> 處理後: {sales_value}"
+                                    )
+                                except NoSuchElementException:
+                                    print("找不到月銷量元素")
+                                    sales_value = "0"
+                                except Exception as e:
+                                    print(f"爬取月銷量時出錯: {e}")
+                                    sales_value = "0"
+
+                                # 更新型號的月銷量
+                                # 檢查型號資料結構是數組還是字典
+                                if isinstance(
+                                        self.products_data[current_product_id]
+                                    ["型號"], list):
+                                    # 如果是數組，遍歷查找匹配的型號
+                                    for model in self.products_data[
+                                            current_product_id]["型號"]:
+                                        if model["型號名稱"] == model_name:
+                                            model["月銷量"] = sales_value
+                                            print(
+                                                f"已更新型號 {model_name} 的月銷量為 {sales_value}"
+                                            )
+                                            break
+                                    else:
+                                        print(
+                                            f"警告：在商品 {current_product_id} 中找不到型號 {model_name}"
+                                        )
+                                elif isinstance(
+                                        self.products_data[current_product_id]
+                                    ["型號"], dict):
+                                    # 如果是字典，直接用型號名稱作為鍵
+                                    if model_name in self.products_data[
+                                            current_product_id]["型號"]:
+                                        self.products_data[current_product_id][
+                                            "型號"][model_name][
+                                                "月銷量"] = sales_value
+                                        print(
+                                            f"已更新型號 {model_name} 的月銷量為 {sales_value}"
+                                        )
+                                    else:
+                                        print(
+                                            f"警告：在商品 {current_product_id} 中找不到型號 {model_name}"
+                                        )
+                                else:
+                                    print(
+                                        f"警告：商品 {current_product_id} 的型號資料結構不是數組也不是字典"
+                                    )
+
+                            except Exception as model_error:
+                                print(f"處理型號資料時出錯: {model_error}")
+
+                    # 移動到下一行
+                    i += 1
+
+                except Exception as row_error:
+                    print(f"處理表格行時出錯: {row_error}")
+                    i += 1  # 確保即使出錯也能繼續處理下一行
+                    continue
+
+            print("月銷量數據更新完成")
+
+        except Exception as e:
+            print(f"提取月銷量數據時出錯: {e}")
+            import traceback
+            traceback.print_exc()
 
     def run(self):
-        """Main execution flow."""
+        """
+        執行爬蟲主流程
+        """
         try:
+            # 初始化產品資料字典
+            self.products_data = {}
+
+            # 登入蝦皮
             self.login()
+            print("登入成功")
+
+            # 展開所有行
             self.expand_all_rows()
-            
-            # Get basic info
-            rows = self.driver.find_elements(By.CLASS_NAME, 'eds-table__row')
-            for row in rows:
-                info = self.get_product_info(row)
-                if info:
-                    self.products_data[info['商品ID']] = info
-            
-            logger.info(f"Collected {len(self.products_data)} products")
+            print("已展開所有行")
 
-            if self.search_keyword:
-                self.get_monthly_sales(self.search_keyword)
+            # 獲取所有商品資訊
+            self.get_all_products_info()
+            print("已獲取所有商品基本資訊")
 
-            self.save_data()
+            print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
+            self.get_monthly_sales(self.search_keyword)
+            print("月銷量查詢完成")
+
+            # 完成所有資料收集後，一次性儲存 JSON 檔案
+            self.save_to_file(self.products_data)
+            print(f"所有資料已儲存至 {self.output_path}")
+
             return self.products_data
 
         except Exception as e:
-            logger.error(f"Crawler run failed: {e}")
+            print(f"爬蟲執行過程中出錯: {e}")
+            import traceback
+            traceback.print_exc()
+
+            # 即使出錯，也嘗試儲存已收集的資料
+            if hasattr(self, 'products_data') and self.products_data:
+                self.save_to_file(self.products_data)
+                print(f"已儲存部分收集的資料至 {self.output_path}")
+
+            return None
         finally:
-            if self.driver:
+            # 關閉瀏覽器
+            if hasattr(self, 'driver'):
                 self.driver.quit()
+                print("瀏覽器已關閉")
+
+    def go_to_next_page(self):
+        """
+        嘗試點擊下一頁按鈕
+        :return: 如果成功點擊下一頁則返回 True，否則返回 False
+        """
+        try:
+            # 尋找下一頁按鈕，使用您提供的 class
+            next_page_selectors = [
+                "//button[contains(@class, 'eds-pager__button-next')]",
+                "//button[contains(@class, 'eds-button--frameless') and contains(@class, 'eds-pager__button-next')]",
+                "//button[contains(@class, 'eds-button eds-button--small eds-button--frameless eds-button--block eds-pager__button-next')]",
+                # 保留原有的選擇器作為備用
+                "//button[contains(@class, 'pagination-next') and not(@disabled)]",
+                "//li[contains(@class, 'next')]/button",
+                "//div[contains(@class, 'pagination')]//button[contains(text(), '下一頁') or contains(text(), '›')]"
+            ]
+
+            next_button = None
+            for selector in next_page_selectors:
+                buttons = self.driver.find_elements(By.XPATH, selector)
+                if buttons and len(buttons) > 0:
+                    # 檢查按鈕是否被禁用
+                    if not buttons[0].get_attribute('disabled'):
+                        next_button = buttons[0]
+                        print(f"找到下一頁按鈕: {buttons[0].get_attribute('class')}")
+                        break
+                    else:
+                        print(
+                            f"找到下一頁按鈕，但已被禁用: {buttons[0].get_attribute('class')}"
+                        )
+
+            if not next_button:
+                print("未找到下一頁按鈕或已到達最後一頁")
+                return False
+
+            # 滾動到按鈕位置
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center'});", next_button)
+
+            # 確保按鈕可見
+            WebDriverWait(self.driver, 2).until(EC.visibility_of(next_button))
+
+            # 獲取當前頁面的某些特徵以便檢查是否成功跳轉
+            current_url = self.driver.current_url
+            current_page_text = ""
+            try:
+                # 嘗試獲取當前頁碼文本
+                page_indicators = self.driver.find_elements(
+                    By.XPATH,
+                    "//div[contains(@class, 'eds-pager__page-indicator')]")
+                if page_indicators:
+                    current_page_text = page_indicators[0].text
+                    print(f"當前頁碼: {current_page_text}")
+            except:
+                pass
+
+            # 嘗試點擊
+            try:
+                print("嘗試直接點擊下一頁按鈕")
+                next_button.click()
+            except Exception as click_error:
+                print(f"直接點擊失敗: {click_error}，嘗試使用 JavaScript 點擊")
+                # 如果直接點擊失敗，使用 JavaScript 點擊
+                self.driver.execute_script("arguments[0].click();",
+                                           next_button)
+
+            # 等待頁面加載
+            print("等待頁面加載...")
+            time.sleep(5)
+            return True
+
+        except Exception as e:
+            print(f"嘗試跳轉到下一頁時出錯: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def delete_temp_files(self, file_paths):
+        """
+        刪除暫存檔
+        :param file_paths: 要刪除的檔案路徑列表
+        """
+        import os
+
+        print(f"開始刪除 {len(file_paths)} 個暫存檔...")
+
+        for file_path in file_paths:
+            try:
+                os.remove(file_path)
+                print(f"已刪除暫存檔: {file_path}")
+            except Exception as e:
+                print(f"刪除暫存檔 {file_path} 時出錯: {e}")
+
+        print("暫存檔刪除完成")
+
+    def is_valid_product(self, product_info):
+        """
+        Check if a product is valid based on essential fields.
+        
+        Args:
+            product_info (dict): Product information dictionary
+        
+        Returns:
+            bool: True if valid, False otherwise
+        """
+        if not product_info:
+            return False
+
+        # Essential fields must not be "未找到" or empty
+        essential_fields = ['商品ID', '商品名稱', '已售出總數量']
+        for field in essential_fields:
+            value = product_info.get(field, "未找到")
+            if value == "未找到" or not str(value).strip():
+                print(f"商品無效：缺少或無效的 {field}")
+                return False
+
+        # At least one model should have meaningful data if models exist
+        if product_info['型號']:
+            has_valid_model = False
+            for model in product_info['型號']:
+                if not all(value in ['未找到', '未知型號']
+                           for value in model.values()):
+                    has_valid_model = True
+                    break
+            if not has_valid_model:
+                print("商品無效：所有型號數據無效")
+                return False
+
+        return True
+
+    def get_image_with_retry(self, element, max_retries=5, wait_time=2):
+        """
+        嘗試多次獲取圖片 URL，直到成功或達到最大重試次數
+        改進版本：正確識別和過濾 base64 格式的圖片URL
+        
+        Args:
+            element: 包含圖片的元素
+            max_retries: 最大重試次數
+            wait_time: 每次重試間隔時間（秒）
+            
+        Returns:
+            str: 圖片 URL 或 "未找到"
+        """
+        print(f"開始獲取圖片URL，最大重試次數: {max_retries}")
+
+        for attempt in range(max_retries):
+            try:
+                print(f"第 {attempt+1}/{max_retries} 次嘗試獲取圖片...")
+
+                # 方法1: 嘗試找到 img 標籤
+                img_url = self._try_get_img_tag_url(element, attempt,
+                                                    wait_time)
+                if img_url and img_url != "未找到":
+                    return img_url
+
+                # 方法2: 嘗試從 style 屬性中提取 background-image
+                style_url = self._try_get_style_url(element, attempt)
+                if style_url and style_url != "未找到":
+                    return style_url
+
+                # 方法3: 嘗試從 data 屬性中獲取
+                data_url = self._try_get_data_url(element, attempt)
+                if data_url and data_url != "未找到":
+                    return data_url
+
+                # 如果所有方法都失敗，等待後重試
+                if attempt < max_retries - 1:
+                    print(f"第 {attempt+1} 次嘗試失敗，等待 {wait_time} 秒後重試...")
+                    time.sleep(wait_time)
+
+                    # 嘗試滾動到元素位置，確保可見
+                    try:
+                        self.driver.execute_script(
+                            "arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});",
+                            element)
+                        time.sleep(0.5)
+                    except:
+                        pass
+
+            except Exception as e:
+                print(f"獲取圖片時發生異常 (嘗試 {attempt+1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(wait_time)
+
+        print("所有重試嘗試都失敗，返回 '未找到'")
+        return "未找到"
+
+    def _try_get_img_tag_url(self, element, attempt, wait_time):
+        """嘗試從 img 標籤獲取 URL"""
+        try:
+            # 嘗試找到 img 標籤
+            img_element = element.find_element(By.TAG_NAME, 'img')
+
+            # 等待圖片加載完成，增加更詳細的檢查
+            for wait_attempt in range(3):
+                is_image_loaded = self.driver.execute_script(
+                    "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
+                    img_element)
+
+                if is_image_loaded:
+                    break
+
+                print(f"  圖片尚未加載完成，等待中... (等待嘗試 {wait_attempt+1}/3)")
+                time.sleep(wait_time)
+
+            # 獲取圖片 URL
+            image_url = img_element.get_attribute('src')
+            if image_url and image_url.strip():
+                image_url = self._normalize_url(image_url)
+                if self._is_valid_image_url(image_url):
+                    print(f"  成功從 img 標籤獲取圖片 URL: {image_url}")
+                    return image_url
+                else:
+                    print(f"  獲取到無效的圖片URL (base64格式): {image_url[:50]}...")
+
+        except Exception as e:
+            print(f"  從 img 標籤獲取圖片失敗: {e}")
+
+        return "未找到"
+
+    def _try_get_style_url(self, element, attempt):
+        """嘗試從 style 屬性中提取 background-image URL"""
+        try:
+            style = element.get_attribute('style')
+            if style and 'background-image' in style:
+                url_match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
+                if url_match:
+                    image_url = url_match.group(1).strip()
+                    if image_url:
+                        image_url = self._normalize_url(image_url)
+                        if self._is_valid_image_url(image_url):
+                            print(f"  成功從 style 屬性獲取圖片 URL: {image_url}")
+                            return image_url
+                        else:
+                            print(
+                                f"  從style獲取到無效的圖片URL (base64格式): {image_url[:50]}..."
+                            )
+        except Exception as e:
+            print(f"  從 style 屬性獲取圖片失敗: {e}")
+
+        return "未找到"
+
+    def _try_get_data_url(self, element, attempt):
+        """嘗試從 data 屬性中獲取圖片 URL"""
+        try:
+            # 檢查常見的 data 屬性
+            data_attrs = [
+                'data-src', 'data-lazy', 'data-original', 'data-srcset'
+            ]
+            for attr in data_attrs:
+                try:
+                    image_url = element.get_attribute(attr)
+                    if image_url and image_url.strip():
+                        image_url = self._normalize_url(image_url)
+                        if self._is_valid_image_url(image_url):
+                            print(f"  成功從 {attr} 屬性獲取圖片 URL: {image_url}")
+                            return image_url
+                        else:
+                            print(
+                                f"  從{attr}獲取到無效的圖片URL (base64格式): {image_url[:50]}..."
+                            )
+                except:
+                    continue
+        except Exception as e:
+            print(f"  從 data 屬性獲取圖片失敗: {e}")
+
+        return "未找到"
+
+    def _normalize_url(self, url):
+        """標準化 URL 格式"""
+        if not url or url == "未找到":
+            return "未找到"
+
+        # 移除URL中的多餘空格
+        url = url.strip()
+
+        # 如果URL不是以http或https開頭，添加https前綴
+        if not url.startswith('http://') and not url.startswith('https://'):
+            # 移除開頭的 //（如果有）
+            if url.startswith('//'):
+                url = url[2:]
+            url = 'https://' + url
+
+        return url
+
+    def _is_valid_image_url(self, url):
+        """
+        驗證圖片URL是否有效
+        正確的URL應該是真實的圖片URL，而不是base64格式的佔位符
+        """
+        if not url or url == "未找到":
+            return False
+
+        # 檢查是否為base64格式的圖片（這些是無效的佔位符）
+        if url.startswith('data:image/'):
+            print(f"  檢測到base64格式的佔位符圖片: {url[:50]}...")
+            return False
+
+        # 檢查是否包含基本的圖片文件擴展名
+        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']
+        url_lower = url.lower()
+
+        # 檢查是否包含圖片擴展名或常見的圖片服務域名
+        has_image_extension = any(ext in url_lower for ext in image_extensions)
+        has_image_domain = any(domain in url_lower for domain in [
+            'shopee.tw', 'cf.shopee.tw', 'imgur.com', 'amazonaws.com',
+            'cloudfront.net', 'cdn.shopee.tw'
+        ])
+
+        # 檢查URL長度（base64圖片通常很長）
+        is_reasonable_length = len(url) < 500  # 真實的圖片URL通常不會太長
+
+        return (has_image_extension
+                or has_image_domain) and is_reasonable_length
+
+    def find_expand_icons(self):
+        """
+        尋找所有表格展開圖標（class="el-table__expand-icon"），確保未展開且排除 checkbox。
+        
+        Returns:
+            list: 找到的展開圖標元素列表
+        """
+        try:
+            expand_icons = []
+
+            # 尋找所有帶有 el-table__expand-icon 類的元素，不過濾展開狀態
+            el_table_icons = self.driver.find_elements(
+                By.CSS_SELECTOR, ".el-table__expand-icon")
+            print(f"找到 {len(el_table_icons)} 個 el-table__expand-icon 元素")
+
+            for icon in el_table_icons:
+                try:
+                    # 檢查是否已展開
+                    is_expanded = "el-table__expand-icon--expanded" in icon.get_attribute(
+                        "class")
+                    if is_expanded:
+                        continue
+
+                    # 檢查是否包含 SVG 元素
+                    try:
+                        # 先嘗試直接找 SVG
+                        svg = icon.find_element(By.TAG_NAME, "svg")
+                    except:
+                        # 如果直接找不到，嘗試通過 i 元素找
+                        try:
+                            i_element = icon.find_element(
+                                By.CLASS_NAME, "el-icon")
+                            svg = i_element.find_element(By.TAG_NAME, "svg")
+                        except:
+                            # 如果還找不到，跳過此元素
+                            print("此元素不包含 SVG")
+                            continue
+
+                    # 檢查 SVG 是否為目標結構（不再檢查 viewBox 和 path 的具體值）
+                    # 只要確認它是展開圖標即可
+
+                    # 排除 checkbox 相關元素
+                    parent_element = self.driver.execute_script(
+                        """
+                        let element = arguments[0];
+                        let parent = element.parentNode;
+                        // 向上查找最多5層父元素
+                        for (let i = 0; i < 5; i++) {
+                            if (!parent) break;
+                            if (parent.className && 
+                                (parent.className.includes('checkbox') || 
+                                 parent.className.includes('select'))) {
+                                return parent;
+                            }
+                            parent = parent.parentNode;
+                        }
+                        return null;
+                    """, icon)
+
+                    if parent_element:
+                        # 如果找到了 checkbox 相關的父元素，跳過此圖標
+                        continue
+
+                    # 檢查是否在可見區域內
+                    is_visible = self.driver.execute_script(
+                        """
+                        const elem = arguments[0];
+                        const rect = elem.getBoundingClientRect();
+                        return (
+                            rect.top >= 0 &&
+                            rect.left >= 0 &&
+                            rect.bottom <= (window.innerHeight || document.documentElement.clientHeight) &&
+                            rect.right <= (window.innerWidth || document.documentElement.clientWidth)
+                        );
+                    """, icon)
+
+                    if not is_visible:
+                        # 如果不在可見區域內，嘗試滾動到該元素
+                        self.driver.execute_script(
+                            "arguments[0].scrollIntoView({block: 'center'});",
+                            icon)
+                        time.sleep(0.2)  # 等待滾動完成
+
+                    # 添加到結果列表
+                    expand_icons.append(icon)
+
+                except Exception as e:
+                    print(f"檢查展開圖標時發生錯誤: {e}")
+                    continue
+
+            print(f"找到 {len(expand_icons)} 個符合條件的展開圖標")
+            return expand_icons
+
+        except Exception as e:
+            print(f"尋找展開圖標時發生錯誤: {e}")
+            return []
+
+    def _is_expanded_svg(self, svg_element):
+        """
+        檢查 SVG 元素是否已經展開
+        
+        Args:
+            svg_element: SVG 元素
+            
+        Returns:
+            bool: 如果已展開則返回 True，否則返回 False
+        """
+        try:
+            # 檢查 SVG 是否旋轉 90 度（表示已展開）
+            transform = svg_element.get_attribute("style")
+            if transform and "rotate(90deg)" in transform:
+                return True
+
+            # 檢查父元素是否有展開標記
+            parent = self.driver.execute_script(
+                "return arguments[0].parentNode;", svg_element)
+            if parent:
+                parent_class = parent.get_attribute("class") or ""
+                if "expanded" in parent_class.lower():
+                    return True
+
+            return False
+        except:
+            return False
+
+    def expand_all_rows_svg(self):
+        """
+        展開所有表格行，點擊找到的展開圖標。
+        """
+        try:
+            expand_icons = self.find_expand_icons()
+            total_expanded = 0
+
+            for i, icon in enumerate(expand_icons, 1):
+                self.driver.execute_script(
+                    "arguments[0].scrollIntoView({block: 'center'});", icon)
+                time.sleep(0.5)
+                self.driver.execute_script("arguments[0].click();", icon)
+                print(f"已展開第 {i} 個表格行")
+                total_expanded += 1
+                time.sleep(0.8)
+
+            print(f"總共成功展開 {total_expanded} 個表格行")
+            return total_expanded
+
+        except Exception as e:
+            print(f"展開表格行時發生錯誤: {e}")
+            return 0
+
+    def expand_all_rows(self):
+        """整合所有展開行的方法，減少冗餘代碼"""
+        try:
+            # 先嘗試使用 SVG 方式展開
+            if self.expand_all_rows_svg():
+                return True
+
+            # 如果 SVG 方式失敗，嘗試使用按鈕方式展開
+            return self.expand_all_buttons()
+        except Exception as e:
+            print(f"展開所有行時出錯: {e}")
+            return False
+
+    def find_expand_buttons(self):
+        """
+        尋找頁面中標有「展開全部」的按鈕
+        Returns:
+            list: 包含「展開全部」文字的按鈕元素列表
+        """
+        try:
+            # 使用 XPath 查找按鈕
+            expand_buttons = self.driver.find_elements(
+                By.XPATH, "//button[.//span[contains(., '展開全部')]]")
+
+            # 過濾出可見的按鈕
+            visible_buttons = [
+                button for button in expand_buttons if button.is_displayed()
+            ]
+
+            print(f"總共找到 {len(visible_buttons)} 個標有「展開全部」的按鈕")
+            return visible_buttons
+        except Exception as e:
+            print(f"尋找「展開全部」按鈕時出錯: {e}")
+            return []
+
+    def expand_all_buttons(self):
+        """
+        點擊所有標有「展開全部」的按鈕
+        Returns:
+            int: 成功點擊的按鈕數量
+        """
+        try:
+            total_expanded = 0
+            expand_buttons = self.find_expand_buttons()
+
+            if not expand_buttons:
+                print("未找到標有「展開全部」的按鈕")
+                return 0
+
+            # 批量處理按鈕，減少單獨滾動次數
+            for i, button in enumerate(expand_buttons, 1):
+                try:
+                    # 使用更高效的滾動方式，不使用平滑滾動以節省時間
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block: 'center', behavior: 'auto'});",
+                        button)
+
+                    # 減少等待時間，使用更短的超時
+                    try:
+                        WebDriverWait(self.driver, 2).until(
+                            EC.element_to_be_clickable(button))
+                    except:
+                        # 如果等待超時，直接嘗試點擊
+                        pass
+
+                    # 使用JavaScript點擊，避免可能的元素遮擋問題
+                    self.driver.execute_script("arguments[0].click();", button)
+                    print(f"  - 已點擊第 {i} 個「展開全部」按鈕")
+                    total_expanded += 1
+
+                except Exception as e:
+                    print(f"  - 點擊第 {i} 個「展開全部」按鈕失敗: {e}")
+                    continue
+
+            print(f"總共成功點擊了 {total_expanded} 個「展開全部」按鈕")
+            return total_expanded
+        except Exception as e:
+            print(f"點擊「展開全部」按鈕時發生錯誤: {e}")
+            return 0
+
+    def get_product_info(self, product_row):
+        # Extract product image URL
+        try:
+            image_container = product_row.find_element(By.CLASS_NAME,
+                                                       'product-image')
+
+            # 使用更高效的滾動方式，不使用平滑滾動
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center', behavior: 'auto'});",
+                image_container)
+
+            # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
+            product_image_url = self.get_image_with_retry(image_container,
+                                                          max_retries=5,
+                                                          wait_time=2)
+        except Exception as e:
+            print(f"獲取商品圖片時出錯: {e}")
+            product_image_url = "未找到"
+
+        # Extract product ID (mandatory field)
+        try:
+            item_id_container = product_row.find_element(
+                By.CLASS_NAME, 'item-id')
+            item_id_text = item_id_container.text
+            item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
+            item_id = item_id_match.group(1) if item_id_match else "未找到"
+            if item_id == "未找到":
+                print("缺少有效商品 ID，跳過此行")
+                return None
+        except:
+            print("無法找到商品 ID 元素，跳過此行")
+            return None
+
+        # Extract product name
+        try:
+            product_name = product_row.find_element(By.CLASS_NAME,
+                                                    'product-name-wrap').text
+            if not product_name.strip():
+                product_name = "未找到"
+        except:
+            product_name = "未找到"
+
+        # Extract total sales
+        try:
+            total_sales = product_row.find_element(By.CLASS_NAME,
+                                                   'list-view-sales').text
+            total_sales = self.convert_sales_number(total_sales)
+        except:
+            total_sales = "未找到"
+
+        # Extract model info
+        models = []
+        try:
+            variation_list = product_row.find_elements(By.CLASS_NAME,
+                                                       'model-list-item')
+            for variation in variation_list:
+                model_info = {
+                    '型號名稱': '未知型號',
+                    '已售出數量': '未找到',
+                    '商品庫存': '未找到',
+                    '型號圖片網址': '未找到'
+                }
+
+                try:
+                    # 找到圖片容器
+                    image_container = variation.find_element(
+                        By.CLASS_NAME, 'variation-name-image')
+
+                    # 滾動到圖片位置
+                    self.driver.execute_script(
+                        "arguments[0].scrollIntoView({block: 'center'});",
+                        image_container)
+
+                    # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
+                    image_url = self.get_image_with_retry(image_container,
+                                                          max_retries=5,
+                                                          wait_time=2)
+                    model_info['型號圖片網址'] = image_url
+                except Exception as e:
+                    print(f"獲取型號圖片時出錯: {e}")
+                    model_info['型號圖片網址'] = "未找到"
+
+                try:
+                    name_elements = variation.find_elements(
+                        By.CLASS_NAME, 'variation-name-info-name')
+                    if name_elements:
+                        model_info['型號名稱'] = name_elements[0].text
+                except:
+                    pass
+
+                try:
+                    sales_elements = variation.find_elements(
+                        By.CLASS_NAME, 'list-view-model-sales')
+                    if sales_elements:
+                        model_info['已售出數量'] = self.convert_sales_number(
+                            sales_elements[0].text)
+                except:
+                    pass
+
+                try:
+                    stock_elements = variation.find_elements(
+                        By.CLASS_NAME, 'stock-text')
+                    if stock_elements:
+                        stock_text = stock_elements[0].text
+                        model_info[
+                            '商品庫存'] = "0" if stock_text == "已售完" else self.convert_sales_number(
+                                stock_text)
+                except:
+                    pass
+
+                if not all(value in ['未找到', '未知型號']
+                           for value in model_info.values()):
+                    models.append(model_info)
+        except Exception as e:
+            print(f"處理型號資訊時出錯: {e}")
+
+        # Build product info dictionary
+        product_info = {
+            '商品ID': item_id,
+            '商品名稱': product_name,
+            '已售出總數量': total_sales,
+            '商品圖片網址': product_image_url,
+            '型號': models
+        }
+
+        return product_info
+
+    def get_all_products_info(self):
+        try:
+            page = 1
+            has_next_page = True
+            total_products = 0
+            self.products_data = {}  # Initialize storage for product info
+
+            while has_next_page:
+                print(f"\n===== 正在處理第 {page} 頁 =====")
+
+                # Wait for page to load
+                try:
+                    WebDriverWait(self.driver, 10).until(
+                        EC.presence_of_element_located(
+                            (By.CLASS_NAME, 'eds-table__row')))
+                    print("頁面已加載")
+                except:
+                    print("等待頁面加載超時，嘗試繼續處理")
+
+                # Expand all rows
+                try:
+                    self.expand_all_buttons()
+                    time.sleep(2)
+                except:
+                    print("展開所有行失敗，繼續處理")
+
+                # Get valid product rows only
+                product_rows = []
+                try:
+                    all_rows = self.driver.find_elements(
+                        By.CLASS_NAME, 'eds-table__row')
+                    print(f"找到 {len(all_rows)} 個潛在商品行")
+
+                    # Filter rows with valid item-id
+                    for row in all_rows:
+                        try:
+                            # 直接從 item-id class 獲取文本
+                            item_id_container = row.find_element(
+                                By.CLASS_NAME, 'item-id')
+                            item_id_text = item_id_container.text
+                            if item_id_text and "商品 ID:" in item_id_text:
+                                product_rows.append(row)
+                        except Exception as e:
+                            print(f"過濾商品行時出錯: {e}")
+                            continue  # Skip rows without item-id
+
+                    print(f"過濾後找到 {len(product_rows)} 個有效商品行")
+                except:
+                    print("未找到商品行，嘗試捲動頁面...")
+                    self.driver.execute_script(
+                        "window.scrollTo(0, document.body.scrollHeight/2);")
+                    time.sleep(2)
+                    all_rows = self.driver.find_elements(
+                        By.CLASS_NAME, 'eds-table__row')
+                    for row in all_rows:
+                        try:
+                            item_id_container = row.find_element(
+                                By.CLASS_NAME, 'item-id')
+                            item_id_text = item_id_container.text
+                            if item_id_text and "商品 ID:" in item_id_text:
+                                product_rows.append(row)
+                        except:
+                            continue
+                    print(f"捲動後找到 {len(product_rows)} 個有效商品行")
+
+                # Process each valid product
+                for i, product_row in enumerate(product_rows, 1):
+                    print(f"\n處理第 {i}/{len(product_rows)} 個商品")
+                    try:
+                        product_info = self.get_product_info(product_row)
+                        if product_info and self.is_valid_product(
+                                product_info):
+                            product_id = product_info.pop('商品ID')
+                            if product_id != "未找到":
+                                self.products_data[product_id] = product_info
+                                total_products += 1
+                                print(f"成功添加商品 ID: {product_id}")
+                            else:
+                                print("商品 ID 無效，跳過")
+                        else:
+                            print("商品資訊無效，跳過")
+                    except Exception as e:
+                        print(f"處理商品時出錯: {e}")
+                    time.sleep(0.5)
+
+                # Check for next page
+                has_next_page = self.go_to_next_page()
+                if has_next_page:
+                    page += 1
+                    time.sleep(3)
+                else:
+                    print("已到達最後一頁")
+
+            print(f"\n===== 爬蟲完成 =====")
+            print(f"共處理了 {page} 頁，成功收集了 {total_products} 個商品資訊")
+            return self.products_data
+
+        except Exception as e:
+            print(f"獲取所有商品資訊時出錯: {e}")
+            return {}
+
+    def find_element_safely(self, by, value, parent=None, wait_time=10):
+        """安全地查找元素，避免重複的 try-except 結構"""
+        try:
+            element = None
+            parent = parent or self.driver
+            wait = WebDriverWait(parent, wait_time)
+            element = wait.until(EC.presence_of_element_located((by, value)))
+            return element
+        except:
+            return None
+
+    def get_sales_data(self, product_name=None):
+        """整合銷售數據獲取邏輯，減少代碼重複"""
+        # 共用的數據獲取邏輯
+        # ...
+
+    def select_date_range_optimized(self):
+        """優化日期選擇流程，減少等待時間"""
+        try:
+            # 使用顯式等待代替固定時間等待
+            date_icon = self.wait_for_element(By.CLASS_NAME,
+                                              "eds-icon.bi-date-input-icon", 8)
+            if not date_icon:
+                return False
+
+            self.scroll_to_element(date_icon)
+            date_icon.click()
+
+            # 使用可見性條件等待面板出現
+            date_options = self.wait_for_element(
+                By.CLASS_NAME, "eds-date-shortcut-item__text", 8,
+                EC.visibility_of_all_elements_located)
+
+            if not date_options:
+                return False
+
+            # 其他選擇邏輯...
+
+            return True
+        except Exception as e:
+            print(f"選擇日期範圍時出錯: {e}")
+            return False
+
+    def process_model_data(self, model_element):
+        """改進型號數據處理邏輯，確保數據完整性"""
+        model_data = {}
+        try:
+            # 獲取型號名稱
+            model_name_element = self.find_element_safely(
+                By.CLASS_NAME, "model-name", model_element, 1)
+            model_data[
+                "型號名稱"] = model_name_element.text if model_name_element else "未知型號"
+
+            # 獲取庫存數量（確保轉換為數字）
+            stock_element = self.find_element_safely(By.CLASS_NAME,
+                                                     "stock-number",
+                                                     model_element, 1)
+            if stock_element:
+                try:
+                    model_data["商品庫存"] = int(
+                        stock_element.text.replace(",", ""))
+                except:
+                    model_data["商品庫存"] = 0
+            else:
+                model_data["商品庫存"] = 0
+
+            # 其他數據處理...
+
+            return model_data
+        except Exception as e:
+            print(f"處理型號數據時出錯: {e}")
+            return {"型號名稱": "處理出錯", "商品庫存": 0}
+
+    def wait_for_element(self,
+                         by,
+                         value,
+                         timeout=10,
+                         condition=EC.presence_of_element_located):
+        """更高效的元素等待方法，支持不同的等待條件"""
+        try:
+            return WebDriverWait(self.driver,
+                                 timeout).until(condition((by, value)))
+        except:
+            return None
+
+    def scroll_to_element(self, element, center=True):
+        """更高效的滾動方法，減少不必要的等待"""
+        if center:
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({block: 'center', behavior: 'instant'});",
+                element)
+        else:
+            self.driver.execute_script(
+                "arguments[0].scrollIntoView({behavior: 'instant'});", element)
+
+    def expand_all_rows_optimized(self):
+        """更高效的展開所有行方法"""
+        try:
+            # 使用JavaScript直接展開所有可展開元素
+            self.driver.execute_script("""
+                document.querySelectorAll('.expand-button:not(.expanded)').forEach(btn => {
+                    if(btn.offsetParent !== null) btn.click();
+                });
+            """)
+            return True
+        except:
+            # 如果JavaScript方法失敗，回退到傳統方法
+            return self.expand_all_rows()
+
 
 if __name__ == "__main__":
+    import sys
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Shopee Crawler')
-    parser.add_argument('keyword', nargs='?', default='', help='Search keyword')
-    parser.add_argument('--output', default='shopee_products.json', help='Output file path')
-    parser.add_argument('--headless', default='true', help='Headless mode')
-    parser.add_argument('--inventory-month', type=int, default=4, help='Inventory month')
-    
-    args = parser.parse_args()
-    
-    # Configuration
-    shopee_url = "https://shopee.tw"
-    cookies_path = "cookies.json"
-    base_url = "https://seller.shopee.tw/portal/product/list/live/all"
-    my_products_url = f"{base_url}?keyword={args.keyword}" if args.keyword else base_url
-    
-    # Driver path logic
-    if os.name == 'nt':
-        driver_path = "chromedriver.exe"
-    else:
-        # Try to find chromedriver in path or use a default
-        import shutil
-        driver_path = shutil.which("chromedriver") or "/usr/local/bin/chromedriver"
+    import os
+    from selenium import webdriver
+    from selenium.webdriver.chrome.service import Service
+    from selenium.webdriver.chrome.options import Options
+    # 假設 ShopeeCrawler 是已定義的類別
+    # from crawler import ShopeeCrawler
 
-    crawler = ShopeeCrawler(
-        shopee_url=shopee_url,
-        cookies_path=cookies_path,
-        my_products_url=my_products_url,
-        driver_path=driver_path,
-        output_path=args.output,
-        search_keyword=args.keyword
-    )
-    
-    crawler.run()
+    if len(sys.argv) > 1:
+        # 使用 argparse 解析命令行參數
+        parser = argparse.ArgumentParser(description='Shopee Crawler')
+        parser.add_argument('keyword', nargs='?', default='', help='搜尋關鍵字')
+        parser.add_argument('--output',
+                            default='shopee_products.json',
+                            help='輸出檔案路徑')
+        parser.add_argument('--headless',
+                            type=str,
+                            default='true',
+                            help='是否使用無頭模式 (true/false)')
+        parser.add_argument('--inventory-month',
+                            type=int,
+                            default=4,
+                            help='庫存月份')
+
+        args = parser.parse_args()
+
+        # 將 headless 參數轉換為布林值
+        headless_mode = args.headless.lower() == 'true'
+
+        # 設定基本參數
+        shopee_url = "https://shopee.tw"
+        cookies_path = "cookies.json"  # 請確保此檔案存在並包含有效的 cookies
+
+        # 根據關鍵字決定搜尋網址
+        base_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
+        if args.keyword.strip():
+            my_products_url = f"{base_products_url}?keyword={args.keyword.strip()}"
+            print(f"將搜尋關鍵字：{args.keyword.strip()}", flush=True)
+        else:
+            my_products_url = base_products_url
+            print("將搜尋全部商品", flush=True)
+
+        # 根據作業系統設置 chromedriver 路徑
+        if os.name == 'nt':  # Windows
+            driver_path = "chromedriver.exe"
+        else:  # Mac/Linux
+            driver_path = "/opt/homebrew/bin/chromedriver"
+
+        # 創建爬蟲實例
+        crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
+                                driver_path, args.output, args.keyword.strip())
+
+        # 如果啟用無頭模式，修改 Chrome 選項
+        if headless_mode:
+            crawler.driver.quit()  # 先關閉原有的瀏覽器
+            chrome_options = Options()
+            chrome_options.add_argument(
+                "--disable-blink-features=AutomationControlled")
+            chrome_options.add_argument(
+                "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36"
+            )
+            chrome_options.add_argument("--disable-notifications")
+            chrome_options.add_argument("--headless")  # 啟用無頭模式
+            chrome_options.add_argument("--disable-gpu")  # 禁用 GPU 加速
+            chrome_options.add_argument("--no-sandbox")  # 禁用沙盒
+            chrome_options.add_argument("--disable-dev-shm-usage")  # 禁用共享內存
+
+            try:
+                # 嘗試使用 ChromeDriverManager 自動管理 ChromeDriver
+                service = Service(ChromeDriverManager().install())
+                print("使用 ChromeDriverManager 自動管理 ChromeDriver（無頭模式）")
+            except Exception as e:
+                print(f"ChromeDriverManager 失敗: {e}，使用指定的 ChromeDriver 路徑")
+                # 如果自動管理失敗，則使用指定的 ChromeDriver 路徑
+                service = Service(executable_path=driver_path)
+
+            crawler.driver = webdriver.Chrome(service=service,
+                                              options=chrome_options)
+
+        # 運行爬蟲
+        products = crawler.run()
+
+        # 確保瀏覽器關閉
+        try:
+            crawler.driver.quit()
+        except:
+            pass
+
+        print("程式執行完畢。")
+        sys.exit(0)  # 確保程式正常退出
+
+    else:
+        # 保留原本的交互式方式
+        shopee_url = "https://shopee.tw"
+        cookies_path = "cookies.json"  # 請確保此檔案存在並包含有效的 cookies
+
+        # 獲取使用者輸入
+        user_input = input("請輸入要搜尋的關鍵字（直接按 Enter 則搜尋全部商品）：")
+
+        # 根據使用者輸入決定搜尋網址
+        base_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
+        if user_input.strip():
+            my_products_url = f"{base_products_url}?keyword={user_input.strip()}"
+            print(f"將搜尋關鍵字：{user_input.strip()}")
+        else:
+            my_products_url = base_products_url
+            print("將搜尋全部商品")
+
+        # 根據作業系統設置 chromedriver 路徑
+        if os.name == 'nt':  # Windows
+            driver_path = "chromedriver.exe"
+        else:  # Mac/Linux
+            driver_path = "/opt/homebrew/bin/chromedriver"
+        output_path = "shopee_products.json"  # 輸出檔案路徑
+
+        # 創建爬蟲實例並運行
+        crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
+                                driver_path, output_path, user_input.strip())
+        products = crawler.run()
+
+        # 確保瀏覽器關閉
+        try:
+            crawler.driver.quit()
+        except:
+            pass
+
+        print("程式執行完畢。")
