@@ -18,6 +18,30 @@ import datetime
 
 # 設置日誌記錄
 LOG_FILE = "debug.log"
+
+def get_resource_path(relative_path):
+    """獲取資源文件的絕對路徑，支持開發環境和 PyInstaller 打包環境"""
+    try:
+        # PyInstaller 創建的臨時文件夾
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+# 如果是 worker 模式，直接執行爬蟲邏輯
+if len(sys.argv) > 1 and sys.argv[1] == '--worker':
+    # 設置環境變量以確保 crawler 能正確找到資源
+    # if getattr(sys, 'frozen', False):
+    #     os.chdir(sys._MEIPASS)
+    
+    # 避免循環導入
+    import crawler
+    # 移除 --worker 參數，讓 crawler 的 argparse 能正常工作
+    sys.argv.pop(1)
+    crawler.main()
+    sys.exit(0)
+
 # 檢查是否存在舊的日誌文件，如果存在則刪除
 if os.path.exists(LOG_FILE):
     try:
@@ -44,11 +68,11 @@ logger.info(
 logger.info(f"操作系統: {os.name}, Python版本: {sys.version}")
 
 PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
-FILE_NAME = "index.html"
+FILE_NAME = get_resource_path("index.html")
 current_crawler_process = None
 
-# 確保 index.html 存在
-if not os.path.exists(FILE_NAME):
+# 確保 index.html 存在 (僅在非打包環境檢查，或確保打包時已包含)
+if not os.path.exists(FILE_NAME) and not getattr(sys, 'frozen', False):
     with open(FILE_NAME, "w", encoding="utf-8") as f:
         f.write("<h1>伺服器運行中！</h1>")
     logger.info(f"創建了 {FILE_NAME} 文件")
@@ -123,8 +147,31 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         # 處理其他請求
-        if self.path == '/':
-            self.path = FILE_NAME
+        # 處理靜態文件與首頁請求
+        if self.path == '/' or any(self.path.endswith(ext) for ext in ['.html', '.css', '.js']):
+            if self.path == '/':
+                target_file = FILE_NAME
+            else:
+                # 移除開頭的 /，並獲取絕對資源路徑
+                target_file = get_resource_path(self.path.lstrip('/'))
+            
+            if os.path.exists(target_file):
+                self.send_response(200)
+                if target_file.endswith('.css'):
+                    self.send_header('Content-type', 'text/css; charset=utf-8')
+                elif target_file.endswith('.js'):
+                    self.send_header('Content-type', 'application/javascript; charset=utf-8')
+                else:
+                    self.send_header('Content-type', 'text/html; charset=utf-8')
+                self.end_headers()
+                
+                try:
+                    with open(target_file, 'rb') as f:
+                        self.wfile.write(f.read())
+                except Exception as e:
+                    logger.error(f"讀取文件失敗: {e}")
+                return
+            
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
 
     def do_POST(self):
@@ -272,12 +319,25 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             logger.info(f"庫存月份: {inventory_month}")
 
             # 設定爬蟲命令
-            cmd = [
-                sys.executable, "crawler.py", keyword, "--output", output_path,
+            # 設定爬蟲命令
+            cmd = []
+            # 確保執行檔路徑為絕對路徑
+            executable = os.path.abspath(sys.executable)
+            
+            if getattr(sys, 'frozen', False):
+                # 凍結環境 (打包後)：呼叫自身並帶上 --worker 參數，利用 multiprocessing 技術
+                cmd = [executable, "--worker"]
+            else:
+                # 開發環境：直接呼叫 crawler.py
+                cmd = [executable, "crawler.py"]
+
+            # 添加通用參數
+            cmd.extend([
+                keyword, "--output", output_path,
                 "--headless",
                 str(not show_browser).lower(), "--inventory-month",
                 str(inventory_month)
-            ]
+            ])
 
             logger.info(f"爬蟲命令: {' '.join(cmd)}")
 

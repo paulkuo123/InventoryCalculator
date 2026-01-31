@@ -63,6 +63,23 @@ python main.py
 ```
 執行後會自動開啟網頁介面，您可以在此進行商品搜尋和數據分析。
 
+## 應用程式打包 (發布)
+
+如果您希望將程式打包成獨立的執行檔 (例如方便分發給其他電腦使用)，請執行以下指令：
+
+1. 確保已安裝打包工具：
+```bash
+pip install -r requirements.txt
+```
+
+2. 執行打包腳本：
+```bash
+python build.py
+```
+
+3. 打包完成後，執行檔將位於 `dist/` 資料夾中。
+   - 將 `dist/ShopeeCrawler` (或 `ShopeeCrawler.exe`) 以及 `cookies.json` 複製到目標電腦即可使用，無需安裝 Python。
+
 ## Demo
 
 ![image](images/main.png)

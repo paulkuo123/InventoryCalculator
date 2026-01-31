@@ -1926,7 +1926,7 @@ class ShopeeCrawler:
             return self.expand_all_rows()
 
 
-if __name__ == "__main__":
+def main():
     import sys
     import argparse
     import os
@@ -2023,3 +2023,6 @@ if __name__ == "__main__":
             pass
 
         print("程式執行完畢。")
+
+if __name__ == "__main__":
+    main()
