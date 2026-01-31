@@ -25,15 +25,17 @@ class ShopeeCrawler:
                  shopee_url,
                  cookies_path,
                  my_products_url,
-                 driver_path,
+                 driver_path=None,  # Make driver_path optional
                  output_path="shopee_products.json",
-                 search_keyword=""):
+                 search_keyword="",
+                 headless=False):
         self.shopee_url = shopee_url
         self.cookies_path = cookies_path
         self.my_products_url = my_products_url
         self.driver_path = driver_path
         self.output_path = output_path
         self.search_keyword = search_keyword  # 保存搜尋關鍵字
+        self.headless = headless
         self.driver = self._init_driver()
         self.products_data = {}
 
@@ -43,6 +45,16 @@ class ShopeeCrawler:
         chrome_options.add_argument(
             "--disable-blink-features=AutomationControlled")
         chrome_options.add_argument("--disable-notifications")
+
+        if self.headless:
+            print("啟用無頭模式")
+            chrome_options.add_argument("--headless")
+            chrome_options.add_argument("--disable-gpu")
+            chrome_options.add_argument("--no-sandbox")
+            chrome_options.add_argument("--disable-dev-shm-usage")
+            # 添加 User-Agent 以防止被偵測
+            chrome_options.add_argument(
+                "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36")
 
         # 添加性能優化選項
         chrome_options.add_argument("--disable-extensions")
@@ -57,12 +69,18 @@ class ShopeeCrawler:
         # 使用 ChromeDriverManager 自動下載與當前 Chrome 瀏覽器版本匹配的 ChromeDriver
         try:
             # 嘗試使用 ChromeDriverManager 自動管理 ChromeDriver
-            service = Service(ChromeDriverManager().install())
-            print("使用 ChromeDriverManager 自動管理 ChromeDriver")
+            driver_path = ChromeDriverManager().install()
+            service = Service(driver_path)
+            print(f"使用 ChromeDriverManager 自動管理 ChromeDriver: {driver_path}")
         except Exception as e:
-            print(f"ChromeDriverManager 失敗: {e}，使用指定的 ChromeDriver 路徑")
-            # 如果自動管理失敗，則使用指定的 ChromeDriver 路徑
-            service = Service(executable_path=self.driver_path)
+            print(f"ChromeDriverManager 失敗: {e}")
+            # 如果自動管理失敗，且有指定 ChromeDriver 路徑，則使用指定的路徑
+            if self.driver_path:
+                print(f"嘗試使用指定的 ChromeDriver 路徑: {self.driver_path}")
+                service = Service(executable_path=self.driver_path)
+            else:
+                print("未指定 ChromeDriver 路徑，且自動管理失敗，無法啟動瀏覽器")
+                raise e
 
         # 啟動 Chrome 瀏覽器
         return webdriver.Chrome(service=service, options=chrome_options)
@@ -1952,42 +1970,13 @@ if __name__ == "__main__":
             my_products_url = base_products_url
             print("將搜尋全部商品", flush=True)
 
-        # 根據作業系統設置 chromedriver 路徑
-        if os.name == 'nt':  # Windows
-            driver_path = "chromedriver.exe"
-        else:  # Mac/Linux
-            driver_path = "/opt/homebrew/bin/chromedriver"
+        # 根據作業系統設置 chromedriver 路徑 (已改為非強制)
+        driver_path = None
 
-        # 創建爬蟲實例
+        # 創建爬蟲實例 (直接傳入 headless 參數)
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
-                                driver_path, args.output, args.keyword.strip())
-
-        # 如果啟用無頭模式，修改 Chrome 選項
-        if headless_mode:
-            crawler.driver.quit()  # 先關閉原有的瀏覽器
-            chrome_options = Options()
-            chrome_options.add_argument(
-                "--disable-blink-features=AutomationControlled")
-            chrome_options.add_argument(
-                "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36"
-            )
-            chrome_options.add_argument("--disable-notifications")
-            chrome_options.add_argument("--headless")  # 啟用無頭模式
-            chrome_options.add_argument("--disable-gpu")  # 禁用 GPU 加速
-            chrome_options.add_argument("--no-sandbox")  # 禁用沙盒
-            chrome_options.add_argument("--disable-dev-shm-usage")  # 禁用共享內存
-
-            try:
-                # 嘗試使用 ChromeDriverManager 自動管理 ChromeDriver
-                service = Service(ChromeDriverManager().install())
-                print("使用 ChromeDriverManager 自動管理 ChromeDriver（無頭模式）")
-            except Exception as e:
-                print(f"ChromeDriverManager 失敗: {e}，使用指定的 ChromeDriver 路徑")
-                # 如果自動管理失敗，則使用指定的 ChromeDriver 路徑
-                service = Service(executable_path=driver_path)
-
-            crawler.driver = webdriver.Chrome(service=service,
-                                              options=chrome_options)
+                                driver_path, args.output, args.keyword.strip(),
+                                headless=headless_mode)
 
         # 運行爬蟲
         products = crawler.run()
@@ -2018,16 +2007,13 @@ if __name__ == "__main__":
             my_products_url = base_products_url
             print("將搜尋全部商品")
 
-        # 根據作業系統設置 chromedriver 路徑
-        if os.name == 'nt':  # Windows
-            driver_path = "chromedriver.exe"
-        else:  # Mac/Linux
-            driver_path = "/opt/homebrew/bin/chromedriver"
+        # 根據作業系統設置 chromedriver 路徑 (已改為非強制)
+        driver_path = None
         output_path = "shopee_products.json"  # 輸出檔案路徑
 
         # 創建爬蟲實例並運行
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
-                                driver_path, output_path, user_input.strip())
+                                driver_path, output_path, user_input.strip(), headless=False)
         products = crawler.run()
 
         # 確保瀏覽器關閉

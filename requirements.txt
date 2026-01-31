@@ -1,0 +1,5 @@
+selenium
+webdriver-manager
+psutil
+PyQt5
+requests

@@ -12,10 +12,7 @@
 
 ### 必要套件
 ```
-pip install PyQt5
-pip install selenium
-pip install psutil
-pip install webdriver-manager
+pip install -r requirements.txt
 ```
 
 > **注意**: webdriver-manager 套件可以自動下載與當前 Chrome 瀏覽器版本匹配的 ChromeDriver，避免版本不匹配的問題。
@@ -33,18 +30,23 @@ cd InventoryCalculator
 ```
 
 ### Chrome瀏覽器設置
-本程式使用Selenium控制Chrome瀏覽器進行爬蟲，請確保您已安裝：
-1. Google Chrome瀏覽器 (建議更新至最新版)
+本程式使用 Selenium 控制 Chrome 瀏覽器進行爬蟲。
 
-> **注意**: 安裝 webdriver-manager 套件後，系統會自動下載與您的 Chrome 瀏覽器版本匹配的 ChromeDriver，無需手動下載和安裝。
+**必要條件**：
+1. 請確保您已安裝 Google Chrome 瀏覽器 (建議更新至最新版)。
 
-如果您仍然希望手動管理 ChromeDriver：
-1. 可從 https://chromedriver.chromium.org/downloads 下載與您 Chrome 版本相符的 ChromeDriver
-2. 將下載的 chromedriver.exe (Windows) 或 chromedriver (Mac/Linux) 放在適當位置
+**關於 ChromeDriver**：
+本專案已整合 `webdriver-manager`，程式執行時會**自動下載並配置**與您 Chrome 版本相匹配的 ChromeDriver，**您無需手動下載或設定**。
 
-MacOS
-如果遇到Mac將chromedriver視為惡意軟體的提示，請在終端執行以下指令：
-```
+#### (進階選項) 手動管理 ChromeDriver
+如果您因特殊需求需要手動管理 ChromeDriver (例如在無網路環境或自動下載失敗時)：
+1. 可從 [Chrome for Testing](https://googlechromelabs.github.io/chrome-for-testing/) 下載對應版本的 ChromeDriver。
+2. Windows: 將 `chromedriver.exe` 放在專案根目錄。
+3. Mac/Linux: 將 `chromedriver` 放在專案根目錄或是 `/opt/homebrew/bin/chromedriver` (Mac)。
+
+MacOS 手動安裝注意事項：
+若遇到 Mac 將手動下載的 chromedriver 視為惡意軟體，請執行：
+```bash
 xattr -d com.apple.quarantine /path/to/chromedriver
 ```
 
