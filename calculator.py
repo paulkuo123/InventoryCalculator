@@ -329,6 +329,9 @@ class SalesCalculator(QWidget):
             if any(x < 0 for x in [product_sold, total_sold, monthly_sales, current_inventory, expected_months]):
                 raise ValueError("所有數值必須為正數")
             
+            # 用於判斷顏色顯示的有效月銷量
+            effective_monthly_sales = monthly_sales
+
             # 特殊情況：當庫存為0且月銷量也為0時，使用歷史佔比法
             if current_inventory == 0 and monthly_sales == 0:
                 if total_sold == 0:
@@ -346,6 +349,8 @@ class SalesCalculator(QWidget):
                 if ok:
                     # 預估月銷量 = 該商品總月銷量 × 歷史佔比
                     estimated_monthly_sales = total_monthly_sales * ratio
+                    effective_monthly_sales = estimated_monthly_sales # 更新有效月銷量
+                    
                     # 補貨量 = 預估月銷量 × 預期庫存水位月數 - 當前庫存(0)
                     expected_inventory = estimated_monthly_sales * expected_months
                     restock = expected_inventory  # 因為 current_inventory 為 0
@@ -357,7 +362,43 @@ class SalesCalculator(QWidget):
                 )
             
             self.result_label.setText(f'預期庫存: {expected_inventory:.2f} 單位 | 建議補貨: {restock:.2f} 單位')
-            if restock <= 0:
+            
+            # 判斷庫存水位顏色
+            # 庫存少於月銷量1個月顯示紅色，介於1~2個月顯示黃色，大於2個月顯示綠色
+            
+            months_coverage = 999.0 # 預設無限大 (當無銷量時)
+            
+            if effective_monthly_sales > 0:
+                months_coverage = current_inventory / effective_monthly_sales
+            elif current_inventory == 0:
+                months_coverage = 0 # 銷量為0且庫存為0，視為0個月 (理論上由特殊流程處理)
+            
+            if months_coverage < 1:
+                # 紅色 - 庫存不足 1 個月
+                self.result_label.setStyleSheet("""
+                    QLabel {
+                        background-color: #2D1A22;
+                        color: #F87171;
+                        padding: 15px;
+                        border-radius: 8px;
+                        font-size: 16px;
+                        border-left: 4px solid #EF4444;
+                    }
+                """)
+            elif 1 <= months_coverage <= 2:
+                # 黃色 - 庫存介於 1~2 個月
+                self.result_label.setStyleSheet("""
+                    QLabel {
+                        background-color: #2D2B1A;
+                        color: #FBBF24;
+                        padding: 15px;
+                        border-radius: 8px;
+                        font-size: 16px;
+                        border-left: 4px solid #F59E0B;
+                    }
+                """)
+            else:
+                # 綠色 - 庫存充足 (> 2 個月)
                 self.result_label.setStyleSheet("""
                     QLabel {
                         background-color: #132C1E;
@@ -366,17 +407,6 @@ class SalesCalculator(QWidget):
                         border-radius: 8px;
                         font-size: 16px;
                         border-left: 4px solid #22C55E;
-                    }
-                """)
-            else:
-                self.result_label.setStyleSheet("""
-                    QLabel {
-                        background-color: #1E2739;
-                        color: #3B82F6;
-                        padding: 15px;
-                        border-radius: 8px;
-                        font-size: 16px;
-                        border-left: 4px solid #3274d9;
                     }
                 """)
             
