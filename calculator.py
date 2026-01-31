@@ -1,7 +1,7 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, 
                              QPushButton, QGraphicsDropShadowEffect, QGridLayout, QFrame, 
-                             QSizePolicy, QSpacerItem, QProgressBar, QShortcut)
+                             QSizePolicy, QSpacerItem, QProgressBar, QShortcut, QInputDialog)
 from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QFontDatabase, QValidator, QKeySequence
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QPoint
 
@@ -329,9 +329,32 @@ class SalesCalculator(QWidget):
             if any(x < 0 for x in [product_sold, total_sold, monthly_sales, current_inventory, expected_months]):
                 raise ValueError("所有數值必須為正數")
             
-            expected_inventory, restock = InventoryCalculator.calculate_inventory(
-                product_sold, total_sold, monthly_sales, current_inventory, expected_months
-            )
+            # 特殊情況：當庫存為0且月銷量也為0時，使用歷史佔比法
+            if current_inventory == 0 and monthly_sales == 0:
+                if total_sold == 0:
+                    raise ValueError("賣出總數不能為零")
+                
+                # 計算歷史佔比
+                ratio = product_sold / total_sold
+                
+                # 彈出輸入框詢問商品整體總月銷量
+                total_monthly_sales, ok = QInputDialog.getDouble(
+                    self, "輸入數據", "檢測到庫存與月銷量皆為0，請輸入商品整體總月銷量：", 
+                    value=0, min=0, decimals=2
+                )
+                
+                if ok:
+                    # 預估月銷量 = 該商品總月銷量 × 歷史佔比
+                    estimated_monthly_sales = total_monthly_sales * ratio
+                    # 補貨量 = 預估月銷量 × 預期庫存水位月數 - 當前庫存(0)
+                    expected_inventory = estimated_monthly_sales * expected_months
+                    restock = expected_inventory  # 因為 current_inventory 為 0
+                else:
+                    return  # 使用者取消輸入
+            else:
+                expected_inventory, restock = InventoryCalculator.calculate_inventory(
+                    product_sold, total_sold, monthly_sales, current_inventory, expected_months
+                )
             
             self.result_label.setText(f'預期庫存: {expected_inventory:.2f} 單位 | 建議補貨: {restock:.2f} 單位')
             if restock <= 0:
