@@ -491,7 +491,11 @@ input:checked + .toggle-slider:before {
 }
 
 .product-image:hover {
-    transform: scale(1.1);
+    transform: scale(2.5);
+    z-index: 999;
+    position: relative;
+    cursor: pointer;
+    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
 }
 
 .product-name {
@@ -599,6 +603,11 @@ input:checked + .toggle-slider:before {
 .badge-info {
     background-color: #e3f2fd;
     color: #0288d1;
+}
+
+.badge-purple {
+    background-color: #f3e5f5;
+    color: #7b1fa2;
 }
 
 .empty-state {

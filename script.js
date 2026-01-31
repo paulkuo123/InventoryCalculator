@@ -703,6 +703,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 salesCell.appendChild(salesBadge);
                 row.appendChild(salesCell);
 
+                // 總月銷量
+                const monthlySalesCell = document.createElement('td');
+                const monthlySalesBadge = document.createElement('span');
+                monthlySalesBadge.className = 'badge badge-purple';
+                monthlySalesBadge.textContent = product.總月銷量 || '0';
+                monthlySalesCell.appendChild(monthlySalesBadge);
+                row.appendChild(monthlySalesCell);
+
                 // 型號數量 - 顯示可見型號數量
                 const modelCountCell = document.createElement('td');
                 const countBadge = document.createElement('span');
