@@ -647,18 +647,48 @@ document.addEventListener('DOMContentLoaded', function() {
                             modelText.appendChild(monthlySalesBadge);
                             
                             // 顯示預期庫存和建議補貨
-                            if (modelData.月銷量) {
+                            // 特殊處理:當庫存為0且月銷量也為0時,使用歷史佔比法估算
+                            let effectiveMonthlyRate = monthlyRate;
+                            let isEstimated = false;
+                            
+                            if (currentStock === 0 && monthlyRate === 0) {
+                                // 計算歷史佔比法的預估月銷量
+                                const modelHistoricalSales = parseInt(modelData.已售出數量, 10) || 0;
+                                const productTotalHistoricalSales = parseInt(product.已售出總數量, 10) || 0;
+                                const productTotalMonthlySales = parseInt(product.總月銷量, 10) || 0;
+                                
+                                // 只有當有歷史銷售數據時才計算
+                                if (modelHistoricalSales > 0 && productTotalHistoricalSales > 0 && productTotalMonthlySales > 0) {
+                                    // 計算歷史佔比 = 該型號歷史總銷量 / 商品全部型號歷史總銷量
+                                    const historicalRatio = modelHistoricalSales / productTotalHistoricalSales;
+                                    
+                                    // 預估月銷量 = 該商品總月銷量 × 歷史佔比
+                                    effectiveMonthlyRate = Math.round(productTotalMonthlySales * historicalRatio * 10) / 10;
+                                    isEstimated = true;
+                                    
+                                    console.log(`型號 ${modelData.型號名稱} 使用歷史佔比法: 歷史銷量=${modelHistoricalSales}, 總歷史銷量=${productTotalHistoricalSales}, 佔比=${(historicalRatio * 100).toFixed(1)}%, 總月銷量=${productTotalMonthlySales}, 預估月銷量=${effectiveMonthlyRate}`);
+                                }
+                            }
+                            
+                            // 如果有有效的月銷量(實際或預估),則顯示預期庫存和建議補貨
+                            if (effectiveMonthlyRate > 0 || modelData.月銷量) {
+                                // 重新計算預期庫存(使用有效月銷量)
+                                const effectiveExpectedStock = Math.round(effectiveMonthlyRate * months);
+                                
                                 // 添加空格
                                 modelText.appendChild(document.createTextNode(' '));
                                 
                                 // 預期庫存標籤
                                 const expectedStockBadge = document.createElement('span');
                                 expectedStockBadge.className = 'badge badge-secondary';
-                                expectedStockBadge.textContent = `預期庫存: ${expectedStock}`;
+                                expectedStockBadge.textContent = `預期庫存: ${effectiveExpectedStock}`;
+                                if (isEstimated) {
+                                    expectedStockBadge.title = `基於歷史佔比法預估 (預估月銷量: ${effectiveMonthlyRate})`;
+                                }
                                 modelText.appendChild(expectedStockBadge);
                                 
                                 // 計算建議補貨 = 預期庫存 - 當前庫存
-                                const suggestedRestock = expectedStock - currentStock;
+                                const suggestedRestock = effectiveExpectedStock - currentStock;
                                 
                                 // 只有當建議補貨為正數時才顯示
                                 if (suggestedRestock > 0) {
@@ -669,6 +699,10 @@ document.addEventListener('DOMContentLoaded', function() {
                                     const restockBadge = document.createElement('span');
                                     restockBadge.className = 'badge badge-danger';
                                     restockBadge.textContent = `建議補貨: ${suggestedRestock}`;
+                                    if (isEstimated) {
+                                        restockBadge.textContent += ' (預估)';
+                                        restockBadge.title = `基於歷史佔比法預估 (預估月銷量: ${effectiveMonthlyRate})`;
+                                    }
                                     restockBadge.style.color = 'red';
                                     restockBadge.style.fontWeight = 'bold';
                                     modelText.appendChild(restockBadge);
