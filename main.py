@@ -420,6 +420,34 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             return {"error": f"執行爬蟲時出錯: {e}"}
 
 
+def kill_process_on_port(port):
+    """終止佔用指定端口的進程"""
+    try:
+        for proc in psutil.process_iter(['pid', 'name']):
+            try:
+                connections = proc.net_connections()
+                for conn in connections:
+                    if conn.laddr.port == port:
+                        logger.info(f"發現進程 {proc.pid} ({proc.name()}) 正在使用端口 {port}")
+                        logger.info(f"正在終止進程 {proc.pid}...")
+                        proc.terminate()
+                        try:
+                            proc.wait(timeout=3)
+                            logger.info(f"進程 {proc.pid} 已成功終止")
+                        except psutil.TimeoutExpired:
+                            logger.warning(f"進程 {proc.pid} 未在 3 秒內終止，強制終止...")
+                            proc.kill()
+                            logger.info(f"進程 {proc.pid} 已強制終止")
+                        return True
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+                pass
+        logger.info(f"端口 {port} 未被任何進程佔用")
+        return False
+    except Exception as e:
+        logger.error(f"檢查端口 {port} 時出錯: {e}")
+        return False
+
+
 def find_free_port(start_port):
     port = start_port
     max_port = start_port + 100  # 嘗試 100 個端口
@@ -440,6 +468,12 @@ def start_server():
     global httpd  # 將 httpd 設為全局變量，以便其他函數可以訪問
 
     try:
+        # 在啟動伺服器前，先終止佔用端口的進程
+        logger.info(f"檢查端口 {PORT} 是否被佔用...")
+        kill_process_on_port(PORT)
+        
+        # 等待一小段時間確保端口已釋放
+        time.sleep(0.5)
 
         class TCPServerReuse(socketserver.TCPServer):
             allow_reuse_address = True
