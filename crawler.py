@@ -85,42 +85,95 @@ class ShopeeCrawler:
         # 啟動 Chrome 瀏覽器
         return webdriver.Chrome(service=service, options=chrome_options)
 
-    def click_init_button(self):
-        try:
-            # 假設目標按鈕有更具體的選擇器，例如包含特定類或屬性
-            specific_selector = "button.close-btn"  # 請替換為實際的唯一選擇器
+    def close_all_shopee_popups(self, max_tries=5):
+        """
+        通用關閉蝦皮彈出視窗的方法
+        透過多管齊下來保證能關掉各種行銷、公告、導覽彈窗
+        """
+        from selenium.webdriver.common.action_chains import ActionChains
+        from selenium.webdriver.common.keys import Keys
+        
+        print("正在檢查並關閉彈出視窗...")
+        for _ in range(max_tries):
+            popup_closed_this_round = False
+            
+            try:
+                # 策略 1: 模擬按 ESC 鍵 (最快，很多 UI 框架預設支援)
+                ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                
+                # 策略 2: 尋找常見的關閉按鈕文字 (不限於 button，可能是 a 或 div)
+                close_texts = ['關閉', '知道了', '我知道了', '稍後再說', '下次再說', '跳過', '取消', 'Close', 'Skip']
+                
+                # 尋找文字完全符合的任何元素，或 class 包含 close 的按鈕/連結
+                for text in close_texts:
+                    # 尋找文字精確符合的元素 (避免 match 到無關的一大串文字)
+                    elements = self.driver.find_elements(By.XPATH, f"//*[text()='{text}' or normalize-space(text())='{text}']")
+                    for el in elements:
+                        if el.is_displayed():
+                            try:
+                                el.click()
+                                popup_closed_this_round = True
+                                time.sleep(0.5)
+                            except:
+                                pass
+                
+                # 尋找常見的 X 關閉圖標或按鈕
+                close_icons = self.driver.find_elements(By.XPATH, "//*[@class and (contains(@class,'close') or contains(@class,'btn-cancel')) and (name()='BUTTON' or name()='I' or name()='A' or name()='SVG')]")
+                for icon in close_icons:
+                    if icon.is_displayed():
+                        try:
+                            icon.click()
+                            popup_closed_this_round = True
+                            time.sleep(0.5)
+                        except:
+                            pass
+                            
+                # 策略 3: 使用 JavaScript 硬刪除常見的 Overlay/Modal DOM 元素 (防禦最頑固的彈窗和教學導覽)
+                js_script = """
+                    let removed = false;
+                    
+                    // 1. 隱藏/移除對話框和教學導覽本身
+                    const dialogSelectors = [
+                        'div[role="dialog"]', '.shopee-modal', '.shopee-popup', '.modal-backdrop',
+                        'shopee-banner-popup-stateful', '[class*="tour"]', '[class*="guide"]', 
+                        '.driver-popover', '.shopee-driver'
+                    ];
+                    
+                    document.querySelectorAll(dialogSelectors.join(',')).forEach(el => { 
+                        if (getComputedStyle(el).display !== 'none') {
+                            el.style.display = 'none'; 
+                            el.style.visibility = 'hidden';
+                            removed = true;
+                        }
+                    });
+                    
+                    // 2. 移除阻斷滑鼠點擊的黑色遮罩層
+                    document.querySelectorAll('.backdrop, [class*="overlay"]:not([class*="eds-popover"]), .shopee-backdrop, #driver-highlighted-element-stage').forEach(el => {
+                        if (getComputedStyle(el).display !== 'none' || getComputedStyle(el).opacity > 0) {
+                            el.style.display = 'none'; 
+                            el.style.opacity = '0';
+                            el.style.pointerEvents = 'none';
+                            removed = true;
+                        }
+                    });
+                    
+                    return removed;
+                """
+                if self.driver.execute_script(js_script):
+                    popup_closed_this_round = True
+                    time.sleep(0.5)
+                
+                # 如果這一輪都沒有發現需要關閉的東西，代表已經乾淨了，直接退出迴圈
+                if not popup_closed_this_round:
+                    break
+                    
+            except Exception as e:
+                # 忽略錯誤繼續下一輪嘗試
+                time.sleep(0.5)
+                pass
+        
+        print("已關閉可能出現的彈窗")
 
-            # 等待特定按鈕可見
-            button = WebDriverWait(self.driver, 2).until(
-                EC.visibility_of_element_located(
-                    (By.CSS_SELECTOR, specific_selector)))
-
-            if button:
-                # 輸出按鈕資訊以確認
-                print(f"找到按鈕: {button.text}，位置: {button.location}")
-
-                # 滾動到按鈕位置
-                self.driver.execute_script(
-                    "arguments[0].scrollIntoView({block: 'center'});", button)
-
-                # 確保按鈕可點擊
-                WebDriverWait(self.driver,
-                              1).until(EC.element_to_be_clickable(button))
-
-                # 嘗試點擊
-                try:
-                    button.click()
-                    print("已成功點擊按鈕")
-                except:
-                    # 如果失敗，使用 JavaScript 點擊
-                    self.driver.execute_script("arguments[0].click();", button)
-                    print("已通過 JavaScript 點擊按鈕")
-            else:
-                print("未找到指定按鈕")
-
-        except Exception as e:
-            print(f"點擊按鈕時出錯: {e}")
-            print("未找到指定按鈕或無法點擊")
 
     def convert_sales_number(self, sales_text):
         """
@@ -367,7 +420,7 @@ class ShopeeCrawler:
             time.sleep(5)
 
             # 關閉可能的通知視窗
-            self.click_init_button()
+            self.close_all_shopee_popups()
             print("成功進入賣家中心")
 
         except Exception as e:
