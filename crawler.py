@@ -1661,17 +1661,42 @@ class ShopeeCrawler:
             product_image_url = "未找到"
 
         # Extract product ID (mandatory field)
+        # Try multiple methods as .item-id is not present on all products
+        item_id = "未找到"
         try:
-            item_id_container = product_row.find_element(
-                By.CLASS_NAME, 'item-id')
+            # Method 1: From .item-id text (legacy products)
+            item_id_container = product_row.find_element(By.CLASS_NAME, 'item-id')
             item_id_text = item_id_container.text
             item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
-            item_id = item_id_match.group(1) if item_id_match else "未找到"
-            if item_id == "未找到":
-                print("缺少有效商品 ID，跳過此行")
-                return None
+            if item_id_match:
+                item_id = item_id_match.group(1)
         except:
-            print("無法找到商品 ID 元素，跳過此行")
+            pass
+
+        if item_id == "未找到":
+            try:
+                # Method 2: From product link href  /portal/product/ID
+                link = product_row.find_element(By.CSS_SELECTOR, 'a.product-name-wrap[href]')
+                href = link.get_attribute('href') or ''
+                id_match = re.search(r'/portal/product/(\d+)', href)
+                if id_match:
+                    item_id = id_match.group(1)
+            except:
+                pass
+
+        if item_id == "未找到":
+            try:
+                # Method 3: From checkbox input name attribute
+                checkbox = product_row.find_element(
+                    By.CSS_SELECTOR, 'input.eds-checkbox__input[name]')
+                name_val = checkbox.get_attribute('name') or ''
+                if name_val.isdigit():
+                    item_id = name_val
+            except:
+                pass
+
+        if item_id == "未找到":
+            print("無法取得商品 ID，跳過此行")
             return None
 
         # Extract product name
@@ -1688,8 +1713,10 @@ class ShopeeCrawler:
             total_sales = product_row.find_element(By.CLASS_NAME,
                                                    'list-view-sales').text
             total_sales = self.convert_sales_number(total_sales)
+            if not total_sales.strip():
+                total_sales = "0"
         except:
-            total_sales = "未找到"
+            total_sales = "0"  # 找不到時視為 0，避免商品被誤判為無效
 
         # Extract model info
         models = []
@@ -1768,6 +1795,40 @@ class ShopeeCrawler:
 
         return product_info
 
+    def scroll_to_load_all_rows(self):
+        """
+        逐步捲動頁面，讓 Lazy-Load 的商品行全部載入進 DOM。
+        捲動策略：每次捲動一個視窗高度，等待新行出現，直到行數不再增加為止。
+        """
+        print("開始捲動頁面以載入所有商品行...")
+        last_count = 0
+        stable_rounds = 0
+
+        # 先捲回頂部
+        self.driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+
+        while stable_rounds < 3:  # 連續 3 輪行數不增加才結束
+            # 逐步向下捲動（每次滾動 80% 視窗高度）
+            self.driver.execute_script(
+                "window.scrollBy(0, window.innerHeight * 0.8);")
+            time.sleep(1.2)  # 等待 lazy load
+
+            current_count = len(
+                self.driver.find_elements(By.CLASS_NAME, 'eds-table__row'))
+            print(f"  捲動後找到 {current_count} 個 eds-table__row")
+
+            if current_count > last_count:
+                last_count = current_count
+                stable_rounds = 0  # 有新行出現，重置穩定輪次
+            else:
+                stable_rounds += 1
+
+        # 捲回頂部，準備正式收集
+        self.driver.execute_script("window.scrollTo(0, 0);")
+        time.sleep(1)
+        print(f"捲動完成，共載入 {last_count} 個 eds-table__row")
+
     def get_all_products_info(self):
         try:
             page = 1
@@ -1778,7 +1839,7 @@ class ShopeeCrawler:
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
 
-                # Wait for page to load
+                # 等待頁面基本載入
                 try:
                     WebDriverWait(self.driver, 10).until(
                         EC.presence_of_element_located(
@@ -1787,59 +1848,55 @@ class ShopeeCrawler:
                 except:
                     print("等待頁面加載超時，嘗試繼續處理")
 
-                # Expand all rows
-                try:
-                    self.expand_all_buttons()
-                    time.sleep(2)
-                except:
-                    print("展開所有行失敗，繼續處理")
+                # ── 關鍵步驟 1：先捲動頁面，觸發 lazy load 載入所有商品行 ──
+                self.scroll_to_load_all_rows()
 
-                # Get valid product rows only
+                # ── 關鍵步驟 2：點擊「展開更多型號」按鈕，顯示隱藏的型號列 ──
+                # 注意：商品列表頁面使用 product-more-models__content 內的按鈕，
+                # 而非 el-table__expand-icon（後者只在數據中心頁面出現）
+                try:
+                    more_buttons = self.find_more_items_buttons()
+                    if more_buttons:
+                        self.click_matched_buttons(more_buttons)
+                        time.sleep(1.5)  # 等待展開動畫完成
+                    else:
+                        print("沒有找到「展開更多型號」按鈕，跳過此步驟")
+                except Exception as e:
+                    print(f"展開更多型號失敗，繼續處理: {e}")
+
+                # ── 關鍵步驟 3：再次捲動以載入展開後才出現的子型號行 ──
+                self.scroll_to_load_all_rows()
+
+                # 收集有效商品行
                 product_rows = []
-                try:
-                    all_rows = self.driver.find_elements(
-                        By.CLASS_NAME, 'eds-table__row')
-                    print(f"找到 {len(all_rows)} 個潛在商品行")
+                all_rows = self.driver.find_elements(
+                    By.CLASS_NAME, 'eds-table__row')
+                print(f"找到 {len(all_rows)} 個潛在商品行")
 
-                    # Filter rows with valid item-id
-                    for row in all_rows:
-                        try:
-                            # 直接從 item-id class 獲取文本
-                            item_id_container = row.find_element(
-                                By.CLASS_NAME, 'item-id')
-                            item_id_text = item_id_container.text
-                            if item_id_text and "商品 ID:" in item_id_text:
-                                product_rows.append(row)
-                        except Exception as e:
-                            print(f"過濾商品行時出錯: {e}")
-                            continue  # Skip rows without item-id
+                # 收集有效商品行 — 使用 product-variation-item 識別主商品行
+                # (所有商品都有此 div，而 action-only 的 tr 哪有
+                # list-view-action，頭題行有 eds-table__head 等)
+                product_rows = []
+                all_rows = self.driver.find_elements(
+                    By.CLASS_NAME, 'eds-table__row')
+                print(f"找到 {len(all_rows)} 個潛在商品行")
 
-                    print(f"過濾後找到 {len(product_rows)} 個有效商品行")
-                except:
-                    print("未找到商品行，嘗試捲動頁面...")
-                    self.driver.execute_script(
-                        "window.scrollTo(0, document.body.scrollHeight/2);")
-                    time.sleep(2)
-                    all_rows = self.driver.find_elements(
-                        By.CLASS_NAME, 'eds-table__row')
-                    for row in all_rows:
-                        try:
-                            item_id_container = row.find_element(
-                                By.CLASS_NAME, 'item-id')
-                            item_id_text = item_id_container.text
-                            if item_id_text and "商品 ID:" in item_id_text:
-                                product_rows.append(row)
-                        except:
-                            continue
-                    print(f"捲動後找到 {len(product_rows)} 個有效商品行")
+                for row in all_rows:
+                    try:
+                        # 確認透就 product-variation-item 識別商品行
+                        row.find_element(By.CLASS_NAME, 'product-variation-item')
+                        product_rows.append(row)
+                    except:
+                        continue  # 無此 div 的行（action 等輔助行）跳過
 
-                # Process each valid product
+                print(f"過濾後找到 {len(product_rows)} 個有效商品行")
+
+                # 處理每個商品
                 for i, product_row in enumerate(product_rows, 1):
                     print(f"\n處理第 {i}/{len(product_rows)} 個商品")
                     try:
                         product_info = self.get_product_info(product_row)
-                        if product_info and self.is_valid_product(
-                                product_info):
+                        if product_info and self.is_valid_product(product_info):
                             product_id = product_info.pop('商品ID')
                             if product_id != "未找到":
                                 self.products_data[product_id] = product_info
@@ -1853,7 +1910,7 @@ class ShopeeCrawler:
                         print(f"處理商品時出錯: {e}")
                     time.sleep(0.5)
 
-                # Check for next page
+                # 檢查下一頁
                 has_next_page = self.go_to_next_page()
                 if has_next_page:
                     page += 1
