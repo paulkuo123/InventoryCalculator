@@ -51,12 +51,32 @@ class ShopeeCrawler:
                 "--disable-infobars",
                 "--no-sandbox",
                 "--disable-dev-shm-usage",
+                "--disable-background-timer-throttling",
+                "--disable-backgrounding-occluded-windows",
+                "--disable-renderer-backgrounding",
+                "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling",
             ]
         )
         self.context = self.browser.new_context(
             user_agent=user_agent,
             viewport={"width": 1280, "height": 800},
         )
+        
+        # 注入 JavaScript 來欺騙網頁，讓它以為永遠在最上層可見
+        # 並將 requestAnimationFrame 替換為 setTimeout，避免視窗縮小導致動畫與加載完全停止
+        self.context.add_init_script("""
+            Object.defineProperty(document, 'visibilityState', {
+                get() { return 'visible'; }
+            });
+            Object.defineProperty(document, 'hidden', {
+                get() { return false; }
+            });
+            // 攔截 rAF 避免 MacOS 縮小視窗後降至 0fps
+            window.requestAnimationFrame = function(cb) {
+                return setTimeout(function() { cb(performance.now()); }, 1000 / 60);
+            };
+        """)
+        
         self.page = self.context.new_page()
         # 兼容層：用 PlaywrightDriver 包裝 page，提供 Selenium-like API
         self.driver = PlaywrightDriver(self.page)
