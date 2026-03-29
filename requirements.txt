@@ -1,5 +1,4 @@
-selenium
-webdriver-manager
+playwright
 psutil
 PyQt5
 requests

@@ -1,19 +1,15 @@
-from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.common.keys import Keys
+from playwright.sync_api import sync_playwright
 import time
 import json
 from datetime import datetime
 import re
 import sys
 import os
-from selenium.common.exceptions import NoSuchElementException
-from selenium.webdriver.common.action_chains import ActionChains
-from webdriver_manager.chrome import ChromeDriverManager
+
+# Playwright 兼容層：取代 Selenium imports
+from pw_adapter import (By, WebDriverWait, EC, Keys,
+                        NoSuchElementException, ActionChains,
+                        PlaywrightDriver)
 
 if os.name == 'nt':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -25,114 +21,124 @@ class ShopeeCrawler:
                  shopee_url,
                  cookies_path,
                  my_products_url,
-                 driver_path=None,  # Make driver_path optional
+                 driver_path=None,  # 保留參數以兼容呼叫端，但不再使用
                  output_path="shopee_products.json",
                  search_keyword="",
                  headless=False):
         self.shopee_url = shopee_url
         self.cookies_path = cookies_path
         self.my_products_url = my_products_url
-        self.driver_path = driver_path
         self.output_path = output_path
         self.search_keyword = search_keyword  # 保存搜尋關鍵字
         self.headless = headless
-        self.driver = self._init_driver()
         self.products_data = {}
+        # 初始化 Playwright 瀏覽器
+        self._init_browser()
 
-    def _init_driver(self):
-        """優化瀏覽器初始化設置，提高性能"""
-        chrome_options = Options()
-        chrome_options.add_argument(
-            "--disable-blink-features=AutomationControlled")
-        chrome_options.add_argument("--disable-notifications")
+    def _init_browser(self):
+        """使用 Playwright 初始化瀏覽器"""
+        user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36"
 
-        if self.headless:
-            print("啟用無頭模式")
-            chrome_options.add_argument("--headless")
-            chrome_options.add_argument("--disable-gpu")
-            chrome_options.add_argument("--no-sandbox")
-            chrome_options.add_argument("--disable-dev-shm-usage")
-            # 添加 User-Agent 以防止被偵測
-            chrome_options.add_argument(
-                "user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36")
+        print(f"正在啟動 Playwright 瀏覽器 (headless={self.headless})")
 
-        # 添加性能優化選項
-        chrome_options.add_argument("--disable-extensions")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument("--disable-dev-shm-usage")
-        chrome_options.add_argument("--no-sandbox")
-        chrome_options.add_argument("--disable-infobars")
+        self.playwright = sync_playwright().start()
+        self.browser = self.playwright.chromium.launch(
+            headless=self.headless,
+            args=[
+                "--disable-blink-features=AutomationControlled",
+                "--disable-notifications",
+                "--disable-extensions",
+                "--disable-infobars",
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+            ]
+        )
+        self.context = self.browser.new_context(
+            user_agent=user_agent,
+            viewport={"width": 1280, "height": 800},
+        )
+        self.page = self.context.new_page()
+        # 兼容層：用 PlaywrightDriver 包裝 page，提供 Selenium-like API
+        self.driver = PlaywrightDriver(self.page)
+        print("Playwright 瀏覽器啟動成功")
 
-        # 設置頁面加載策略，只等待DOM樹
-        chrome_options.page_load_strategy = 'eager'
-
-        # 使用 ChromeDriverManager 自動下載與當前 Chrome 瀏覽器版本匹配的 ChromeDriver
+    def cleanup(self):
+        """清理 Playwright 資源"""
         try:
-            # 嘗試使用 ChromeDriverManager 自動管理 ChromeDriver
-            driver_path = ChromeDriverManager().install()
-            service = Service(driver_path)
-            print(f"使用 ChromeDriverManager 自動管理 ChromeDriver: {driver_path}")
+            if hasattr(self, 'page') and self.page:
+                self.page.close()
+            if hasattr(self, 'context') and self.context:
+                self.context.close()
+            if hasattr(self, 'browser') and self.browser:
+                self.browser.close()
+            if hasattr(self, 'playwright') and self.playwright:
+                self.playwright.stop()
+            print("Playwright 資源已清理")
         except Exception as e:
-            print(f"ChromeDriverManager 失敗: {e}")
-            # 如果自動管理失敗，且有指定 ChromeDriver 路徑，則使用指定的路徑
-            if self.driver_path:
-                print(f"嘗試使用指定的 ChromeDriver 路徑: {self.driver_path}")
-                service = Service(executable_path=self.driver_path)
-            else:
-                print("未指定 ChromeDriver 路徑，且自動管理失敗，無法啟動瀏覽器")
-                raise e
-
-        # 啟動 Chrome 瀏覽器
-        return webdriver.Chrome(service=service, options=chrome_options)
+            print(f"清理 Playwright 資源時出錯: {e}")
 
     def close_all_shopee_popups(self, max_tries=5):
         """
         通用關閉蝦皮彈出視窗的方法
         透過多管齊下來保證能關掉各種行銷、公告、導覽彈窗
         """
-        from selenium.webdriver.common.action_chains import ActionChains
-        from selenium.webdriver.common.keys import Keys
-        
         print("正在檢查並關閉彈出視窗...")
         for _ in range(max_tries):
             popup_closed_this_round = False
             
             try:
-                # 策略 1: 模擬按 ESC 鍵 (最快，很多 UI 框架預設支援)
-                ActionChains(self.driver).send_keys(Keys.ESCAPE).perform()
+                # 策略 1: 模擬按 ESC 鍵
+                self.page.keyboard.press("Escape")
+                time.sleep(0.3)
                 
-                # 策略 2: 尋找常見的關閉按鈕文字 (不限於 button，可能是 a 或 div)
+                # 策略 2: 尋找常見的關閉按鈕文字
                 close_texts = ['關閉', '知道了', '我知道了', '稍後再說', '下次再說', '跳過', '取消', 'Close', 'Skip']
                 
-                # 尋找文字完全符合的任何元素，或 class 包含 close 的按鈕/連結
                 for text in close_texts:
-                    # 尋找文字精確符合的元素 (避免 match 到無關的一大串文字)
-                    elements = self.driver.find_elements(By.XPATH, f"//*[text()='{text}' or normalize-space(text())='{text}']")
-                    for el in elements:
-                        if el.is_displayed():
+                    try:
+                        # 使用 Playwright 的 text selector（精確匹配）
+                        locator = self.page.locator(f"text='{text}'")
+                        count = locator.count()
+                        for i in range(count):
                             try:
-                                el.click()
-                                popup_closed_this_round = True
-                                time.sleep(0.5)
+                                el = locator.nth(i)
+                                if el.is_visible():
+                                    el.click(timeout=2000)
+                                    popup_closed_this_round = True
+                                    time.sleep(0.5)
                             except:
                                 pass
+                    except:
+                        pass
                 
-                # 尋找常見的 X 關閉圖標或按鈕
-                close_icons = self.driver.find_elements(By.XPATH, "//*[@class and (contains(@class,'close') or contains(@class,'btn-cancel')) and (name()='BUTTON' or name()='I' or name()='A' or name()='SVG')]")
-                for icon in close_icons:
-                    if icon.is_displayed():
-                        try:
-                            icon.click()
-                            popup_closed_this_round = True
-                            time.sleep(0.5)
-                        except:
-                            pass
+                # 策略 2.5: 尋找常見的 X 關閉圖標或按鈕
+                close_selectors = [
+                    'button[class*="close"]',
+                    'button[class*="btn-cancel"]',
+                    'i[class*="close"]',
+                    'svg[class*="close"]',
+                    'a[class*="close"]',
+                    '[class*="shopee-popup"] button',
+                    '[role="dialog"] button',
+                ]
+                for sel in close_selectors:
+                    try:
+                        icons = self.page.query_selector_all(sel)
+                        for icon in icons:
+                            if icon.is_visible():
+                                try:
+                                    icon.click()
+                                    popup_closed_this_round = True
+                                    time.sleep(0.5)
+                                except:
+                                    pass
+                    except:
+                        pass
                             
-                # 策略 3: 使用 JavaScript 硬刪除常見的 Overlay/Modal DOM 元素 (防禦最頑固的彈窗和教學導覽)
+                # 策略 3: 使用 JavaScript 硬刪除常見的 Overlay/Modal DOM 元素
                 js_script = """
                     let removed = false;
                     
-                    // 1. 隱藏/移除對話框和教學導覽本身
                     const dialogSelectors = [
                         'div[role="dialog"]', '.shopee-modal', '.shopee-popup', '.modal-backdrop',
                         'shopee-banner-popup-stateful', '[class*="tour"]', '[class*="guide"]', 
@@ -147,7 +153,6 @@ class ShopeeCrawler:
                         }
                     });
                     
-                    // 2. 移除阻斷滑鼠點擊的黑色遮罩層
                     document.querySelectorAll('.backdrop, [class*="overlay"]:not([class*="eds-popover"]), .shopee-backdrop, #driver-highlighted-element-stage').forEach(el => {
                         if (getComputedStyle(el).display !== 'none' || getComputedStyle(el).opacity > 0) {
                             el.style.display = 'none'; 
@@ -159,16 +164,14 @@ class ShopeeCrawler:
                     
                     return removed;
                 """
-                if self.driver.execute_script(js_script):
+                if self.page.evaluate(js_script):
                     popup_closed_this_round = True
                     time.sleep(0.5)
                 
-                # 如果這一輪都沒有發現需要關閉的東西，代表已經乾淨了，直接退出迴圈
                 if not popup_closed_this_round:
                     break
                     
             except Exception as e:
-                # 忽略錯誤繼續下一輪嘗試
                 time.sleep(0.5)
                 pass
         
@@ -217,23 +220,18 @@ class ShopeeCrawler:
         for i, button in enumerate(buttons, 1):
             print(f"正在點擊第 {i}/{total_buttons} 個按鈕")
             try:
-                # 直接滾動到按鈕位置（移除 smooth 行為以加快速度）
-                self.driver.execute_script(
-                    "arguments[0].scrollIntoView({block: 'center'});", button)
-
-                # 最小化等待時間，僅確保元素可見
-                WebDriverWait(self.driver, 2).until(EC.visibility_of(
-                    button))  # 改為 visibility_of 代替 element_to_be_clickable
-
+                # 最小化等待時間，僅確保元素可見 (Playwright 自動處理可見性)
+                WebDriverWait(self.driver, 1).until(EC.visibility_of(button))
+                
                 # 優先嘗試直接點擊
                 try:
                     button.click()
                 except Exception:
                     # 如果失敗，使用 JavaScript 點擊
                     self.driver.execute_script("arguments[0].click();", button)
-
-                # 減少點擊後的等待時間，僅保留必要的最小延遲
-                time.sleep(0.1)  # 最小延遲，確保頁面反應
+                
+                # 極小延遲，確保頁面反應
+                time.sleep(0.05)
 
             except Exception as e:
                 print(f"點擊第 {i}/{total_buttons} 個按鈕時出錯: {e}")
@@ -252,42 +250,52 @@ class ShopeeCrawler:
                 cookies = json.load(f)
 
             # 先訪問目標域名，然後才能加載 cookies
-            self.driver.get(self.shopee_url)
+            self.page.goto(self.shopee_url, wait_until="domcontentloaded")
             time.sleep(2)
 
+            # 將 cookies 轉換為 Playwright 格式並批次添加
+            playwright_cookies = []
             for cookie in cookies:
-                # 移除不相容的 cookie 屬性
-                keys_to_remove = ['storeId', 'sameSite']
-                for key in keys_to_remove:
-                    if key in cookie:
-                        cookie.pop(key)
-
-                # 創建適用於 Selenium 的 cookie 格式
-                cookie_for_selenium = {
+                pw_cookie = {
                     'name': cookie.get('name', ''),
                     'value': cookie.get('value', ''),
                     'domain': cookie.get('domain', ''),
                     'path': cookie.get('path', '/'),
                 }
 
-                # 添加過期時間（如果有）
+                # 添加過期時間（Playwright 使用 expires，單位為 Unix timestamp）
                 if 'expirationDate' in cookie and isinstance(
                         cookie['expirationDate'], (int, float)):
-                    cookie_for_selenium['expiry'] = int(
-                        cookie['expirationDate'])
+                    pw_cookie['expires'] = int(cookie['expirationDate'])
 
-                # 添加 httpOnly 和 secure 屬性（如果有）
+                # 添加 httpOnly 和 secure 屬性
                 if cookie.get('httpOnly', False):
-                    cookie_for_selenium['httpOnly'] = True
+                    pw_cookie['httpOnly'] = True
                 if cookie.get('secure', False):
-                    cookie_for_selenium['secure'] = True
+                    pw_cookie['secure'] = True
 
-                # 嘗試添加 cookie
-                try:
-                    self.driver.add_cookie(cookie_for_selenium)
-                    print(f"成功添加 Cookie: {cookie.get('name', 'unnamed')}")
-                except Exception as e:
-                    print(f"無法添加 Cookie {cookie.get('name', 'unnamed')}: {e}")
+                # sameSite 屬性（Playwright 需要）
+                same_site = cookie.get('sameSite', 'Lax')
+                if same_site and same_site in ['Strict', 'Lax', 'None']:
+                    pw_cookie['sameSite'] = same_site
+                else:
+                    pw_cookie['sameSite'] = 'Lax'
+
+                playwright_cookies.append(pw_cookie)
+
+            # 批次添加所有 cookies
+            try:
+                self.context.add_cookies(playwright_cookies)
+                print(f"成功添加 {len(playwright_cookies)} 個 Cookies")
+            except Exception as e:
+                print(f"批次添加 Cookies 失敗: {e}")
+                # 如果批次失敗，逐一添加
+                for pw_cookie in playwright_cookies:
+                    try:
+                        self.context.add_cookies([pw_cookie])
+                        print(f"成功添加 Cookie: {pw_cookie.get('name', 'unnamed')}")
+                    except Exception as e2:
+                        print(f"無法添加 Cookie {pw_cookie.get('name', 'unnamed')}: {e2}")
         except Exception as e:
             print(f"載入 Cookies 時發生錯誤: {e}")
 
@@ -400,7 +408,7 @@ class ShopeeCrawler:
     def login(self):
         try:
             # 前往蝦皮賣家中心登入頁面
-            self.driver.get(self.shopee_url)
+            self.page.goto(self.shopee_url, wait_until="domcontentloaded")
             print("開始訪問蝦皮網站")
 
             # 加載 Cookies
@@ -408,16 +416,24 @@ class ShopeeCrawler:
             print("已載入 Cookies")
 
             # 重新加載頁面，使 Cookies 生效
-            self.driver.get(self.my_products_url)
+            self.page.goto(self.my_products_url, wait_until="domcontentloaded")
             print("正在前往賣家中心商品列表")
 
-            # 等待登入成功跳轉
-            WebDriverWait(self.driver, 20).until(
-                EC.url_contains("portal/product")
-                or EC.url_contains("seller.shopee.tw"))
+            # 等待登入成功跳轉（等待 URL 包含 portal/product 或 seller.shopee.tw）
+            try:
+                self.page.wait_for_url("**/portal/product/**", timeout=20000)
+            except Exception:
+                # 如果 URL 不匹配，檢查是否已經在賣家中心
+                current_url = self.page.url
+                if "seller.shopee.tw" not in current_url:
+                    raise Exception(f"登入可能失敗，當前 URL: {current_url}")
 
-            # 等待頁面加載
-            time.sleep(5)
+            # 等待頁面完全加載（networkidle 可能因持續的網路活動而超時，不影響登入）
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=15000)
+            except Exception:
+                print("networkidle 等待超時，繼續執行")
+            time.sleep(2)  # 保留少量等待確保動態內容載入
 
             # 關閉可能的通知視窗
             self.close_all_shopee_popups()
@@ -788,32 +804,11 @@ class ShopeeCrawler:
 
                 # 清空搜尋框
                 search_input.clear()
-
-                # 使用 JavaScript 設置值並觸發事件
-                self.driver.execute_script(
-                    """
-                    const input = arguments[0];
-                    const value = arguments[1];
-                    
-                    // 設置值
-                    input.value = value;
-                    
-                    // 創建並觸發 input 事件
-                    const inputEvent = new Event('input', { bubbles: true });
-                    input.dispatchEvent(inputEvent);
-                    
-                    // 創建並觸發 change 事件
-                    const changeEvent = new Event('change', { bubbles: true });
-                    input.dispatchEvent(changeEvent);
-                """, search_input, product_name)
-
+                
+                # 直接輸入商品名稱
+                search_input.send_keys(product_name)
                 print(f"已在搜尋框中輸入商品名稱: {product_name}")
-
-                # 如果 JavaScript 方式失敗，嘗試直接輸入
-                actual_value = search_input.get_attribute('value')
-                if not actual_value:
-                    search_input.send_keys(product_name)
-                    time.sleep(0.5)
+                time.sleep(0.5)
 
                 # 按下 Enter 鍵
                 search_input.send_keys(Keys.RETURN)
@@ -1062,9 +1057,7 @@ class ShopeeCrawler:
             self.login()
             print("登入成功")
 
-            # 展開所有行
-            self.expand_all_rows()
-            print("已展開所有行")
+
 
             # 獲取所有商品資訊
             self.get_all_products_info()
@@ -1093,8 +1086,8 @@ class ShopeeCrawler:
             return None
         finally:
             # 關閉瀏覽器
-            if hasattr(self, 'driver'):
-                self.driver.quit()
+            if hasattr(self, 'browser'):
+                self.cleanup()
                 print("瀏覽器已關閉")
 
     def go_to_next_page(self):
@@ -1118,14 +1111,18 @@ class ShopeeCrawler:
             for selector in next_page_selectors:
                 buttons = self.driver.find_elements(By.XPATH, selector)
                 if buttons and len(buttons) > 0:
-                    # 檢查按鈕是否被禁用
-                    if not buttons[0].get_attribute('disabled'):
+                    # 檢查按鈕是否被禁用（同時檢查 HTML disabled 屬性和 CSS class）
+                    btn_disabled_attr = buttons[0].get_attribute('disabled')
+                    btn_class = buttons[0].get_attribute('class') or ''
+                    is_disabled = (btn_disabled_attr is not None) or ('disabled' in btn_class)
+                    
+                    if not is_disabled:
                         next_button = buttons[0]
-                        print(f"找到下一頁按鈕: {buttons[0].get_attribute('class')}")
+                        print(f"找到下一頁按鈕: {btn_class}")
                         break
                     else:
                         print(
-                            f"找到下一頁按鈕，但已被禁用: {buttons[0].get_attribute('class')}"
+                            f"找到下一頁按鈕，但已被禁用: {btn_class}"
                         )
 
             if not next_button:
@@ -1285,25 +1282,18 @@ class ShopeeCrawler:
         return "未找到"
 
     def _try_get_img_tag_url(self, element, attempt, wait_time):
-        """嘗試從 img 標籤獲取 URL"""
+        """嘗試從 img 標籤獲取 URL (已優化: 直接提取不空等)"""
         try:
             # 嘗試找到 img 標籤
             img_element = element.find_element(By.TAG_NAME, 'img')
 
-            # 等待圖片加載完成，增加更詳細的檢查
-            for wait_attempt in range(3):
-                is_image_loaded = self.driver.execute_script(
-                    "return arguments[0].complete && typeof arguments[0].naturalWidth != 'undefined' && arguments[0].naturalWidth > 0",
-                    img_element)
-
-                if is_image_loaded:
-                    break
-
-                print(f"  圖片尚未加載完成，等待中... (等待嘗試 {wait_attempt+1}/3)")
-                time.sleep(wait_time)
-
-            # 獲取圖片 URL
+            # 直接提取 src 屬性，不再等待 naturalWidth
+            # 蝦皮網頁中圖片的 src 通常已經加載好較小版本的圖片 (_tn)
             image_url = img_element.get_attribute('src')
+            if not image_url or not image_url.strip():
+                # 若 src 暫時為空，才稍微等一下
+                time.sleep(1)
+                image_url = img_element.get_attribute('src')
             if image_url and image_url.strip():
                 image_url = self._normalize_url(image_url)
                 if self._is_valid_image_url(image_url):
@@ -1804,15 +1794,17 @@ class ShopeeCrawler:
         last_count = 0
         stable_rounds = 0
 
-        # 先捲回頂部
-        self.driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(1)
-
-        while stable_rounds < 3:  # 連續 3 輪行數不增加才結束
-            # 逐步向下捲動（每次滾動 80% 視窗高度）
+        while stable_rounds < 2:  # 減少為 2 輪即可判斷穩定
+            # 檢查是否已經捲到底部
+            is_bottom = self.driver.execute_script(
+                "(window.innerHeight + window.scrollY) >= document.body.scrollHeight - 50"
+            )
+            
+            # 逐步向下捲動
             self.driver.execute_script(
-                "window.scrollBy(0, window.innerHeight * 0.8);")
-            time.sleep(1.2)  # 等待 lazy load
+                "window.scrollBy(0, window.innerHeight * 0.8);"
+            )
+            time.sleep(1.0)  # 稍微縮短等待時間
 
             current_count = len(
                 self.driver.find_elements(By.CLASS_NAME, 'eds-table__row'))
@@ -1823,10 +1815,12 @@ class ShopeeCrawler:
                 stable_rounds = 0  # 有新行出現，重置穩定輪次
             else:
                 stable_rounds += 1
+                
+            # 如果已經到底部且行數沒增加，提早結束
+            if is_bottom and stable_rounds >= 1:
+                print("  已捲動至頁面底部且無新內容，提早結束捲動")
+                break
 
-        # 捲回頂部，準備正式收集
-        self.driver.execute_script("window.scrollTo(0, 0);")
-        time.sleep(1)
         print(f"捲動完成，共載入 {last_count} 個 eds-table__row")
 
     def get_all_products_info(self):
@@ -2040,11 +2034,6 @@ def main():
     import sys
     import argparse
     import os
-    from selenium import webdriver
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.chrome.options import Options
-    # 假設 ShopeeCrawler 是已定義的類別
-    # from crawler import ShopeeCrawler
 
     if len(sys.argv) > 1:
         # 使用 argparse 解析命令行參數
@@ -2093,7 +2082,7 @@ def main():
 
         # 確保瀏覽器關閉
         try:
-            crawler.driver.quit()
+            crawler.cleanup()
         except:
             pass
 
@@ -2128,7 +2117,7 @@ def main():
 
         # 確保瀏覽器關閉
         try:
-            crawler.driver.quit()
+            crawler.cleanup()
         except:
             pass
 
