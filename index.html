@@ -17,10 +17,7 @@
                 <h1>莉莉安蝦皮庫存管理系統</h1>
             </div>
             <div class="header-actions">
-                <button id="togglePieChartBtn" class="chart-toggle-btn">
-                    <i class="fas fa-chart-pie"></i>
-                    <span>庫存分析</span>
-                </button>
+
                 <div class="stats-badge">
                     <i class="fas fa-chart-line"></i>
                     <span>庫存監控中</span>
@@ -75,104 +72,55 @@
         </div>
 
         <!-- 整體庫存水位圓餅圖區塊 -->
-        <div class="card" id="inventoryPieChartCard" style="display: none;">
-            <div class="pie-chart-container">
-                <div class="chart-header">
-                    <div class="chart-title">
-                        <i class="fas fa-chart-pie"></i>
-                        <h3>整體庫存水位分析</h3>
+        <!-- 庫存健康儀表板 (Dashboard Summary) -->
+        <div class="card dashboard-summary" id="dashboardSummary">
+            <div class="dashboard-header">
+                <i class="fas fa-heartbeat"></i>
+                <h3>整體庫存狀態</h3>
+            </div>
+            <div class="dashboard-content">
+                <!-- 狀態指示器 -->
+                <div class="dashboard-status-card" id="overallStatusCard">
+                    <div class="status-icon-wrapper">
+                        <i class="fas fa-check-circle" id="statusIcon"></i>
                     </div>
-                    <div class="chart-subtitle">基於目前顯示的商品統計</div>
-                    <button id="closePieChartBtn" class="close-chart-btn">
-                        <i class="fas fa-times"></i>
-                    </button>
+                    <div class="status-info">
+                        <div class="status-title">目前狀態</div>
+                        <div class="status-value" id="overallStatusText">健康</div>
+                        <div class="status-desc" id="overallStatusDesc">平均庫存足夠支撐 3 個月以上</div>
+                    </div>
                 </div>
-                
-                <div class="chart-content">
-                    <div class="pie-chart-wrapper">
-                        <div class="pie-chart" id="inventoryPieChart">
-                            <div class="pie-slice" id="pieSlice1"></div>
-                            <div class="pie-slice" id="pieSlice2"></div>
-                            <div class="pie-center">
-                                <div class="center-value" id="centerValue">0</div>
-                                <div class="center-label">個月</div>
-                            </div>
+
+                <!-- 關鍵指標 -->
+                <div class="dashboard-metrics">
+                    <div class="metric-item">
+                        <div class="metric-icon alert-icon">
+                            <i class="fas fa-exclamation-triangle"></i>
                         </div>
-                        <div class="chart-legend">
-                            <div class="legend-item">
-                                <div class="legend-color" style="background: #4CAF50;"></div>
-                                <span>庫存充足 (>6個月)</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color" style="background: #FF9800;"></div>
-                                <span>庫存正常 (3-6個月)</span>
-                            </div>
-                            <div class="legend-item">
-                                <div class="legend-color" style="background: #F44336;"></div>
-                                <span>庫存不足 (<3個月)</span>
-                            </div>
+                        <div class="metric-info">
+                            <div class="metric-value text-danger" id="restockModelsCount">0</div>
+                            <div class="metric-label">需補貨型號</div>
                         </div>
                     </div>
                     
-                    <div class="stats-panel">
-                        <div class="stat-card">
-                            <div class="stat-icon">
-                                <i class="fas fa-boxes"></i>
-                            </div>
-                            <div class="stat-content">
-                                <div class="stat-number" id="totalProductsCount">0</div>
-                                <div class="stat-label">顯示商品</div>
-                            </div>
+                    <div class="metric-item">
+                        <div class="metric-icon info-icon">
+                            <i class="fas fa-chart-line"></i>
                         </div>
-                        
-                        <div class="stat-card">
-                            <div class="stat-icon">
-                                <i class="fas fa-layer-group"></i>
-                            </div>
-                            <div class="stat-content">
-                                <div class="stat-number" id="totalModelsCount">0</div>
-                                <div class="stat-label">型號總數</div>
-                            </div>
-                        </div>
-                        
-                        <div class="stat-card">
-                            <div class="stat-icon">
-                                <i class="fas fa-warehouse"></i>
-                            </div>
-                            <div class="stat-content">
-                                <div class="stat-number" id="totalStockCount">0</div>
-                                <div class="stat-label">總庫存</div>
-                            </div>
-                        </div>
-                        
-                        <div class="stat-card">
-                            <div class="stat-icon">
-                                <i class="fas fa-chart-line"></i>
-                            </div>
-                            <div class="stat-content">
-                                <div class="stat-number" id="totalSalesCount">0</div>
-                                <div class="stat-label">總月銷量</div>
-                            </div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="dashboardTotalSales">0</div>
+                            <div class="metric-label">總月銷量</div>
                         </div>
                     </div>
-                </div>
-                
-                <div class="analysis-panel">
-                    <div class="analysis-item">
-                        <span class="analysis-label">平均庫存水位:</span>
-                        <span class="analysis-value" id="avgInventoryLevel">0 個月</span>
-                    </div>
-                    <div class="analysis-item">
-                        <span class="analysis-label">庫存標準差:</span>
-                        <span class="analysis-value" id="inventoryStdDev">0 個月</span>
-                    </div>
-                    <div class="analysis-item">
-                        <span class="analysis-label">最低庫存水位:</span>
-                        <span class="analysis-value" id="minInventoryLevel">0 個月</span>
-                    </div>
-                    <div class="analysis-item">
-                        <span class="analysis-label">最高庫存水位:</span>
-                        <span class="analysis-value" id="maxInventoryLevel">0 個月</span>
+
+                    <div class="metric-item">
+                        <div class="metric-icon success-icon">
+                            <i class="fas fa-box-open"></i>
+                        </div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="dashboardTotalStock">0</div>
+                            <div class="metric-label">總庫存量</div>
+                        </div>
                     </div>
                 </div>
             </div>

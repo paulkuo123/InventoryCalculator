@@ -36,7 +36,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 minLevel: 0,
                 maxLevel: 0,
                 overallLevel: 0,
-                levelDistribution: { low: 0, medium: 0, high: 0 }
+                levelDistribution: { low: 0, medium: 0, high: 0 },
+                modelsNeedingRestock: 0
             };
         }
         
@@ -81,6 +82,7 @@ document.addEventListener('DOMContentLoaded', function() {
         let totalStock = 0;
         let totalMonthlySales = 0;
         let inventoryLevels = [];
+        let modelsNeedingRestock = 0;
         
         // 計算統計數據
         Object.entries(filteredProducts).forEach(([productId, product]) => {
@@ -88,14 +90,30 @@ document.addEventListener('DOMContentLoaded', function() {
                 let productHasVisibleModels = false;
                 
                 product.型號.forEach((modelData) => {
-                    const monthlyRate = parseInt(modelData.月銷量, 10) || 0;
+                    let monthlyRate = parseInt(modelData.月銷量, 10) || 0;
                     const months = parseInt(inventoryMonth, 10) || 0;
-                    const expectedStock = monthlyRate * months;
                     const currentStock = parseInt(modelData.商品庫存, 10) || 0;
+                    
+                    // 歷史佔比法預估月銷量
+                    if (currentStock === 0 && monthlyRate === 0) {
+                        const modelHistoricalSales = parseInt(modelData.已售出數量, 10) || 0;
+                        const productTotalHistoricalSales = parseInt(product.已售出總數量, 10) || 0;
+                        const productTotalMonthlySales = parseInt(product.總月銷量, 10) || 0;
+                        
+                        if (modelHistoricalSales > 0 && productTotalHistoricalSales > 0 && productTotalMonthlySales > 0) {
+                            const historicalRatio = modelHistoricalSales / productTotalHistoricalSales;
+                            monthlyRate = Math.round(productTotalMonthlySales * historicalRatio * 10) / 10;
+                        }
+                    }
+                    
+                    const expectedStock = Math.round(monthlyRate * months);
                     
                     // 如果過濾模式開啟且當前庫存大於等於預期庫存，則跳過此型號
                     if (filterMode && currentStock >= expectedStock && expectedStock > 0) {
                         return;
+                    }
+                    if (currentStock < expectedStock && expectedStock > 0) {
+                        modelsNeedingRestock++;
                     }
                     
                     productHasVisibleModels = true;
@@ -179,101 +197,54 @@ document.addEventListener('DOMContentLoaded', function() {
             minLevel: Math.round(minLevel * 10) / 10,
             maxLevel: Math.round(maxLevel * 10) / 10,
             overallLevel: Math.round(overallLevel * 10) / 10,
-            levelDistribution
+            levelDistribution,
+            modelsNeedingRestock
         };
     }
     
-    // 更新圓餅圖UI
-    function updatePieChartUI(products, advancedKeyword = '', searchOption = 'product') {
-        const pieChartCard = document.getElementById('inventoryPieChartCard');
-        if (!pieChartCard) return;
+    // 更新儀表板UI
+    function updateDashboardUI(products, advancedKeyword = '', searchOption = 'product') {
+        const dashboardSummary = document.getElementById('dashboardSummary');
+        if (!dashboardSummary) return;
+        
+        // 確保儀表板總是可見
+        dashboardSummary.style.display = 'block';
         
         const stats = calculateInventoryStatistics(products, advancedKeyword, searchOption);
         
-        // 更新統計數據
-        document.getElementById('totalProductsCount').textContent = stats.totalProducts;
-        document.getElementById('totalModelsCount').textContent = stats.totalModels;
-        document.getElementById('totalStockCount').textContent = stats.totalStock;
-        document.getElementById('totalSalesCount').textContent = stats.totalMonthlySales;
+        // 更新指標數據
+        document.getElementById('restockModelsCount').textContent = stats.modelsNeedingRestock;
+        document.getElementById('dashboardTotalSales').textContent = Math.round(stats.totalMonthlySales);
+        document.getElementById('dashboardTotalStock').textContent = stats.totalStock;
         
-        // 更新分析數據
-        document.getElementById('avgInventoryLevel').textContent = `${stats.avgLevel} 個月`;
-        document.getElementById('inventoryStdDev').textContent = `${stats.stdDev} 個月`;
-        document.getElementById('minInventoryLevel').textContent = `${stats.minLevel} 個月`;
-        document.getElementById('maxInventoryLevel').textContent = `${stats.maxLevel} 個月`;
+        // 判定狀態
+        const statusCard = document.getElementById('overallStatusCard');
+        const statusIcon = document.getElementById('statusIcon');
+        const statusText = document.getElementById('overallStatusText');
+        const statusDesc = document.getElementById('overallStatusDesc');
         
-        // 更新圓餅圖中心值
-        const centerValue = document.getElementById('centerValue');
-        centerValue.textContent = stats.overallLevel;
+        // 移除舊的狀態類別
+        statusCard.classList.remove('status-healthy', 'status-warning', 'status-critical');
         
-        // 更新圓餅圖顏色和比例
-        const pieChart = document.getElementById('inventoryPieChart');
-        const totalWeight = stats.levelDistribution.low + stats.levelDistribution.medium + stats.levelDistribution.high;
-        
-        if (totalWeight > 0) {
-            const lowPercentage = (stats.levelDistribution.low / totalWeight) * 100;
-            const mediumPercentage = (stats.levelDistribution.medium / totalWeight) * 100;
-            const highPercentage = (stats.levelDistribution.high / totalWeight) * 100;
-            
-            // 計算角度
-            const lowAngle = (lowPercentage / 100) * 360;
-            const mediumAngle = (mediumPercentage / 100) * 360;
-            const highAngle = (highPercentage / 100) * 360;
-            
-            // 更新圓餅圖背景
-            pieChart.style.background = `conic-gradient(
-                #F44336 0deg ${lowAngle}deg,
-                #FF9800 ${lowAngle}deg ${lowAngle + mediumAngle}deg,
-                #4CAF50 ${lowAngle + mediumAngle}deg ${lowAngle + mediumAngle + highAngle}deg,
-                #e0e0e0 ${lowAngle + mediumAngle + highAngle}deg 360deg
-            )`;
+        if (stats.avgLevel > 3) {
+            statusCard.classList.add('status-healthy');
+            statusIcon.className = 'fas fa-check-circle';
+            statusText.textContent = '健康';
+            statusDesc.textContent = `平均庫存足夠支撐 ${stats.avgLevel} 個月以上`;
+        } else if (stats.avgLevel >= 2) {
+            statusCard.classList.add('status-warning');
+            statusIcon.className = 'fas fa-exclamation-circle';
+            statusText.textContent = '需注意';
+            statusDesc.textContent = `平均庫存僅夠支撐 ${stats.avgLevel} 個月，建議部分補貨`;
         } else {
-            pieChart.style.background = 'conic-gradient(#e0e0e0 0deg 360deg)';
-        }
-        
-        // 只有在圓餅圖可見時才顯示
-        if (window.isPieChartVisible) {
-            pieChartCard.style.display = 'block';
+            statusCard.classList.add('status-critical');
+            statusIcon.className = 'fas fa-times-circle';
+            statusText.textContent = '危急';
+            statusDesc.textContent = `平均庫存剩餘 ${stats.avgLevel} 個月，急需補貨！`;
         }
     }
     
-    // 切換圓餅圖顯示/隱藏
-    function togglePieChart() {
-        const pieChartCard = document.getElementById('inventoryPieChartCard');
-        const toggleBtn = document.getElementById('togglePieChartBtn');
-        
-        if (!pieChartCard || !toggleBtn) return;
-        
-        window.isPieChartVisible = !window.isPieChartVisible;
-        
-        if (window.isPieChartVisible) {
-            pieChartCard.style.display = 'block';
-            toggleBtn.classList.add('active');
-            toggleBtn.innerHTML = '<i class="fas fa-times"></i><span>關閉分析</span>';
-            
-            // 如果有搜尋結果，重新計算圓餅圖
-            if (window.lastSearchResults) {
-                updatePieChartUI(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
-            }
-        } else {
-            pieChartCard.style.display = 'none';
-            toggleBtn.classList.remove('active');
-            toggleBtn.innerHTML = '<i class="fas fa-chart-pie"></i><span>庫存分析</span>';
-        }
-    }
-    
-    // 關閉圓餅圖
-    function closePieChart() {
-        const pieChartCard = document.getElementById('inventoryPieChartCard');
-        const toggleBtn = document.getElementById('togglePieChartBtn');
-        
-        if (!pieChartCard || !toggleBtn) return;
-        
-        window.isPieChartVisible = false;
-        pieChartCard.style.display = 'none';
-        toggleBtn.classList.remove('active');
-        toggleBtn.innerHTML = '<i class="fas fa-chart-pie"></i><span>庫存分析</span>';
-    }
+
     
     // 修改狀態消息更新邏輯，加入爬取月銷量的階段
     function updateStatusMessage(progress) {
@@ -778,8 +749,8 @@ document.addEventListener('DOMContentLoaded', function() {
             console.log('沒有符合過濾條件的商品');
         }
         
-        // 更新圓餅圖UI
-        updatePieChartUI(products, advancedKeyword, searchOption);
+        // 更新儀表板UI
+        updateDashboardUI(products, advancedKeyword, searchOption);
     }
     
     // 綁定過濾模式切換事件 - 當過濾模式改變時重新顯示商品
@@ -890,17 +861,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // 綁定圓餅圖切換按鈕事件
-    const togglePieChartBtn = document.getElementById('togglePieChartBtn');
-    if (togglePieChartBtn) {
-        togglePieChartBtn.addEventListener('click', togglePieChart);
-    }
-    
-    // 綁定關閉圓餅圖按鈕事件
-    const closePieChartBtn = document.getElementById('closePieChartBtn');
-    if (closePieChartBtn) {
-        closePieChartBtn.addEventListener('click', closePieChart);
-    }
+    // (已移除圓餅圖相關按鈕事件)
     
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
