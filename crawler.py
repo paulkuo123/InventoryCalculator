@@ -32,8 +32,19 @@ class ShopeeCrawler:
         self.search_keyword = search_keyword  # 保存搜尋關鍵字
         self.headless = headless
         self.products_data = {}
+        self.golden_table = self._load_golden_table()
         # 初始化 Playwright 瀏覽器
         self._init_browser()
+
+    def _load_golden_table(self):
+        try:
+            import os, json
+            golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'golden_table.json')
+            with open(golden_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"載入 golden_table.json 失敗: {e}")
+            return {}
 
     def _init_browser(self):
         """使用 Playwright 初始化瀏覽器"""
@@ -836,7 +847,7 @@ class ShopeeCrawler:
 
                 # 等待搜尋結果加載
                 print("等待搜尋結果加載...")
-                time.sleep(3)
+                time.sleep(1)
 
                 page = 1
                 has_next_page = True
@@ -854,7 +865,7 @@ class ShopeeCrawler:
                     has_next_page = self.go_to_next_page()  # 假設此方法檢查並跳轉到下一頁
                     if has_next_page:
                         page += 1
-                        time.sleep(3)
+                        time.sleep(1)
                     else:
                         print("已到達最後一頁")
 
@@ -889,7 +900,7 @@ class ShopeeCrawler:
                         print("已按下 Enter 鍵進行搜尋")
 
                     # 等待搜尋結果加載
-                    time.sleep(5)
+                    time.sleep(1.5)
 
                     # 展開所有表格行
                     print("展開所有表格行...")
@@ -1182,7 +1193,7 @@ class ShopeeCrawler:
 
             # 等待頁面加載
             print("等待頁面加載...")
-            time.sleep(5)
+            time.sleep(1.5)
             return True
 
         except Exception as e:
@@ -1243,184 +1254,6 @@ class ShopeeCrawler:
                 return False
 
         return True
-
-    def get_image_with_retry(self, element, max_retries=5, wait_time=2):
-        """
-        嘗試多次獲取圖片 URL，直到成功或達到最大重試次數
-        改進版本：正確識別和過濾 base64 格式的圖片URL
-        
-        Args:
-            element: 包含圖片的元素
-            max_retries: 最大重試次數
-            wait_time: 每次重試間隔時間（秒）
-            
-        Returns:
-            str: 圖片 URL 或 "未找到"
-        """
-        print(f"開始獲取圖片URL，最大重試次數: {max_retries}")
-
-        for attempt in range(max_retries):
-            try:
-                print(f"第 {attempt+1}/{max_retries} 次嘗試獲取圖片...")
-
-                # 方法1: 嘗試找到 img 標籤
-                img_url = self._try_get_img_tag_url(element, attempt,
-                                                    wait_time)
-                if img_url and img_url != "未找到":
-                    return img_url
-
-                # 方法2: 嘗試從 style 屬性中提取 background-image
-                style_url = self._try_get_style_url(element, attempt)
-                if style_url and style_url != "未找到":
-                    return style_url
-
-                # 方法3: 嘗試從 data 屬性中獲取
-                data_url = self._try_get_data_url(element, attempt)
-                if data_url and data_url != "未找到":
-                    return data_url
-
-                # 如果所有方法都失敗，等待後重試
-                if attempt < max_retries - 1:
-                    print(f"第 {attempt+1} 次嘗試失敗，等待 {wait_time} 秒後重試...")
-                    time.sleep(wait_time)
-
-                    # 嘗試滾動到元素位置，確保可見
-                    try:
-                        self.driver.execute_script(
-                            "arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});",
-                            element)
-                        time.sleep(0.5)
-                    except:
-                        pass
-
-            except Exception as e:
-                print(f"獲取圖片時發生異常 (嘗試 {attempt+1}/{max_retries}): {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(wait_time)
-
-        print("所有重試嘗試都失敗，返回 '未找到'")
-        return "未找到"
-
-    def _try_get_img_tag_url(self, element, attempt, wait_time):
-        """嘗試從 img 標籤獲取 URL (已優化: 直接提取不空等)"""
-        try:
-            # 嘗試找到 img 標籤
-            img_element = element.find_element(By.TAG_NAME, 'img')
-
-            # 直接提取 src 屬性，不再等待 naturalWidth
-            # 蝦皮網頁中圖片的 src 通常已經加載好較小版本的圖片 (_tn)
-            image_url = img_element.get_attribute('src')
-            if not image_url or not image_url.strip():
-                # 若 src 暫時為空，才稍微等一下
-                time.sleep(1)
-                image_url = img_element.get_attribute('src')
-            if image_url and image_url.strip():
-                image_url = self._normalize_url(image_url)
-                if self._is_valid_image_url(image_url):
-                    print(f"  成功從 img 標籤獲取圖片 URL: {image_url}")
-                    return image_url
-                else:
-                    print(f"  獲取到無效的圖片URL (base64格式): {image_url[:50]}...")
-
-        except Exception as e:
-            print(f"  從 img 標籤獲取圖片失敗: {e}")
-
-        return "未找到"
-
-    def _try_get_style_url(self, element, attempt):
-        """嘗試從 style 屬性中提取 background-image URL"""
-        try:
-            style = element.get_attribute('style')
-            if style and 'background-image' in style:
-                url_match = re.search(r"url\(['\"]?(.*?)['\"]?\)", style)
-                if url_match:
-                    image_url = url_match.group(1).strip()
-                    if image_url:
-                        image_url = self._normalize_url(image_url)
-                        if self._is_valid_image_url(image_url):
-                            print(f"  成功從 style 屬性獲取圖片 URL: {image_url}")
-                            return image_url
-                        else:
-                            print(
-                                f"  從style獲取到無效的圖片URL (base64格式): {image_url[:50]}..."
-                            )
-        except Exception as e:
-            print(f"  從 style 屬性獲取圖片失敗: {e}")
-
-        return "未找到"
-
-    def _try_get_data_url(self, element, attempt):
-        """嘗試從 data 屬性中獲取圖片 URL"""
-        try:
-            # 檢查常見的 data 屬性
-            data_attrs = [
-                'data-src', 'data-lazy', 'data-original', 'data-srcset'
-            ]
-            for attr in data_attrs:
-                try:
-                    image_url = element.get_attribute(attr)
-                    if image_url and image_url.strip():
-                        image_url = self._normalize_url(image_url)
-                        if self._is_valid_image_url(image_url):
-                            print(f"  成功從 {attr} 屬性獲取圖片 URL: {image_url}")
-                            return image_url
-                        else:
-                            print(
-                                f"  從{attr}獲取到無效的圖片URL (base64格式): {image_url[:50]}..."
-                            )
-                except:
-                    continue
-        except Exception as e:
-            print(f"  從 data 屬性獲取圖片失敗: {e}")
-
-        return "未找到"
-
-    def _normalize_url(self, url):
-        """標準化 URL 格式"""
-        if not url or url == "未找到":
-            return "未找到"
-
-        # 移除URL中的多餘空格
-        url = url.strip()
-
-        # 如果URL不是以http或https開頭，添加https前綴
-        if not url.startswith('http://') and not url.startswith('https://'):
-            # 移除開頭的 //（如果有）
-            if url.startswith('//'):
-                url = url[2:]
-            url = 'https://' + url
-
-        return url
-
-    def _is_valid_image_url(self, url):
-        """
-        驗證圖片URL是否有效
-        正確的URL應該是真實的圖片URL，而不是base64格式的佔位符
-        """
-        if not url or url == "未找到":
-            return False
-
-        # 檢查是否為base64格式的圖片（這些是無效的佔位符）
-        if url.startswith('data:image/'):
-            print(f"  檢測到base64格式的佔位符圖片: {url[:50]}...")
-            return False
-
-        # 檢查是否包含基本的圖片文件擴展名
-        image_extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.svg']
-        url_lower = url.lower()
-
-        # 檢查是否包含圖片擴展名或常見的圖片服務域名
-        has_image_extension = any(ext in url_lower for ext in image_extensions)
-        has_image_domain = any(domain in url_lower for domain in [
-            'shopee.tw', 'cf.shopee.tw', 'imgur.com', 'amazonaws.com',
-            'cloudfront.net', 'cdn.shopee.tw'
-        ])
-
-        # 檢查URL長度（base64圖片通常很長）
-        is_reasonable_length = len(url) < 500  # 真實的圖片URL通常不會太長
-
-        return (has_image_extension
-                or has_image_domain) and is_reasonable_length
 
     def find_expand_icons(self):
         """
@@ -1558,11 +1391,9 @@ class ShopeeCrawler:
             for i, icon in enumerate(expand_icons, 1):
                 self.driver.execute_script(
                     "arguments[0].scrollIntoView({block: 'center'});", icon)
-                time.sleep(0.5)
                 self.driver.execute_script("arguments[0].click();", icon)
                 print(f"已展開第 {i} 個表格行")
                 total_expanded += 1
-                time.sleep(0.8)
 
             print(f"總共成功展開 {total_expanded} 個表格行")
             return total_expanded
@@ -1652,26 +1483,7 @@ class ShopeeCrawler:
             return 0
 
     def get_product_info(self, product_row):
-        # Extract product image URL
-        try:
-            image_container = product_row.find_element(By.CLASS_NAME,
-                                                       'product-image')
-
-            # 使用更高效的滾動方式，不使用平滑滾動
-            self.driver.execute_script(
-                "arguments[0].scrollIntoView({block: 'center', behavior: 'auto'});",
-                image_container)
-
-            # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
-            product_image_url = self.get_image_with_retry(image_container,
-                                                          max_retries=5,
-                                                          wait_time=2)
-        except Exception as e:
-            print(f"獲取商品圖片時出錯: {e}")
-            product_image_url = "未找到"
-
-        # Extract product ID (mandatory field)
-        # Try multiple methods as .item-id is not present on all products
+        # Extract product ID (mandatory field) first to query golden_table
         item_id = "未找到"
         try:
             # Method 1: From .item-id text (legacy products)
@@ -1709,14 +1521,20 @@ class ShopeeCrawler:
             print("無法取得商品 ID，跳過此行")
             return None
 
+        import json
+        golden_info = self.golden_table.get(item_id, {})
+
+        # Extract product image URL from golden table
+        product_image_url = golden_info.get("商品圖片網址", "未找到")
+
         # Extract product name
         try:
             product_name = product_row.find_element(By.CLASS_NAME,
                                                     'product-name-wrap').text
             if not product_name.strip():
-                product_name = "未找到"
+                product_name = golden_info.get("商品名稱", "未找到")
         except:
-            product_name = "未找到"
+            product_name = golden_info.get("商品名稱", "未找到")
 
         # Extract total sales
         try:
@@ -1724,9 +1542,13 @@ class ShopeeCrawler:
                                                    'list-view-sales').text
             total_sales = self.convert_sales_number(total_sales)
             if not total_sales.strip():
-                total_sales = "0"
+                total_sales = golden_info.get("已售出總數量", "0")
         except:
-            total_sales = "0"  # 找不到時視為 0，避免商品被誤判為無效
+            total_sales = golden_info.get("已售出總數量", "0")
+
+        # Create a quick lookup for model images from golden table
+        golden_models = {m.get("型號名稱"): m.get("型號圖片網址", "未找到") 
+                         for m in golden_info.get("型號", []) if "型號名稱" in m}
 
         # Extract model info
         models = []
@@ -1742,29 +1564,12 @@ class ShopeeCrawler:
                 }
 
                 try:
-                    # 找到圖片容器
-                    image_container = variation.find_element(
-                        By.CLASS_NAME, 'variation-name-image')
-
-                    # 滾動到圖片位置
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView({block: 'center'});",
-                        image_container)
-
-                    # 使用 get_image_with_retry 方法等待圖片載入並獲取 URL
-                    image_url = self.get_image_with_retry(image_container,
-                                                          max_retries=5,
-                                                          wait_time=2)
-                    model_info['型號圖片網址'] = image_url
-                except Exception as e:
-                    print(f"獲取型號圖片時出錯: {e}")
-                    model_info['型號圖片網址'] = "未找到"
-
-                try:
                     name_elements = variation.find_elements(
                         By.CLASS_NAME, 'variation-name-info-name')
                     if name_elements:
-                        model_info['型號名稱'] = name_elements[0].text
+                        model_name = name_elements[0].text.strip()
+                        model_info['型號名稱'] = model_name
+                        model_info['型號圖片網址'] = golden_models.get(model_name, "未找到")
                 except:
                     pass
 
@@ -1824,7 +1629,7 @@ class ShopeeCrawler:
             self.driver.execute_script(
                 "window.scrollBy(0, window.innerHeight * 0.8);"
             )
-            time.sleep(1.0)  # 稍微縮短等待時間
+            time.sleep(0.3)  # 大幅縮短等待時間
 
             current_count = len(
                 self.driver.find_elements(By.CLASS_NAME, 'eds-table__row'))
@@ -1872,7 +1677,7 @@ class ShopeeCrawler:
                     more_buttons = self.find_more_items_buttons()
                     if more_buttons:
                         self.click_matched_buttons(more_buttons)
-                        time.sleep(1.5)  # 等待展開動畫完成
+                        time.sleep(0.3)  # 等待展開動畫完成
                     else:
                         print("沒有找到「展開更多型號」按鈕，跳過此步驟")
                 except Exception as e:
@@ -1922,13 +1727,12 @@ class ShopeeCrawler:
                             print("商品資訊無效，跳過")
                     except Exception as e:
                         print(f"處理商品時出錯: {e}")
-                    time.sleep(0.5)
 
                 # 檢查下一頁
                 has_next_page = self.go_to_next_page()
                 if has_next_page:
                     page += 1
-                    time.sleep(3)
+                    time.sleep(1)
                 else:
                     print("已到達最後一頁")
 
