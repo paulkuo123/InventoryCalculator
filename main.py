@@ -1,18 +1,79 @@
+import sys
+import subprocess
+import os
+import re
+import importlib.metadata
+
+def ensure_dependencies():
+    """檢查並安裝缺失的依賴套件"""
+    # 獲取腳本所在目錄及 requirements.txt 路徑
+    base_path = os.path.dirname(os.path.abspath(__file__))
+    requirements_file = os.path.join(base_path, "requirements.txt")
+    
+    if not os.path.exists(requirements_file):
+        return
+
+    try:
+        with open(requirements_file, "r", encoding="utf-8") as f:
+            packages = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+    except Exception as e:
+        print(f"讀取 requirements.txt 時出錯: {e}")
+        return
+
+    missing_packages = []
+    for package in packages:
+        # 解析套件名稱（處理版本號，例如 requests>=2.25.1 -> requests）
+        package_name = re.split(r'[<>=!]', package)[0].strip()
+        
+        # 特殊映射（如果有的話）
+        # pyinstaller 的 metadata 名稱就是 pyinstaller (小寫)
+        
+        try:
+            importlib.metadata.version(package_name)
+        except importlib.metadata.PackageNotFoundError:
+            missing_packages.append(package)
+
+    if missing_packages:
+        print("\n" + "="*50)
+        print(f"偵測到缺失的套件: {', '.join(missing_packages)}")
+        print("正在嘗試自動安裝，這可能需要幾分鐘時間...")
+        print("="*50 + "\n")
+        
+        try:
+            # 使用當前 Python 解析器執行 pip
+            subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing_packages)
+            print("\n✅ 套件安裝成功。")
+            
+            # Playwright 額外處理
+            if any("playwright" in p.lower() for p in missing_packages):
+                print("偵測到 Playwright，正在安裝 Chromium 瀏覽器...")
+                subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
+                print("✅ Playwright 瀏覽器安裝完成。")
+                
+        except subprocess.CalledProcessError as e:
+            print(f"\n❌ 自動安裝過程出錯: {e}")
+            print("請手動執行: pip install -r requirements.txt")
+            print("="*50 + "\n")
+            # 繼續嘗試執行，但也許會因導入失敗而崩潰
+        except Exception as e:
+            print(f"\n❌ 發生非預期錯誤: {e}")
+
+# 立即執行依賴檢查
+ensure_dependencies()
+
+# 原有導入
 import http.server
 import socketserver
 import webbrowser
 import threading
-import os
 import time
 import json
 import urllib.parse
-import subprocess
 import tempfile
 import signal
 import psutil  # 需要安裝: pip install psutil
 import atexit
 import socket
-import sys
 import logging
 import datetime
 
