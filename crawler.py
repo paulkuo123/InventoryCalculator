@@ -5,14 +5,23 @@ from datetime import datetime
 import re
 import sys
 import os
+import random
 
 # Playwright 兼容層：取代 Selenium imports
 from pw_adapter import (By, WebDriverWait, EC, Keys,
-                        NoSuchElementException, ActionChains,
+                        NoSuchElementException,
                         PlaywrightDriver)
 
 if os.name == 'nt':
     sys.stdout.reconfigure(encoding='utf-8')
+
+# 常見的 User Agent 版本列表（避免硬編碼單一版本）
+USER_AGENTS = [
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
+]
 
 class ShopeeCrawler:
 
@@ -32,6 +41,7 @@ class ShopeeCrawler:
         self.headless = headless
         self.products_data = {}
         self.golden_table = self._load_golden_table()
+        self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
         # 初始化 Playwright 瀏覽器
         self._init_browser()
 
@@ -47,9 +57,11 @@ class ShopeeCrawler:
 
     def _init_browser(self):
         """使用 Playwright 初始化瀏覽器"""
-        user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.6943.142 Safari/537.36"
+        # 動態選擇 User Agent，避免硬編碼單一版本
+        user_agent = random.choice(USER_AGENTS)
 
         print(f"正在啟動 Playwright 瀏覽器 (headless={self.headless})")
+        print(f"使用 User Agent: {user_agent[:60]}...")
 
         self.playwright = sync_playwright().start()
         self.browser = self.playwright.chromium.launch(
@@ -93,7 +105,10 @@ class ShopeeCrawler:
         print("Playwright 瀏覽器啟動成功")
 
     def cleanup(self):
-        """清理 Playwright 資源"""
+        """清理 Playwright 資源（防重入）"""
+        if self._cleaned_up:
+            return
+        self._cleaned_up = True
         try:
             if hasattr(self, 'page') and self.page:
                 self.page.close()
@@ -136,10 +151,10 @@ class ShopeeCrawler:
                                     el.click(timeout=2000)
                                     popup_closed_this_round = True
                                     time.sleep(0.5)
-                            except:
-                                pass
-                    except:
-                        pass
+                            except Exception:
+                                pass  # 預期的例外：元素不存在或無法點擊
+                    except Exception:
+                        pass  # 預期的例外：元素不存在或無法點擊
                 
                 # 策略 2.5: 尋找常見的 X 關閉圖標或按鈕
                 close_selectors = [
@@ -160,10 +175,10 @@ class ShopeeCrawler:
                                     icon.click()
                                     popup_closed_this_round = True
                                     time.sleep(0.5)
-                                except:
-                                    pass
-                    except:
-                        pass
+                                except Exception:
+                                    pass  # 預期的例外：元素不存在或無法點擊
+                    except Exception:
+                        pass  # 預期的例外：元素不存在或無法點擊
                             
                 # 策略 3: 使用 JavaScript 硬刪除常見的 Overlay/Modal DOM 元素
                 js_script = """
@@ -243,35 +258,37 @@ class ShopeeCrawler:
             return []
 
     def click_matched_buttons(self, buttons):
+        """
+        點擊展開更多型號按鈕
+        優化：移除不必要的延遲，使用批次處理
+        """
         total_buttons = len(buttons)
+        if total_buttons == 0:
+            print("沒有需要點擊的按鈕")
+            return
+
         print(f"準備點擊 {total_buttons} 個按鈕")
+        success_count = 0
 
         for i, button in enumerate(buttons, 1):
-            print(f"正在點擊第 {i}/{total_buttons} 個按鈕")
             try:
-                # 最小化等待時間，僅確保元素可見 (Playwright 自動處理可見性)
+                # 確保元素可見
                 WebDriverWait(self.driver, 1).until(EC.visibility_of(button))
-                
+
                 # 優先嘗試直接點擊
                 try:
                     button.click()
+                    success_count += 1
                 except Exception:
                     # 如果失敗，使用 JavaScript 點擊
                     self.driver.execute_script("arguments[0].click();", button)
-                
-                # 極小延遲，確保頁面反應
-                time.sleep(0.05)
+                    success_count += 1
 
             except Exception as e:
-                print(f"點擊第 {i}/{total_buttons} 個按鈕時出錯: {e}")
-                try:
-                    # 失敗時再次嘗試 JavaScript 點擊
-                    self.driver.execute_script("arguments[0].click();", button)
-                    time.sleep(0.1)
-                except Exception as e2:
-                    print(f"JavaScript 點擊第 {i}/{total_buttons} 個按鈕也失敗: {e2}")
+                # 記錄錯誤但繼續處理其他按鈕
+                print(f"點擊第 {i}/{total_buttons} 個按鈕時出錯：{e}")
 
-        print("所有按鈕點擊完成")
+        print(f"按鈕點擊完成：成功 {success_count}/{total_buttons}")
 
     def load_cookies(self):
         try:
@@ -328,14 +345,11 @@ class ShopeeCrawler:
         except Exception as e:
             print(f"載入 Cookies 時發生錯誤: {e}")
 
-    def save_to_file(self, data, custom_path=None):
+    def save_to_file(self, data):
         """
-        保存資料到檔案
-        :param data: 要保存的資料
-        :param custom_path: 自定義檔案路徑，如果為 None 則使用預設路徑
+        保存資料到檔案，路徑由建構子的 output_path 決定（預設 shopee_products.json）
         """
-        # 強制使用固定的輸出路徑，忽略 custom_path
-        output_path = "shopee_products.json"
+        output_path = self.output_path or "shopee_products.json"
 
         # 計算每個商品的總月銷量並添加到商品數據中
         print("開始計算每個商品的總月銷量...")
@@ -480,28 +494,89 @@ class ShopeeCrawler:
         url = "https://seller.shopee.tw/datacenter/product/performance"
         print(f"正在前往數據中心: {url}")
         self.driver.get(url)
+        # 等待日期圖標出現，確認頁面已載入
         WebDriverWait(self.driver, 20).until(
             EC.presence_of_element_located((By.CLASS_NAME, "eds-icon.bi-date-input-icon")))
+        time.sleep(1.5)  # 額外等待頁面 JS 完全初始化
+        # 關閉數據中心頁面可能出現的引導彈窗
+        self.close_all_shopee_popups()
+        print("數據中心頁面已就緒")
 
     def _select_past_30_days(self):
+        """
+        選擇日期範圍為「過去 30 天」
+        """
         try:
-            date_icon = self.driver.find_element(By.CLASS_NAME, "eds-icon.bi-date-input-icon")
-            self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", date_icon)
-            time.sleep(0.5)
-            date_icon.click()
-            
-            WebDriverWait(self.driver, 10).until(EC.presence_of_element_located((By.CLASS_NAME, "eds-date-shortcut-item__text")))
-            time.sleep(0.5)
-            
-            options = self.driver.find_elements(By.CLASS_NAME, "eds-date-shortcut-item__text")
-            for opt in options:
-                if "過去 30 天" in opt.text:
-                    opt.click()
-                    print("已選擇「過去 30 天」")
-                    time.sleep(1)
+            # 1. 等待日期選擇圖標出現（頁面完全就緒才繼續）
+            date_icon_el = WebDriverWait(self.driver, 15).until(
+                EC.presence_of_element_located((By.CLASS_NAME, 'eds-icon.bi-date-input-icon'))
+            )
+            self.driver.execute_script('arguments[0].scrollIntoView({block: "center"});', date_icon_el)
+            time.sleep(0.8)
+
+            # 2. 點擊日期圖標（先嘗試 Playwright 原生，再 JS fallback）
+            print('正在點擊日期選擇圖標...')
+            try:
+                self.page.locator('.eds-icon.bi-date-input-icon').first.click(timeout=8000)
+            except Exception as click_err:
+                print(f'原生點擊失敗({click_err})，改用 JS 點擊')
+                self.driver.execute_script('arguments[0].click();', date_icon_el)
+            print('已點擊日期選擇圖標')
+
+            # 3. 等待日期選擇面板出現（最多 15 秒）
+            try:
+                WebDriverWait(self.driver, 15).until(
+                    EC.visibility_of_element_located((By.CLASS_NAME, 'eds-date-shortcut-item__text'))
+                )
+            except Exception:
+                print('等待日期面板超時，嘗試再次點擊圖標...')
+                self.driver.execute_script('arguments[0].click();', date_icon_el)
+                time.sleep(2)
+
+            time.sleep(0.5)  # 等待面板動畫
+
+            # 4. 找到所有日期選項
+            options = self.page.locator('.eds-date-shortcut-item__text').all()
+            print(f'找到 {len(options)} 個日期選項')
+
+            if not options:
+                print('警告：找不到任何日期選項，日期面板可能未打開！')
+                return False
+
+            # 5. 尋找並點擊「過去 30 天」選項（用 Playwright locator 直接操作，更可靠）
+            for opt_locator in options:
+                try:
+                    option_text = opt_locator.inner_text().strip()
+                    print(f'  選項文字：{option_text}')
+                    if '過去 30 天' in option_text:
+                        opt_locator.scroll_into_view_if_needed()
+                        time.sleep(0.3)
+                        opt_locator.click(timeout=5000)
+                        print('已選擇「過去 30 天」')
+                        time.sleep(2)  # 等待日期範圍更新
+                        return True
+                except Exception as e:
+                    print(f'點擊選項時出錯：{e}')
+                    continue
+
+            # 6. fallback：點擊第 4 個選項
+            if len(options) >= 4:
+                try:
+                    option_text = options[3].inner_text().strip()
+                    print(f'未找到「過去 30 天」，嘗試點擊第 4 個選項：{option_text}')
+                    options[3].scroll_into_view_if_needed()
+                    time.sleep(0.3)
+                    options[3].click(timeout=5000)
+                    print(f'已點擊第 4 個選項：{option_text}')
+                    time.sleep(2)
                     return True
+                except Exception as e:
+                    print(f'點擊 fallback 選項失敗：{e}')
+
         except Exception as e:
-            print(f"選擇日期失敗: {e}")
+            print(f'選擇日期失敗：{e}')
+            import traceback
+            traceback.print_exc()
         return False
 
     def _setup_datacenter_filters(self):
@@ -528,7 +603,13 @@ class ShopeeCrawler:
     def get_monthly_sales(self, product_name):
         try:
             self._navigate_to_datacenter()
-            self._select_past_30_days()
+
+            date_selected = self._select_past_30_days()
+            if date_selected:
+                print('✅ 日期範圍已設定為「過去 30 天」')
+            else:
+                print('⚠️ 警告：未能成功選擇「過去 30 天」，月銷量數據可能不準確！')
+
             self._setup_datacenter_filters()
 
             search_input = WebDriverWait(self.driver, 10).until(
@@ -536,9 +617,9 @@ class ShopeeCrawler:
             search_input.clear()
             search_input.send_keys(product_name)
             search_input.send_keys(Keys.RETURN)
-            
+
             print("等待搜尋結果...")
-            time.sleep(1.5)
+            time.sleep(2)
 
             page = 1
             while True:
@@ -551,6 +632,8 @@ class ShopeeCrawler:
             return self.products_data
         except Exception as e:
             print(f"爬取月銷量失敗: {e}")
+            import traceback
+            traceback.print_exc()
             return self.products_data
     def extract_monthly_sales_data(self):
         """
@@ -807,8 +890,8 @@ class ShopeeCrawler:
                 if page_indicators:
                     current_page_text = page_indicators[0].text
                     print(f"當前頁碼: {current_page_text}")
-            except:
-                pass
+            except Exception:
+                pass  # 預期的例外：元素不存在或無法點擊
 
             # 嘗試點擊
             try:
@@ -1108,8 +1191,8 @@ class ShopeeCrawler:
             item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
             if item_id_match:
                 item_id = item_id_match.group(1)
-        except:
-            pass
+        except Exception:
+            pass  # 預期的例外：元素不存在或無法點擊
 
         if item_id == "未找到":
             try:
@@ -1119,8 +1202,8 @@ class ShopeeCrawler:
                 id_match = re.search(r'/portal/product/(\d+)', href)
                 if id_match:
                     item_id = id_match.group(1)
-            except:
-                pass
+            except Exception:
+                pass  # 預期的例外：元素不存在或無法點擊
 
         if item_id == "未找到":
             try:
@@ -1130,8 +1213,8 @@ class ShopeeCrawler:
                 name_val = checkbox.get_attribute('name') or ''
                 if name_val.isdigit():
                     item_id = name_val
-            except:
-                pass
+            except Exception:
+                pass  # 預期的例外：元素不存在或無法點擊
 
         if item_id == "未找到":
             print("無法取得商品 ID，跳過此行")
@@ -1186,8 +1269,8 @@ class ShopeeCrawler:
                         model_name = name_elements[0].text.strip()
                         model_info['型號名稱'] = model_name
                         model_info['型號圖片網址'] = golden_models.get(model_name, "未找到")
-                except:
-                    pass
+                except Exception:
+                    pass  # 預期的例外：元素不存在或無法點擊
 
                 try:
                     sales_elements = variation.find_elements(
@@ -1195,8 +1278,8 @@ class ShopeeCrawler:
                     if sales_elements:
                         model_info['已售出數量'] = self.convert_sales_number(
                             sales_elements[0].text)
-                except:
-                    pass
+                except Exception:
+                    pass  # 預期的例外：元素不存在或無法點擊
 
                 try:
                     stock_elements = variation.find_elements(
@@ -1206,8 +1289,8 @@ class ShopeeCrawler:
                         model_info[
                             '商品庫存'] = "0" if stock_text == "已售完" else self.convert_sales_number(
                                 stock_text)
-                except:
-                    pass
+                except Exception:
+                    pass  # 預期的例外：元素不存在或無法點擊
 
                 if not all(value in ['未找到', '未知型號']
                            for value in model_info.values()):
@@ -1302,15 +1385,7 @@ class ShopeeCrawler:
                 # ── 關鍵步驟 3：再次捲動以載入展開後才出現的子型號行 ──
                 self.scroll_to_load_all_rows()
 
-                # 收集有效商品行
-                product_rows = []
-                all_rows = self.driver.find_elements(
-                    By.CLASS_NAME, 'eds-table__row')
-                print(f"找到 {len(all_rows)} 個潛在商品行")
-
                 # 收集有效商品行 — 使用 product-variation-item 識別主商品行
-                # (所有商品都有此 div，而 action-only 的 tr 哪有
-                # list-view-action，頭題行有 eds-table__head 等)
                 product_rows = []
                 all_rows = self.driver.find_elements(
                     By.CLASS_NAME, 'eds-table__row')
@@ -1413,8 +1488,8 @@ def main():
         # 確保瀏覽器關閉
         try:
             crawler.cleanup()
-        except:
-            pass
+        except Exception:
+            pass  # 預期的例外：元素不存在或無法點擊
 
         print("程式執行完畢。")
         sys.exit(0)  # 確保程式正常退出
@@ -1448,8 +1523,8 @@ def main():
         # 確保瀏覽器關閉
         try:
             crawler.cleanup()
-        except:
-            pass
+        except Exception:
+            pass  # 預期的例外：元素不存在或無法點擊
 
         print("程式執行完畢。")
 

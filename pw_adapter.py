@@ -3,6 +3,7 @@ Playwright ↔ Selenium 兼容層
 讓原有使用 Selenium API 的程式碼能透過 Playwright 執行，無需逐行修改。
 """
 import time
+import re
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -56,10 +57,10 @@ def _by_to_selector(by, value):
     elif by == "css":
         return value
     elif by == "class_name":
-        # 複合 class: "eds-icon.bi-date-input-icon" → ".eds-icon.bi-date-input-icon"
-        if '.' in value:
-            return '.' + value if not value.startswith('.') else value
-        return f".{value}"
+        # 支援複合 class（空格或點分隔），統一轉為 CSS class selector
+        # 例: "eds-icon bi-date-input-icon" 或 "eds-icon.bi-date-input-icon"
+        classes = value.strip().replace(' ', '.').lstrip('.')
+        return '.' + classes
     elif by == "id":
         return f"#{value}"
     elif by == "tag_name":
@@ -94,11 +95,14 @@ class PlaywrightElement:
         return [PlaywrightElement(c, self._page)
                 for c in self._el.query_selector_all(selector)]
 
-    def click(self):
+    def click(self, timeout=8000):
         try:
-            self._el.click(timeout=5000)
-        except Exception:
-            self._el.evaluate("el => el.click()")
+            self._el.click(timeout=timeout)
+        except Exception as e:
+            try:
+                self._el.evaluate("el => el.click()")
+            except Exception as e2:
+                raise Exception(f"click 失敗（原生: {e}）（JS fallback: {e2}）") from e2
 
     def clear(self):
         self._el.fill("")
@@ -171,36 +175,52 @@ class PlaywrightDriver:
 
     # ── JavaScript ──
     def execute_script(self, script, *args):
+        """
+        執行 JavaScript，使用 Playwright 原生的參數傳遞機制。
+        Arrow function 不支援 arguments 物件，因此自動將腳本中的
+        arguments[0], arguments[1], ... 替換為 ___arg0___, ___arg1___, ...
+        """
         pw_args = []
         for a in args:
             pw_args.append(a._el if isinstance(a, PlaywrightElement) else a)
 
+        # 將腳本中的 arguments[N] 替換為 ___argN___（arrow function 不支援 arguments）
+        def _replace_arguments(s):
+            return re.sub(r'\barguments\[(\d+)\]', lambda m: f'___arg{m.group(1)}___', s)
+
+        def _wrap(stripped, params_str):
+            """把處理好的 JS 片段包裝成 arrow function"""
+            # 已有顯式 return → 當純表達式
+            if stripped.startswith("return "):
+                body = stripped[7:]
+                return f"({params_str}) => {{ return {body}; }}"
+            # 多語句（有分號或換行）→ 當函數體
+            if ";" in stripped or "\n" in stripped:
+                return f"({params_str}) => {{ {stripped} }}"
+            # 其餘視為單一表達式
+            return f"({params_str}) => {{ return {stripped}; }}"
+
         if not pw_args:
-            return self._page.evaluate(script)
+            stripped = script.strip().rstrip(";").strip()
+            fn = _wrap(stripped, "")
+            return self._page.evaluate(fn)
 
         if len(pw_args) == 1:
-            adapted = script.replace("arguments[0]", "____a0____")
-            # 判斷是否為 expression（無 { } 包裹且無 return）
-            stripped = adapted.strip().rstrip(";").strip()
-            if "return " in adapted or "{" in adapted:
-                fn = f"(____a0____) => {{ {adapted} }}"
-            else:
-                fn = f"(____a0____) => {{ return {adapted}; }}"
+            stripped = _replace_arguments(script.strip().rstrip(";").strip())
+            fn = _wrap(stripped, "___arg0___")
             return self._page.evaluate(fn, pw_args[0])
 
         # 多參數
-        pnames = [f"____a{i}____" for i in range(len(pw_args))]
-        adapted = script
-        for i, pn in enumerate(pnames):
-            adapted = adapted.replace(f"arguments[{i}]", pn)
-
-        plist = ", ".join(pnames)
-        stripped = adapted.strip().rstrip(";").strip()
-        if "return " in adapted or "{" in adapted:
-            fn = f"([{plist}]) => {{ {adapted} }}"
-        else:
-            fn = f"([{plist}]) => {{ return {adapted}; }}"
-        return self._page.evaluate(fn, pw_args)
+        arg_list = ", ".join([f"___arg{i}___" for i in range(len(pw_args))])
+        stripped = _replace_arguments(script.strip().rstrip(";").strip())
+        fn = _wrap(stripped, arg_list)
+        # 多參數時 Playwright 以陣列傳入
+        fn_multi = re.sub(
+            rf"^\({re.escape(arg_list)}\)",
+            f"([{arg_list}])",
+            fn
+        )
+        return self._page.evaluate(fn_multi, pw_args)
 
     # ── Cookie ──
     def add_cookie(self, cookie_dict):
@@ -222,15 +242,19 @@ class WebDriverWait:
 
     def until(self, condition):
         end = time.time() + self._timeout
+        last_exc = None
         while time.time() < end:
             try:
                 result = condition(self._driver)
                 if result:
                     return result
-            except Exception:
-                pass
+            except Exception as e:
+                last_exc = e  # 保留最後一次例外，方便 debug
             time.sleep(0.5)
-        raise Exception(f"WebDriverWait 超時 ({self._timeout}s)")
+        msg = f"WebDriverWait 超時 ({self._timeout}s)"
+        if last_exc:
+            msg += f"，最後錯誤：{last_exc}"
+        raise TimeoutError(msg)
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -254,6 +278,19 @@ class EC:
             try:
                 if element.is_displayed():
                     return element
+            except Exception:
+                pass
+            return None
+        return _check
+
+    @staticmethod
+    def visibility_of_element_located(locator):
+        by, value = locator
+        def _check(driver):
+            try:
+                el = driver.find_element(by, value)
+                if el.is_displayed():
+                    return el
             except Exception:
                 pass
             return None

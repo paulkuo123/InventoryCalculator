@@ -450,7 +450,7 @@ document.addEventListener('DOMContentLoaded', function() {
             tableContainer.insertBefore(resultsInfo, tableContainer.firstChild);
         }
         
-        console.log('顯示商品數據:', filteredProductCount, '個商品');
+        // console.log removed
         
         // 按總月銷量從大到小排序商品
         const sortedProducts = Object.entries(filteredProducts).sort(([, productA], [, productB]) => {
@@ -459,11 +459,7 @@ document.addEventListener('DOMContentLoaded', function() {
             return salesB - salesA; // 從大到小排序
         });
         
-        console.log('商品排序結果:', sortedProducts.map(([id, product]) => ({
-            id,
-            name: product.商品名稱,
-            totalSales: product.總月銷量
-        })));
+        // console.log removed
         
         // 使用文檔片段減少DOM重繪
         const fragment = document.createDocumentFragment();
@@ -637,7 +633,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                     effectiveMonthlyRate = Math.round(productTotalMonthlySales * historicalRatio * 10) / 10;
                                     isEstimated = true;
                                     
-                                    console.log(`型號 ${modelData.型號名稱} 使用歷史佔比法: 歷史銷量=${modelHistoricalSales}, 總歷史銷量=${productTotalHistoricalSales}, 佔比=${(historicalRatio * 100).toFixed(1)}%, 總月銷量=${productTotalMonthlySales}, 預估月銷量=${effectiveMonthlyRate}`);
+        // console.log removed
                                 }
                             }
                             
@@ -734,7 +730,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // 一次性更新DOM
         if (totalVisibleProducts > 0) {
             productList.appendChild(fragment);
-            console.log(`成功顯示 ${totalVisibleProducts} 個商品`);
+        // console.log removed
         } else {
             productList.innerHTML = `
                 <tr>
@@ -746,7 +742,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     </td>
                 </tr>
             `;
-            console.log('沒有符合過濾條件的商品');
+        // console.log removed
         }
         
         // 更新儀表板UI
@@ -791,7 +787,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 添加進階搜尋功能
     function performAdvancedSearch() {
-        console.log('執行進階搜尋...');
+        // console.log removed
         
         const keyword = advancedSearchInput.value.trim();
         
@@ -823,7 +819,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 清除進階搜尋功能
     function clearAdvancedSearch() {
-        console.log('清除進階搜尋...');
+        // console.log removed
         
         // 清空進階搜尋輸入框
         advancedSearchInput.value = '';
@@ -865,7 +861,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
-        console.log('執行搜尋...(全局函數)');
+        // console.log removed
         
         const searchInput = document.getElementById('searchInput');
         if (!searchInput) {
@@ -885,7 +881,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const showBrowser = headlessModeElement.checked;
         const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
         
-        console.log(`搜尋關鍵字: ${keyword}, 顯示瀏覽器: ${showBrowser}, 庫存月份: ${inventoryMonth}`);
+        // console.log removed
         
         // 移除關鍵字檢查，無論是否有關鍵字都執行以下代碼
         // 重置進階搜尋
@@ -905,19 +901,19 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // 設置爬蟲運行狀態
         window.crawlerRunning = true;
-        console.log('設置爬蟲運行狀態為: true');
+        // console.log removed
         
         // 顯示載入中
         const loading = document.getElementById('loading');
         if (loading) {
             loading.style.display = 'block';
-            console.log('顯示載入中元素');
+        // console.log removed
         }
         
         const productList = document.getElementById('productList');
         if (productList) {
             productList.innerHTML = '';
-            console.log('清空商品列表');
+        // console.log removed
         }
         
         // 開始進度模擬，使用改進的進度模擬函數
@@ -925,11 +921,11 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // 發送請求到API，包含顯示瀏覽器參數和庫存月份
         const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&inventoryMonth=${inventoryMonth}`;
-        console.log(`發送請求到: ${searchUrl}`);
+        // console.log removed
         
         fetch(searchUrl)
             .then(response => {
-                console.log('收到API回應:', response.status);
+        // console.log removed
                 return response.json();
             })
             .then(data => {
@@ -941,8 +937,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 progressText.textContent = '100%';
                 statusMessage.textContent = '爬取完成！';
                 
-                console.log('API回傳數據類型:', typeof data);
-                console.log('API回傳數據結構:', data ? Object.keys(data).length : 'null');
+        // console.log removed
+        // console.log removed
                 
                 // 保存最後的搜尋結果
                 window.lastSearchResults = data;
@@ -992,7 +988,7 @@ document.addEventListener('DOMContentLoaded', function() {
             fetch('/stop_crawler')
                 .then(response => response.json())
                 .then(data => {
-                    console.log('爬蟲中斷結果:', data);
+        // console.log removed
                     crawlerRunning = false;
                     loading.style.display = 'none';
                     alert('爬蟲已中斷');
