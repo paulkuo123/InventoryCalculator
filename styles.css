@@ -1003,7 +1003,7 @@ input:checked + .toggle-slider:before {
 /* 右側：關鍵指標 */
 .dashboard-metrics {
     display: grid;
-    grid-template-columns: repeat(3, 1fr);
+    grid-template-columns: repeat(4, 1fr);
     gap: 20px;
 }
 
@@ -1039,9 +1039,10 @@ input:checked + .toggle-slider:before {
     color: white;
 }
 
-.alert-icon { background: linear-gradient(135deg, #f44336, #e53935); }
-.info-icon { background: linear-gradient(135deg, #2196f3, #1e88e5); }
+.alert-icon   { background: linear-gradient(135deg, #f44336, #e53935); }
+.info-icon    { background: linear-gradient(135deg, #2196f3, #1e88e5); }
 .success-icon { background: linear-gradient(135deg, #4caf50, #43a047); }
+.warning-icon { background: linear-gradient(135deg, #ff9800, #fb8c00); }
 
 .metric-info {
     display: flex;
@@ -1075,7 +1076,7 @@ input:checked + .toggle-slider:before {
 
 @media (max-width: 600px) {
     .dashboard-metrics {
-        grid-template-columns: 1fr;
+        grid-template-columns: repeat(2, 1fr);
     }
 }
 

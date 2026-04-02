@@ -99,7 +99,7 @@
                         </div>
                         <div class="metric-info">
                             <div class="metric-value text-danger" id="restockModelsCount">0</div>
-                            <div class="metric-label">需補貨型號</div>
+                            <div class="metric-label" id="restockModelsLabel">需補貨 / 共 0 型號</div>
                         </div>
                     </div>
                     
@@ -120,6 +120,16 @@
                         <div class="metric-info">
                             <div class="metric-value" id="dashboardTotalStock">0</div>
                             <div class="metric-label">總庫存量</div>
+                        </div>
+                    </div>
+
+                    <div class="metric-item">
+                        <div class="metric-icon" id="avgLevelIconWrapper">
+                            <i class="fas fa-calendar-alt"></i>
+                        </div>
+                        <div class="metric-info">
+                            <div class="metric-value" id="dashboardAvgLevel">-</div>
+                            <div class="metric-label">平均庫存水位</div>
                         </div>
                     </div>
                 </div>

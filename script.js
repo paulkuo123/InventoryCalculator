@@ -241,7 +241,36 @@ document.addEventListener('DOMContentLoaded', function() {
         document.getElementById('restockModelsCount').textContent = stats.modelsNeedingRestock;
         document.getElementById('dashboardTotalSales').textContent = Math.round(stats.totalMonthlySales);
         document.getElementById('dashboardTotalStock').textContent = stats.totalStock;
-        
+
+        // 需補貨型號 label：顯示 「需補貨 / 共 N 型號」
+        const restockLabel = document.getElementById('restockModelsLabel');
+        if (restockLabel) {
+            restockLabel.textContent = `需補貨 / 共 ${stats.totalModels} 型號`;
+        }
+
+        // 平均庫存水位：總庫存 / 總月銷量，帶顏色指示
+        const avgLevelEl = document.getElementById('dashboardAvgLevel');
+        const avgLevelIcon = document.getElementById('avgLevelIconWrapper');
+        if (avgLevelEl && stats.totalMonthlySales > 0) {
+            const level = Math.round((stats.totalStock / stats.totalMonthlySales) * 10) / 10;
+            avgLevelEl.textContent = `${level} 月`;
+
+            // 顏色：< 1月→紅，1~3月→橘，> 3月→綠
+            if (level < 1) {
+                avgLevelEl.style.color = '#e74c3c';
+                if (avgLevelIcon) avgLevelIcon.className = 'metric-icon alert-icon';
+            } else if (level < 3) {
+                avgLevelEl.style.color = '#e67e22';
+                if (avgLevelIcon) avgLevelIcon.className = 'metric-icon warning-icon';
+            } else {
+                avgLevelEl.style.color = '';
+                if (avgLevelIcon) avgLevelIcon.className = 'metric-icon success-icon';
+            }
+        } else if (avgLevelEl) {
+            avgLevelEl.textContent = '-';
+            if (avgLevelIcon) avgLevelIcon.className = 'metric-icon';
+        }
+
         // 判定狀態
         const statusCard = document.getElementById('overallStatusCard');
         const statusIcon = document.getElementById('statusIcon');
