@@ -108,9 +108,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     const expectedStock = Math.round(monthlyRate * months);
                     
-                    // 如果過濾模式開啟且當前庫存大於等於預期庫存，則跳過此型號
-                    if (filterMode && currentStock >= expectedStock && expectedStock > 0) {
-                        return;
+                    // 過濾邏輯（與 displayProducts 相同）：
+                    // 1. 有月銷量時：若庫存 >= 預期庫存，代表充足，隱藏
+                    // 2. 月銷量為 0 時：若庫存 > 0，代表不需補貨，隱藏；庫存也為 0 則顯示
+                    if (filterMode) {
+                        if (expectedStock > 0 && currentStock >= expectedStock) {
+                            return;
+                        }
+                        if (expectedStock === 0 && currentStock > 0) {
+                            return;
+                        }
                     }
                     if (currentStock < expectedStock && expectedStock > 0) {
                         modelsNeedingRestock++;
@@ -526,9 +533,16 @@ document.addEventListener('DOMContentLoaded', function() {
                             // 當前庫存
                             const currentStock = parseInt(modelData.商品庫存, 10) || 0;
                             
-                            // 如果過濾模式開啟且當前庫存大於等於預期庫存，則跳過此型號
-                            if (filterMode && currentStock >= expectedStock && expectedStock > 0) {
-                                return;
+                            // 過濾邏輯：
+                            // 1. 有月銷量時：若庫存 >= 預期庫存，代表充足，隱藏
+                            // 2. 月銷量為 0 時：若庫存 > 0，代表不需補貨，隱藏；庫存也為 0 則顯示
+                            if (filterMode) {
+                                if (expectedStock > 0 && currentStock >= expectedStock) {
+                                    return; // 庫存充足，隱藏
+                                }
+                                if (expectedStock === 0 && currentStock > 0) {
+                                    return; // 月銷量為 0 但有庫存，不需補貨，隱藏
+                                }
                             }
                             
                             visibleModelCount++; // 增加可見型號計數
