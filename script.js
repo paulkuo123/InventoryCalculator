@@ -83,6 +83,9 @@ document.addEventListener('DOMContentLoaded', function() {
         let totalMonthlySales = 0;
         let inventoryLevels = [];
         let modelsNeedingRestock = 0;
+        let criticalModels = 0;    // 庫存水位 < 1 個月（即將斷貨）
+        let zeroStockModels = 0;   // 庫存 = 0 且有月銷量（已缺貨）
+        let totalActiveModels = 0; // 有月銷量的型號總數（作為比例分母）
         
         // 計算統計數據
         Object.entries(filteredProducts).forEach(([productId, product]) => {
@@ -121,6 +124,18 @@ document.addEventListener('DOMContentLoaded', function() {
                     }
                     if (currentStock < expectedStock && expectedStock > 0) {
                         modelsNeedingRestock++;
+                    }
+
+                    // 統計危急型號
+                    if (monthlyRate > 0) {
+                        totalActiveModels++;
+                        const stockLevel = currentStock / monthlyRate; // 庫存可支撐月數
+                        if (currentStock === 0) {
+                            zeroStockModels++;
+                            criticalModels++; // 零庫存必定是危急
+                        } else if (stockLevel < 1) {
+                            criticalModels++; // 不到 1 個月庫存
+                        }
                     }
                     
                     productHasVisibleModels = true;
@@ -205,7 +220,10 @@ document.addEventListener('DOMContentLoaded', function() {
             maxLevel: Math.round(maxLevel * 10) / 10,
             overallLevel: Math.round(overallLevel * 10) / 10,
             levelDistribution,
-            modelsNeedingRestock
+            modelsNeedingRestock,
+            criticalModels,
+            zeroStockModels,
+            totalActiveModels
         };
     }
     
@@ -232,22 +250,36 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // 移除舊的狀態類別
         statusCard.classList.remove('status-healthy', 'status-warning', 'status-critical');
-        
-        if (stats.avgLevel > 3) {
-            statusCard.classList.add('status-healthy');
-            statusIcon.className = 'fas fa-check-circle';
-            statusText.textContent = '健康';
-            statusDesc.textContent = `平均庫存足夠支撐 ${stats.avgLevel} 個月以上`;
-        } else if (stats.avgLevel >= 2) {
-            statusCard.classList.add('status-warning');
-            statusIcon.className = 'fas fa-exclamation-circle';
-            statusText.textContent = '需注意';
-            statusDesc.textContent = `平均庫存僅夠支撐 ${stats.avgLevel} 個月，建議部分補貨`;
-        } else {
+
+        // 用 criticalModels（庫存水位 < 1 個月）佔有銷量型號的比例判定狀態
+        const criticalRatio = stats.totalActiveModels > 0
+            ? stats.criticalModels / stats.totalActiveModels
+            : 0;
+        const criticalPct = Math.round(criticalRatio * 100);
+
+        if (criticalRatio > 0.30) {
+            // 危急：超過 30% 的型號即將或已斷貨
             statusCard.classList.add('status-critical');
             statusIcon.className = 'fas fa-times-circle';
             statusText.textContent = '危急';
-            statusDesc.textContent = `平均庫存剩餘 ${stats.avgLevel} 個月，急需補貨！`;
+            const zeroDesc = stats.zeroStockModels > 0 ? `（其中 ${stats.zeroStockModels} 個已缺貨）` : '';
+            statusDesc.textContent = `${stats.criticalModels} 個型號庫存不足 1 個月（佔 ${criticalPct}%）${zeroDesc}，急需補貨！`;
+        } else if (criticalRatio > 0.10) {
+            // 需注意：超過 10% 的型號庫存偏低
+            statusCard.classList.add('status-warning');
+            statusIcon.className = 'fas fa-exclamation-circle';
+            statusText.textContent = '需注意';
+            statusDesc.textContent = `${stats.criticalModels} 個型號庫存不足 1 個月（佔 ${criticalPct}%），建議優先補貨`;
+        } else {
+            // 健康
+            statusCard.classList.add('status-healthy');
+            statusIcon.className = 'fas fa-check-circle';
+            statusText.textContent = '健康';
+            if (stats.criticalModels > 0) {
+                statusDesc.textContent = `整體庫存良好，仍有 ${stats.criticalModels} 個型號待留意`;
+            } else {
+                statusDesc.textContent = `所有型號庫存充足，平均可支撐 ${stats.avgLevel} 個月`;
+            }
         }
     }
     
