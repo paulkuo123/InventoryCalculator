@@ -3,3 +3,5 @@ psutil
 PyQt5
 requests
 pyinstaller
+pandas
+python-calamine

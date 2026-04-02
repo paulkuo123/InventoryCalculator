@@ -30,13 +30,13 @@ def build():
         
         # 添加數據文件
         *[f'--add-data={data}' for data in add_data],
-        
+
         # 隱藏導入 (確保這些庫被包含)
-        '--hidden-import=selenium',
-        '--hidden-import=webdriver_manager',
         '--hidden-import=requests',
         '--hidden-import=PyQt5',
-        
+        '--hidden-import=pandas',
+        '--hidden-import=playwright',
+
         # 排除不需要的模組以減小體積 (可選)
         # '--exclude-module=tkinter',
     ]
