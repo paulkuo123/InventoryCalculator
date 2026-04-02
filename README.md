@@ -91,7 +91,7 @@ python build.py
 
 ## Demo
 
-![image](images/demo_v3.png)
+![image](images/main.png)
 
 ## 專案結構
 
