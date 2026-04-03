@@ -768,9 +768,6 @@ def run_crawler_task(chat_id, keyword, months):
             current_task = None
             return
         
-        # 发送报告
-        send_message(chat_id, report)
-        
         # 发送 HTML 報表
         if html_report_path and os.path.exists(html_report_path):
             send_chat_action(chat_id, "upload_document")
