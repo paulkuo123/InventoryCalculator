@@ -305,6 +305,7 @@ def build_inventory_analysis(data, months):
         products.append({
             "product_id": product_id,
             "product_name": product_name,
+            "product_image_url": info.get("商品圖片網址", ""),
             "total_monthly_sales": total_monthly_sales,
             "total_stock": product_stock,
             "total_restock": sum(model["restock"] for model in product_models),
@@ -428,13 +429,24 @@ def generate_html_report(keyword, months, summary, products, output_path):
                 "</tr>"
             )
 
+        product_image = product.get("product_image_url") or ""
+        image_markup = (
+            f'<img class="product-image" src="{html.escape(product_image, quote=True)}" '
+            f'alt="{html.escape(product["product_name"], quote=True)}" loading="lazy" referrerpolicy="no-referrer">'
+            if product_image.startswith("http") else
+            '<div class="product-image product-image-placeholder">No Image</div>'
+        )
+
         rows.append(
             f"""
             <section class="product-card">
               <div class="product-header">
-                <div>
+                <div class="product-title-group">
+                  {image_markup}
+                  <div>
                   <h2>{html.escape(product['product_name'])}</h2>
                   <p>商品 ID：{html.escape(product['product_id'])}</p>
+                  </div>
                 </div>
                 <div class="product-metrics">
                   <span>月銷量 {product['total_monthly_sales']:,}</span>
@@ -558,6 +570,30 @@ def generate_html_report(keyword, months, summary, products, output_path):
       align-items: flex-start;
       margin-bottom: 12px;
     }}
+    .product-title-group {{
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+      min-width: min(100%, 420px);
+    }}
+    .product-image {{
+      width: 84px;
+      height: 84px;
+      object-fit: cover;
+      border-radius: 18px;
+      border: 1px solid #f3d7bd;
+      background: #fff7ed;
+      flex: 0 0 auto;
+      box-shadow: 0 8px 18px rgba(120, 53, 15, 0.10);
+    }}
+    .product-image-placeholder {{
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }}
     .product-header p {{
       margin: 8px 0 0;
       color: var(--muted);
@@ -607,6 +643,7 @@ def generate_html_report(keyword, months, summary, products, output_path):
       .container {{ padding: 18px 14px 36px; }}
       .hero, .product-card {{ padding: 18px; border-radius: 18px; }}
       .summary-card .value {{ font-size: 24px; }}
+      .product-image {{ width: 72px; height: 72px; border-radius: 16px; }}
     }}
   </style>
 </head>
@@ -703,7 +740,13 @@ def run_crawler_task(chat_id, keyword, months):
             send_chat_action(chat_id, "upload_document")
             caption = f"📄 {keyword} 庫存報表（{months} 個月）"
             send_document(chat_id, html_report_path, caption)
-        
+            # 发送後刪除本地檔案
+            try:
+                os.remove(html_report_path)
+                print(f"🗑️ 已刪除本地報表：{html_report_path}")
+            except Exception as e:
+                print(f"⚠️ 刪除報表失敗：{e}")
+
         send_message(chat_id, "✅ 任務完成！")
         
     except subprocess.TimeoutExpired:
