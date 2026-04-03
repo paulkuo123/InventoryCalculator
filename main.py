@@ -77,6 +77,9 @@ import socket
 import logging
 import datetime
 
+# 導入版本管理
+from version import check_for_updates, CURRENT_VERSION
+
 # 設置日誌記錄
 LOG_FILE = "debug.log"
 
@@ -557,6 +560,13 @@ def start_server():
 
 # 全局變量
 httpd = None
+
+# ===== 啟動時檢查版本更新 =====
+try:
+    check_for_updates()
+except Exception as e:
+    logger.warning(f"版本檢查失敗：{e}")
+# ============================
 
 # 先啟動伺服器
 server_thread = threading.Thread(target=start_server, daemon=True)

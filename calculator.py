@@ -1,9 +1,14 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QGraphicsDropShadowEffect, QGridLayout, QFrame,
-                             QSizePolicy, QSpacerItem, QProgressBar, QShortcut, QInputDialog)
+                             QSizePolicy, QSpacerItem, QProgressBar, QShortcut, QInputDialog,
+                             QMessageBox)
 from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QFontDatabase, QValidator, QKeySequence
 from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QPoint
+import threading
+
+# 導入版本管理
+from version import check_for_updates, CURRENT_VERSION
 
 # 定義深色主題樣式
 dark_theme_stylesheet = """
@@ -43,8 +48,8 @@ dark_theme_stylesheet = """
 """
 
 # 庫存水位閾值常數
-INVENTORY_LOW_THRESHOLD = 1.0    # 少於 1 個月：紅色
-INVENTORY_MEDIUM_THRESHOLD = 2.0  # 1-2 個月：黃色
+INVENTORY_LOW_THRESHOLD = 1.5    # 少於 1.5 個月：紅色
+INVENTORY_MEDIUM_THRESHOLD = 2.0  # 1.5-2 個月：黃色
 # 大於 2 個月：綠色
 
 class NumberValidator(QValidator):
@@ -143,6 +148,31 @@ class SalesCalculator(QWidget):
         app_title.setFont(QFont('Arial', 24, QFont.Bold))
         app_title.setStyleSheet("color: #4A90E2; margin-bottom: 5px;")
         title_layout.addWidget(app_title)
+        
+        # 版本號標籤
+        self.version_label = QLabel(f"v{CURRENT_VERSION}")
+        self.version_label.setFont(QFont('Arial', 10))
+        self.version_label.setStyleSheet("color: #6B7280;")
+        title_layout.addWidget(self.version_label)
+        
+        # 檢查更新按鈕
+        self.update_button = QPushButton("🔄 檢查更新")
+        self.update_button.setFont(QFont('Arial', 10))
+        self.update_button.setStyleSheet("""
+            QPushButton {
+                background-color: #2E3B55;
+                color: #B0C4FF;
+                padding: 5px 12px;
+                border: 1px solid #3E4A65;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #3A4A70;
+            }
+        """)
+        self.update_button.clicked.connect(self.check_updates_async)
+        title_layout.addWidget(self.update_button)
+        
         title_layout.addStretch()
 
         # 創建卡片式容器
@@ -374,7 +404,7 @@ class SalesCalculator(QWidget):
                 months_coverage = 0
 
             if months_coverage < INVENTORY_LOW_THRESHOLD:
-                # 紅色 - 庫存不足 1 個月
+                # 紅色 - 庫存不足 1.5 個月
                 self.result_label.setStyleSheet("""
                     QLabel {
                         background-color: #2D1A22;
@@ -386,7 +416,7 @@ class SalesCalculator(QWidget):
                     }
                 """)
             elif months_coverage <= INVENTORY_MEDIUM_THRESHOLD:
-                # 黃色 - 庫存介於 1~2 個月
+                # 黃色 - 庫存介於 1.5~2 個月
                 self.result_label.setStyleSheet("""
                     QLabel {
                         background-color: #2D2B1A;
@@ -444,8 +474,47 @@ class SalesCalculator(QWidget):
         """)
         self.inventory_bar.setValue(0)
 
+    def check_updates_async(self):
+        """非同步檢查更新"""
+        self.update_button.setEnabled(False)
+        self.update_button.setText("檢查中...")
+        threading.Thread(target=self._run_update_check, daemon=True).start()
+
+    def _run_update_check(self):
+        """執行更新檢查（在背景線程）"""
+        import io, contextlib
+        f = io.StringIO()
+        with contextlib.redirect_stdout(f):
+            check_for_updates()
+        output = f.getvalue()
+        # 使用 QTimer 在主線程更新 UI
+        from PyQt5.QtCore import QTimer
+        QTimer.singleShot(0, lambda: self._show_update_result(output))
+
+    def _show_update_result(self, output):
+        """顯示更新檢查結果"""
+        self.update_button.setEnabled(True)
+        self.update_button.setText("🔄 檢查更新")
+        
+        if output.strip():
+            QMessageBox.information(self, "更新檢查", output)
+
+    def check_updates_on_startup(self):
+        """啟動時檢查更新（非阻塞）"""
+        def run_check():
+            import io, contextlib
+            f = io.StringIO()
+            with contextlib.redirect_stdout(f):
+                check_for_updates()
+            output = f.getvalue()
+            if "發現" in output or "新版本" in output:
+                from PyQt5.QtCore import QTimer
+                QTimer.singleShot(1000, lambda: self._show_update_result(output))
+        threading.Thread(target=run_check, daemon=True).start()
+
 if __name__ == '__main__':
     app = QApplication(sys.argv)
     calculator = SalesCalculator()
+    calculator.check_updates_on_startup()  # 啟動時檢查更新
     calculator.show()
     sys.exit(app.exec_())

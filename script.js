@@ -83,7 +83,7 @@ document.addEventListener('DOMContentLoaded', function() {
         let totalMonthlySales = 0;
         let inventoryLevels = [];
         let modelsNeedingRestock = 0;
-        let criticalModels = 0;    // 庫存水位 < 1 個月（即將斷貨）
+        let criticalModels = 0;    // 庫存水位 < 1.5 個月（即將斷貨）
         let zeroStockModels = 0;   // 庫存 = 0 且有月銷量（已缺貨）
         let totalActiveModels = 0; // 有月銷量的型號總數（作為比例分母）
         
@@ -133,8 +133,8 @@ document.addEventListener('DOMContentLoaded', function() {
                         if (currentStock === 0) {
                             zeroStockModels++;
                             criticalModels++; // 零庫存必定是危急
-                        } else if (stockLevel < 1) {
-                            criticalModels++; // 不到 1 個月庫存
+                        } else if (stockLevel < 1.5) {
+                            criticalModels++; // 不到 1.5 個月庫存
                         }
                     }
                     
@@ -255,8 +255,8 @@ document.addEventListener('DOMContentLoaded', function() {
             const level = Math.round((stats.totalStock / stats.totalMonthlySales) * 10) / 10;
             avgLevelEl.textContent = `${level} 月`;
 
-            // 顏色：< 1月→紅，1~3月→橘，> 3月→綠
-            if (level < 1) {
+            // 顏色：< 1.5月→紅，1.5~3月→橘，> 3月→綠
+            if (level < 1.5) {
                 avgLevelEl.style.color = '#e74c3c';
                 if (avgLevelIcon) avgLevelIcon.className = 'metric-icon alert-icon';
             } else if (level < 3) {
@@ -280,7 +280,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // 移除舊的狀態類別
         statusCard.classList.remove('status-healthy', 'status-warning', 'status-critical');
 
-        // 用 criticalModels（庫存水位 < 1 個月）佔有銷量型號的比例判定狀態
+        // 用 criticalModels（庫存水位 < 1.5 個月）佔有銷量型號的比例判定狀態
         const criticalRatio = stats.totalActiveModels > 0
             ? stats.criticalModels / stats.totalActiveModels
             : 0;
@@ -292,13 +292,13 @@ document.addEventListener('DOMContentLoaded', function() {
             statusIcon.className = 'fas fa-times-circle';
             statusText.textContent = '危急';
             const zeroDesc = stats.zeroStockModels > 0 ? `（其中 ${stats.zeroStockModels} 個已缺貨）` : '';
-            statusDesc.textContent = `${stats.criticalModels} 個型號庫存不足 1 個月（佔 ${criticalPct}%）${zeroDesc}，急需補貨！`;
+            statusDesc.textContent = `${stats.criticalModels} 個型號庫存不足 1.5 個月（佔 ${criticalPct}%）${zeroDesc}，急需補貨！`;
         } else if (criticalRatio > 0.10) {
             // 需注意：超過 10% 的型號庫存偏低
             statusCard.classList.add('status-warning');
             statusIcon.className = 'fas fa-exclamation-circle';
             statusText.textContent = '需注意';
-            statusDesc.textContent = `${stats.criticalModels} 個型號庫存不足 1 個月（佔 ${criticalPct}%），建議優先補貨`;
+            statusDesc.textContent = `${stats.criticalModels} 個型號庫存不足 1.5 個月（佔 ${criticalPct}%），建議優先補貨`;
         } else {
             // 健康
             statusCard.classList.add('status-healthy');

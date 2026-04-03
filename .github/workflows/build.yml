@@ -1,0 +1,91 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'  # 當推送版本標籤時觸發（例如 v1.0.0, v1.1.0）
+
+permissions:
+  contents: write  # 允許創建 Release
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: macos-latest
+            platform: macOS
+            executable: ShopeeCrawler
+          - os: ubuntu-latest
+            platform: Linux
+            executable: ShopeeCrawler
+          - os: windows-latest
+            platform: Windows
+            executable: ShopeeCrawler.exe
+
+    steps:
+      - name: 檢出程式碼
+        uses: actions/checkout@v4
+
+      - name: 設定 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: 安裝依賴
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: 安裝 Playwright 瀏覽器（macOS/Linux）
+        if: runner.os != 'Windows'
+        run: |
+          python -m playwright install chromium
+
+      - name: 安裝 Playwright 瀏覽器（Windows）
+        if: runner.os == 'Windows'
+        run: |
+          python -m playwright install chromium
+
+      - name: 執行打包
+        run: |
+          python build.py
+
+      - name: 上傳構建產物
+        uses: actions/upload-artifact@v4
+        with:
+          name: ShopeeCrawler-${{ matrix.platform }}
+          path: dist/ShopeeCrawler*
+          retention-days: 7
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+      - name: 下載所有構建產物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: 準備發布檔案
+        run: |
+          mkdir -p release-files
+          # 重新命名檔案以便上傳
+          find artifacts -type f -exec mv {} release-files/ \;
+          ls -la release-files/
+
+      - name: 創建 GitHub Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release-files/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
