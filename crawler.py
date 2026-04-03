@@ -345,6 +345,43 @@ class ShopeeCrawler:
         except Exception as e:
             print(f"載入 Cookies 時發生錯誤: {e}")
 
+    def calculate_restock_quantity(self, product_sold, total_sold, monthly_sales, current_inventory, expected_months=4):
+        """
+        計算建議補貨數量
+        
+        Args:
+            product_sold (int): 型號已售出數量
+            total_sold (int): 商品總已售出數量
+            monthly_sales (int): 月銷量
+            current_inventory (int): 當前庫存
+            expected_months (int): 期望維持的庫存月數（預設 4 個月）
+            
+        Returns:
+            int: 建議補貨數量（如果不需要補貨則為 0 或負數）
+        """
+        try:
+            # 如果總銷量為 0，無法計算
+            if total_sold == 0:
+                return 0
+
+            # 如果月銷量為 0 且庫存為 0，需要特殊處理
+            if monthly_sales == 0 and current_inventory == 0:
+                return 0
+
+            # 計算預期庫存 = 月銷量 × 期望月數
+            # 注意：monthly_sales 已經是該型號的月銷量，不需要再乘以 (product_sold / total_sold) 比例
+            expected_inventory = monthly_sales * expected_months
+
+            # 建議補貨 = 預期庫存 - 當前庫存
+            restock = expected_inventory - current_inventory
+
+            # 如果補貨數量為負數或零，表示不需要補貨
+            return max(0, int(restock))
+            
+        except Exception as e:
+            print(f"計算補貨數量時出錯: {e}")
+            return 0
+
     def save_to_file(self, data):
         """
         保存資料到檔案，路徑由建構子的 output_path 決定（預設 shopee_products.json）
@@ -403,10 +440,46 @@ class ShopeeCrawler:
             # 將總月銷量添加到商品數據中
             product_info["總月銷量"] = str(total_monthly_sales)
 
+            # 計算並添加建議補貨數量到每個型號
+            total_sold = int(product_info.get("已售出總數量", "0"))
+            expected_months = 4  # 預設維持 4 個月庫存
+            
+            if "型號" in product_info and isinstance(product_info["型號"], list):
+                for model in product_info["型號"]:
+                    model_name = model.get('型號名稱', '未知')
+                    model_sold = int(model.get('已售出數量', '0'))
+                    current_inventory = int(model.get('商品庫存', '0'))
+                    monthly_sales = 0
+                    
+                    # 獲取月銷量
+                    if "月銷量" in model:
+                        try:
+                            sales_text = model["月銷量"].strip()
+                            if 'K' in sales_text.upper() or 'k' in sales_text:
+                                monthly_sales = int(float(sales_text.lower().replace('k', '')) * 1000)
+                            else:
+                                sales_value = sales_text.replace(",", "")
+                                if sales_value.isdigit():
+                                    monthly_sales = int(sales_value)
+                        except (ValueError, TypeError):
+                            monthly_sales = 0
+                    
+                    # 計算建議補貨數量
+                    restock_qty = self.calculate_restock_quantity(
+                        model_sold, total_sold, monthly_sales, current_inventory, expected_months
+                    )
+                    model["建議補貨數量"] = restock_qty
+                    
+                    print(f"  型號 {model_name}: 庫存 {current_inventory}, 月銷量 {monthly_sales}, 建議補貨 {restock_qty}")
+
+            # 計算整個商品的總建議補貨數量
+            total_restock = sum(model.get("建議補貨數量", 0) for model in product_info.get("型號", []))
+            product_info["總建議補貨數量"] = total_restock
+
             # 輸出詳細的計算過程
             product_name = product_info.get("商品名稱", "未知商品")
             print(
-                f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}"
+                f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}, 總建議補貨: {total_restock}"
             )
             if model_sales_details:
                 print("  詳細月銷量: " + ", ".join(model_sales_details))
