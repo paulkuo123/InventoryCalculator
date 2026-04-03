@@ -18,6 +18,9 @@ build/
 debug.log
 cookies.json
 data/*
+.last_update_id
+.qwen/
+shopee_products.json
 進貨紀錄.txt
 telegram_alert.sh
 todolist.txt
