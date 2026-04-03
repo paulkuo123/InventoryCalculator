@@ -180,6 +180,28 @@ def sanitize_filename(value):
     return "".join(cleaned).strip("_") or "report"
 
 
+def normalize_shopee_image_url(url):
+    """比照前端邏輯整理 Shopee 圖片網址"""
+    if not url:
+        return ""
+
+    normalized = str(url).strip()
+    if normalized in ("undefined", "未找到"):
+        return ""
+
+    if not normalized.startswith(("http://", "https://")):
+        if normalized.startswith("//"):
+            normalized = normalized[2:]
+        normalized = "https://" + normalized
+
+    if "shopee.tw/file/" in normalized:
+        normalized = normalized.split("?", 1)[0]
+        if not normalized.endswith("_tn"):
+            normalized += "_tn"
+
+    return normalized
+
+
 def estimate_monthly_sales(product_info, model_info):
     """比照前端邏輯，在必要時用歷史佔比回推出月銷量"""
     monthly_sales = safe_int(model_info.get("月銷量", 0))
@@ -327,17 +349,18 @@ def build_inventory_analysis(data, months):
 
 def render_status_badge(level, text):
     colors = {
-        "critical": ("#fee2e2", "#991b1b"),
-        "warning": ("#ffedd5", "#9a3412"),
-        "normal": ("#dbeafe", "#1d4ed8"),
-        "healthy": ("#dcfce7", "#166534"),
-        "stable": ("#f3f4f6", "#374151"),
-        "unknown": ("#fef3c7", "#92400e"),
+        "critical": ("linear-gradient(135deg, #ffebe6, #ffd6cc)", "#c62828", "#ffc1b3"),
+        "warning": ("linear-gradient(135deg, #fff2e5, #ffe2bf)", "#d96b00", "#ffd19a"),
+        "normal": ("linear-gradient(135deg, #fff7f2, #ffe8dc)", "#e85d2a", "#ffd3bf"),
+        "healthy": ("linear-gradient(135deg, #fff9f5, #ffeede)", "#d35400", "#ffd8bf"),
+        "stable": ("linear-gradient(135deg, #f8f5f2, #eee7e1)", "#7a5c4f", "#e4d8cf"),
+        "unknown": ("linear-gradient(135deg, #fff4ec, #ffe7d1)", "#b86a2f", "#ffd8b6"),
     }
-    bg, fg = colors.get(level, ("#f3f4f6", "#374151"))
+    bg, fg, border = colors.get(level, ("#f3f4f6", "#374151", "#e5e7eb"))
     return (
         f"<span style=\"display:inline-block;padding:4px 10px;border-radius:999px;"
-        f"background:{bg};color:{fg};font-weight:700;font-size:12px;\">{html.escape(text)}</span>"
+        f"background:{bg};color:{fg};font-weight:700;font-size:12px;border:1px solid {border};"
+        f"box-shadow:0 4px 10px rgba(255,87,34,0.08);\">{html.escape(text)}</span>"
     )
 
 
@@ -429,10 +452,10 @@ def generate_html_report(keyword, months, summary, products, output_path):
                 "</tr>"
             )
 
-        product_image = product.get("product_image_url") or ""
+        product_image = normalize_shopee_image_url(product.get("product_image_url"))
         image_markup = (
             f'<img class="product-image" src="{html.escape(product_image, quote=True)}" '
-            f'alt="{html.escape(product["product_name"], quote=True)}" loading="lazy" referrerpolicy="no-referrer">'
+            f'alt="{html.escape(product["product_name"], quote=True)}" loading="lazy">'
             if product_image.startswith("http") else
             '<div class="product-image product-image-placeholder">No Image</div>'
         )
@@ -489,21 +512,24 @@ def generate_html_report(keyword, months, summary, products, output_path):
   <title>Shopee 庫存報表 - {html.escape(keyword)}</title>
   <style>
     :root {{
-      --bg: #f4efe7;
-      --panel: #fffdfa;
-      --ink: #1f2937;
-      --muted: #6b7280;
-      --accent: #c2410c;
-      --line: #eadfd2;
-      --shadow: 0 18px 40px rgba(120, 53, 15, 0.10);
+      --primary: #ff5722;
+      --primary-dark: #e64a19;
+      --secondary: #ff9800;
+      --bg: #fff6f1;
+      --panel: #ffffff;
+      --panel-soft: #fffaf7;
+      --ink: #333333;
+      --muted: #757575;
+      --line: #ffe0d6;
+      --shadow: 0 14px 30px rgba(255, 87, 34, 0.12);
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
       font-family: "Segoe UI", "Noto Sans TC", sans-serif;
       background:
-        radial-gradient(circle at top right, rgba(194,65,12,0.10), transparent 24%),
-        linear-gradient(180deg, #fcf7f0 0%, var(--bg) 100%);
+        radial-gradient(circle at top right, rgba(255, 152, 0, 0.22), transparent 26%),
+        linear-gradient(180deg, #fff9f6 0%, var(--bg) 100%);
       color: var(--ink);
     }}
     .container {{
@@ -512,16 +538,17 @@ def generate_html_report(keyword, months, summary, products, output_path):
       padding: 32px 20px 48px;
     }}
     .hero {{
-      background: linear-gradient(135deg, #fff7ed 0%, #ffffff 100%);
-      border: 1px solid var(--line);
+      background: linear-gradient(135deg, #ff7043 0%, var(--primary) 58%, var(--primary-dark) 100%);
+      border: 1px solid rgba(255, 255, 255, 0.22);
       border-radius: 24px;
       padding: 28px;
       box-shadow: var(--shadow);
+      color: #fff;
     }}
     h1, h2 {{ margin: 0; }}
     .hero p {{
       margin: 10px 0 0;
-      color: var(--muted);
+      color: rgba(255, 255, 255, 0.88);
       line-height: 1.6;
     }}
     .hero-top, .summary-grid, .product-header, .product-metrics, .product-alerts {{
@@ -539,30 +566,32 @@ def generate_html_report(keyword, months, summary, products, output_path):
     .summary-card {{
       flex: 1 1 160px;
       min-width: 160px;
-      background: var(--panel);
-      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.96);
+      border: 1px solid rgba(255, 255, 255, 0.5);
       border-radius: 18px;
       padding: 18px;
+      box-shadow: 0 8px 20px rgba(230, 74, 25, 0.12);
     }}
     .summary-card .label {{
-      color: var(--muted);
+      color: #a9441a;
       font-size: 13px;
       margin-bottom: 8px;
     }}
     .summary-card .value {{
       font-size: 28px;
       font-weight: 800;
+      color: var(--primary-dark);
     }}
     .section-title {{
       margin: 28px 0 14px;
       font-size: 22px;
     }}
     .product-card {{
-      background: rgba(255, 253, 250, 0.92);
+      background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%);
       border: 1px solid var(--line);
       border-radius: 22px;
       padding: 22px;
-      box-shadow: 0 10px 24px rgba(120, 53, 15, 0.08);
+      box-shadow: 0 10px 24px rgba(255, 87, 34, 0.10);
       margin-bottom: 18px;
     }}
     .product-header {{
@@ -599,14 +628,20 @@ def generate_html_report(keyword, months, summary, products, output_path):
       color: var(--muted);
       font-size: 14px;
     }}
+    .product-header h2 {{
+      font-size: 20px;
+      line-height: 1.4;
+      color: #2f2f2f;
+      font-weight: 700;
+    }}
     .product-metrics span {{
-      background: #fff7ed;
-      border: 1px solid #fed7aa;
+      background: linear-gradient(135deg, #fff1eb, #fff8f1);
+      border: 1px solid #ffd2c2;
       border-radius: 999px;
       padding: 8px 12px;
       font-size: 13px;
       font-weight: 700;
-      color: #9a3412;
+      color: var(--primary-dark);
     }}
     .product-alerts {{
       margin-bottom: 14px;
@@ -628,13 +663,13 @@ def generate_html_report(keyword, months, summary, products, output_path):
     th {{
       font-size: 13px;
       color: var(--muted);
-      background: #fff8f1;
+      background: #fff1eb;
     }}
     tr:hover td {{
-      background: rgba(255, 247, 237, 0.45);
+      background: rgba(255, 241, 235, 0.7);
     }}
     .footer-note {{
-      color: var(--muted);
+      color: rgba(255, 255, 255, 0.82);
       font-size: 13px;
       margin-top: 16px;
       line-height: 1.6;
@@ -644,6 +679,7 @@ def generate_html_report(keyword, months, summary, products, output_path):
       .hero, .product-card {{ padding: 18px; border-radius: 18px; }}
       .summary-card .value {{ font-size: 24px; }}
       .product-image {{ width: 72px; height: 72px; border-radius: 16px; }}
+      .product-header h2 {{ font-size: 18px; }}
     }}
   </style>
 </head>
