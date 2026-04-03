@@ -659,13 +659,16 @@ document.addEventListener('DOMContentLoaded', function() {
                             const stockNum = parseInt(stock, 10);
                             const stockBadge = document.createElement('span');
                             if (isNaN(stockNum)) {
-                            stockBadge.className = 'badge badge-secondary'; // 未知庫存，使用灰色
-                            } else if (stockNum > 10) {
-                                stockBadge.className = 'badge badge-success'; // 庫存大於 10，使用綠色
-                            } else if (stockNum === 0) {
-                                stockBadge.className = 'badge badge-danger'; // 庫存為 0，使用紅色
+                                stockBadge.className = 'badge badge-secondary'; // 未知庫存，使用灰色
+                            } else if (monthlyRate <= 0) {
+                                // 月銷量為 0，無法計算月數，以庫存是否為 0 判斷
+                                stockBadge.className = stockNum === 0 ? 'badge badge-danger' : 'badge badge-success';
+                            } else if (stockNum < monthlyRate) {
+                                stockBadge.className = 'badge badge-danger';   // 不足 1 個月，紅色
+                            } else if (stockNum < monthlyRate * 2) {
+                                stockBadge.className = 'badge badge-warning';  // 1~2 個月，橘色
                             } else {
-                                stockBadge.className = 'badge badge-warning'; // 庫存 1-10，使用橘色
+                                stockBadge.className = 'badge badge-success';  // 超過 2 個月，綠色
                             }
                             stockBadge.textContent = `庫存: ${stock}`;
                             modelText.appendChild(stockBadge);
