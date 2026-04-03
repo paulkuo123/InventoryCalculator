@@ -13,6 +13,7 @@ import sys
 import os
 import signal
 import html
+import base64
 from datetime import datetime
 
 # ===== Telegram 設定 =====
@@ -200,6 +201,29 @@ def normalize_shopee_image_url(url):
             normalized += "_tn"
 
     return normalized
+
+
+def fetch_image_as_base64(url):
+    """下載圖片並轉為 Base64 Data URI，讓 HTML 完全自給自足。
+    失敗時回傳 None，由呼叫端決定顯示 placeholder。
+    """
+    if not url or not url.startswith("http"):
+        return None
+    try:
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                          "AppleWebKit/537.36 (KHTML, like Gecko) "
+                          "Chrome/133.0.0.0 Safari/537.36",
+            "Referer": "https://shopee.tw/",
+        }
+        resp = requests.get(url, headers=headers, timeout=8)
+        if resp.status_code == 200:
+            content_type = resp.headers.get("Content-Type", "image/jpeg").split(";")[0].strip()
+            encoded = base64.b64encode(resp.content).decode("utf-8")
+            return f"data:{content_type};base64,{encoded}"
+    except Exception as e:
+        print(f"⚠️ 圖片下載失敗 ({url[:60]}...): {e}")
+    return None
 
 
 def estimate_monthly_sales(product_info, model_info):
@@ -453,12 +477,21 @@ def generate_html_report(keyword, months, summary, products, output_path):
             )
 
         product_image = normalize_shopee_image_url(product.get("product_image_url"))
-        image_markup = (
-            f'<img class="product-image" src="{html.escape(product_image, quote=True)}" '
-            f'alt="{html.escape(product["product_name"], quote=True)}" loading="lazy">'
-            if product_image.startswith("http") else
-            '<div class="product-image product-image-placeholder">No Image</div>'
-        )
+        # 優先使用 Base64 嵌入圖片，確保 Telegram 和離線瀏覽器都能顯示
+        b64_src = fetch_image_as_base64(product_image) if product_image.startswith("http") else None
+        if b64_src:
+            image_markup = (
+                f'<img class="product-image" src="{b64_src}" '
+                f'alt="{html.escape(product["product_name"], quote=True)}">'
+            )
+        elif product_image.startswith("http"):
+            # Base64 失敗時 fallback 回原始 URL（桌機瀏覽器仍能顯示）
+            image_markup = (
+                f'<img class="product-image" src="{html.escape(product_image, quote=True)}" '
+                f'alt="{html.escape(product["product_name"], quote=True)}" loading="lazy">'
+            )
+        else:
+            image_markup = '<div class="product-image product-image-placeholder">No Image</div>'
 
         rows.append(
             f"""
@@ -718,8 +751,9 @@ def run_crawler_task(chat_id, keyword, months):
     global current_task
     
     output_file = os.path.join(WORK_DIR, "shopee_products.json")
-    safe_keyword = sanitize_filename(keyword)
-    html_output_file = os.path.join(WORK_DIR, f"shopee_report_{safe_keyword}_{months}m.html")
+    # 使用純 ASCII 時間戳檔名，避免中文檔名在手機 OS 傳遞時出現問題
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    html_output_file = os.path.join(WORK_DIR, f"report_{ts}.html")
     crawler_script = os.path.join(WORK_DIR, "crawler.py")
     
     print(f"🚀 开始爬蟲任务：关键字='{keyword}', 月数={months}")
