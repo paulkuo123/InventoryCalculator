@@ -373,18 +373,24 @@ def build_inventory_analysis(data, months):
 
 def render_status_badge(level, text):
     colors = {
-        "critical": ("linear-gradient(135deg, #ffebe6, #ffd6cc)", "#c62828", "#ffc1b3"),
-        "warning": ("linear-gradient(135deg, #fff2e5, #ffe2bf)", "#d96b00", "#ffd19a"),
-        "normal": ("linear-gradient(135deg, #fff7f2, #ffe8dc)", "#e85d2a", "#ffd3bf"),
-        "healthy": ("linear-gradient(135deg, #fff9f5, #ffeede)", "#d35400", "#ffd8bf"),
-        "stable": ("linear-gradient(135deg, #f8f5f2, #eee7e1)", "#7a5c4f", "#e4d8cf"),
-        "unknown": ("linear-gradient(135deg, #fff4ec, #ffe7d1)", "#b86a2f", "#ffd8b6"),
+        # 危急：深紅 — 最高優先級，鮮明警示
+        "critical": ("linear-gradient(135deg, #fff0f0, #ffd6d6)", "#b71c1c", "#ffb3b3"),
+        # 偏低：鮮明橘黃 — 第二警示，與紅色明顯區分
+        "warning":  ("linear-gradient(135deg, #fffde0, #fff59d)", "#e65100", "#ffe082"),
+        # 正常：藍色系 — 中性積極，顯示有銷量且庫存尚可
+        "normal":   ("linear-gradient(135deg, #e8f4fd, #bbdefb)", "#0d47a1", "#90caf9"),
+        # 充足：綠色系 — 健康安全感
+        "healthy":  ("linear-gradient(135deg, #e8f5e9, #c8e6c9)", "#1b5e20", "#81c784"),
+        # 低流動：紫灰色 — 有庫存但無銷量，中性偏冷
+        "stable":   ("linear-gradient(135deg, #ede7f6, #d1c4e9)", "#4a148c", "#b39ddb"),
+        # 待確認：中性灰 — 資料不足，低調提示
+        "unknown":  ("linear-gradient(135deg, #f5f5f5, #e0e0e0)", "#424242", "#bdbdbd"),
     }
     bg, fg, border = colors.get(level, ("#f3f4f6", "#374151", "#e5e7eb"))
     return (
         f"<span style=\"display:inline-block;padding:4px 10px;border-radius:999px;"
         f"background:{bg};color:{fg};font-weight:700;font-size:12px;border:1px solid {border};"
-        f"box-shadow:0 4px 10px rgba(255,87,34,0.08);\">{html.escape(text)}</span>"
+        f"box-shadow:0 2px 8px rgba(0,0,0,0.10);\">{html.escape(text)}</span>"
     )
 
 
