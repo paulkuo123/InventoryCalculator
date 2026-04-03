@@ -789,8 +789,35 @@ def run_crawler_task(chat_id, keyword, months):
             cwd=WORK_DIR
         )
         
+        if result.returncode == 77:
+            # Cookies 失效的專屬提示
+            send_message(
+                chat_id,
+                "🔐 <b>登入失效：Cookies 已過期</b>\n\n"
+                "蝦皮已將您登出，Bot 無法自動登入。\n\n"
+                "📋 <b>請依照以下步驟更新 Cookies：</b>\n"
+                "1. 在電腦上用 Chrome 登入蝦皮賣家中心\n"
+                "2. 安裝 <b>EditThisCookie</b> 或 <b>Cookie-Editor</b> 擴充套件\n"
+                "3. 點擊匯出，複製所有 Cookies\n"
+                "4. 覆蓋伺服器上的 <code>cookies.json</code> 檔案\n"
+                "5. 重新啟動 Bot\n\n"
+                "⚠️ 通常蝦皮 Cookies 有效期約 30 天，請定期更新。"
+            )
+            current_task = None
+            return
+
         if result.returncode != 0:
             error_msg = f"❌ 爬蟲執行失敗\n返回碼: {result.returncode}"
+            combined_output = (result.stdout or "") + (result.stderr or "")
+            # 也嘗試從輸出文字中偵測 COOKIES_EXPIRED（防止某些情況下退出碼未正確傳遞）
+            if "COOKIES_EXPIRED" in combined_output:
+                send_message(
+                    chat_id,
+                    "🔐 <b>登入失效：Cookies 已過期</b>\n\n"
+                    "請重新取得 Cookies 並覆蓋 <code>cookies.json</code>，再重新啟動 Bot。"
+                )
+                current_task = None
+                return
             if result.stderr:
                 error_msg += f"\n\n錯誤訊息:\n{result.stderr[:500]}"
             send_message(chat_id, error_msg)

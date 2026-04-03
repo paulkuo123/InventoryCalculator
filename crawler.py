@@ -521,6 +521,33 @@ class ShopeeCrawler:
                 json.dump(sorted_data, f, ensure_ascii=False, indent=4)
             print(f"已備份資料到 {backup_path}")
 
+    def save_cookies(self):
+        """將瀏覽器當前的最新 Cookies 回存至 cookies.json，延長登入有效期。"""
+        try:
+            current_cookies = self.context.cookies()
+            # 轉換為通用 JSON 格式（與 cookies.json 相容）
+            saved_cookies = []
+            for cookie in current_cookies:
+                saved_cookie = {
+                    "name": cookie.get("name", ""),
+                    "value": cookie.get("value", ""),
+                    "domain": cookie.get("domain", ""),
+                    "path": cookie.get("path", "/"),
+                    "secure": cookie.get("secure", False),
+                    "httpOnly": cookie.get("httpOnly", False),
+                }
+                if "expires" in cookie and cookie["expires"] and cookie["expires"] > 0:
+                    saved_cookie["expirationDate"] = cookie["expires"]
+                if "sameSite" in cookie:
+                    saved_cookie["sameSite"] = cookie["sameSite"]
+                saved_cookies.append(saved_cookie)
+
+            with open(self.cookies_path, "w", encoding="utf-8") as f:
+                json.dump(saved_cookies, f, ensure_ascii=False, indent=2)
+            print(f"✅ Cookies 已成功回存至 {self.cookies_path}（共 {len(saved_cookies)} 個）")
+        except Exception as e:
+            print(f"⚠️ 回存 Cookies 失敗: {e}")
+
     def login(self):
         try:
             # 前往蝦皮賣家中心登入頁面
@@ -542,7 +569,17 @@ class ShopeeCrawler:
                 # 如果 URL 不匹配，檢查是否已經在賣家中心
                 current_url = self.page.url
                 if "seller.shopee.tw" not in current_url:
+                    # 若被導回登入頁面，代表 Cookies 已失效
+                    if any(kw in current_url for kw in ["login", "buyer", "accounts.shopee"]):
+                        print("COOKIES_EXPIRED: 偵測到被導向登入頁面，Cookies 可能已失效")
+                        raise RuntimeError("COOKIES_EXPIRED")
                     raise Exception(f"登入可能失敗，當前 URL: {current_url}")
+
+            # 二次確認：確保當前頁面確實是賣家中心（不是登入或消費者頁面）
+            final_url = self.page.url
+            if any(kw in final_url for kw in ["login", "buyer", "accounts.shopee"]):
+                print("COOKIES_EXPIRED: 最終 URL 仍在登入頁，Cookies 可能已失效")
+                raise RuntimeError("COOKIES_EXPIRED")
 
             # 等待頁面完全加載（networkidle 可能因持續的網路活動而超時，不影響登入）
             try:
@@ -555,13 +592,16 @@ class ShopeeCrawler:
             self.close_all_shopee_popups()
             print("成功進入賣家中心")
 
+            # ✅ 登入成功後立刻回存最新 Cookies，延長有效期
+            self.save_cookies()
+
+        except RuntimeError:
+            # 重新拋出 COOKIES_EXPIRED 讓 run() 捕捉
+            raise
         except Exception as e:
             print(f"登入過程中發生錯誤: {e}")
             import traceback
             traceback.print_exc()
-
-        except Exception:
-            return "未找到"
 
     def _navigate_to_datacenter(self):
         url = "https://seller.shopee.tw/datacenter/product/performance"
@@ -866,6 +906,7 @@ class ShopeeCrawler:
     def run(self):
         """
         執行爬蟲主流程
+        退出碼：0 = 成功；77 = Cookies 失效；1 = 其他錯誤
         """
         try:
             # 初始化產品資料字典
@@ -888,6 +929,17 @@ class ShopeeCrawler:
             print(f"所有資料已儲存至 {self.output_path}")
 
             return self.products_data
+
+        except RuntimeError as e:
+            if "COOKIES_EXPIRED" in str(e):
+                # 以特殊退出碼 77 通知 Telegram Bot Cookies 已失效
+                print("COOKIES_EXPIRED: Cookies 已失效，請重新取得並更新 cookies.json")
+                import sys
+                sys.exit(77)
+            print(f"爬蟲執行過程中出錯: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
 
         except Exception as e:
             print(f"爬蟲執行過程中出錯: {e}")
