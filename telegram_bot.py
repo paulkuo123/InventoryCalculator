@@ -14,7 +14,11 @@ import os
 import signal
 import html
 import base64
+import threading
 from datetime import datetime
+
+# 導入 Cookie Refresher
+from cookie_refresher import CookieRefresher
 
 # ===== Telegram 設定 =====
 TG_TOKEN = "8743953981:AAGlIFtMa9YBLxB-DN9S_3LqNHyworqehIc"
@@ -30,6 +34,7 @@ LAST_UPDATE_FILE = os.path.join(WORK_DIR, ".last_update_id")
 # ===== 全域變數 =====
 running = True
 current_task = None  # 目前執行的任務狀態
+cookie_refresher = None  # Cookie 刷新模組
 
 CRITICAL_MONTHS = 1.5
 LOW_MONTHS = 3
@@ -107,6 +112,56 @@ def send_document(chat_id, file_path, caption=""):
     except Exception as e:
         print(f"❌ 发送文件失败: {e}")
         return False
+
+
+# ===== Cookie 刷新功能 =====
+def manual_refresh_cookies(chat_id=None):
+    """手動刷新 cookies（可選：透過 Telegram 通知結果）"""
+    global cookie_refresher
+    
+    if cookie_refresher is None:
+        if chat_id:
+            send_message(chat_id, "⚠️ Cookie Refresher 尚未啟動")
+        return False
+    
+    if chat_id:
+        send_message(chat_id, "🔄 正在刷新 Cookies...")
+    
+    success = cookie_refresher.refresh_cookies()
+    
+    if chat_id:
+        if success:
+            send_message(chat_id, "✅ Cookies 刷新成功！有效期已延長")
+        else:
+            send_message(chat_id, "❌ Cookies 刷新失敗，請檢查日誌")
+    
+    return success
+
+
+def start_cookie_refresher():
+    """在背景執行緒啟動 Cookie Refresher"""
+    global cookie_refresher, running
+    
+    if cookie_refresher is not None:
+        print("⚠️ Cookie Refresher 已經在運行中")
+        return
+    
+    try:
+        cookies_path = os.path.join(WORK_DIR, "cookies.json")
+        cookie_refresher = CookieRefresher(cookies_path)
+        
+        # 在背景執行緒運行
+        refresh_thread = threading.Thread(
+            target=cookie_refresher.start,
+            kwargs={"min_interval_min": 10, "max_interval_min": 30},
+            daemon=True
+        )
+        refresh_thread.start()
+        print("✅ Cookie Refresher 已在背景啟動")
+        
+    except Exception as e:
+        print(f"❌ 啟動 Cookie Refresher 失敗: {e}")
+        cookie_refresher = None
 
 
 # ===== 輔助函数 =====
@@ -880,15 +935,19 @@ def generate_report(keyword, months, output_file, html_output_file):
 # ===== Bot 主循环 =====
 def main():
     global running, current_task
-    
+
     print("="*50)
     print("🤖 Shopee 庫存查詢 Telegram Bot")
     print("="*50)
     print(f"📡 開始監聽訊息...")
     print(f"💡 指令格式：/搜尋 <產品> <月數>")
     print(f"   例如：/搜尋 牙刷 4")
+    print(f"🔄 Cookie 自動刷新已啟用（10-30 分鐘隨機間隔）")
     print(f"⚠️ 按 Ctrl+C 停止\n")
-    
+
+    # 啟動 Cookie 自動刷新
+    start_cookie_refresher()
+
     last_update_id = load_last_update_id()
     
     while running:
@@ -921,10 +980,10 @@ def main():
                     if current_task is not None:
                         send_message(chat_id, "⏳ 目前有任務正在執行中，請稍後再試")
                         continue
-                    
+
                     parsed = parse_search_command(text)
                     if parsed is None:
-                        send_message(chat_id, 
+                        send_message(chat_id,
                             "❌ 指令格式錯誤\n\n"
                             "✅ 正確格式：\n"
                             "<code>/搜尋 產品 月數</code>\n\n"
@@ -932,10 +991,10 @@ def main():
                             "<code>/搜尋 牙刷 4</code>\n"
                             "<code>/搜尋 手機殼 3</code>")
                         continue
-                    
+
                     keyword, months = parsed
                     current_task = {"keyword": keyword, "months": months}
-                    
+
                     # 在后台线程执行爬虫任务
                     import threading
                     thread = threading.Thread(
@@ -944,23 +1003,30 @@ def main():
                         daemon=True
                     )
                     thread.start()
-                
+
+                # 处理 /refresh 指令（手動刷新 Cookies）
+                elif text.startswith('/refresh'):
+                    manual_refresh_cookies(chat_id)
+
                 # 处理 /help 或 /start
                 elif text.startswith('/help') or text.startswith('/start'):
                     send_message(chat_id,
                         "🤖 <b>Shopee 庫存查詢 Bot</b>\n\n"
                         "📝 可用指令：\n"
-                        "<code>/搜尋 產品 月數</code> - 搜尋商品庫存\n\n"
+                        "<code>/搜尋 產品 月數</code> - 搜尋商品庫存\n"
+                        "<code>/refresh</code> - 手動刷新 Cookies\n\n"
                         "📝 範例：\n"
                         "<code>/搜尋 牙刷 4</code>\n"
                         "<code>/搜尋 手機殼 3</code>\n\n"
-                        "💡 月數範圍：1-12，預設為 4")
+                        "💡 月數範圍：1-12，預設為 4\n"
+                        "🔄 Cookies 會自動刷新，永久有效")
                 
                 # 其他消息
                 else:
-                    send_message(chat_id, 
+                    send_message(chat_id,
                         "🤔 我不太理解，請使用以下指令：\n\n"
-                        "<code>/搜尋 產品 月數</code>\n\n"
+                        "<code>/搜尋 產品 月數</code> - 搜尋商品庫存\n"
+                        "<code>/refresh</code> - 手動刷新 Cookies\n\n"
                         "輸入 /help 查看更多")
             
         except Exception as e:
