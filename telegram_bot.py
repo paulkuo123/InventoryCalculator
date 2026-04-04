@@ -673,56 +673,60 @@ def generate_html_report(keyword, months, summary, products, output_path):
       align-items: flex-start;
     }}
 
-    /* 庫存狀態 - 最突出 */
+    /* 庫存狀態 - 最大最突出 */
     .status-hero {{
-      background: rgba(255, 255, 255, 0.15);
-      border: 1px solid rgba(255, 255, 255, 0.3);
-      border-radius: 14px;
-      padding: 16px;
+      background: rgba(255, 255, 255, 0.18);
+      border: 2px solid rgba(255, 255, 255, 0.4);
+      border-radius: 18px;
+      padding: 24px 20px;
       text-align: center;
-      margin-top: 14px;
+      margin-top: 16px;
     }}
     .status-badge-large {{
       display: inline-block;
-      margin-bottom: 8px;
+      margin-bottom: 12px;
     }}
     .status-badge-large > span {{
-      font-size: 18px !important;
-      padding: 8px 18px !important;
+      font-size: 26px !important;
+      padding: 12px 28px !important;
+      letter-spacing: 1px;
     }}
     .status-detail {{
       color: rgba(255, 255, 255, 0.95);
-      font-size: 15px;
+      font-size: 17px;
       font-weight: 600;
     }}
     .status-detail strong {{
       color: #fff;
-      font-size: 20px;
+      font-size: 28px;
+      font-weight: 800;
     }}
 
-    /* 指標卡片 - 緊湊 */
+    /* 指標卡片 - 小且緊湊 */
     .summary-grid {{
-      margin-top: 14px;
+      margin-top: 16px;
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+      gap: 8px;
     }}
     .summary-card {{
-      background: rgba(255, 255, 255, 0.96);
-      border: 1px solid rgba(255, 255, 255, 0.5);
-      border-radius: 12px;
-      padding: 10px 12px;
-      box-shadow: 0 4px 12px rgba(230, 74, 25, 0.10);
+      background: rgba(255, 255, 255, 0.92);
+      border: 1px solid rgba(255, 255, 255, 0.4);
+      border-radius: 10px;
+      padding: 8px 10px;
+      box-shadow: 0 2px 8px rgba(230, 74, 25, 0.08);
     }}
     .summary-card .label {{
       color: #a9441a;
-      font-size: 12px;
-      margin-bottom: 4px;
+      font-size: 11px;
+      margin-bottom: 3px;
+      white-space: nowrap;
     }}
     .summary-card .value {{
-      font-size: 20px;
+      font-size: 17px;
       font-weight: 800;
       color: var(--primary-dark);
+      line-height: 1.2;
     }}
     .section-title {{
       margin: 20px 0 10px;
@@ -820,11 +824,13 @@ def generate_html_report(keyword, months, summary, products, output_path):
     @media (max-width: 720px) {{
       .container {{ padding: 14px 12px 30px; }}
       .hero, .product-card {{ padding: 14px; border-radius: 14px; }}
-      .summary-card .value {{ font-size: 18px; }}
-      .summary-card {{ padding: 8px 10px; }}
+      .status-hero {{ padding: 18px 14px; }}
+      .status-badge-large > span {{ font-size: 22px !important; padding: 10px 22px !important; }}
+      .status-detail strong {{ font-size: 24px; }}
+      .summary-card .value {{ font-size: 15px; }}
+      .summary-card {{ padding: 7px 8px; }}
       .product-image {{ width: 60px; height: 60px; border-radius: 12px; }}
       .product-header h2 {{ font-size: 15px; }}
-      .status-badge-large > span {{ font-size: 16px !important; padding: 6px 14px !important; }}
     }}
   </style>
 </head>
