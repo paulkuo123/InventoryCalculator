@@ -913,7 +913,6 @@ def run_crawler_task(chat_id, keyword, months):
             return
 
         if result.returncode != 0:
-            error_msg = f"❌ 爬蟲執行失敗\n返回碼: {result.returncode}"
             combined_output = (result.stdout or "") + (result.stderr or "")
             # 也嘗試從輸出文字中偵測 COOKIES_EXPIRED（防止某些情況下退出碼未正確傳遞）
             if "COOKIES_EXPIRED" in combined_output:
@@ -924,28 +923,48 @@ def run_crawler_task(chat_id, keyword, months):
                 )
                 current_task = None
                 return
+
+            # 結構化錯誤報告
+            error_lines = [
+                "❌ <b>爬蟲執行失敗</b>",
+                f"🔹 關鍵字：<code>{html.escape(keyword)}</code>",
+                f"🔹 返回碼：<code>{result.returncode}</code>",
+            ]
             if result.stderr:
-                error_msg += f"\n\n錯誤訊息:\n{result.stderr[:500]}"
-            send_message(chat_id, error_msg)
+                # 取最後 400 字元的 stderr（通常是關鍵錯誤）
+                stderr_tail = result.stderr.strip()[-400:]
+                error_lines.append("")
+                error_lines.append("📋 <b>錯誤輸出</b>：")
+                error_lines.append(f"<code>{html.escape(stderr_tail)}</code>")
+            if result.stdout:
+                stdout_tail = result.stdout.strip()[-200:]
+                if stdout_tail:
+                    error_lines.append("")
+                    error_lines.append("📋 <b>程式輸出</b>：")
+                    error_lines.append(f"<code>{html.escape(stdout_tail)}</code>")
+
+            send_message(chat_id, "\n".join(error_lines))
             current_task = None
             return
         
         # 生成报告
         send_chat_action(chat_id, "typing")
         send_message(chat_id, "📊 正在生成報告...")
-        
-        report, html_report_path = generate_report(keyword, months, output_file, html_output_file)
 
-        if not report:
-            send_message(chat_id, "❌ 報告生成失敗，請檢查日誌")
+        report, html_report_path, gen_error = generate_report(keyword, months, output_file, html_output_file)
+
+        if gen_error:
+            send_message(chat_id, gen_error)
             current_task = None
             return
-        
+
         # 发送 HTML 報表
         if html_report_path and os.path.exists(html_report_path):
             send_chat_action(chat_id, "upload_document")
             caption = f"📄 {keyword} 庫存報表（{months} 個月）"
-            send_document(chat_id, html_report_path, caption)
+            sent_ok = send_document(chat_id, html_report_path, caption)
+            if not sent_ok:
+                send_message(chat_id, "⚠️ 報表已生成，但 <b>傳送檔案失敗</b>。請檢查網路或稍後重試。")
             # 发送後刪除本地檔案
             try:
                 os.remove(html_report_path)
@@ -964,23 +983,44 @@ def run_crawler_task(chat_id, keyword, months):
 
 
 def generate_report(keyword, months, output_file, html_output_file):
-    """生成 Telegram 摘要與 HTML 報表"""
+    """生成 Telegram 摘要與 HTML 報表
+    返回: (report_text, html_path, error_message)
+    成功時 error_message 為 None；失敗時 report_text 為 None。
+    """
     if not os.path.exists(output_file):
-        return None, None
-    
+        return None, None, f"❌ 找不到爬蟲輸出檔案：\n<code>{html.escape(output_file)}</code>\n\n可能原因：爬蟲被中斷、或寫入失敗。"
+
     try:
         with open(output_file, 'r', encoding='utf-8') as f:
             data = json.load(f)
-    except:
-        return None, None
-    
-    if not data:
-        return f"⚠️ 未找到任何與「{html.escape(keyword)}」相關的商品", None
+    except json.JSONDecodeError as e:
+        return None, None, (
+            f"❌ JSON 檔案損毀，無法解析：\n"
+            f"<code>{html.escape(output_file)}</code>\n\n"
+            f"錯誤：{html.escape(str(e))}"
+        )
+    except Exception as e:
+        return None, None, f"❌ 讀取 JSON 檔案時出錯：{html.escape(str(e))}"
 
-    summary, products = build_inventory_analysis(data, months)
-    report = build_summary_message(keyword, months, summary, products)
-    html_path = generate_html_report(keyword, months, summary, products, html_output_file)
-    return report, html_path
+    if not data:
+        return f"⚠️ 未找到任何與「{html.escape(keyword)}」相關的商品", None, None
+
+    try:
+        summary, products = build_inventory_analysis(data, months)
+    except Exception as e:
+        return None, None, f"❌ 分析庫存資料時出錯：\n{html.escape(str(e))}"
+
+    try:
+        report = build_summary_message(keyword, months, summary, products)
+    except Exception as e:
+        return None, None, f"❌ 生成文字報告時出錯：\n{html.escape(str(e))}"
+
+    try:
+        html_path = generate_html_report(keyword, months, summary, products, html_output_file)
+    except Exception as e:
+        return None, None, f"❌ 生成 HTML 報表時出錯：\n{html.escape(str(e))}"
+
+    return report, html_path, None
 
 
 # ===== Bot 主循环 =====
