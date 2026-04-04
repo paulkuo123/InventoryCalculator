@@ -508,6 +508,15 @@ def generate_html_report(keyword, months, summary, products, output_path):
         summary["total_stock"], summary["total_monthly_sales"]
     )
 
+    # 狀態卡片 - 最重要，放在最前面且突出
+    status_card = (
+        f'<div class="status-hero">'
+        f'<div class="status-badge-large">{render_status_badge(overall_level_key, f"庫存狀態：{overall_status}")}</div>'
+        f'<div class="status-detail">整體庫存約可支撐 <strong>{overall_level} 個月</strong></div>'
+        f'</div>'
+    )
+
+    # 指標卡片 - 緊湊排版
     cards = [
         ("商品數", summary["total_products"], "個"),
         ("型號數", summary["total_models"], "個"),
@@ -516,6 +525,14 @@ def generate_html_report(keyword, months, summary, products, output_path):
         ("建議補貨", f"{summary['total_restock']:,}", ""),
         ("危急型號", summary["critical_models"], "個"),
     ]
+
+    metrics_html = ''.join(
+        f'<article class="summary-card">'
+        f'<div class="label">{label}</div>'
+        f'<div class="value">{value}<small style="font-size:13px;font-weight:600;"> {unit}</small></div>'
+        f'</article>'
+        for label, value, unit in cards
+    )
 
     rows = []
     for product in products:
@@ -629,102 +646,133 @@ def generate_html_report(keyword, months, summary, products, output_path):
     .container {{
       max-width: 1200px;
       margin: 0 auto;
-      padding: 32px 20px 48px;
+      padding: 24px 16px 40px;
     }}
     .hero {{
       background: linear-gradient(135deg, #ff7043 0%, var(--primary) 58%, var(--primary-dark) 100%);
       border: 1px solid rgba(255, 255, 255, 0.22);
-      border-radius: 24px;
-      padding: 28px;
+      border-radius: 18px;
+      padding: 20px;
       box-shadow: var(--shadow);
       color: #fff;
     }}
     h1, h2 {{ margin: 0; }}
     .hero p {{
-      margin: 10px 0 0;
+      margin: 8px 0 0;
       color: rgba(255, 255, 255, 0.88);
-      line-height: 1.6;
+      line-height: 1.5;
+      font-size: 14px;
     }}
-    .hero-top, .summary-grid, .product-header, .product-metrics, .product-alerts {{
+    .hero-top, .product-header, .product-metrics, .product-alerts {{
       display: flex;
-      gap: 12px;
+      gap: 10px;
       flex-wrap: wrap;
     }}
     .hero-top {{
       justify-content: space-between;
       align-items: flex-start;
     }}
+
+    /* 庫存狀態 - 最突出 */
+    .status-hero {{
+      background: rgba(255, 255, 255, 0.15);
+      border: 1px solid rgba(255, 255, 255, 0.3);
+      border-radius: 14px;
+      padding: 16px;
+      text-align: center;
+      margin-top: 14px;
+    }}
+    .status-badge-large {{
+      display: inline-block;
+      margin-bottom: 8px;
+    }}
+    .status-badge-large > span {{
+      font-size: 18px !important;
+      padding: 8px 18px !important;
+    }}
+    .status-detail {{
+      color: rgba(255, 255, 255, 0.95);
+      font-size: 15px;
+      font-weight: 600;
+    }}
+    .status-detail strong {{
+      color: #fff;
+      font-size: 20px;
+    }}
+
+    /* 指標卡片 - 緊湊 */
     .summary-grid {{
-      margin-top: 22px;
+      margin-top: 14px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+      gap: 10px;
     }}
     .summary-card {{
-      flex: 1 1 160px;
-      min-width: 160px;
       background: rgba(255, 255, 255, 0.96);
       border: 1px solid rgba(255, 255, 255, 0.5);
-      border-radius: 18px;
-      padding: 18px;
-      box-shadow: 0 8px 20px rgba(230, 74, 25, 0.12);
+      border-radius: 12px;
+      padding: 10px 12px;
+      box-shadow: 0 4px 12px rgba(230, 74, 25, 0.10);
     }}
     .summary-card .label {{
       color: #a9441a;
-      font-size: 13px;
-      margin-bottom: 8px;
+      font-size: 12px;
+      margin-bottom: 4px;
     }}
     .summary-card .value {{
-      font-size: 28px;
+      font-size: 20px;
       font-weight: 800;
       color: var(--primary-dark);
     }}
     .section-title {{
-      margin: 28px 0 14px;
-      font-size: 22px;
+      margin: 20px 0 10px;
+      font-size: 19px;
     }}
     .product-card {{
       background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%);
       border: 1px solid var(--line);
-      border-radius: 22px;
-      padding: 22px;
-      box-shadow: 0 10px 24px rgba(255, 87, 34, 0.10);
-      margin-bottom: 18px;
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 6px 16px rgba(255, 87, 34, 0.08);
+      margin-bottom: 14px;
     }}
     .product-header {{
       justify-content: space-between;
       align-items: flex-start;
-      margin-bottom: 12px;
+      margin-bottom: 10px;
     }}
     .product-title-group {{
       display: flex;
-      gap: 14px;
+      gap: 12px;
       align-items: flex-start;
       min-width: min(100%, 420px);
     }}
     .product-image {{
-      width: 84px;
-      height: 84px;
+      width: 68px;
+      height: 68px;
       object-fit: cover;
-      border-radius: 18px;
+      border-radius: 14px;
       border: 1px solid #f3d7bd;
       background: #fff7ed;
       flex: 0 0 auto;
-      box-shadow: 0 8px 18px rgba(120, 53, 15, 0.10);
+      box-shadow: 0 4px 10px rgba(120, 53, 15, 0.08);
     }}
     .product-image-placeholder {{
       display: flex;
       align-items: center;
       justify-content: center;
       color: var(--muted);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 700;
     }}
     .product-header p {{
-      margin: 8px 0 0;
+      margin: 6px 0 0;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 13px;
     }}
     .product-header h2 {{
-      font-size: 20px;
-      line-height: 1.4;
+      font-size: 17px;
+      line-height: 1.35;
       color: #2f2f2f;
       font-weight: 700;
     }}
@@ -732,13 +780,13 @@ def generate_html_report(keyword, months, summary, products, output_path):
       background: linear-gradient(135deg, #fff1eb, #fff8f1);
       border: 1px solid #ffd2c2;
       border-radius: 999px;
-      padding: 8px 12px;
-      font-size: 13px;
+      padding: 6px 10px;
+      font-size: 12px;
       font-weight: 700;
       color: var(--primary-dark);
     }}
     .product-alerts {{
-      margin-bottom: 14px;
+      margin-bottom: 10px;
     }}
     .table-wrap {{
       overflow-x: auto;
@@ -749,13 +797,14 @@ def generate_html_report(keyword, months, summary, products, output_path):
       min-width: 760px;
     }}
     th, td {{
-      padding: 12px 10px;
+      padding: 9px 8px;
       border-bottom: 1px solid #f1e5d9;
       text-align: left;
       vertical-align: middle;
+      font-size: 13px;
     }}
     th {{
-      font-size: 13px;
+      font-size: 12px;
       color: var(--muted);
       background: #fff1eb;
     }}
@@ -764,16 +813,18 @@ def generate_html_report(keyword, months, summary, products, output_path):
     }}
     .footer-note {{
       color: rgba(255, 255, 255, 0.82);
-      font-size: 13px;
-      margin-top: 16px;
-      line-height: 1.6;
+      font-size: 12px;
+      margin-top: 12px;
+      line-height: 1.5;
     }}
     @media (max-width: 720px) {{
-      .container {{ padding: 18px 14px 36px; }}
-      .hero, .product-card {{ padding: 18px; border-radius: 18px; }}
-      .summary-card .value {{ font-size: 24px; }}
-      .product-image {{ width: 72px; height: 72px; border-radius: 16px; }}
-      .product-header h2 {{ font-size: 18px; }}
+      .container {{ padding: 14px 12px 30px; }}
+      .hero, .product-card {{ padding: 14px; border-radius: 14px; }}
+      .summary-card .value {{ font-size: 18px; }}
+      .summary-card {{ padding: 8px 10px; }}
+      .product-image {{ width: 60px; height: 60px; border-radius: 12px; }}
+      .product-header h2 {{ font-size: 15px; }}
+      .status-badge-large > span {{ font-size: 16px !important; padding: 6px 14px !important; }}
     }}
   </style>
 </head>
@@ -783,14 +834,14 @@ def generate_html_report(keyword, months, summary, products, output_path):
       <div class="hero-top">
         <div>
           <h1>Shopee 庫存報表</h1>
-          <p>關鍵字：<strong>{html.escape(keyword)}</strong>　|　庫存覆蓋：<strong>{months} 個月</strong>　|　生成時間：<strong>{now}</strong></p>
+          <p>關鍵字：<strong>{html.escape(keyword)}</strong> | 庫存覆蓋：<strong>{months} 個月</strong> | 生成時間：<strong>{now}</strong></p>
         </div>
-        <div>{render_status_badge(overall_level_key, f"目前庫存狀態：{overall_status} / 約 {overall_level} 個月")}</div>
       </div>
+      {status_card}
       <div class="summary-grid">
-        {''.join(f'<article class="summary-card"><div class="label">{label}</div><div class="value">{value}<small style="font-size:14px;font-weight:600;"> {unit}</small></div></article>' for label, value, unit in cards)}
+        {metrics_html}
       </div>
-      <p class="footer-note">危急定義比照前端邏輯：有月銷量且庫存為 0，或可支撐月數低於 {CRITICAL_MONTHS} 個月。偏低為 {CRITICAL_MONTHS} 到 {LOW_MONTHS} 個月之間。</p>
+      <p class="footer-note">危急定義：庫存可支撐時間 &lt; {CRITICAL_MONTHS} 個月。偏低：&lt; {LOW_MONTHS} 個月。正常：&lt; {MEDIUM_MONTHS} 個月。充足：&gt;= {MEDIUM_MONTHS} 個月。</p>
     </section>
 
     <h2 class="section-title">商品與型號明細</h2>
