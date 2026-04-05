@@ -49,6 +49,23 @@ cd InventoryCalculator
 4. 點擊「Export」輸出 JSON 格式
 5. 將內容複製並貼到 `cookies.json` 檔案（專案根目錄）
 
+### 設置 OpenAI API Key（廣告分析用）
+廣告 AI 分析建議使用專案本地設定檔，不要把 Key 寫進程式碼或提交到 Git。
+
+1. 執行初始化腳本：
+```bash
+python3 setup_openai_key.py
+```
+
+2. 腳本會將 Key 寫入專案根目錄下的 `.env.local`
+
+3. 程式讀取順序如下：
+   - `OPENAI_API_KEY` 環境變數
+   - 專案本地 `.env.local`
+   - `~/.zshrc` / `~/.bashrc`（舊方式備援）
+
+> `.env.local` 已加入 `.gitignore`，不會推上 GitHub。若只想提供格式範例，可參考 `.env.example`。
+
 ### 執行主程式
 ```bash
 python main.py
@@ -107,6 +124,8 @@ InventoryCalculater/
 ├── script.js            # 前端 JavaScript 邏輯
 ├── styles.css           # 前端樣式
 ├── requirements.txt     # Python 依賴套件
+├── setup_openai_key.py  # 設定專案本地 OpenAI Key
+├── .env.example         # 本地設定檔範例
 ├── golden_table.json    # 參考數據表
 ├── cookies.json         # 蝦皮登入 Cookies（需自行設置）
 └── dist/                # 打包後的執行檔

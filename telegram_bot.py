@@ -41,6 +41,24 @@ CRITICAL_MONTHS = 1.5
 LOW_MONTHS = 3
 MEDIUM_MONTHS = 6
 
+HELP_TEXT = (
+    "🤖 <b>Shopee 庫存 / 廣告 Bot</b>\n\n"
+    "📝 可用指令：\n"
+    "<code>/搜尋 產品 月數</code> - 搜尋商品庫存\n"
+    "<code>/廣告匯出</code> - 下載蝦皮廣告報表（過去一個月、過去一週、昨天、今天）\n"
+    "<code>/廣告分析</code> - 分析現有廣告報表並輸出 HTML 報告（含 AI）\n"
+    "<code>/廣告分析 無AI</code> - 只用規則層分析，不呼叫 OpenAI\n"
+    "<code>/refresh</code> - 手動刷新 Cookies\n\n"
+    "📝 範例：\n"
+    "<code>/搜尋 牙刷 4</code>\n"
+    "<code>/廣告匯出</code>\n"
+    "<code>/廣告分析</code>\n"
+    "<code>/廣告分析 無AI</code>\n\n"
+    "💡 庫存搜尋月數範圍：1-12，預設為 4\n"
+    "📌 廣告分析以昨天為主要決策基準，過去一週與過去一個月作為輔助視窗\n"
+    "🔄 Cookies 會自動刷新，永久有效"
+)
+
 def signal_handler(sig, frame):
     """處理 Ctrl+C"""
     global running
@@ -213,6 +231,17 @@ def parse_search_command(text):
     
     # 只有关键字，默认 4 个月
     return (text, 4)
+
+
+def parse_ads_analysis_command(text):
+    """解析 /廣告分析 指令
+    返回: include_ai (bool)
+    """
+    normalized = text.strip().replace("　", " ")
+    lowered = normalized.lower()
+    disable_tokens = ["無ai", "noai", "false", "off", "關ai", "不用ai"]
+    include_ai = not any(token in lowered for token in disable_tokens)
+    return include_ai
 
 
 def safe_int(value, default=0):
@@ -989,6 +1018,215 @@ def run_crawler_task(chat_id, keyword, months):
     current_task = None
 
 
+def run_ads_export_task(chat_id):
+    """執行廣告匯出任務並回傳結果"""
+    global current_task
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = os.path.join(WORK_DIR, f"ads_export_result_{ts}.json")
+    crawler_script = os.path.join(WORK_DIR, "crawler.py")
+
+    print("📣 開始廣告匯出任務")
+    send_message(
+        chat_id,
+        "📣 開始匯出蝦皮廣告報表\n"
+        "範圍：過去一個月 → 過去一週 → 昨天 → 今天\n"
+        "⏳ 會依序等待處理完成後下載，請稍候..."
+    )
+
+    cmd = [
+        sys.executable, crawler_script,
+        "--mode", "ads-export",
+        "--output", output_file,
+        "--headless", "true",
+    ]
+
+    try:
+        send_chat_action(chat_id, "typing")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=CRAWLER_TIMEOUT,
+            cwd=WORK_DIR
+        )
+
+        combined_output = (result.stdout or "") + (result.stderr or "")
+        if result.returncode == 77 or "COOKIES_EXPIRED" in combined_output:
+            send_message(
+                chat_id,
+                "🔐 <b>登入失效：Cookies 已過期</b>\n\n"
+                "請重新取得 Cookies 並覆蓋 <code>cookies.json</code>，再重新執行 <code>/廣告匯出</code>。"
+            )
+            current_task = None
+            return
+
+        if result.returncode != 0:
+            error_lines = [
+                "❌ <b>廣告匯出失敗</b>",
+                f"🔹 返回碼：<code>{result.returncode}</code>",
+            ]
+            if result.stderr:
+                error_lines.append("")
+                error_lines.append("📋 <b>錯誤輸出</b>：")
+                error_lines.append(f"<code>{html.escape(result.stderr.strip()[-500:])}</code>")
+            send_message(chat_id, "\n".join(error_lines))
+            current_task = None
+            return
+
+        if not os.path.exists(output_file):
+            send_message(chat_id, "❌ 廣告匯出已執行，但找不到結果檔。")
+            current_task = None
+            return
+
+        with open(output_file, 'r', encoding='utf-8') as f:
+            export_result = json.load(f)
+
+        results = export_result.get("results", [])
+        success_results = [item for item in results if item.get("status") == "success" and item.get("file_path")]
+        failed_results = [item for item in results if item.get("status") == "error"]
+        skipped_results = [item for item in results if item.get("status") == "skipped"]
+
+        summary_lines = [
+            "📦 <b>廣告匯出完成</b>",
+            html.escape(export_result.get("message", "")),
+            "",
+            f"✅ 成功：<b>{len(success_results)}</b> 份",
+        ]
+        if failed_results:
+            summary_lines.append(f"❌ 失敗：<b>{len(failed_results)}</b> 份")
+        if skipped_results:
+            summary_lines.append(f"⏭️ 跳過：<b>{len(skipped_results)}</b> 份")
+
+        if success_results:
+            summary_lines.append("")
+            summary_lines.append("📄 已下載：")
+            for item in success_results:
+                summary_lines.append(f"• {html.escape(item.get('range_label', ''))}：<code>{html.escape(item.get('file_name', ''))}</code>")
+
+        send_message(chat_id, "\n".join(summary_lines))
+
+        for item in success_results:
+            file_path = item.get("file_path", "")
+            if file_path and os.path.exists(file_path):
+                send_chat_action(chat_id, "upload_document")
+                caption = f"📊 {item.get('range_label', '廣告報表')} CSV"
+                send_document(chat_id, file_path, caption)
+
+        if failed_results:
+            failure_lines = ["⚠️ <b>失敗範圍</b>"]
+            for item in failed_results:
+                failure_lines.append(
+                    f"• {html.escape(item.get('range_label', ''))}：{html.escape(item.get('message', '未知錯誤'))}"
+                )
+            send_message(chat_id, "\n".join(failure_lines))
+
+    except subprocess.TimeoutExpired:
+        send_message(chat_id, f"⏰ 廣告匯出超時（超過 {CRAWLER_TIMEOUT} 秒）")
+    except Exception as e:
+        send_message(chat_id, f"❌ 廣告匯出過程出錯：{html.escape(str(e))}")
+    finally:
+        current_task = None
+
+
+def run_ads_analysis_task(chat_id, include_ai=True):
+    """執行廣告分析並傳送 HTML 報告"""
+    global current_task
+
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    analysis_script = os.path.join(WORK_DIR, "ads_analysis.py")
+    output_file = os.path.join(WORK_DIR, f"ads_analysis_latest_{ts}.json")
+    history_output_file = os.path.join(WORK_DIR, f"ads_history_{ts}.json")
+    markdown_output_file = os.path.join(WORK_DIR, f"ads_analysis_report_{ts}.md")
+    html_output_file = os.path.join(WORK_DIR, f"ads_analysis_report_{ts}.html")
+
+    ai_label = "AI 強化分析" if include_ai else "規則層分析"
+    print(f"🧠 開始廣告分析任務：{ai_label}")
+    send_message(
+        chat_id,
+        f"🧠 開始執行廣告分析\n模式：<b>{ai_label}</b>\n"
+        "📌 會以昨天為主、過去一週與過去一個月為輔，輸出 HTML 報告。"
+    )
+
+    cmd = [
+        sys.executable, analysis_script,
+        "--ads-dir", "ads_exports",
+        "--golden-table", "golden_table.json",
+        "--output", output_file,
+        "--history-output", history_output_file,
+        "--markdown-output", markdown_output_file,
+        "--html-output", html_output_file,
+        "--include-ai", "true" if include_ai else "false",
+    ]
+
+    try:
+        send_chat_action(chat_id, "typing")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace',
+            timeout=CRAWLER_TIMEOUT,
+            cwd=WORK_DIR
+        )
+
+        if result.returncode != 0:
+            error_lines = [
+                "❌ <b>廣告分析失敗</b>",
+                f"🔹 返回碼：<code>{result.returncode}</code>",
+            ]
+            if result.stderr:
+                error_lines.append("")
+                error_lines.append("📋 <b>錯誤輸出</b>：")
+                error_lines.append(f"<code>{html.escape(result.stderr.strip()[-500:])}</code>")
+            send_message(chat_id, "\n".join(error_lines))
+            current_task = None
+            return
+
+        if not os.path.exists(output_file):
+            send_message(chat_id, "❌ 廣告分析已執行，但找不到分析結果檔。")
+            current_task = None
+            return
+
+        with open(output_file, 'r', encoding='utf-8') as f:
+            analysis_result = json.load(f)
+
+        report_payload = analysis_result.get("report", {})
+        rankings = report_payload.get("rankings", {})
+        narrative = report_payload.get("narrative", {})
+        source = narrative.get("source", "rules")
+        actionable_total = sum(
+            len(rankings.get(key, []))
+            for key in ("scale_up", "reduce_budget", "indirect_dependency")
+        )
+
+        summary_lines = [
+            "📈 <b>廣告分析完成</b>",
+            f"來源：<b>{html.escape(source)}</b>",
+            f"需調整商品：<b>{actionable_total}</b> 筆",
+            "📄 已附上 HTML 報告，建議直接打開報告查看圖片與完整調整建議。",
+        ]
+        if not include_ai:
+            summary_lines.append("ℹ️ 本次未呼叫 OpenAI。")
+
+        send_message(chat_id, "\n".join(summary_lines))
+
+        if os.path.exists(html_output_file):
+            send_chat_action(chat_id, "upload_document")
+            caption = f"📄 廣告分析報告（{'AI' if include_ai else '規則層'}）"
+            send_document(chat_id, html_output_file, caption)
+
+    except subprocess.TimeoutExpired:
+        send_message(chat_id, f"⏰ 廣告分析超時（超過 {CRAWLER_TIMEOUT} 秒）")
+    except Exception as e:
+        send_message(chat_id, f"❌ 廣告分析過程出錯：{html.escape(str(e))}")
+    finally:
+        current_task = None
+
+
 def generate_report(keyword, months, output_file, html_output_file):
     """生成 Telegram 摘要與 HTML 報表
     返回: (report_text, html_path, error_message)
@@ -1035,11 +1273,12 @@ def main():
     global running, current_task
 
     print("="*50)
-    print("🤖 Shopee 庫存查詢 Telegram Bot")
+    print("🤖 Shopee 庫存 / 廣告 Telegram Bot")
     print("="*50)
     print(f"📡 開始監聽訊息...")
     print(f"💡 指令格式：/搜尋 <產品> <月數>")
     print(f"   例如：/搜尋 牙刷 4")
+    print(f"💡 廣告指令：/廣告匯出、/廣告分析、/廣告分析 無AI")
     print(f"🔄 Cookie 自動刷新已啟用（10-30 分鐘隨機間隔）")
     print(f"⚠️ 按 Ctrl+C 停止\n")
 
@@ -1102,30 +1341,48 @@ def main():
                     )
                     thread.start()
 
+                # 处理 /廣告匯出 指令
+                elif text.startswith('/廣告匯出'):
+                    if current_task is not None:
+                        send_message(chat_id, "⏳ 目前有任務正在執行中，請稍後再試")
+                        continue
+
+                    current_task = {"type": "ads_export"}
+                    import threading
+                    thread = threading.Thread(
+                        target=run_ads_export_task,
+                        args=(chat_id,),
+                        daemon=True
+                    )
+                    thread.start()
+
+                # 处理 /廣告分析 指令
+                elif text.startswith('/廣告分析'):
+                    if current_task is not None:
+                        send_message(chat_id, "⏳ 目前有任務正在執行中，請稍後再試")
+                        continue
+
+                    include_ai = parse_ads_analysis_command(text)
+                    current_task = {"type": "ads_analysis", "include_ai": include_ai}
+                    import threading
+                    thread = threading.Thread(
+                        target=run_ads_analysis_task,
+                        args=(chat_id, include_ai),
+                        daemon=True
+                    )
+                    thread.start()
+
                 # 处理 /refresh 指令（手動刷新 Cookies）
                 elif text.startswith('/refresh'):
                     manual_refresh_cookies(chat_id)
 
                 # 处理 /help 或 /start
                 elif text.startswith('/help') or text.startswith('/start'):
-                    send_message(chat_id,
-                        "🤖 <b>Shopee 庫存查詢 Bot</b>\n\n"
-                        "📝 可用指令：\n"
-                        "<code>/搜尋 產品 月數</code> - 搜尋商品庫存\n"
-                        "<code>/refresh</code> - 手動刷新 Cookies\n\n"
-                        "📝 範例：\n"
-                        "<code>/搜尋 牙刷 4</code>\n"
-                        "<code>/搜尋 手機殼 3</code>\n\n"
-                        "💡 月數範圍：1-12，預設為 4\n"
-                        "🔄 Cookies 會自動刷新，永久有效")
+                    send_message(chat_id, HELP_TEXT)
                 
                 # 其他消息
                 else:
-                    send_message(chat_id,
-                        "🤔 我不太理解，請使用以下指令：\n\n"
-                        "<code>/搜尋 產品 月數</code> - 搜尋商品庫存\n"
-                        "<code>/refresh</code> - 手動刷新 Cookies\n\n"
-                        "輸入 /help 查看更多")
+                    send_message(chat_id, "🤔 我不太理解，請輸入 /help 查看完整指令清單。")
             
         except Exception as e:
             print(f"❌ 主循环出錯: {e}")

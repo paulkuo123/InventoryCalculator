@@ -15,7 +15,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
     const statusMessage = document.getElementById('statusMessage');
-    
     // 保存當前狀態變量
     window.currentSearchResults = null; // 保存原始搜尋結果
     window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
@@ -368,7 +367,7 @@ document.addEventListener('DOMContentLoaded', function() {
         
         return progressInterval;
     }
-    
+
     // 添加處理蝦皮圖片URL的函數
     function processShopeeImageUrl(url) {
         if (!url || url === 'undefined' || url === '未找到') {
@@ -1044,7 +1043,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.crawlerRunning = false;
             });
     }
-    
+
     // 綁定搜尋按鈕點擊事件
     searchButton.addEventListener('click', performSearch);
     
@@ -1080,9 +1079,4 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 重設按鈕相關代碼已移除
     
-    // 添加頁面關閉事件
-    window.addEventListener('beforeunload', function() {
-        // 發送關閉請求到伺服器
-        navigator.sendBeacon('/shutdown');
-    });
 });

@@ -1,11 +1,14 @@
 from playwright.sync_api import sync_playwright
 import time
 import json
-from datetime import datetime
+from calendar import monthrange
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 import re
 import sys
 import os
 import random
+import shutil
 
 # Playwright 兼容層：取代 Selenium imports
 from pw_adapter import (By, WebDriverWait, EC, Keys,
@@ -22,6 +25,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
 ]
+
+ADS_EXPORT_RANGE_ORDER = ["past_month", "past_week", "yesterday", "today"]
 
 class ShopeeCrawler:
 
@@ -42,6 +47,7 @@ class ShopeeCrawler:
         self.products_data = {}
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
+        self.ads_export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ads_exports")
         # 初始化 Playwright 瀏覽器
         self._init_browser()
 
@@ -82,6 +88,7 @@ class ShopeeCrawler:
         self.context = self.browser.new_context(
             user_agent=user_agent,
             viewport={"width": 1280, "height": 800},
+            accept_downloads=True,
         )
         
         # 注入 JavaScript 來欺騙網頁，讓它以為永遠在最上層可見
@@ -614,6 +621,713 @@ class ShopeeCrawler:
         # 關閉數據中心頁面可能出現的引導彈窗
         self.close_all_shopee_popups()
         print("數據中心頁面已就緒")
+
+    def _locator_exists(self, locator):
+        try:
+            return locator.count() > 0
+        except Exception:
+            return False
+
+    def _locator_is_visible(self, locator):
+        try:
+            if locator.count() == 0:
+                return False
+            return locator.first.is_visible()
+        except Exception:
+            return False
+
+    def _click_first_visible_locator(self, locators, description, timeout=8000):
+        last_error = None
+        for locator in locators:
+            try:
+                if not self._locator_exists(locator):
+                    continue
+                target = locator.first
+                target.wait_for(state="visible", timeout=timeout)
+                target.scroll_into_view_if_needed()
+                time.sleep(0.3)
+                try:
+                    target.click(timeout=timeout)
+                except Exception:
+                    target.click(timeout=timeout, force=True)
+                print(f"已點擊{description}")
+                return True
+            except Exception as e:
+                last_error = e
+        if last_error:
+            print(f"點擊{description}失敗: {last_error}")
+        return False
+
+    def _find_text_button_locators(self, texts):
+        locators = []
+        for text in texts:
+            locators.extend([
+                self.page.get_by_role("button", name=re.compile(text)),
+                self.page.get_by_role("link", name=re.compile(text)),
+                self.page.get_by_role("menuitem", name=re.compile(text)),
+                self.page.get_by_role("tab", name=re.compile(text)),
+                self.page.get_by_text(re.compile(text)),
+            ])
+        return locators
+
+    def _capture_debug_snapshot(self, name):
+        try:
+            debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_snapshots")
+            os.makedirs(debug_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(debug_dir, f"{name}_{timestamp}.png")
+            self.page.screenshot(path=path, full_page=True)
+            print(f"已保存除錯截圖: {path}")
+        except Exception as e:
+            print(f"保存除錯截圖失敗: {e}")
+
+    def _capture_debug_html(self, name):
+        try:
+            debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "debug_snapshots")
+            os.makedirs(debug_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            path = os.path.join(debug_dir, f"{name}_{timestamp}.html")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(self.page.content())
+            print(f"已保存除錯 HTML: {path}")
+        except Exception as e:
+            print(f"保存除錯 HTML 失敗: {e}")
+
+    def _log_page_text_excerpt(self, limit=1200):
+        try:
+            text = self.page.locator("body").inner_text(timeout=5000)
+            excerpt = text[:limit].replace("\n", " | ")
+            print(f"頁面文字摘要: {excerpt}")
+        except Exception as e:
+            print(f"取得頁面文字摘要失敗: {e}")
+
+    def _open_marketing_menu(self):
+        marketing_locators = [
+            self.page.locator("aside").get_by_text(re.compile(r"行銷活動|营销活动")),
+            self.page.locator("nav").get_by_text(re.compile(r"行銷活動|营销活动")),
+            self.page.get_by_role("link", name=re.compile(r"行銷活動|营销活动")),
+            self.page.get_by_role("button", name=re.compile(r"行銷活動|营销活动")),
+            self.page.get_by_text(re.compile(r"行銷活動|营销活动")),
+        ]
+
+        print("正在尋找「行銷活動」入口")
+        opened = self._click_first_visible_locator(marketing_locators, "行銷活動", timeout=8000)
+        if not opened:
+            self._capture_debug_snapshot("marketing_menu_not_found")
+            raise RuntimeError("ADS_MARKETING_MENU_NOT_FOUND: 找不到「行銷活動」入口")
+
+        time.sleep(1.5)
+        print("已點擊「行銷活動」，等待下拉選單")
+        return True
+
+    def _click_shopee_ads_entry(self):
+        ads_link_locators = [
+            self.page.locator('a[href*="/portal/marketing/pas/index"]'),
+            self.page.locator('a[href*="/marketing/pas/index"]'),
+        ]
+
+        for locator in ads_link_locators:
+            try:
+                if not self._locator_exists(locator):
+                    continue
+                href = locator.first.get_attribute("href")
+                if not href:
+                    continue
+                if href.startswith("/"):
+                    href = f"https://seller.shopee.tw{href}"
+                print(f"找到蝦皮廣告連結，直接導頁: {href}")
+                self.page.goto(href, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception:
+                    pass
+                print("已透過連結直接進入蝦皮廣告頁")
+                return True
+            except Exception as e:
+                print(f"透過蝦皮廣告連結導頁失敗: {e}")
+
+        ads_locators = [
+            self.page.locator('[role="menu"]').get_by_text(re.compile(r"蝦皮廣告")),
+            self.page.locator('[class*="popover"]').get_by_text(re.compile(r"蝦皮廣告")),
+            self.page.locator('[class*="dropdown"]').get_by_text(re.compile(r"蝦皮廣告")),
+            self.page.locator("aside").get_by_text(re.compile(r"蝦皮廣告")),
+            self.page.get_by_role("link", name=re.compile(r"蝦皮廣告")),
+            self.page.get_by_role("menuitem", name=re.compile(r"蝦皮廣告")),
+            self.page.get_by_text(re.compile(r"蝦皮廣告")),
+        ]
+
+        print("正在尋找下拉選單中的「蝦皮廣告」")
+        clicked = self._click_first_visible_locator(ads_locators, "蝦皮廣告入口", timeout=8000)
+        if not clicked:
+            self._capture_debug_snapshot("shopee_ads_entry_not_found")
+            raise RuntimeError("ADS_ENTRY_NOT_FOUND: 找不到下拉選單中的「蝦皮廣告」")
+
+        try:
+            self.page.wait_for_load_state("domcontentloaded", timeout=15000)
+        except Exception:
+            pass
+        time.sleep(2)
+        print(f"蝦皮廣告頁面 URL: {self.page.url}")
+        return True
+
+    def _navigate_to_ads_center(self):
+        candidate_urls = [
+            self.my_products_url,
+            "https://seller.shopee.tw/portal/home",
+            "https://seller.shopee.tw/portal/product/list/live/all",
+        ]
+
+        last_error = None
+        for url in candidate_urls:
+            try:
+                print(f"正在嘗試進入廣告入口頁: {url}")
+                self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                try:
+                    self.page.wait_for_load_state("networkidle", timeout=10000)
+                except Exception as e:
+                    print(f"{url} 的 networkidle 等待超時，繼續操作: {e}")
+            except Exception as e:
+                last_error = e
+                print(f"進入 {url} 時出錯: {e}")
+                continue
+
+            print(f"目前頁面 URL: {self.page.url}")
+            self.close_all_shopee_popups()
+            try:
+                self._open_marketing_menu()
+                self._click_shopee_ads_entry()
+            except Exception as e:
+                last_error = e
+                print(f"從 {url} 進入蝦皮廣告失敗: {e}")
+                self._capture_debug_snapshot("ads_menu_navigation_failed")
+                continue
+
+            try:
+                self.page.wait_for_load_state("domcontentloaded", timeout=15000)
+            except Exception:
+                pass
+            time.sleep(2)
+            print("已進入蝦皮廣告頁面")
+            return True
+
+        self._capture_debug_snapshot("ads_navigation_failed")
+        if last_error:
+            print(f"最後一次進入廣告入口頁失敗: {last_error}")
+            raise RuntimeError(f"ADS_NAVIGATION_FAILED: {last_error}")
+        raise RuntimeError("ADS_NAVIGATION_FAILED: 找不到蝦皮廣告入口")
+
+    def _ads_log(self, stage, message, range_label=None):
+        prefix = "[ADS]"
+        if range_label:
+            prefix += f"[{range_label}]"
+        prefix += f"[{stage}]"
+        print(f"{prefix} {message}")
+
+    def _build_ads_range_configs(self):
+        today = datetime.now().date()
+        yesterday = today - timedelta(days=1)
+        past_week_start = today - timedelta(days=6)
+        if today.month == 1:
+            previous_month_year = today.year - 1
+            previous_month = 12
+        else:
+            previous_month_year = today.year
+            previous_month = today.month - 1
+
+        previous_month_last_day = monthrange(previous_month_year, previous_month)[1]
+        past_month_start = today.replace(
+            year=previous_month_year,
+            month=previous_month,
+            day=min(today.day, previous_month_last_day),
+        )
+
+        def fmt(date_value):
+            return date_value.strftime("%Y/%m/%d")
+
+        return {
+            "today": {
+                "key": "today",
+                "label": "今天",
+                "group": "today",
+                "start_date": today,
+                "end_date": today,
+                "option_patterns": [r"今天"],
+                "file_prefix": "ads_overall_today",
+                "report_patterns": [
+                    rf"{re.escape(fmt(today))}\.csv$",
+                    rf"{re.escape(fmt(today))}-{re.escape(fmt(today))}\.csv$",
+                ],
+            },
+            "yesterday": {
+                "key": "yesterday",
+                "label": "昨天",
+                "group": "yesterday",
+                "start_date": yesterday,
+                "end_date": yesterday,
+                "option_patterns": [r"昨天"],
+                "file_prefix": "ads_overall_yesterday",
+                "report_patterns": [
+                    rf"{re.escape(fmt(yesterday))}\.csv$",
+                    rf"{re.escape(fmt(yesterday))}-{re.escape(fmt(yesterday))}\.csv$",
+                ],
+            },
+            "past_week": {
+                "key": "past_week",
+                "label": "過去一週",
+                "group": "last_week",
+                "start_date": past_week_start,
+                "end_date": today,
+                "option_patterns": [r"過去一週", r"過去 7 天", r"近 7 天", r"過去7天"],
+                "file_prefix": "ads_overall_past_week",
+                "report_patterns": [
+                    rf"{re.escape(fmt(past_week_start))}-{re.escape(fmt(today))}\.csv$",
+                ],
+            },
+            "past_month": {
+                "key": "past_month",
+                "label": "過去一個月",
+                "group": "last_month",
+                "start_date": past_month_start,
+                "end_date": today,
+                "option_patterns": [r"過去一個月", r"過去 30 天", r"近 30 天", r"過去30天"],
+                "file_prefix": "ads_overall_past_month",
+                "report_patterns": [
+                    rf"{re.escape(fmt(past_month_start))}-{re.escape(fmt(today))}\.csv$",
+                ],
+            },
+        }
+
+    def _to_taipei_unix_timestamp(self, date_value, end_of_day=False):
+        taipei_tz = ZoneInfo("Asia/Taipei")
+        if end_of_day:
+            dt_value = datetime(date_value.year, date_value.month, date_value.day, 23, 59, 59, tzinfo=taipei_tz)
+        else:
+            dt_value = datetime(date_value.year, date_value.month, date_value.day, 0, 0, 0, tzinfo=taipei_tz)
+        return int(dt_value.timestamp())
+
+    def _build_ads_range_url(self, range_config):
+        from_ts = self._to_taipei_unix_timestamp(range_config["start_date"], end_of_day=False)
+        to_ts = self._to_taipei_unix_timestamp(range_config["end_date"], end_of_day=True)
+        return (
+            "https://seller.shopee.tw/portal/marketing/pas/index"
+            f"?from={from_ts}&to={to_ts}&type=new_cpc_homepage&group={range_config['group']}"
+        )
+
+    def _navigate_to_ads_range_page(self, range_config):
+        target_url = self._build_ads_range_url(range_config)
+        self._ads_log("RANGE", f"正在直接進入 {range_config['label']} 報表頁：{target_url}", range_config["label"])
+        last_error = None
+
+        for attempt in range(1, 4):
+            navigation_error = None
+            self._ads_log("RANGE", f"第 {attempt} 次嘗試載入 {range_config['label']} 報表頁", range_config["label"])
+            try:
+                self.page.goto(target_url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as e:
+                navigation_error = e
+                self._ads_log("RANGE", f"{range_config['label']} 報表頁導頁逾時，改用頁面元素確認是否已進入: {e}", range_config["label"])
+
+            try:
+                self.page.wait_for_load_state("networkidle", timeout=10000)
+            except Exception as e:
+                self._ads_log("RANGE", f"{range_config['label']} 報表頁 networkidle 等待超時，繼續操作: {e}", range_config["label"])
+
+            export_button = self.page.locator('[data-testid="export-data-dropdown-trigger"]')
+            try:
+                export_button.first.wait_for(state="visible", timeout=30000)
+                time.sleep(2)
+                self._ads_log("RANGE", f"已透過 URL 進入 {range_config['label']} 報表頁", range_config["label"])
+                return True
+            except Exception as e:
+                last_error = navigation_error or e
+                self._ads_log("RANGE", f"第 {attempt} 次仍未等到匯出按鈕，將重試: {last_error}", range_config["label"])
+                time.sleep(3)
+
+        raise RuntimeError(f"ADS_RANGE_URL_FAILED: {range_config['label']} 報表頁未就緒，最後錯誤：{last_error}")
+
+    def _open_ads_date_picker(self):
+        openers = [
+            self.page.locator('.eds-icon.bi-date-input-icon'),
+            self.page.locator('[role="button"]').filter(has_text=re.compile(r"GMT\+8|今天|昨天|過去|近")),
+            self.page.locator('[class*="date"] i'),
+            self.page.locator('[class*="date-picker"]'),
+            self.page.locator('[class*="range"]'),
+            self.page.get_by_text(re.compile(r"日期|時間|過去|今天|昨天")),
+        ]
+        return self._click_first_visible_locator(openers, "日期選擇器", timeout=8000)
+
+    def _select_ads_date_range(self, range_config):
+        range_label = range_config["label"]
+        self._ads_log("RANGE", f"正在設定日期範圍為 {range_label}", range_label)
+
+        if not self._open_ads_date_picker():
+            self._capture_debug_snapshot("ads_date_picker_not_found")
+            self._capture_debug_html("ads_date_picker_not_found")
+            self._log_page_text_excerpt()
+            raise RuntimeError("ADS_DATE_PICKER_NOT_FOUND: 找不到日期選擇器")
+
+        time.sleep(1)
+
+        shortcut_locators = []
+        for pattern in range_config["option_patterns"]:
+            shortcut_locators.extend([
+                self.page.locator(".eds-date-shortcut-item").filter(has_text=re.compile(fr"^{pattern}$")),
+                self.page.locator(".eds-date-shortcut-item__text").filter(has_text=re.compile(fr"^{pattern}$")),
+            ])
+
+        if self._click_first_visible_locator(shortcut_locators, f"日期範圍 {range_label}", timeout=5000):
+            time.sleep(2)
+            self._ads_log("RANGE", f"已設定日期為 {range_label}", range_label)
+            return True
+
+        self._capture_debug_snapshot(f"ads_{range_config['key']}_option_not_found")
+        self._capture_debug_html(f"ads_{range_config['key']}_option_not_found")
+        self._log_page_text_excerpt()
+        raise RuntimeError(f"ADS_DATE_OPTION_NOT_FOUND: 找不到「{range_label}」選項")
+
+    def _open_ads_export_dropdown(self):
+        dropdown = self.page.locator('[data-testid="export-data-dropdown-trigger"]')
+        if self._click_first_visible_locator([dropdown], "匯出數據按鈕", timeout=8000):
+            time.sleep(1)
+            return True
+
+        self._ads_log("PANEL", "找不到 data-testid 匯出按鈕，改用文字定位")
+        export_clicked = self._click_first_visible_locator(
+            self._find_text_button_locators([r"匯出數據", r"匯出", r"導出數據", r"導出"]),
+            "匯出數據按鈕",
+            timeout=8000,
+        )
+        if export_clicked:
+            time.sleep(1)
+            return True
+        return False
+
+    def _open_ads_latest_reports_panel(self):
+        panel_heading = self.page.get_by_text(re.compile(r"最新報表"))
+        if self._locator_is_visible(panel_heading):
+            return True
+
+        self._ads_log("PANEL", "正在打開最新報表面板")
+        trigger = self.page.locator('[data-testid="export-data-result-trigger"]')
+        opened = self._click_first_visible_locator([trigger], "最新報表按鈕", timeout=8000)
+        if not opened:
+            return False
+
+        try:
+            panel_heading.first.wait_for(state="visible", timeout=8000)
+        except Exception:
+            pass
+        time.sleep(1)
+        return self._locator_is_visible(panel_heading)
+
+    def _escape_js(self, text):
+        return json.dumps(text, ensure_ascii=False)
+
+    def _collect_ads_report_entries(self):
+        entries = []
+        rows = self.page.locator('[data-testid="export-data-result-item"]')
+        try:
+            row_count = rows.count()
+        except Exception as e:
+            self._ads_log("CHECK", f"讀取最新報表列數失敗: {e}")
+            return []
+
+        for index in range(row_count):
+            row = rows.nth(index)
+            try:
+                if not row.is_visible():
+                    continue
+                report_name = row.locator(".name").inner_text(timeout=3000).strip()
+                status_text = row.locator(".status").inner_text(timeout=3000).strip()
+                timestamp = row.get_attribute("data-test-timestamp") or ""
+                entries.append({
+                    "report_name": report_name,
+                    "row_text": f"{report_name} {status_text}".strip(),
+                    "status_text": status_text,
+                    "has_download": "下載" in status_text,
+                    "has_processing": ("處理中" in status_text) or ("处理中" in status_text),
+                    "has_failed": "失敗" in status_text,
+                    "timestamp": int(timestamp) if str(timestamp).isdigit() else 0,
+                    "row_index": index,
+                })
+            except Exception as e:
+                self._ads_log("CHECK", f"解析第 {index + 1} 筆最新報表失敗: {e}")
+
+        entries.sort(key=lambda item: item.get("timestamp", 0), reverse=True)
+        return entries
+
+    def _report_matches_range(self, report_name, range_config):
+        if not report_name:
+            return False
+        start_date, end_date = self._extract_report_date_range(report_name)
+        if start_date and end_date:
+            return start_date == range_config["start_date"] and end_date == range_config["end_date"]
+        return any(re.search(pattern, report_name) for pattern in range_config["report_patterns"])
+
+    def _extract_report_date_range(self, report_name):
+        match = re.search(r"(\d{4}/\d{2}/\d{2})(?:-(\d{4}/\d{2}/\d{2}))?\.csv$", report_name)
+        if not match:
+            return None, None
+
+        start_text = match.group(1)
+        end_text = match.group(2) or match.group(1)
+
+        try:
+            start_date = datetime.strptime(start_text, "%Y/%m/%d").date()
+            end_date = datetime.strptime(end_text, "%Y/%m/%d").date()
+            return start_date, end_date
+        except Exception:
+            return None, None
+
+    def _find_matching_report_entries(self, range_config):
+        entries = self._collect_ads_report_entries()
+        matching_entries = [
+            entry for entry in entries
+            if self._report_matches_range(entry.get("report_name", ""), range_config)
+        ]
+        return matching_entries, entries
+
+    def _xpath_literal(self, text):
+        if "'" not in text:
+            return f"'{text}'"
+        if '"' not in text:
+            return f'"{text}"'
+        parts = text.split("'")
+        return "concat(" + ", \"'\", ".join([f"'{part}'" for part in parts]) + ")"
+
+    def _get_download_button_for_report(self, report_name):
+        rows = self.page.locator('[data-testid="export-data-result-item"]')
+        try:
+            row_count = rows.count()
+        except Exception:
+            row_count = 0
+
+        for index in range(row_count):
+            row = rows.nth(index)
+            try:
+                if not row.is_visible():
+                    continue
+                name_text = row.locator(".name").inner_text(timeout=3000).strip()
+                if name_text != report_name:
+                    continue
+                button = row.get_by_role("button", name=re.compile(r"下載"))
+                if self._locator_exists(button):
+                    return button.first
+            except Exception:
+                continue
+
+        xpath = (
+            f"(//*[contains(normalize-space(.), {self._xpath_literal(report_name)})]"
+            f"//*[self::button or self::span][contains(normalize-space(.), '下載')])[1]"
+        )
+        locator = self.page.locator(f"xpath={xpath}")
+        if self._locator_exists(locator):
+            return locator.first
+        return None
+
+    def _save_ads_download(self, download, range_config):
+        os.makedirs(self.ads_export_dir, exist_ok=True)
+        suggested_name = download.suggested_filename or "ads_export.xlsx"
+        ext = os.path.splitext(suggested_name)[1] or ".xlsx"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        final_name = f"{range_config['file_prefix']}_{timestamp}{ext}"
+        final_path = os.path.join(self.ads_export_dir, final_name)
+
+        try:
+            download.save_as(final_path)
+        except Exception as e:
+            print(f"直接保存下載檔案失敗，改用暫存路徑搬移: {e}")
+            temp_path = download.path()
+            if not temp_path or not os.path.exists(temp_path):
+                raise RuntimeError("ADS_DOWNLOAD_FILE_MISSING: 下載檔案不存在")
+            shutil.copyfile(temp_path, final_path)
+
+        if not os.path.exists(final_path):
+            raise RuntimeError("ADS_DOWNLOAD_FILE_MISSING: 下載檔案不存在")
+
+        self._ads_log("DOWNLOAD", f"廣告報表已下載完成: {final_path}", range_config["label"])
+        return {
+            "range_key": range_config["key"],
+            "range_label": range_config["label"],
+            "status": "success",
+            "message": f"{range_config['label']} 廣告數據下載完成",
+            "file_path": final_path,
+            "file_name": final_name,
+        }
+
+    def _trigger_ads_overall_export(self, range_config):
+        self._ads_log("EXPORT", "未找到可復用報表，準備點擊匯出總體廣告數據", range_config["label"])
+        if not self._open_ads_export_dropdown():
+            raise RuntimeError("ADS_EXPORT_TRIGGER_NOT_FOUND: 找不到匯出數據按鈕")
+
+        time.sleep(1)
+
+        overall_clicked = self._click_first_visible_locator(
+            [
+                self.page.locator('[data-testid="export-data-dropdown-item"]').filter(has_text=re.compile(r"總體廣告數據|整體廣告數據")),
+                self.page.locator('[data-testid="export-data-dropdown-item"]'),
+                *self._find_text_button_locators([r"總體廣告數據", r"整體廣告數據", r"總體", r"整體"]),
+            ],
+            "總體廣告數據選項",
+            timeout=6000,
+        )
+        if not overall_clicked:
+            raise RuntimeError("ADS_EXPORT_MODAL_NOT_FOUND: 找不到總體廣告數據選項")
+
+        self._ads_log("EXPORT", "已觸發總體廣告數據匯出", range_config["label"])
+        return True
+
+    def _wait_for_ads_report_download(self, range_config, timeout=900, poll_interval=30):
+        deadline = time.time() + timeout
+        poll_count = 0
+        export_triggered = False
+
+        while time.time() < deadline:
+            poll_count += 1
+            if not self._open_ads_latest_reports_panel():
+                raise RuntimeError("ADS_REPORT_PANEL_NOT_FOUND: 找不到最新報表面板")
+
+            matching_entries, all_entries = self._find_matching_report_entries(range_config)
+            self._ads_log(
+                "CHECK",
+                f"第 {poll_count} 次檢查，找到 {len(matching_entries)} 筆符合範圍的報表，面板總共 {len(all_entries)} 筆候選報表",
+                range_config["label"],
+            )
+            if not matching_entries and all_entries:
+                sample_names = " | ".join(entry.get("report_name", "") for entry in all_entries[:3])
+                self._ads_log("CHECK", f"目前候選報表樣本：{sample_names}", range_config["label"])
+
+            downloadable_entry = next((entry for entry in matching_entries if entry.get("has_download")), None)
+            processing_entry = next((entry for entry in matching_entries if entry.get("has_processing")), None)
+
+            if downloadable_entry:
+                self._ads_log("CHECK", f"發現可下載報表：{downloadable_entry['report_name']}", range_config["label"])
+                download_button = self._get_download_button_for_report(downloadable_entry["report_name"])
+                if download_button is not None:
+                    action_taken = "reused_existing" if not export_triggered else "waited_then_downloaded"
+                    self._ads_log("DOWNLOAD", "已找到下載按鈕，準備下載", range_config["label"])
+                    with self.page.expect_download(timeout=30000) as download_info:
+                        download_button.click(timeout=8000)
+                    result = self._save_ads_download(download_info.value, range_config)
+                    result["action_taken"] = action_taken
+                    return result
+
+            if processing_entry:
+                self._ads_log("CHECK", f"發現處理中報表：{processing_entry['report_name']}", range_config["label"])
+            elif not export_triggered:
+                self._trigger_ads_overall_export(range_config)
+                export_triggered = True
+            else:
+                self._ads_log("CHECK", "尚未出現符合範圍的報表，將持續輪詢", range_config["label"])
+
+            remaining_seconds = max(0, int(deadline - time.time()))
+            self._ads_log(
+                "WAIT",
+                f"第 {poll_count} 次輪詢後等待 {poll_interval} 秒，剩餘約 {remaining_seconds} 秒",
+                range_config["label"],
+            )
+
+            time.sleep(poll_interval)
+
+            try:
+                self.page.keyboard.press("Escape")
+            except Exception:
+                pass
+
+        self._capture_debug_snapshot(f"ads_{range_config['key']}_download_timeout")
+        self._capture_debug_html(f"ads_{range_config['key']}_download_timeout")
+        self._log_page_text_excerpt()
+        raise RuntimeError(f"ADS_DOWNLOAD_TIMEOUT: {range_config['label']} 等待下載按鈕超時")
+
+    def _export_single_ads_range(self, range_config):
+        try:
+            self._navigate_to_ads_range_page(range_config)
+        except Exception as e:
+            self._ads_log("RANGE", f"直接進頁失敗，改回 UI 選擇模式: {e}", range_config["label"])
+            self._select_ads_date_range(range_config)
+        result = self._wait_for_ads_report_download(range_config)
+        self._ads_log("DONE", f"{range_config['label']} 完成，動作：{result.get('action_taken', 'downloaded')}", range_config["label"])
+        return result
+
+    def _summarize_ads_export_results(self, results):
+        success_count = sum(1 for item in results if item.get("status") == "success")
+        total_count = len(results)
+        if success_count == total_count:
+            status = "success"
+            message = f"已完成 {total_count}/{total_count} 份廣告報表下載"
+        elif success_count > 0:
+            status = "partial_success"
+            message = f"已完成 {success_count}/{total_count} 份廣告報表下載，其餘失敗"
+        else:
+            status = "error"
+            message = "所有廣告報表導出皆失敗"
+
+        return {
+            "status": status,
+            "message": message,
+            "results": results,
+        }
+
+    def _build_skipped_ads_result(self, range_config, reason):
+        return {
+            "range_key": range_config["key"],
+            "range_label": range_config["label"],
+            "status": "skipped",
+            "message": reason,
+            "file_path": "",
+            "file_name": "",
+            "action_taken": "skipped",
+        }
+
+    def export_ads_report(self):
+        """
+        執行蝦皮廣告多時間範圍總體報表匯出流程
+        退出碼：0 = 成功；77 = Cookies 失效；1 = 其他錯誤
+        """
+        results = []
+        try:
+            self._ads_log("INIT", "開始初始化廣告匯出流程")
+            self.login()
+            self._ads_log("LOGIN", "登入賣家中心成功")
+            self._navigate_to_ads_center()
+            self._ads_log("NAV", "已進入蝦皮廣告頁面")
+
+            range_configs = self._build_ads_range_configs()
+            for index, range_key in enumerate(ADS_EXPORT_RANGE_ORDER, start=1):
+                range_config = range_configs[range_key]
+                self._ads_log("NEXT", f"開始第 {index}/{len(ADS_EXPORT_RANGE_ORDER)} 個範圍：{range_config['label']}")
+                try:
+                    range_result = self._export_single_ads_range(range_config)
+                    results.append(range_result)
+                except Exception as e:
+                    self._ads_log("ERROR", str(e), range_config["label"])
+                    results.append({
+                        "range_key": range_config["key"],
+                        "range_label": range_config["label"],
+                        "status": "error",
+                        "message": str(e),
+                        "file_path": "",
+                        "file_name": "",
+                        "action_taken": "failed",
+                    })
+                    remaining_keys = ADS_EXPORT_RANGE_ORDER[index:]
+                    for remaining_key in remaining_keys:
+                        skipped_config = range_configs[remaining_key]
+                        skipped_reason = f"前一個範圍失敗，未繼續執行 {skipped_config['label']}"
+                        self._ads_log("STOP", skipped_reason)
+                        results.append(self._build_skipped_ads_result(skipped_config, skipped_reason))
+                    break
+
+            summary = self._summarize_ads_export_results(results)
+            self._ads_log("SUMMARY", summary["message"])
+            return summary
+
+        except RuntimeError as e:
+            if "COOKIES_EXPIRED" in str(e):
+                print("COOKIES_EXPIRED: Cookies 已失效，請重新取得並更新 cookies.json")
+                import sys
+                sys.exit(77)
+            raise
 
     def _select_past_30_days(self):
         """
@@ -1580,6 +2294,10 @@ def main():
                             type=int,
                             default=4,
                             help='庫存月份')
+        parser.add_argument('--mode',
+                            choices=['inventory', 'ads-export'],
+                            default='inventory',
+                            help='執行模式')
 
         args = parser.parse_args()
 
@@ -1607,8 +2325,13 @@ def main():
                                 driver_path, args.output, args.keyword.strip(),
                                 headless=headless_mode)
 
-        # 運行爬蟲
-        products = crawler.run()
+        # 運行指定流程
+        if args.mode == 'ads-export':
+            result = crawler.export_ads_report()
+            with open(args.output, 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, indent=4)
+        else:
+            crawler.run()
 
         # 確保瀏覽器關閉
         try:

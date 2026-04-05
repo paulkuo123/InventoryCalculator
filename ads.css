@@ -1,0 +1,253 @@
+.ads-workspace {
+    display: grid;
+    gap: 24px;
+}
+
+.ads-toolbar,
+.ads-analysis-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.ads-export-card {
+    border: 1px solid rgba(255, 152, 0, 0.18);
+    background: linear-gradient(180deg, #fffdf8 0%, #ffffff 100%);
+}
+
+.ads-analysis-card {
+    background: linear-gradient(180deg, #fff7ef 0%, #ffffff 100%);
+}
+
+.ads-export-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 20px;
+}
+
+.ads-export-header h3 {
+    margin-bottom: 6px;
+    color: #c96b00;
+}
+
+.ads-export-header p {
+    color: var(--dark-gray);
+    font-size: 14px;
+}
+
+.ads-export-button {
+    min-width: 220px;
+}
+
+.ads-status-card {
+    margin-top: 18px;
+    padding: 18px;
+    border-radius: 12px;
+    background-color: #fff7ec;
+    border: 1px solid #ffd8a8;
+}
+
+.ads-status-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+
+.ads-status-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 6px 12px;
+    border-radius: 999px;
+    background-color: #ff9800;
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.ads-status-badge.success {
+    background-color: var(--success-color);
+}
+
+.ads-status-badge.warning {
+    background-color: var(--warning-color);
+}
+
+.ads-status-badge.error {
+    background-color: var(--danger-color);
+}
+
+.ads-status-step {
+    font-weight: 600;
+    color: #8a4b00;
+}
+
+.ads-progress-container {
+    max-width: none;
+    margin: 14px 0 10px;
+}
+
+.ads-status-message {
+    margin-top: 8px;
+    color: var(--dark-gray);
+}
+
+.ads-export-result {
+    margin-top: 14px;
+    padding: 14px 16px;
+    border-radius: 10px;
+    background-color: white;
+    border: 1px solid #ffe1b3;
+    color: #6c4a00;
+    word-break: break-word;
+}
+
+.ads-export-result.success {
+    border-color: #b7e4c7;
+    background-color: #f3fff7;
+    color: #1c6b3c;
+}
+
+.ads-export-result.warning {
+    border-color: #ffe08a;
+    background-color: #fffaf0;
+    color: #8a5a00;
+}
+
+.ads-export-result.error {
+    border-color: #ffc9c9;
+    background-color: #fff5f5;
+    color: #b42318;
+}
+
+.ads-result-list {
+    margin-top: 12px;
+    display: grid;
+    gap: 10px;
+}
+
+.ads-result-item {
+    padding: 10px 12px;
+    border-radius: 8px;
+    background-color: rgba(255, 255, 255, 0.8);
+    border: 1px solid #f0e0c6;
+}
+
+.ads-result-item.success {
+    border-color: #b7e4c7;
+}
+
+.ads-result-item.error {
+    border-color: #ffc9c9;
+}
+
+.ai-toggle {
+    margin-right: -4px;
+}
+
+.ai-toggle-label {
+    font-size: 14px;
+    color: var(--dark-gray);
+}
+
+.ads-analysis-report {
+    margin-top: 20px;
+    display: grid;
+    gap: 20px;
+}
+
+.ads-analysis-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 16px;
+}
+
+.ads-analysis-summary-card,
+.ads-analysis-section {
+    background: #ffffff;
+    border: 1px solid #f1dfcf;
+    border-radius: 18px;
+    box-shadow: 0 10px 28px rgba(210, 124, 46, 0.08);
+}
+
+.ads-analysis-summary-card {
+    padding: 18px;
+}
+
+.ads-analysis-summary-card span {
+    display: block;
+    font-size: 13px;
+    color: #8b6b53;
+    margin-bottom: 8px;
+}
+
+.ads-analysis-summary-card strong {
+    display: block;
+    font-size: 30px;
+    color: #222;
+}
+
+.ads-analysis-summary-card p {
+    margin: 10px 0 0;
+    color: #6a5748;
+    font-size: 14px;
+}
+
+.ads-analysis-section {
+    padding: 20px;
+}
+
+.ads-analysis-section h3 {
+    margin: 0 0 14px;
+    font-size: 18px;
+    color: #262626;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.ads-analysis-action-list {
+    margin: 0;
+    padding-left: 20px;
+    color: #4f4338;
+}
+
+.ads-analysis-action-list li + li {
+    margin-top: 10px;
+}
+
+.ads-analysis-files {
+    font-size: 13px;
+    color: #75675a;
+    display: grid;
+    gap: 6px;
+}
+
+.ads-analysis-error {
+    background: #fff1f1;
+    border: 1px solid #efc8c8;
+    border-radius: 16px;
+    padding: 18px;
+    color: #8d2a2a;
+}
+
+@media (max-width: 768px) {
+    .ads-export-header {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .ads-export-button {
+        width: 100%;
+    }
+
+    .ads-analysis-actions,
+    .ads-toolbar {
+        width: 100%;
+        justify-content: flex-start;
+    }
+}

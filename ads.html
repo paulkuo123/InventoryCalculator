@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>莉莉安蝦皮廣告工作台</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="ads.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <div class="logo-circle">
+                    <i class="fas fa-bullhorn"></i>
+                </div>
+                <h1>莉莉安蝦皮廣告工作台</h1>
+            </div>
+            <div class="header-actions">
+                <a class="btn-secondary header-link-button" href="/">
+                    <i class="fas fa-boxes-stacked"></i>
+                    返回庫存首頁
+                </a>
+                <div class="stats-badge">
+                    <i class="fas fa-chart-line"></i>
+                    <span>廣告診斷中</span>
+                </div>
+            </div>
+        </div>
+        <div class="header-wave">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 100">
+                <path fill="#ffffff" fill-opacity="1" d="M0,64L48,69.3C96,75,192,85,288,80C384,75,480,53,576,48C672,43,768,53,864,58.7C960,64,1056,64,1152,56C1248,48,1344,32,1392,24L1440,16L1440,100L1392,100C1344,100,1248,100,1152,100C1056,100,960,100,864,100C768,100,672,100,576,100C480,100,384,100,288,100C192,100,96,100,48,100L0,100Z"></path>
+            </svg>
+        </div>
+    </header>
+
+    <div class="container ads-workspace">
+        <div class="card ads-export-card">
+            <div class="ads-export-header">
+                <div>
+                    <h3><i class="fas fa-file-download"></i> 蝦皮廣告數據匯出</h3>
+                    <p>一鍵批次導出今天、昨天、過去一週、過去一個月的總體廣告數據，並優先復用已存在的報表。</p>
+                </div>
+                <div class="ads-toolbar">
+                    <div class="headless-option">
+                        <label class="toggle-switch">
+                            <input type="checkbox" id="headlessMode" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span>顯示瀏覽器</span>
+                    </div>
+                    <button id="adsExportButton" class="btn-secondary ads-export-button">
+                        <i class="fas fa-file-arrow-down"></i>
+                        匯出 4 個時間範圍廣告數據
+                    </button>
+                </div>
+            </div>
+            <div id="adsExportStatusCard" class="ads-status-card" style="display: none;">
+                <div class="ads-status-top">
+                    <span class="ads-status-badge" id="adsStatusBadge">執行中</span>
+                    <span class="ads-status-step" id="adsStatusStep">準備開始...</span>
+                </div>
+                <div class="progress-container ads-progress-container">
+                    <div id="adsProgressBar" class="progress-bar"></div>
+                </div>
+                <div id="adsProgressText" class="progress-text">0%</div>
+                <p id="adsStatusMessage" class="ads-status-message">等待後端啟動流程...</p>
+                <div id="adsExportResult" class="ads-export-result" style="display: none;"></div>
+            </div>
+        </div>
+
+        <div class="card ads-analysis-card">
+            <div class="ads-export-header">
+                <div>
+                    <h3><i class="fas fa-chart-pie"></i> 廣告 AI 分析報告</h3>
+                    <p>讀取目前已下載的廣告 CSV，結合商品圖片、規則診斷與 ChatGPT API，輸出完整的投放調整建議。</p>
+                </div>
+                <div class="ads-analysis-actions">
+                    <label class="toggle-switch ai-toggle">
+                        <input type="checkbox" id="includeAiAnalysis" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span class="ai-toggle-label">啟用 ChatGPT API</span>
+                    <button id="adsAnalyzeButton" class="btn-primary ads-export-button">
+                        <i class="fas fa-magnifying-glass-chart"></i>
+                        分析現有廣告報表
+                    </button>
+                </div>
+            </div>
+            <div id="adsAnalysisStatusCard" class="ads-status-card" style="display: none;">
+                <div class="ads-status-top">
+                    <span class="ads-status-badge" id="adsAnalysisStatusBadge">分析中</span>
+                    <span class="ads-status-step" id="adsAnalysisStatusStep">準備解析報表...</span>
+                </div>
+                <div class="progress-container ads-progress-container">
+                    <div id="adsAnalysisProgressBar" class="progress-bar"></div>
+                </div>
+                <div id="adsAnalysisProgressText" class="progress-text">0%</div>
+                <p id="adsAnalysisStatusMessage" class="ads-status-message">正在等待分析器啟動...</p>
+            </div>
+            <div id="adsAnalysisReport" class="ads-analysis-report" style="display: none;"></div>
+        </div>
+    </div>
+
+    <script src="ads.js"></script>
+</body>
+</html>

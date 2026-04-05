@@ -181,6 +181,58 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     }, ensure_ascii=False).encode('utf-8'))
                 return
 
+        if self.path.startswith('/export_ads'):
+            try:
+                showBrowser = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query
+                ).get('showBrowser', ['true'])[0].lower() == 'true'
+
+                result = self.run_ads_export(showBrowser)
+
+                status_code = 200 if result.get("status") in ("success", "partial_success") else 500
+                self.send_response(status_code)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(result, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({
+                        "status": "error",
+                        "message": str(e)
+                    }, ensure_ascii=False).encode('utf-8'))
+                return
+
+        if self.path.startswith('/analyze_ads'):
+            try:
+                include_ai = urllib.parse.parse_qs(
+                    urllib.parse.urlparse(self.path).query
+                ).get('includeAI', ['true'])[0].lower() == 'true'
+
+                result = self.run_ads_analysis(include_ai=include_ai)
+
+                status_code = 200 if result.get("status") == "success" else 500
+                self.send_response(status_code)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(result, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({
+                        "status": "error",
+                        "message": str(e)
+                    }, ensure_ascii=False).encode('utf-8'))
+                return
+
         # 處理中斷爬蟲請求
         if self.path == '/stop_crawler':
             self.send_response(200)
@@ -212,7 +264,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
         # 處理其他請求
         # 處理靜態文件與首頁請求
-        if self.path == '/' or any(self.path.endswith(ext) for ext in ['.html', '.css', '.js']):
+        if self.path == '/' or any(self.path.endswith(ext) for ext in ['.html', '.css', '.js', '.pdf', '.json', '.md']):
             if self.path == '/':
                 target_file = FILE_NAME
             else:
@@ -225,6 +277,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     self.send_header('Content-type', 'text/css; charset=utf-8')
                 elif target_file.endswith('.js'):
                     self.send_header('Content-type', 'application/javascript; charset=utf-8')
+                elif target_file.endswith('.pdf'):
+                    self.send_header('Content-type', 'application/pdf')
+                elif target_file.endswith('.json'):
+                    self.send_header('Content-type', 'application/json; charset=utf-8')
+                elif target_file.endswith('.md'):
+                    self.send_header('Content-type', 'text/markdown; charset=utf-8')
                 else:
                     self.send_header('Content-type', 'text/html; charset=utf-8')
                 self.end_headers()
@@ -371,41 +429,84 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
     def run_crawler(self, keyword, show_browser=False, inventory_month=4):
         """執行爬蟲程序"""
+        output_path = "shopee_products.json"
+        mode_args = [
+            keyword, "--output", output_path,
+            "--headless",
+            str(not show_browser).lower(), "--inventory-month",
+            str(inventory_month)
+        ]
+        result = self.run_worker_process(
+            mode_args,
+            output_path,
+            task_name="爬蟲",
+            timeout=20000,
+        )
+        if result.get("status") == "error":
+            return {"error": result.get("message", "爬蟲執行失敗")}
+        return result
+
+    def run_ads_export(self, show_browser=True):
+        """執行蝦皮廣告匯出程序"""
+        output_path = "ads_export_result.json"
+        mode_args = [
+            "--mode", "ads-export",
+            "--output", output_path,
+            "--headless", str(not show_browser).lower()
+        ]
+        return self.run_worker_process(
+            mode_args,
+            output_path,
+            task_name="廣告匯出",
+            timeout=1200,
+        )
+
+    def run_ads_analysis(self, include_ai=True):
+        """執行蝦皮廣告分析程序"""
+        output_path = "ads_analysis_latest.json"
+        script_name = "ads_analysis.py"
+        mode_args = [
+            "--output", output_path,
+            "--history-output", "ads_history.json",
+            "--markdown-output", "ads_analysis_report.md",
+            "--include-ai", str(include_ai).lower(),
+        ]
+        return self.run_worker_process(
+            mode_args,
+            output_path,
+            task_name="廣告分析",
+            timeout=600,
+            script_name=script_name,
+        )
+
+    def run_worker_process(self, worker_args, output_path, task_name="任務", timeout=20000, script_name="crawler.py"):
+        """執行 worker 子程序並讀取 JSON 結果"""
         global current_crawler_process  # 全局變量聲明必須在函數開頭
 
         try:
-            # 使用固定的輸出路徑
-            output_path = "shopee_products.json"
+            if current_crawler_process is not None and current_crawler_process.poll() is None:
+                logger.warning(f"{task_name}啟動失敗：已有進程在執行")
+                return {"status": "error", "message": "目前已有其他流程在執行，請稍後再試"}
 
-            logger.info(f"===== 開始執行爬蟲 =====")
-            logger.info(f"搜尋關鍵字: {keyword}")
-            logger.info(f"顯示瀏覽器: {show_browser}")
-            logger.info(f"庫存月份: {inventory_month}")
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    logger.warning(f"無法刪除舊結果文件: {output_path}")
 
-            # 設定爬蟲命令
-            # 設定爬蟲命令
+            logger.info(f"===== 開始執行{task_name} =====")
             cmd = []
-            # 確保執行檔路徑為絕對路徑
             executable = os.path.abspath(sys.executable)
             
-            if getattr(sys, 'frozen', False):
-                # 凍結環境 (打包後)：呼叫自身並帶上 --worker 參數，利用 multiprocessing 技術
+            if getattr(sys, 'frozen', False) and script_name == "crawler.py":
                 cmd = [executable, "--worker"]
             else:
-                # 開發環境：直接呼叫 crawler.py
-                cmd = [executable, "crawler.py"]
+                cmd = [executable, script_name]
 
-            # 添加通用參數
-            cmd.extend([
-                keyword, "--output", output_path,
-                "--headless",
-                str(not show_browser).lower(), "--inventory-month",
-                str(inventory_month)
-            ])
+            cmd.extend(worker_args)
 
-            logger.info(f"爬蟲命令: {' '.join(cmd)}")
+            logger.info(f"{task_name}命令: {' '.join(cmd)}")
 
-            # 執行爬蟲腳本，並實時顯示輸出
             process = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -414,15 +515,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 encoding='utf-8',
                 errors='replace',
                 bufsize=1,  # 行緩衝，確保輸出及時顯示
-                # 在 Unix/Linux 上創建新進程組，以便於後續終止
                 preexec_fn=None if os.name == 'nt' else os.setsid)
 
-            # 保存當前爬蟲進程的引用
             current_crawler_process = process
 
-            logger.info(f"爬蟲進程已啟動，PID: {process.pid}")
+            logger.info(f"{task_name}進程已啟動，PID: {process.pid}")
 
-            # 創建線程來實時讀取和顯示輸出，並記錄到日誌文件
             def read_output(pipe, prefix):
                 for line in pipe:
                     line_text = line.strip()
@@ -430,58 +528,60 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     # 同時記錄到日誌文件
                     logger.info(f"{prefix}: {line_text}")
 
-            # 啟動輸出讀取線程
             stdout_thread = threading.Thread(target=read_output,
-                                             args=(process.stdout, "爬蟲輸出"),
+                                             args=(process.stdout, f"{task_name}輸出"),
                                              daemon=True)
             stderr_thread = threading.Thread(target=read_output,
-                                             args=(process.stderr, "爬蟲錯誤"),
+                                             args=(process.stderr, f"{task_name}錯誤"),
                                              daemon=True)
             stdout_thread.start()
             stderr_thread.start()
 
-            logger.info("爬蟲輸出讀取線程已啟動")
+            logger.info(f"{task_name}輸出讀取線程已啟動")
 
-            # 等待爬蟲完成，設置超時
             try:
-                process.wait(timeout=20000)
+                process.wait(timeout=timeout)
             except subprocess.TimeoutExpired:
                 self.stop_running_crawler()
-                logger.error("爬蟲執行超時，已強制終止")
-                return {"error": "爬蟲執行超時，已強制終止"}
+                logger.error(f"{task_name}執行超時，已強制終止")
+                return {"status": "error", "message": f"{task_name}執行超時，已強制終止"}
 
-            # 確保輸出讀取線程完成
             stdout_thread.join(timeout=1)
             stderr_thread.join(timeout=1)
 
-            # 清除當前爬蟲進程的引用
             current_crawler_process = None
 
-            logger.info(f"爬蟲進程已完成，返回碼: {process.returncode}")
+            logger.info(f"{task_name}進程已完成，返回碼: {process.returncode}")
 
             if process.returncode != 0:
-                logger.error(f"爬蟲執行失敗，返回碼: {process.returncode}")
-                return {"error": "爬蟲執行失敗"}
+                if process.returncode == 77:
+                    message = "Cookies 已失效，請重新更新 cookies.json"
+                else:
+                    message = f"{task_name}執行失敗"
+                logger.error(f"{task_name}執行失敗，返回碼: {process.returncode}")
+                return {"status": "error", "message": message}
 
-            # 檢查結果文件是否存在
             if not os.path.exists(output_path):
-                logger.error("爬蟲未生成結果文件")
-                return {"error": "爬蟲未生成結果文件"}
+                logger.error(f"{task_name}未生成結果文件")
+                return {"status": "error", "message": f"{task_name}未生成結果文件"}
 
-            # 讀取爬蟲結果
             try:
                 with open(output_path, 'r', encoding='utf-8') as f:
                     result = json.load(f)
 
-                logger.info(f"爬取完成，找到 {len(result)} 個商品")
+                if isinstance(result, dict) and result.get("status") == "error":
+                    return result
+
+                logger.info(f"{task_name}完成")
                 return result
             except json.JSONDecodeError:
-                logger.error("爬蟲結果不是有效的 JSON 格式")
-                return {"error": "爬蟲結果不是有效的 JSON 格式"}
+                logger.error(f"{task_name}結果不是有效的 JSON 格式")
+                return {"status": "error", "message": f"{task_name}結果不是有效的 JSON 格式"}
 
         except Exception as e:
-            logger.exception(f"執行爬蟲時出錯: {e}")
-            return {"error": f"執行爬蟲時出錯: {e}"}
+            logger.exception(f"執行{task_name}時出錯: {e}")
+            current_crawler_process = None
+            return {"status": "error", "message": f"執行{task_name}時出錯: {e}"}
 
 
 def kill_process_on_port(port):
