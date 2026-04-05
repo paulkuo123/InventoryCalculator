@@ -8,6 +8,9 @@
 - **銷售數據分析**：分析商品銷售趨勢和表現
 - **庫存計算**：根據銷售數據計算最佳庫存量
 - **Excel 數據解析**：解析蝦皮後台匯出的 Excel 檔案
+- **Shopee 廣告報表匯出**：自動依序下載過去一個月、過去一週、昨天與今天的廣告總體報表
+- **Shopee 廣告 AI 分析**：整合昨天 / 過去一週 / 過去一個月的表現，輸出 HTML 廣告調整報告
+- **Telegram Bot**：支援庫存搜尋、廣告匯出與廣告分析報告回傳
 
 ## 環境搭建
 
@@ -70,7 +73,14 @@ python3 setup_openai_key.py
 ```bash
 python main.py
 ```
-執行後會自動開啟網頁介面，您可以在此進行商品搜尋和數據分析。
+執行後會自動開啟網頁介面。
+
+- 庫存首頁：可進行商品搜尋、庫存儀表板與補貨判讀
+- 廣告工作台：可進行 Shopee 廣告報表匯出與 AI 分析
+
+目前庫存與廣告功能已拆成不同頁面：
+- `/`：庫存首頁
+- `/ads.html`：廣告工作台
 
 ### 獨立庫存計算器（GUI 工具）
 除了主要的爬蟲功能外，本專案還包含一個獨立的 PyQt5 庫存計算工具：
@@ -84,6 +94,62 @@ python calculator.py
 python parser.py
 ```
 解析結果將輸出至 `shopee_products.json`
+
+### 廣告報表匯出
+若要手動執行 Shopee 廣告報表匯出，可直接執行：
+
+```bash
+python3 crawler.py --mode ads-export --output ads_export_result.json --headless true
+```
+
+流程會固定依序處理：
+1. 過去一個月
+2. 過去一週
+3. 昨天
+4. 今天
+
+每個範圍都會先等待 Shopee 產出檔案，再下載 CSV 到 `ads_exports/`。
+
+### 廣告分析
+當 `ads_exports/` 內已有廣告 CSV 後，可手動執行分析：
+
+```bash
+python3 ads_analysis.py --include-ai true
+```
+
+主要輸出：
+- `ads_analysis_latest.json`
+- `ads_history.json`
+- `ads_analysis_report.html`
+- `ads_analysis_report.md`
+
+分析原則：
+- 以「昨天」作為主要決策基準
+- 「過去一週」與「過去一個月」作為穩定性驗證視窗
+- 以 `ROAS >= 3` 作為店內基準
+- 除了 `ROAS`，也會一起考慮 `直接 ROAS / CTR / CVR / CPC / CPA / 直接成交占比`
+- HTML 報告會只列出需要調整的商品，並附上商品圖片與具體建議
+
+### Telegram Bot
+若要使用 Telegram Bot：
+
+```bash
+python3 telegram_bot.py
+```
+
+目前可用指令：
+
+- `/搜尋 產品 月數`
+- `/廣告匯出`
+- `/廣告分析`
+- `/廣告分析 無AI`
+- `/refresh`
+- `/help`
+
+其中：
+- `/廣告匯出`：會回傳已下載的廣告 CSV
+- `/廣告分析`：會回傳 HTML 廣告分析報告
+- `/廣告分析 無AI`：只使用規則層，不呼叫 OpenAI
 
 ## 應用程式打包 (發布)
 
@@ -116,18 +182,25 @@ python build.py
 InventoryCalculater/
 ├── main.py              # Web 伺服器入口點
 ├── crawler.py           # 蝦皮爬蟲（Playwright）
+├── ads_analysis.py      # Shopee 廣告分析器
 ├── calculator.py        # PyQt5 庫存計算器（GUI）
 ├── parser.py            # Excel 數據解析器
+├── telegram_bot.py      # Telegram Bot（庫存 / 廣告）
 ├── pw_adapter.py        # Playwright ↔ Selenium 兼容層
 ├── build.py             # PyInstaller 打包腳本
 ├── index.html           # Web UI 前端
+├── ads.html             # 廣告工作台前端
 ├── script.js            # 前端 JavaScript 邏輯
+├── ads.js               # 廣告工作台 JavaScript
 ├── styles.css           # 前端樣式
+├── ads.css              # 廣告工作台樣式
 ├── requirements.txt     # Python 依賴套件
 ├── setup_openai_key.py  # 設定專案本地 OpenAI Key
+├── config_loader.py     # 本地設定 / OpenAI Key 載入器
 ├── .env.example         # 本地設定檔範例
 ├── golden_table.json    # 參考數據表
 ├── cookies.json         # 蝦皮登入 Cookies（需自行設置）
+├── ads_exports/         # 廣告 CSV 匯出資料夾
 └── dist/                # 打包後的執行檔
 ```
 
@@ -138,6 +211,8 @@ InventoryCalculater/
 - **GUI**: PyQt5（獨立庫存計算器）
 - **Web 框架**: 內建 `http.server` 模組
 - **數據處理**: pandas（Excel 解析）
+- **廣告分析**: OpenAI API + 自訂規則層
+- **通知 / 操作**: Telegram Bot API
 - **打包工具**: PyInstaller
 
 ## 常見問題
@@ -149,6 +224,15 @@ InventoryCalculater/
 1. 檢查 `cookies.json` 是否存在且格式正確
 2. 確認 Playwright 瀏覽器已安裝：`playwright install chromium`
 3. 查看 `debug.log` 了解詳細錯誤訊息
+
+### 廣告分析沒有使用 OpenAI？
+1. 先執行 `python3 setup_openai_key.py`
+2. 確認專案根目錄已有 `.env.local`
+3. 檢查 `OPENAI_API_KEY` 是否可用
+4. 可用 `python3 inspect_openai_status.py` 測試目前設定是否能正常呼叫 OpenAI API
+
+### Telegram 收到的 HTML 圖片顯示不出來？
+廣告分析與庫存報表都會盡量將圖片轉成 Base64 內嵌在 HTML 中。若仍看不到圖片，通常是當次圖片網址抓取失敗，可重新執行一次分析。
 
 ### 打包後執行檔無法運行？
 確保已將 `cookies.json` 和執行檔放在同一目錄。
