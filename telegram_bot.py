@@ -23,6 +23,7 @@ from cookie_refresher import CookieRefresher
 # ===== Telegram 設定 =====
 TG_TOKEN = "8743953981:AAGlIFtMa9YBLxB-DN9S_3LqNHyworqehIc"
 TG_CHAT_ID = "6847971073"
+AUTHORIZED_USERS = [7985701289]  # 可新增其他 chat_id，例如: ["6847971073", "1234567890"]
 BASE_URL = f"https://api.telegram.org/bot{TG_TOKEN}"
 
 # ===== 設定 =====
@@ -1067,9 +1068,9 @@ def main():
                 
                 chat_id = message.get("chat", {}).get("id")
                 text = message.get("text", "")
-                
-                # 只处理指定 chat_id 的消息
-                if str(chat_id) != str(TG_CHAT_ID):
+
+                # 只处理授权用户的消息
+                if str(chat_id) not in [str(uid) for uid in AUTHORIZED_USERS]:
                     continue
                 
                 # 处理 /搜尋 指令
