@@ -70,7 +70,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const steps = [
             { progress: 10, step: '登入中', message: '正在使用現有 cookies 進入蝦皮賣家中心...' },
             { progress: 28, step: '進入廣告後台', message: '正在尋找並點擊蝦皮廣告入口...' },
-            { progress: 46, step: '批次導出', message: '正在依序處理今天、昨天、過去一週、過去一個月...' },
+            { progress: 46, step: '批次導出', message: '正在依序處理過去一個月、昨天與近 6 週趨勢...' },
             { progress: 68, step: '輪詢報表', message: '正在檢查是否已有可下載報表，避免重複導出...' },
             { progress: 84, step: '等待下載', message: '若報表仍在處理中，系統會持續輪詢直到可下載...' },
             { progress: 95, step: '整理檔案', message: '正在保存檔案並整理批次結果...' }
@@ -88,12 +88,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function startAdsAnalysisProgressSimulation() {
         const steps = [
-            { progress: 12, step: '解析 CSV', message: '正在拆解 Shopee 報表 metadata 與正式表頭...' },
-            { progress: 28, step: '標準化資料', message: '正在整理商品 ID、花費、銷售與直接轉換指標...' },
-            { progress: 48, step: '映射商品圖', message: '正在將商品 ID 對應到 golden_table.json 的圖片與名稱...' },
-            { progress: 68, step: '規則診斷', message: '正在計算 ROAS、直接 ROAS、CTR、CVR 與候選建議...' },
-            { progress: 84, step: '生成報告', message: '正在整理帳戶摘要、排行與商品診斷卡片...' },
-            { progress: 95, step: 'AI 強化', message: '若已設定 ChatGPT API，正在補充專業文字建議...' }
+            { progress: 10, step: '載入來源', message: '正在讀取現有昨天、過去一個月與過去 6 週滾動周報...' },
+            { progress: 26, step: '解析 CSV', message: '正在拆解 Shopee 報表 metadata 與正式表頭...' },
+            { progress: 42, step: '標準化資料', message: '正在整理商品 ID、花費、銷售與直接轉換指標...' },
+            { progress: 58, step: '周趨勢建模', message: '正在計算近 6 週 ROAS、CTR、CVR、CPC、CPA 趨勢...' },
+            { progress: 76, step: '映射商品圖', message: '正在將商品 ID 對應到 golden_table.json 的圖片與名稱...' },
+            { progress: 90, step: '生成報告', message: '正在整理當前快照 + 6 週趨勢卡片與 AI 建議...' }
         ];
 
         let index = 0;
@@ -150,13 +150,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const excluded = Array.isArray(narrative.excluded_but_reviewed_products)
             ? narrative.excluded_but_reviewed_products
             : [];
+        const watchlistCount = (rankings.watchlist || []).length;
 
         return `
             <div class="ads-analysis-summary-grid">
                 <div class="ads-analysis-summary-card">
                     <span>主決策基準</span>
                     <strong>${current.window_label || '昨天'}</strong>
-                    <p>今天資料只作監控，不作主要調整依據</p>
+                    <p>已額外納入過去 6 週滾動趨勢</p>
                 </div>
                 <div class="ads-analysis-summary-card">
                     <span>昨日 ROAS</span>
@@ -166,12 +167,17 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="ads-analysis-summary-card">
                     <span>需處理商品數</span>
                     <strong>${actionableCount}</strong>
-                    <p>只輸出需要調整的商品到 HTML 報告</p>
+                    <p>包含加碼、降預算、間接轉換與先觀察</p>
                 </div>
                 <div class="ads-analysis-summary-card">
                     <span>分析來源</span>
                     <strong>${narrative.source === 'openai' ? 'ChatGPT API' : '規則層'}</strong>
                     <p>${data.has_ai_enhancement ? '已套用 AI 強化建議' : '未啟用或未設定 API'}</p>
+                </div>
+                <div class="ads-analysis-summary-card">
+                    <span>先觀察</span>
+                    <strong>${watchlistCount}</strong>
+                    <p>昨天異常但週趨勢未必持續轉弱</p>
                 </div>
             </div>
 

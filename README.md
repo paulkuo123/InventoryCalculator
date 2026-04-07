@@ -8,8 +8,8 @@
 - **銷售數據分析**：分析商品銷售趨勢和表現
 - **庫存計算**：根據銷售數據計算最佳庫存量
 - **Excel 數據解析**：解析蝦皮後台匯出的 Excel 檔案
-- **Shopee 廣告報表匯出**：自動依序下載過去一個月、過去一週、昨天與今天的廣告總體報表
-- **Shopee 廣告 AI 分析**：整合昨天 / 過去一週 / 過去一個月的表現，輸出 HTML 廣告調整報告
+- **Shopee 廣告報表匯出**：自動依序下載過去一個月、昨天，以及過去 6 週滾動周報
+- **Shopee 廣告 AI 分析**：使用現有的昨天 / 最近一週（week_01）/ 過去一個月與過去 6 週趨勢資料，輸出 HTML 廣告調整報告
 - **Telegram Bot**：支援庫存搜尋、廣告匯出與廣告分析報告回傳
 
 ## 環境搭建
@@ -104,9 +104,13 @@ python3 crawler.py --mode ads-export --output ads_export_result.json --headless 
 
 流程會固定依序處理：
 1. 過去一個月
-2. 過去一週
-3. 昨天
-4. 今天
+2. 昨天
+3. 近第 1 週
+4. 近第 2 週
+5. 近第 3 週
+6. 近第 4 週
+7. 近第 5 週
+8. 近第 6 週
 
 每個範圍都會先等待 Shopee 產出檔案，再下載 CSV 到 `ads_exports/`。
 
@@ -117,6 +121,12 @@ python3 crawler.py --mode ads-export --output ads_export_result.json --headless 
 python3 ads_analysis.py --include-ai true
 ```
 
+預設行為：
+1. 讀取 `ads_exports/` 中各視窗最新一份 CSV
+2. 使用昨天 / 最近一週（week_01）/ 過去一個月做即時判讀
+3. 使用過去 6 週滾動近 7 天窗口做趨勢分析
+4. 再統一產出 HTML / Markdown / JSON 報告
+
 主要輸出：
 - `ads_analysis_latest.json`
 - `ads_history.json`
@@ -125,9 +135,15 @@ python3 ads_analysis.py --include-ai true
 
 分析原則：
 - 以「昨天」作為主要決策基準
-- 「過去一週」與「過去一個月」作為穩定性驗證視窗
+- 「最近一週（week_01）」與「過去一個月」作為穩定性驗證視窗
+- 額外納入「過去 6 週滾動 7 天窗口」做趨勢判讀
 - 以 `ROAS >= 3` 作為店內基準
 - 除了 `ROAS`，也會一起考慮 `直接 ROAS / CTR / CVR / CPC / CPA / 直接成交占比`
+- 趨勢判斷會特別看：
+  - 連續幾週回收走弱
+  - CTR 連續下滑是否疑似素材疲勞
+  - CVR 長期偏低是否疑似商品頁問題
+  - 花費提升但回收未同步改善
 - HTML 報告會只列出需要調整的商品，並附上商品圖片與具體建議
 
 ### Telegram Bot
@@ -147,8 +163,8 @@ python3 telegram_bot.py
 - `/help`
 
 其中：
-- `/廣告匯出`：會回傳已下載的廣告 CSV
-- `/廣告分析`：會回傳 HTML 廣告分析報告
+- `/廣告匯出`：會回傳昨天、過去一個月與過去 6 週的廣告 CSV
+- `/廣告分析`：會使用現有 CSV 做 OpenAI 分析，並回傳 HTML 廣告分析報告
 - `/廣告分析 無AI`：只使用規則層，不呼叫 OpenAI
 
 ## 應用程式打包 (發布)
@@ -224,6 +240,11 @@ InventoryCalculater/
 1. 檢查 `cookies.json` 是否存在且格式正確
 2. 確認 Playwright 瀏覽器已安裝：`playwright install chromium`
 3. 查看 `debug.log` 了解詳細錯誤訊息
+
+### 廣告匯出 / 分析目前的 scenario 是什麼？
+- `/廣告匯出`：負責準備完整分析資料集，會依序匯出「過去一個月、昨天、近第 1 週到近第 6 週」
+- `/廣告分析`：不再重新抓 Shopee 後台，而是直接讀取 `ads_exports/` 內各視窗最新一份 CSV
+- 若同一視窗下載多次，分析器只會取該視窗最新一份，不會把舊檔全部混在一起算
 
 ### 廣告分析沒有使用 OpenAI？
 1. 先執行 `python3 setup_openai_key.py`

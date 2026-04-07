@@ -458,7 +458,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             mode_args,
             output_path,
             task_name="廣告匯出",
-            timeout=1200,
+            timeout=5400,
         )
 
     def run_ads_analysis(self, include_ai=True):
@@ -470,12 +470,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "--history-output", "ads_history.json",
             "--markdown-output", "ads_analysis_report.md",
             "--include-ai", str(include_ai).lower(),
+            "--refresh-source", "false",
+            "--trend-weeks", "6",
         ]
         return self.run_worker_process(
             mode_args,
             output_path,
             task_name="廣告分析",
-            timeout=600,
+            timeout=5400,
             script_name=script_name,
         )
 

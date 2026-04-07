@@ -4,6 +4,8 @@ import csv
 import json
 import os
 import re
+import subprocess
+import sys
 from io import BytesIO
 from dataclasses import dataclass
 from datetime import datetime
@@ -15,27 +17,38 @@ from config_loader import load_openai_api_key
 
 
 WINDOW_KEY_BY_PREFIX = {
-    "ads_overall_today_": "today",
     "ads_overall_yesterday_": "yesterday",
-    "ads_overall_past_week_": "past_week",
     "ads_overall_past_month_": "past_month",
 }
 
-WINDOW_LABELS = {
-    "today": "今天",
+CURRENT_WINDOW_LABELS = {
     "yesterday": "昨天",
-    "past_week": "過去一週",
     "past_month": "過去一個月",
 }
 
-WINDOW_ORDER = ["today", "yesterday", "past_week", "past_month"]
+CURRENT_WINDOW_ORDER = ["yesterday", "past_month"]
+DISPLAY_WINDOW_ORDER = ["yesterday", "recent_week", "past_month"]
 
 WINDOW_DAY_COUNT = {
-    "today": 1,
     "yesterday": 1,
-    "past_week": 7,
     "past_month": 30,
+    "recent_week": 7,
 }
+
+
+def build_trend_window_keys(week_count: int) -> List[str]:
+    return [f"week_{index:02d}" for index in range(1, week_count + 1)]
+
+
+def get_window_label(window_key: str) -> str:
+    if window_key in CURRENT_WINDOW_LABELS:
+        return CURRENT_WINDOW_LABELS[window_key]
+    if window_key == "recent_week":
+        return "最近一週"
+    match = re.match(r"week_(\d{2})", window_key)
+    if match:
+        return f"近第 {int(match.group(1))} 週"
+    return window_key
 
 METRIC_DICTIONARY = {
     "impressions": "廣告被看見的次數，用來判斷流量基礎是否足夠。",
@@ -98,6 +111,9 @@ def parse_period(value: str) -> Tuple[Optional[str], Optional[str]]:
 
 
 def detect_window_key(file_name: str) -> str:
+    week_match = re.match(r"ads_overall_week_(\d{2})_", file_name)
+    if week_match:
+        return f"week_{week_match.group(1)}"
     for prefix, window_key in WINDOW_KEY_BY_PREFIX.items():
         if file_name.startswith(prefix):
             return window_key
@@ -157,6 +173,8 @@ class AdsAnalyzer:
         markdown_output_path: str = "ads_analysis_report.md",
         html_output_path: str = "ads_analysis_report.html",
         include_ai: bool = True,
+        refresh_source: bool = True,
+        trend_weeks: int = 6,
     ):
         self.ads_export_dir = ads_export_dir
         self.golden_table_path = golden_table_path
@@ -165,6 +183,10 @@ class AdsAnalyzer:
         self.markdown_output_path = markdown_output_path
         self.html_output_path = html_output_path
         self.include_ai = include_ai
+        self.refresh_source = refresh_source
+        self.trend_weeks = max(1, trend_weeks)
+        self.trend_window_order = build_trend_window_keys(self.trend_weeks)
+        self.window_order = CURRENT_WINDOW_ORDER + self.trend_window_order
         self.golden_table = self._load_golden_table()
 
     def _log(self, stage: str, message: str) -> None:
@@ -181,6 +203,61 @@ class AdsAnalyzer:
         except Exception as e:
             self._log("WARN", f"讀取 golden_table.json 失敗: {e}")
             return {}
+
+    def _run_crawler_export_mode(self, mode: str, output_name: str, extra_args: Optional[List[str]] = None) -> Dict[str, Any]:
+        crawler_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crawler.py")
+        cmd = [
+            sys.executable,
+            crawler_script,
+            "--mode", mode,
+            "--output", output_name,
+            "--headless", "true",
+        ]
+        if extra_args:
+            cmd.extend(extra_args)
+
+        result = subprocess.run(
+            cmd,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=3600,
+        )
+        if result.returncode != 0:
+            stderr = (result.stderr or "").strip()[-800:]
+            stdout = (result.stdout or "").strip()[-400:]
+            raise RuntimeError(
+                f"{mode} 失敗，返回碼 {result.returncode}。"
+                f"{' STDERR: ' + stderr if stderr else ''}"
+                f"{' STDOUT: ' + stdout if stdout else ''}"
+            )
+
+        if not os.path.exists(output_name):
+            raise RuntimeError(f"{mode} 執行完成，但找不到輸出結果檔：{output_name}")
+
+        with open(output_name, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _refresh_source_reports(self) -> None:
+        if not self.refresh_source:
+            self._log("EXPORT", "略過來源刷新，直接使用現有 ads_exports")
+            return
+
+        self._log("EXPORT", "開始刷新分析來源：先匯出摘要報表，再匯出 6 週滾動趨勢")
+        current_result = self._run_crawler_export_mode(
+            "ads-export",
+            "ads_analysis_current_export.json",
+        )
+        self._log("EXPORT", f"摘要報表刷新完成：{current_result.get('message', '')}")
+
+        trend_result = self._run_crawler_export_mode(
+            "ads-trend-export",
+            "ads_analysis_trend_export.json",
+            extra_args=["--trend-weeks", str(self.trend_weeks)],
+        )
+        self._log("EXPORT", f"趨勢報表刷新完成：{trend_result.get('message', '')}")
 
     def _parse_csv_file(self, path: str) -> ParsedAdsReport:
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
@@ -208,7 +285,7 @@ class AdsAnalyzer:
             "file_name": file_name,
             "file_path": os.path.abspath(path),
             "window_key": window_key,
-            "window_label": WINDOW_LABELS.get(window_key, file_name),
+            "window_label": get_window_label(window_key),
             "store_name": metadata.get("賣場名稱", ""),
             "store_id": metadata.get("賣場ID", ""),
             "username": metadata.get("使用者名稱", ""),
@@ -234,7 +311,7 @@ class AdsAnalyzer:
             metrics.append({
                 "report_file_name": file_name,
                 "window_key": window_key,
-                "window_label": WINDOW_LABELS.get(window_key, file_name),
+                "window_label": get_window_label(window_key),
                 "report_start_date": start_date or "",
                 "report_end_date": end_date or "",
                 "report_date": end_date or start_date or "",
@@ -287,11 +364,13 @@ class AdsAnalyzer:
 
         latest_by_window: Dict[str, str] = {}
         for path in csv_files:
-            latest_by_window[detect_window_key(os.path.basename(path))] = path
+            window_key = detect_window_key(os.path.basename(path))
+            if window_key in self.window_order:
+                latest_by_window[window_key] = path
 
         report_runs: List[Dict[str, Any]] = []
         metrics: List[Dict[str, Any]] = []
-        for window_key in WINDOW_ORDER:
+        for window_key in self.window_order:
             selected = latest_by_window.get(window_key)
             if not selected:
                 continue
@@ -310,7 +389,7 @@ class AdsAnalyzer:
     def _build_account_summary(self, metrics: List[Dict[str, Any]]) -> Dict[str, Any]:
         window_summaries = []
         window_map = {}
-        for window_key in WINDOW_ORDER:
+        for window_key in CURRENT_WINDOW_ORDER:
             window_records = [row for row in metrics if row["window_key"] == window_key]
             if not window_records:
                 continue
@@ -327,7 +406,7 @@ class AdsAnalyzer:
             direct_cvr = (direct_conversions / clicks * 100) if clicks else 0.0
             summary = {
                 "window_key": window_key,
-                "window_label": WINDOW_LABELS[window_key],
+                "window_label": get_window_label(window_key),
                 "days": days,
                 "spend": round2(spend),
                 "sales_amount": round2(sales_amount),
@@ -352,25 +431,69 @@ class AdsAnalyzer:
             window_map[window_key] = summary
             window_summaries.append(summary)
 
+        recent_week_records = [row for row in metrics if row["window_key"] == "week_01"]
+        if recent_week_records:
+            days = max(recent_week_records[0]["days"], 1)
+            spend = sum(row["spend"] for row in recent_week_records)
+            sales_amount = sum(row["sales_amount"] for row in recent_week_records)
+            direct_sales_amount = sum(row["direct_sales_amount"] for row in recent_week_records)
+            clicks = sum(row["clicks"] for row in recent_week_records)
+            impressions = sum(row["impressions"] for row in recent_week_records)
+            conversions = sum(row["conversions"] for row in recent_week_records)
+            direct_conversions = sum(row["direct_conversions"] for row in recent_week_records)
+            ctr = (clicks / impressions * 100) if impressions else 0.0
+            cvr = (conversions / clicks * 100) if clicks else 0.0
+            direct_cvr = (direct_conversions / clicks * 100) if clicks else 0.0
+            recent_week_summary = {
+                "window_key": "recent_week",
+                "window_label": get_window_label("recent_week"),
+                "days": days,
+                "spend": round2(spend),
+                "sales_amount": round2(sales_amount),
+                "direct_sales_amount": round2(direct_sales_amount),
+                "clicks": clicks,
+                "impressions": impressions,
+                "conversions": conversions,
+                "direct_conversions": direct_conversions,
+                "roas": round2(sales_amount / spend) if spend else 0.0,
+                "direct_roas": round2(direct_sales_amount / spend) if spend else 0.0,
+                "ctr": round2(ctr),
+                "cvr": round2(cvr),
+                "direct_cvr": round2(direct_cvr),
+                "cpc": round2(self._safe_div(spend, clicks)),
+                "cpa": round2(self._safe_div(spend, conversions)),
+                "direct_cpa": round2(self._safe_div(spend, direct_conversions)),
+                "direct_sales_share": round2(self._safe_div(direct_sales_amount, sales_amount) * 100),
+                "daily_spend": round2(spend / days),
+                "daily_sales_amount": round2(sales_amount / days),
+                "daily_direct_sales_amount": round2(direct_sales_amount / days),
+            }
+            window_map["recent_week"] = recent_week_summary
+            window_summaries.append(recent_week_summary)
+
+        window_summaries.sort(
+            key=lambda item: DISPLAY_WINDOW_ORDER.index(item["window_key"])
+            if item["window_key"] in DISPLAY_WINDOW_ORDER
+            else 99
+        )
+
         yesterday = window_map.get("yesterday", {})
-        past_week = window_map.get("past_week", {})
+        recent_week = window_map.get("recent_week", {})
         past_month = window_map.get("past_month", {})
-        today = window_map.get("today", {})
         comparison = {
-            "yesterday_vs_week_daily_sales_pct": round2(self._pct_change(yesterday.get("sales_amount", 0), past_week.get("daily_sales_amount", 0))),
+            "yesterday_vs_recent_week_daily_sales_pct": round2(self._pct_change(yesterday.get("sales_amount", 0), recent_week.get("daily_sales_amount", 0))),
             "yesterday_vs_month_daily_sales_pct": round2(self._pct_change(yesterday.get("sales_amount", 0), past_month.get("daily_sales_amount", 0))),
-            "today_progress_note": "今天數據屬於未完結日資料，只作監控，不作主要調整依據。" if today else "",
         }
 
         health = "穩健"
         if yesterday.get("roas", 0) < 3 or yesterday.get("direct_roas", 0) < 3:
             health = "偏弱"
-        elif yesterday.get("roas", 0) >= 3 and past_week.get("roas", 0) >= 3:
+        elif yesterday.get("roas", 0) >= 3 and recent_week.get("roas", 0) >= 3:
             health = "強勢"
 
         return {
             "health": health,
-            "current_window": yesterday or past_week or past_month or today or {},
+            "current_window": yesterday or recent_week or past_month or {},
             "windows": window_summaries,
             "comparison": comparison,
         }
@@ -429,6 +552,7 @@ class AdsAnalyzer:
         yesterday_diag: Dict[str, Any],
         week_diag: Dict[str, Any],
         month_diag: Dict[str, Any],
+        trend_analysis: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         signals: List[str] = []
         if yesterday_diag.get("impressions", 0) >= 1000 and yesterday_diag.get("ctr", 0) < 1.2:
@@ -445,7 +569,103 @@ class AdsAnalyzer:
             signals.append("短中期回收持續不達標")
         if yesterday_diag.get("direct_sales_share", 0) < 45 and yesterday_diag.get("sales_amount", 0) > 0:
             signals.append("直接成交占比偏低")
+        trend_flags = (trend_analysis or {}).get("trend_flags", [])
+        signals.extend(flag for flag in trend_flags if flag not in signals)
         return signals
+
+    def _build_weekly_trend_series(self, window_map: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+        series = []
+        for key in self.trend_window_order:
+            item = window_map.get(key)
+            if not item:
+                continue
+            diag = self._build_window_diagnostics(item)
+            diag["window_key"] = key
+            series.append(diag)
+        return series
+
+    def _analyze_weekly_trends(self, weekly_series: List[Dict[str, Any]]) -> Dict[str, Any]:
+        recent = [item for item in weekly_series if item.get("spend", 0) > 0]
+        trend_flags: List[str] = []
+        if not recent:
+            return {
+                "trend_flags": [],
+                "trend_summary": "歷史趨勢資料不足",
+                "trend_confidence": "low",
+                "stable_strong_weeks": 0,
+                "weak_weeks": 0,
+                "indirect_dependency_weeks": 0,
+                "high_volatility": False,
+            }
+
+        roas_values = [item.get("roas", 0) for item in recent[:3]]
+        direct_roas_values = [item.get("direct_roas", 0) for item in recent[:3]]
+        ctr_values = [item.get("ctr", 0) for item in recent[:3]]
+        cvr_values = [item.get("cvr", 0) for item in recent[:3]]
+        spend_values = [item.get("spend", 0) for item in recent[:3]]
+
+        stable_strong_weeks = sum(
+            1 for item in recent[:4]
+            if item.get("roas", 0) >= 3 and item.get("direct_roas", 0) >= 3
+        )
+        weak_weeks = sum(
+            1 for item in recent[:4]
+            if item.get("roas", 0) < 3 or item.get("direct_roas", 0) < 3
+        )
+        indirect_dependency_weeks = sum(
+            1 for item in recent[:4]
+            if item.get("roas", 0) >= 3 and item.get("direct_roas", 0) < 3
+        )
+
+        roas_decline = len(roas_values) >= 3 and roas_values[0] < roas_values[1] < roas_values[2]
+        direct_roas_decline = len(direct_roas_values) >= 3 and direct_roas_values[0] < direct_roas_values[1] < direct_roas_values[2]
+        ctr_decline = len(ctr_values) >= 3 and ctr_values[0] < ctr_values[1] < ctr_values[2]
+        cvr_long_term_weak = len(cvr_values) >= 3 and sum(cvr_values) / len(cvr_values) < 2.5
+
+        spend_up_no_return = False
+        if len(spend_values) >= 3 and len(roas_values) >= 3:
+            older_spend_avg = sum(spend_values[1:]) / 2
+            older_roas_avg = sum(roas_values[1:]) / 2
+            spend_up_no_return = spend_values[0] > older_spend_avg * 1.15 and roas_values[0] < older_roas_avg
+
+        all_roas = [item.get("roas", 0) for item in recent]
+        high_volatility = len(all_roas) >= 4 and (max(all_roas) - min(all_roas)) >= 1.5
+
+        if stable_strong_weeks >= 3:
+            trend_flags.append("近幾週持續達標")
+        if weak_weeks >= 3:
+            trend_flags.append("近幾週持續不達標")
+        if roas_decline or direct_roas_decline:
+            trend_flags.append("回收連續走弱")
+        if ctr_decline:
+            trend_flags.append("CTR 連續下滑，疑似素材疲勞")
+        if cvr_long_term_weak:
+            trend_flags.append("CVR 長期偏弱")
+        if spend_up_no_return:
+            trend_flags.append("花費提升但回收未同步改善")
+        if indirect_dependency_weeks >= 2:
+            trend_flags.append("間接轉換依賴持續出現")
+        if high_volatility:
+            trend_flags.append("週趨勢波動偏大")
+
+        if not trend_flags:
+            trend_flags.append("近幾週趨勢相對平穩")
+
+        confidence = "high" if len(recent) >= 5 else ("medium" if len(recent) >= 3 else "low")
+        return {
+            "trend_flags": trend_flags,
+            "trend_summary": "；".join(trend_flags),
+            "trend_confidence": confidence,
+            "stable_strong_weeks": stable_strong_weeks,
+            "weak_weeks": weak_weeks,
+            "indirect_dependency_weeks": indirect_dependency_weeks,
+            "roas_decline": roas_decline,
+            "direct_roas_decline": direct_roas_decline,
+            "ctr_decline": ctr_decline,
+            "cvr_long_term_weak": cvr_long_term_weak,
+            "spend_up_no_return": spend_up_no_return,
+            "high_volatility": high_volatility,
+        }
 
     def _build_product_analysis(self, metrics: List[Dict[str, Any]]) -> Dict[str, Any]:
         products: Dict[str, List[Dict[str, Any]]] = {}
@@ -454,12 +674,15 @@ class AdsAnalyzer:
 
         diagnostics = []
         for product_id, rows in products.items():
-            rows.sort(key=lambda item: WINDOW_ORDER.index(item["window_key"]) if item["window_key"] in WINDOW_ORDER else 99)
+            rows.sort(
+                key=lambda item: self.window_order.index(item["window_key"])
+                if item["window_key"] in self.window_order
+                else 99
+            )
             window_map = self._window_map_for_product(rows)
-            stable = window_map.get("past_week") or window_map.get("past_month") or window_map.get("yesterday") or rows[0]
-            today = window_map.get("today", {})
+            stable = window_map.get("week_01") or window_map.get("past_month") or window_map.get("yesterday") or rows[0]
             yesterday = window_map.get("yesterday", {})
-            past_week = window_map.get("past_week", {})
+            recent_week = window_map.get("week_01", {})
             past_month = window_map.get("past_month", {})
 
             direct_share = (
@@ -474,18 +697,20 @@ class AdsAnalyzer:
             yesterday_vs_month_sales_pct = self._pct_change(yesterday.get("sales_amount", 0.0), daily_month_sales) if yesterday and past_month else 0.0
 
             yesterday_diag = self._build_window_diagnostics(yesterday) if yesterday else {}
-            week_diag = self._build_window_diagnostics(past_week) if past_week else {}
+            week_diag = self._build_window_diagnostics(recent_week) if recent_week else {}
             month_diag = self._build_window_diagnostics(past_month) if past_month else {}
-            signals = self._derive_signals(yesterday_diag, week_diag, month_diag)
+            weekly_trend_series = self._build_weekly_trend_series(window_map)
+            trend_analysis = self._analyze_weekly_trends(weekly_trend_series)
+            signals = self._derive_signals(yesterday_diag, week_diag, month_diag, trend_analysis)
 
             category, priority, action_title, action_detail, action_steps, primary_issue = self._classify_product(
-                today=today,
                 yesterday=yesterday,
-                past_week=past_week,
+                recent_week=recent_week,
                 past_month=past_month,
                 yesterday_diag=yesterday_diag,
-                week_diag=week_diag,
+                recent_week_diag=week_diag,
                 month_diag=month_diag,
+                trend_analysis=trend_analysis,
                 direct_share=direct_share,
                 spend_growth_pct=spend_growth_pct,
                 yesterday_vs_month_sales_pct=yesterday_vs_month_sales_pct,
@@ -503,16 +728,20 @@ class AdsAnalyzer:
                 "action_steps": action_steps,
                 "primary_issue": primary_issue,
                 "signals": signals,
+                "trend_flags": trend_analysis.get("trend_flags", []),
+                "trend_summary": trend_analysis.get("trend_summary", ""),
+                "trend_confidence": trend_analysis.get("trend_confidence", "low"),
                 "stable_window": stable.get("window_label", ""),
                 "direct_sales_share": round2(direct_share * 100),
                 "yesterday_vs_month_daily_spend_pct": round2(spend_growth_pct),
                 "yesterday_vs_month_daily_sales_pct": round2(yesterday_vs_month_sales_pct),
+                "weekly_trend_series": weekly_trend_series,
                 "decision_snapshot": {
                     "yesterday": {
                         **yesterday_diag,
                         "status": "達標" if yesterday_diag.get("roas", 0) >= 3 and yesterday_diag.get("direct_roas", 0) >= 3 else ("偏間接" if yesterday_diag.get("roas", 0) >= 3 else "未達標"),
                     } if yesterday_diag else {},
-                    "past_week": {
+                    "recent_week": {
                         **week_diag,
                         "status": "達標" if week_diag.get("roas", 0) >= 3 and week_diag.get("direct_roas", 0) >= 3 else ("偏間接" if week_diag.get("roas", 0) >= 3 else "未達標"),
                     } if week_diag else {},
@@ -525,6 +754,8 @@ class AdsAnalyzer:
                     "category": category,
                     "primary_issue": primary_issue,
                     "signals": signals[:4],
+                    "trend_flags": trend_analysis.get("trend_flags", []),
+                    "trend_summary": trend_analysis.get("trend_summary", ""),
                     "yesterday": {
                         "spend": yesterday_diag.get("spend", 0),
                         "impressions": yesterday_diag.get("impressions", 0),
@@ -537,7 +768,7 @@ class AdsAnalyzer:
                         "cpa": yesterday_diag.get("cpa", 0),
                         "direct_sales_share": yesterday_diag.get("direct_sales_share", 0),
                     },
-                    "past_week": {
+                    "recent_week": {
                         "ctr": week_diag.get("ctr", 0),
                         "cvr": week_diag.get("cvr", 0),
                         "roas": week_diag.get("roas", 0),
@@ -553,10 +784,23 @@ class AdsAnalyzer:
                         "cpc": month_diag.get("cpc", 0),
                         "cpa": month_diag.get("cpa", 0),
                     },
+                    "weekly_trend_series": [
+                        {
+                            "window_label": item.get("window_label", ""),
+                            "roas": item.get("roas", 0),
+                            "direct_roas": item.get("direct_roas", 0),
+                            "ctr": item.get("ctr", 0),
+                            "cvr": item.get("cvr", 0),
+                            "cpc": item.get("cpc", 0),
+                            "cpa": item.get("cpa", 0),
+                            "spend": item.get("spend", 0),
+                        }
+                        for item in weekly_trend_series
+                    ],
                 },
                 "windows": {
                     key: {
-                        "window_label": WINDOW_LABELS.get(key, key),
+                        "window_label": get_window_label(key),
                         "spend": round2(item.get("spend", 0)),
                         "sales_amount": round2(item.get("sales_amount", 0)),
                         "direct_sales_amount": round2(item.get("direct_sales_amount", 0)),
@@ -577,30 +821,39 @@ class AdsAnalyzer:
             "scale_up": diagnostics_by_category(diagnostics, "立即加碼", limit=8),
             "reduce_budget": diagnostics_by_category(diagnostics, "優先降預算", limit=8),
             "indirect_dependency": diagnostics_by_category(diagnostics, "依賴間接轉換", limit=8),
+            "watchlist": diagnostics_by_category(diagnostics, "先觀察", limit=8),
         }
         return {"products": diagnostics, "rankings": rankings}
 
     def _classify_product(
         self,
-        today: Dict[str, Any],
         yesterday: Dict[str, Any],
-        past_week: Dict[str, Any],
+        recent_week: Dict[str, Any],
         past_month: Dict[str, Any],
         yesterday_diag: Dict[str, Any],
-        week_diag: Dict[str, Any],
+        recent_week_diag: Dict[str, Any],
         month_diag: Dict[str, Any],
+        trend_analysis: Dict[str, Any],
         direct_share: float,
         spend_growth_pct: float,
         yesterday_vs_month_sales_pct: float,
     ) -> Tuple[str, int, str, str, List[str], str]:
-        week_roas = past_week.get("roas", 0.0)
-        week_direct_roas = past_week.get("direct_roas", 0.0)
+        week_roas = recent_week.get("roas", 0.0)
+        week_direct_roas = recent_week.get("direct_roas", 0.0)
         month_roas = past_month.get("roas", 0.0)
         month_direct_roas = past_month.get("direct_roas", 0.0)
         yesterday_spend = yesterday.get("spend", 0.0)
         yesterday_roas = yesterday.get("roas", 0.0)
         yesterday_direct_roas = yesterday.get("direct_roas", 0.0)
         yesterday_clicks = yesterday.get("clicks", 0)
+        stable_strong_weeks = trend_analysis.get("stable_strong_weeks", 0)
+        weak_weeks = trend_analysis.get("weak_weeks", 0)
+        indirect_dependency_weeks = trend_analysis.get("indirect_dependency_weeks", 0)
+        roas_decline = trend_analysis.get("roas_decline", False) or trend_analysis.get("direct_roas_decline", False)
+        ctr_decline = trend_analysis.get("ctr_decline", False)
+        cvr_long_term_weak = trend_analysis.get("cvr_long_term_weak", False)
+        spend_up_no_return = trend_analysis.get("spend_up_no_return", False)
+        high_volatility = trend_analysis.get("high_volatility", False)
 
         if (
             yesterday_spend >= 500
@@ -609,12 +862,14 @@ class AdsAnalyzer:
             and week_roas >= 3
             and week_direct_roas >= 2.8
             and month_roas >= 3
+            and stable_strong_weeks >= 3
+            and not roas_decline
         ):
             detail = (
                 f"驗算：昨天 ROAS={yesterday_roas:.2f}、直接 ROAS={yesterday_direct_roas:.2f}，"
-                f"過去一週 ROAS={week_roas:.2f}、直接 ROAS={week_direct_roas:.2f}，"
+                f"最近一週 ROAS={week_roas:.2f}、直接 ROAS={week_direct_roas:.2f}，"
                 f"過去一個月 ROAS={month_roas:.2f}、直接 ROAS={month_direct_roas:.2f}。"
-                " 三個視窗都站穩在店內基準 3 附近或以上，可以擴量。"
+                f" 近 6 週有 {stable_strong_weeks} 週穩定達標，且未出現連續走弱，可擴量。"
             )
             if spend_growth_pct <= 10:
                 detail += f" 昨天相對近月日均花費只變動 {spend_growth_pct:.1f}%，表示回收不是靠短期暴衝撐出來的。"
@@ -627,17 +882,25 @@ class AdsAnalyzer:
         if (
             yesterday_spend >= 200
             and (yesterday_roas < 3 or yesterday_direct_roas < 3)
-            and (week_roas < 3 or month_roas < 3 or week_direct_roas < 3 or month_direct_roas < 3)
+            and (
+                weak_weeks >= 3
+                or roas_decline
+                or spend_up_no_return
+                or week_roas < 3
+                or month_roas < 3
+                or week_direct_roas < 3
+                or month_direct_roas < 3
+            )
         ):
             issue = "成本過高"
-            if yesterday_diag.get("ctr", 0) < 1.2:
+            if ctr_decline or yesterday_diag.get("ctr", 0) < 1.2:
                 issue = "素材吸引力不足"
-            elif yesterday_diag.get("cvr", 0) < 2.0:
+            elif cvr_long_term_weak or yesterday_diag.get("cvr", 0) < 2.0:
                 issue = "商品頁或價格轉換偏弱"
             detail = (
                 f"驗算：昨天花費={yesterday_spend:.2f}，昨天 ROAS={yesterday_roas:.2f}，直接 ROAS={yesterday_direct_roas:.2f}。"
-                f" 過去一週 ROAS={week_roas:.2f}，過去一個月 ROAS={month_roas:.2f}。"
-                " 昨天、週期或月期至少兩層未達店內基準 3，不能當成單日雜訊。"
+                f" 最近一週 ROAS={week_roas:.2f}，過去一個月 ROAS={month_roas:.2f}。"
+                f" 近 6 週有 {weak_weeks} 週未達標，趨勢判定不是單日雜訊。"
             )
             return "優先降預算", 95, "控制花費", detail, [
                 "先降預算 10% 到 30%，不要再用原金額硬跑。",
@@ -649,12 +912,12 @@ class AdsAnalyzer:
             yesterday_spend >= 200
             and yesterday_roas >= 3
             and yesterday_direct_roas < 3
-            and (week_direct_roas < 3 or month_direct_roas < 3)
+            and (week_direct_roas < 3 or month_direct_roas < 3 or indirect_dependency_weeks >= 2)
         ):
             detail = (
                 f"驗算：昨天總 ROAS={yesterday_roas:.2f} 達標，但直接 ROAS={yesterday_direct_roas:.2f} 未達 3，"
-                f"過去一週直接 ROAS={week_direct_roas:.2f}，過去一個月直接 ROAS={month_direct_roas:.2f}，"
-                f"直接銷售占比={direct_share * 100:.1f}%。"
+                f"最近一週直接 ROAS={week_direct_roas:.2f}，過去一個月直接 ROAS={month_direct_roas:.2f}，"
+                f"直接銷售占比={direct_share * 100:.1f}%。近 6 週有 {indirect_dependency_weeks} 週出現類似結構。"
                 " 這支商品主要吃間接轉換，總 ROAS 好看不代表可以擴量。"
             )
             return "依賴間接轉換", 88, "檢查真實回收", detail, [
@@ -669,16 +932,33 @@ class AdsAnalyzer:
             and week_roas >= 3
             and month_roas >= 3
             and yesterday_vs_month_sales_pct >= 20
+            and stable_strong_weeks >= 2
+            and not high_volatility
         ):
             detail = (
-                f"驗算：昨天 ROAS={yesterday_roas:.2f}，過去一週 ROAS={week_roas:.2f}，過去一個月 ROAS={month_roas:.2f}，"
-                f"昨天相對近月日均銷售變動 {yesterday_vs_month_sales_pct:.1f}%。"
-                " 短中期表現都不差，但昨天增幅還需要再確認一次。"
+                f"驗算：昨天 ROAS={yesterday_roas:.2f}，最近一週 ROAS={week_roas:.2f}，過去一個月 ROAS={month_roas:.2f}，"
+                f"昨天相對近月日均銷售變動 {yesterday_vs_month_sales_pct:.1f}%。近 6 週有 {stable_strong_weeks} 週維持達標。"
+                " 短中期表現都不差，可列入候選擴量。"
             )
             return "立即加碼", 72, "候選擴量", detail, [
                 "先不要一次大加，先小幅加預算 5% 到 10%。",
                 "再看 2 天，若昨天與本週直接 ROAS 都守住 3，再升級成主力擴量。",
             ], "短中期回收穩定但仍需驗證"
+
+        if (
+            (yesterday_roas < 3 or yesterday_direct_roas < 3)
+            and weak_weeks < 3
+            and not roas_decline
+        ):
+            detail = (
+                f"驗算：昨天 ROAS={yesterday_roas:.2f}、直接 ROAS={yesterday_direct_roas:.2f}。"
+                f" 但近 6 週只有 {weak_weeks} 週未達標，近期趨勢沒有明顯連續走弱，較像短期波動。"
+            )
+            return "先觀察", 60, "短期觀察", detail, [
+                "先不要大幅調整預算，連續觀察 2 到 3 天。",
+                "同步檢查是否有短期活動、價格變動或評價因素干擾。",
+                "若接下來一週 ROAS 持續偏弱，再轉入降預算處理。",
+            ], "需繼續觀察"
 
         return "忽略", 0, "不輸出", "", [], "暫無明顯調整需求"
 
@@ -702,6 +982,9 @@ class AdsAnalyzer:
             action_points.append(f"有 {reduce_count} 個商品昨天 ROAS 或直接 ROAS 低於 3，應先控預算。")
         if indirect_count:
             action_points.append(f"有 {indirect_count} 個商品總 ROAS 達標但直接 ROAS 未達 3，不能直接加碼。")
+        watch_count = len(product_analysis["rankings"]["watchlist"])
+        if watch_count:
+            action_points.append(f"有 {watch_count} 個商品屬於短期波動，建議先觀察 2 到 3 天再決定是否大調。")
         if not action_points:
             action_points.append("目前帳戶沒有明顯異常，可先維持投放並持續累積歷史資料。")
 
@@ -798,6 +1081,7 @@ class AdsAnalyzer:
             "scale_up": ("立即加碼", "擴量優先"),
             "reduce_or_fix": ("優先降預算", "控制花費"),
             "indirect_dependency": ("依賴間接轉換", "檢查真實回收"),
+            "watchlist": ("先觀察", "短期觀察"),
         }
         existing_by_id = {
             str(item["product_id"]): dict(item)
@@ -807,6 +1091,7 @@ class AdsAnalyzer:
             "scale_up": [],
             "reduce_budget": [],
             "indirect_dependency": [],
+            "watchlist": [],
         }
         merged_products: List[Dict[str, Any]] = []
         seen_ids = set()
@@ -817,6 +1102,7 @@ class AdsAnalyzer:
                 "scale_up": "scale_up",
                 "reduce_or_fix": "reduce_budget",
                 "indirect_dependency": "indirect_dependency",
+                "watchlist": "watchlist",
             }[narrative_key]
             for entry in entries:
                 base = existing_by_id.get(entry["product_id"])
@@ -883,8 +1169,10 @@ class AdsAnalyzer:
                 "store_id": report_runs[0].get("store_id", ""),
             },
             "analysis_scope": {
-                "decision_baseline": "昨天為主，過去一週與過去一個月用來驗證穩定性",
+                "decision_baseline": "昨天為主，最近一週（week_01）與過去一個月用來驗證穩定性，並額外納入近 6 週滾動 7 天趨勢",
                 "roas_threshold": 3,
+                "trend_window_count": self.trend_weeks,
+                "trend_window_mode": "rolling_7_day_weeks",
                 "selected_metrics": [
                     "roas",
                     "direct_roas",
@@ -925,6 +1213,7 @@ class AdsAnalyzer:
                 "scale_up_count": len(top_scale),
                 "reduce_budget_count": len(top_reduce),
                 "indirect_dependency_count": len(top_indirect),
+                "watchlist_count": len(product_analysis["rankings"]["watchlist"][:6]),
             },
             "candidate_pool_size": len(compact_products),
             "must_review_count": len(must_review_products),
@@ -950,14 +1239,17 @@ class AdsAnalyzer:
             "你是資深電商廣告顧問，專長 Shopee 平價零售。"
             "請只根據提供的結構化數據給出保守、可執行的建議。"
             "你必須同時考慮 ROAS、直接 ROAS、CTR、CVR、CPC、CPA、點擊量、曝光量與直接銷售占比，不要只看單一指標。"
-            "昨天是主要決策基準，過去一週與過去一個月只用來驗證穩定性。"
+            "昨天是主要決策基準，最近一週（week_01）與過去一個月只用來驗證穩定性，並額外納入近 6 週滾動近 7 天窗口做趨勢判讀。"
             "不可虛構預算欄位，不可斷言一定撞到預算上限；只能用『可能』『建議檢查』。"
-            "請輸出 JSON，欄位固定為 overall_health, executive_summary, scale_up, reduce_or_fix, indirect_dependency, next_actions, excluded_but_reviewed_products。"
+            "請輸出 JSON，欄位固定為 overall_health, executive_summary, scale_up, reduce_or_fix, indirect_dependency, watchlist, next_actions, excluded_but_reviewed_products。"
             "每個區塊都要明確指出主要問題是流量、素材、商品頁、成本或間接轉換，不要空話。"
             "如果結論主要只依賴 ROAS、沒有提到其他指標的作用，視為分析不完整。"
             "判讀順序固定為：1. 流量基礎（曝光、點擊）2. 素材吸引力（CTR）3. 轉換效率（CVR、直接CVR）4. 成本效率（CPC、CPA）5. 回收效率（ROAS、直接ROAS）6. 直接與間接成交結構。"
             "對每個商品的建議，至少要引用兩個非 ROAS 指標，並說明它們如何影響決策。"
-            "scale_up / reduce_or_fix / indirect_dependency 這三個欄位都必須是陣列，陣列元素格式固定為 {product_id, primary_issue, reason, why_not_other_issue, direct_actions}。"
+            "你必須結合 weekly_trend_series、trend_flags、trend_summary 判斷這是單週異常還是連續趨勢。"
+            "如果昨天失準，但過去幾週穩定，應優先考慮 watchlist，而不是直接 reduce_or_fix。"
+            "若連續數週 CTR 下滑，優先懷疑素材疲勞；若 CTR 尚可但 CVR 長期偏弱，優先懷疑商品頁或價格問題。"
+            "scale_up / reduce_or_fix / indirect_dependency / watchlist 這四個欄位都必須是陣列，陣列元素格式固定為 {product_id, primary_issue, reason, why_not_other_issue, direct_actions}。"
             "direct_actions 必須是 2 到 4 條可執行短句。"
             "你可以從 candidate_products 裡挑出比 rule_category 更多的商品，只要你認為它應該出現在報告中。"
             "不要被 rule_category 綁死；它只是初判，不是最終答案。"
@@ -1009,6 +1301,7 @@ class AdsAnalyzer:
     def _build_narrative(self, rule_summary: Dict[str, Any], ai_sections: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if ai_sections:
             ai_sections["source"] = "openai"
+            ai_sections.setdefault("watchlist", [])
             return ai_sections
 
         return {
@@ -1018,6 +1311,7 @@ class AdsAnalyzer:
             "scale_up": "優先檢查高直接 ROAS 且花費穩定的商品，若常態表現強但流量沒有同步放大，可檢查是否達日預算上限。",
             "reduce_or_fix": "對昨天 ROAS 或直接 ROAS 低於 3 的商品，先降預算或收緊投放，並檢查素材與商品頁。",
             "indirect_dependency": "若總 ROAS 明顯高於直接 ROAS，代表廣告可能更偏向輔助成交，評估時要避免只看總體回收。",
+            "watchlist": [],
             "next_actions": rule_summary["action_points"],
             "excluded_but_reviewed_products": [],
         }
@@ -1032,7 +1326,7 @@ class AdsAnalyzer:
         narrative = report["report"]["narrative"]
         narrative_reason_map: Dict[str, str] = {}
         narrative_issue_map: Dict[str, str] = {}
-        for key in ("scale_up", "reduce_or_fix", "indirect_dependency"):
+        for key in ("scale_up", "reduce_or_fix", "indirect_dependency", "watchlist"):
             items = narrative.get(key, [])
             if not isinstance(items, list):
                 continue
@@ -1064,6 +1358,13 @@ class AdsAnalyzer:
             detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
             issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
             lines.append(f"- {item['product_name']} ({item['product_id']}) [{issue}]: {detail}")
+        if rankings.get("watchlist"):
+            lines.extend(["", "## 建議先觀察", ""])
+            for item in rankings["watchlist"][:5]:
+                detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
+                issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
+                trend = item.get("trend_summary", "")
+                lines.append(f"- {item['product_name']} ({item['product_id']}) [{issue}]: {detail} | 趨勢：{trend}")
         lines.extend(["", "## 建議觀察", ""])
         for action in narrative.get("next_actions", []):
             lines.append(f"- {action}")
@@ -1094,12 +1395,12 @@ class AdsAnalyzer:
         image_cache: Dict[str, str] = {}
         actionable_total = sum(
             len(rankings.get(key, []))
-            for key in ("scale_up", "reduce_budget", "indirect_dependency")
+            for key in ("scale_up", "reduce_budget", "indirect_dependency", "watchlist")
         )
         narrative_reason_map: Dict[str, str] = {}
         narrative_issue_map: Dict[str, str] = {}
         narrative_why_not_map: Dict[str, str] = {}
-        for key in ("scale_up", "reduce_or_fix", "indirect_dependency"):
+        for key in ("scale_up", "reduce_or_fix", "indirect_dependency", "watchlist"):
             items = narrative.get(key, [])
             if not isinstance(items, list):
                 continue
@@ -1133,6 +1434,23 @@ class AdsAnalyzer:
             </div>
             """
 
+        def render_trend_strip(series: List[Dict[str, Any]]) -> str:
+            if not series:
+                return '<div class="trend-empty">趨勢資料不足</div>'
+            cells = []
+            for item in series:
+                cells.append(
+                    f"""
+                    <div class="trend-cell">
+                      <div class="trend-label">{item.get('window_label', '-')}</div>
+                      <div class="trend-metric">ROAS {item.get('roas', 0):.2f}</div>
+                      <div class="trend-sub">直接 {item.get('direct_roas', 0):.2f}</div>
+                      <div class="trend-sub">CTR {item.get('ctr', 0):.2f}% / CVR {item.get('cvr', 0):.2f}%</div>
+                    </div>
+                    """
+                )
+            return f'<div class="trend-grid">{"".join(cells)}</div>'
+
         def render_product_image(item: Dict[str, Any]) -> str:
             product_image_url = process_image_url(item.get("product_image_url", ""))
             if not product_image_url:
@@ -1150,6 +1468,7 @@ class AdsAnalyzer:
             ("立即加碼", rankings.get("scale_up", [])),
             ("優先降預算", rankings.get("reduce_budget", [])),
             ("依賴間接轉換", rankings.get("indirect_dependency", [])),
+            ("先觀察", rankings.get("watchlist", [])),
         ]:
             if not items:
                 continue
@@ -1174,8 +1493,13 @@ class AdsAnalyzer:
                   </div>
                   <div class="window-grid">
                     {render_window_strip(snapshot.get('yesterday', {}))}
-                    {render_window_strip(snapshot.get('past_week', {}))}
+                    {render_window_strip(snapshot.get('recent_week', {}))}
                     {render_window_strip(snapshot.get('past_month', {}))}
+                  </div>
+                  <div class="trend-panel">
+                    <div class="steps-title">近 6 週滾動趨勢</div>
+                    <div class="detail"><strong>趨勢摘要：</strong>{item.get('trend_summary', '資料不足')}</div>
+                    {render_trend_strip(item.get('weekly_trend_series', []))}
                   </div>
                   <div class="detail"><strong>{'OpenAI 判讀' if narrative.get('source') == 'openai' else '驗算摘要'}：</strong>{display_detail}</div>
                   {f'<div class="detail"><strong>為何不是其他問題：</strong>{why_not}</div>' if why_not else ''}
@@ -1216,6 +1540,13 @@ class AdsAnalyzer:
               .metric-value {{ font-size:18px; font-weight:800; margin-top:6px; }}
               .metric-sub {{ font-size:12px; color:#555; margin-top:4px; }}
               .detail {{ margin-top:14px; font-size:13px; line-height:1.8; background:#faf7f4; padding:12px; border-radius:12px; }}
+              .trend-panel {{ margin-top:14px; }}
+              .trend-grid {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }}
+              .trend-cell {{ border:1px solid #eadfd5; border-radius:10px; padding:10px; background:#fffaf6; }}
+              .trend-label {{ font-size:11px; color:#6b7280; }}
+              .trend-metric {{ font-size:14px; font-weight:700; margin-top:4px; }}
+              .trend-sub {{ font-size:11px; color:#6b7280; margin-top:3px; }}
+              .trend-empty {{ margin-top:10px; color:#6b7280; font-size:12px; }}
               .steps {{ margin-top:14px; }}
               .steps-title {{ font-size:13px; font-weight:800; margin-bottom:6px; }}
               ul {{ line-height:1.8; }}
@@ -1228,7 +1559,7 @@ class AdsAnalyzer:
           <body>
             <h1>Shopee 廣告調整報告</h1>
             <div class="note">生成時間：{report['generated_at']}</div>
-            <div class="note">主要決策基準：昨天完整日報表。今天資料只作監控，不作主要調整依據。</div>
+            <div class="note">主要決策基準：昨天完整日報表，最近一週（week_01）與過去一個月用來驗證穩定性，另納入近 6 週滾動 7 天趨勢判斷。</div>
             <div class="summary">
               <div class="summary-box"><strong>觀察視窗</strong><br>{current.get('window_label', '-')}</div>
               <div class="summary-box"><strong>總花費</strong><br>{current.get('spend', 0):,.2f}</div>
@@ -1238,6 +1569,7 @@ class AdsAnalyzer:
               <div class="summary-box"><strong>立即加碼</strong><br>{len(rankings.get('scale_up', []))}</div>
               <div class="summary-box"><strong>優先降預算</strong><br>{len(rankings.get('reduce_budget', []))}</div>
               <div class="summary-box"><strong>依賴間接轉換</strong><br>{len(rankings.get('indirect_dependency', []))}</div>
+              <div class="summary-box"><strong>先觀察</strong><br>{len(rankings.get('watchlist', []))}</div>
             </div>
             <h2>整體判讀</h2>
             <p>{narrative.get('executive_summary', '')}</p>
@@ -1252,6 +1584,7 @@ class AdsAnalyzer:
 
     def run(self) -> Dict[str, Any]:
         self._log("INIT", "開始分析廣告報表")
+        self._refresh_source_reports()
         report_runs, metrics = self._load_reports()
         self._log("PARSE", f"已載入 {len(report_runs)} 份報表、{len(metrics)} 筆商品指標")
 
@@ -1275,6 +1608,7 @@ class AdsAnalyzer:
         report = {
             "status": "success",
             "message": "廣告分析完成",
+            "source": narrative.get("source"),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "has_ai_enhancement": narrative.get("source") == "openai",
             "output_files": {
@@ -1291,6 +1625,7 @@ class AdsAnalyzer:
                 "products": product_analysis["products"][:36],
                 "narrative": narrative,
                 "chart_series": account_summary["windows"],
+                "trend_window_count": self.trend_weeks,
             },
         }
 
@@ -1314,6 +1649,8 @@ def main() -> None:
     parser.add_argument("--markdown-output", default="ads_analysis_report.md")
     parser.add_argument("--html-output", default="ads_analysis_report.html")
     parser.add_argument("--include-ai", default="true")
+    parser.add_argument("--refresh-source", default="false")
+    parser.add_argument("--trend-weeks", type=int, default=6)
     args = parser.parse_args()
 
     analyzer = AdsAnalyzer(
@@ -1324,6 +1661,8 @@ def main() -> None:
         markdown_output_path=args.markdown_output,
         html_output_path=args.html_output,
         include_ai=args.include_ai.lower() == "true",
+        refresh_source=args.refresh_source.lower() == "true",
+        trend_weeks=args.trend_weeks,
     )
     result = analyzer.run()
     print(json.dumps({"status": result["status"], "message": result["message"]}, ensure_ascii=False))

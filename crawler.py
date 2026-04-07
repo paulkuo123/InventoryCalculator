@@ -26,7 +26,8 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
 ]
 
-ADS_EXPORT_RANGE_ORDER = ["past_month", "past_week", "yesterday", "today"]
+ADS_EXPORT_RANGE_ORDER = ["past_month", "yesterday"]
+DEFAULT_TREND_EXPORT_WEEKS = 6
 
 class ShopeeCrawler:
 
@@ -826,38 +827,25 @@ class ShopeeCrawler:
     def _build_ads_range_configs(self):
         today = datetime.now().date()
         yesterday = today - timedelta(days=1)
-        past_week_start = today - timedelta(days=6)
-        if today.month == 1:
-            previous_month_year = today.year - 1
+        anchor_date = yesterday
+        if anchor_date.month == 1:
+            previous_month_year = anchor_date.year - 1
             previous_month = 12
         else:
-            previous_month_year = today.year
-            previous_month = today.month - 1
+            previous_month_year = anchor_date.year
+            previous_month = anchor_date.month - 1
 
         previous_month_last_day = monthrange(previous_month_year, previous_month)[1]
-        past_month_start = today.replace(
+        past_month_start = anchor_date.replace(
             year=previous_month_year,
             month=previous_month,
-            day=min(today.day, previous_month_last_day),
+            day=min(anchor_date.day, previous_month_last_day),
         )
 
         def fmt(date_value):
             return date_value.strftime("%Y/%m/%d")
 
         return {
-            "today": {
-                "key": "today",
-                "label": "今天",
-                "group": "today",
-                "start_date": today,
-                "end_date": today,
-                "option_patterns": [r"今天"],
-                "file_prefix": "ads_overall_today",
-                "report_patterns": [
-                    rf"{re.escape(fmt(today))}\.csv$",
-                    rf"{re.escape(fmt(today))}-{re.escape(fmt(today))}\.csv$",
-                ],
-            },
             "yesterday": {
                 "key": "yesterday",
                 "label": "昨天",
@@ -871,31 +859,47 @@ class ShopeeCrawler:
                     rf"{re.escape(fmt(yesterday))}-{re.escape(fmt(yesterday))}\.csv$",
                 ],
             },
-            "past_week": {
-                "key": "past_week",
-                "label": "過去一週",
-                "group": "last_week",
-                "start_date": past_week_start,
-                "end_date": today,
-                "option_patterns": [r"過去一週", r"過去 7 天", r"近 7 天", r"過去7天"],
-                "file_prefix": "ads_overall_past_week",
-                "report_patterns": [
-                    rf"{re.escape(fmt(past_week_start))}-{re.escape(fmt(today))}\.csv$",
-                ],
-            },
             "past_month": {
                 "key": "past_month",
                 "label": "過去一個月",
-                "group": "last_month",
+                "group": "custom",
                 "start_date": past_month_start,
-                "end_date": today,
+                "end_date": anchor_date,
                 "option_patterns": [r"過去一個月", r"過去 30 天", r"近 30 天", r"過去30天"],
                 "file_prefix": "ads_overall_past_month",
                 "report_patterns": [
-                    rf"{re.escape(fmt(past_month_start))}-{re.escape(fmt(today))}\.csv$",
+                    rf"{re.escape(fmt(past_month_start))}-{re.escape(fmt(anchor_date))}\.csv$",
                 ],
+                "custom_only": True,
             },
         }
+
+    def _build_ads_trend_range_configs(self, week_count=DEFAULT_TREND_EXPORT_WEEKS):
+        anchor_date = datetime.now().date() - timedelta(days=1)
+
+        def fmt(date_value):
+            return date_value.strftime("%Y/%m/%d")
+
+        configs = {}
+        for week_index in range(1, week_count + 1):
+            end_date = anchor_date - timedelta(days=(week_index - 1) * 7)
+            start_date = end_date - timedelta(days=6)
+            key = f"week_{week_index:02d}"
+            label = f"近第 {week_index} 週"
+            configs[key] = {
+                "key": key,
+                "label": label,
+                "group": "custom",
+                "start_date": start_date,
+                "end_date": end_date,
+                "option_patterns": [],
+                "file_prefix": f"ads_overall_week_{week_index:02d}_{start_date.strftime('%Y%m%d')}_{end_date.strftime('%Y%m%d')}",
+                "report_patterns": [
+                    rf"{re.escape(fmt(start_date))}-{re.escape(fmt(end_date))}\.csv$",
+                ],
+                "custom_only": True,
+            }
+        return configs
 
     def _to_taipei_unix_timestamp(self, date_value, end_of_day=False):
         taipei_tz = ZoneInfo("Asia/Taipei")
@@ -956,9 +960,313 @@ class ShopeeCrawler:
         ]
         return self._click_first_visible_locator(openers, "日期選擇器", timeout=8000)
 
+    def _ads_month_label(self, date_value):
+        months = [
+            "一月", "二月", "三月", "四月", "五月", "六月",
+            "七月", "八月", "九月", "十月", "十一月", "十二月",
+        ]
+        return months[date_value.month - 1]
+
+    def _find_ads_date_picker_root(self):
+        candidates = [
+            self.page.locator('.eds-popper.eds-date-picker__picker'),
+            self.page.locator('.eds-popper-container .eds-popper.eds-date-picker__picker'),
+            self.page.locator('.eds-date-picker__popup'),
+            self.page.locator('.eds-popper').filter(has=self.page.locator('.eds-date-table')),
+            self.page.locator('.eds-daterange-picker-panel').filter(has=self.page.locator('.eds-date-table')),
+            self.page.locator('.eds-date-picker-range'),
+        ]
+        for locator in candidates:
+            try:
+                count = locator.count()
+            except Exception:
+                count = 0
+            for index in range(max(0, count - 1), -1, -1):
+                item = locator.nth(index)
+                if self._locator_is_visible(item):
+                    return item
+        return None
+
+    def _ensure_ads_custom_mode(self, range_label):
+        custom_locators = [
+            self.page.locator('.eds-date-picker-shortcut-item').filter(has_text=re.compile(r"自訂")),
+            self.page.locator('.eds-date-picker-shortcut-item span').filter(has_text=re.compile(r"自訂")),
+            self.page.get_by_text(re.compile(r"^自訂$")),
+        ]
+        if self._click_first_visible_locator(custom_locators, "自訂日期模式", timeout=4000):
+            time.sleep(1)
+            self._ads_log("RANGE", "已切換到自訂日期模式", range_label)
+            return True
+        self._ads_log("RANGE", "日期面板未見自訂捷徑，直接使用目前日期面板", range_label)
+        return False
+
+    def _get_visible_ads_calendar_text(self):
+        picker_root = self._find_ads_date_picker_root()
+        if picker_root is None:
+            return ""
+        try:
+            return picker_root.inner_text(timeout=2000).replace(" ", "")
+        except Exception:
+            return ""
+
+    def _click_ads_calendar_nav(self, direction, range_label):
+        selector_map = {
+            "prev": [
+                '.eds-daterange-picker-panel__body-left .eds-picker-header__prev:not(.disabled)',
+                '.eds-picker-header__prev:not(.disabled)',
+                '[class*="arrow-left-bold"]',
+                '[class*="arrow-ios-left"]',
+                '.eds-date-picker__header [class*="left"]',
+            ],
+            "prev-double": [
+                '[class*="arrow-double-left"]',
+                '.eds-date-picker__header [class*="double"][class*="left"]',
+            ],
+            "next": [
+                '.eds-daterange-picker-panel__body-right .eds-picker-header__next:not(.disabled)',
+                '.eds-picker-header__next:not(.disabled)',
+                '[class*="arrow-right-bold"]',
+                '.eds-date-picker__header [class*="right"]',
+            ],
+            "next-double": [
+                '[class*="arrow-double-right"]',
+                '.eds-date-picker__header [class*="double"][class*="right"]',
+            ],
+        }
+        locators = [self.page.locator(selector) for selector in selector_map.get(direction, [])]
+        clicked = self._click_first_visible_locator(locators, f"日期面板導覽 {direction}", timeout=3000)
+        if clicked:
+            time.sleep(0.8)
+            self._ads_log("RANGE", f"已點擊日期面板導覽：{direction}", range_label)
+        return clicked
+
+    def _ensure_ads_month_visible(self, target_date, range_label):
+        picker_root = self._find_ads_date_picker_root()
+        if picker_root is None:
+            return False
+
+        script = """
+        (root, { targetYear, targetMonth }) => {
+          const isVisible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            if (!style || style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') {
+              return false;
+            }
+            const rect = el.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+          const monthMap = {
+            '一月': 1, '二月': 2, '三月': 3, '四月': 4, '五月': 5, '六月': 6,
+            '七月': 7, '八月': 8, '九月': 9, '十月': 10, '十一月': 11, '十二月': 12,
+          };
+          const panels = Array.from(root.querySelectorAll('.eds-date-picker-panel__date')).filter(isVisible);
+          const panelStates = panels.map((panel) => {
+            const labels = Array.from(panel.querySelectorAll('.eds-picker-header__label.clickable'))
+              .map((label) => (label.textContent || '').trim())
+              .filter(Boolean);
+            const monthLabel = labels.find((label) => monthMap[label]);
+            const yearLabel = labels.find((label) => /^\\d{4}$/.test(label));
+            const month = monthLabel ? monthMap[monthLabel] : null;
+            const year = yearLabel ? Number(yearLabel) : null;
+            const serial = year && month ? (year * 12 + month) : null;
+            return { panel, month, year, serial };
+          }).filter((state) => state.month && state.year);
+
+          if (!panelStates.length) return 'not_found';
+
+          const targetSerial = targetYear * 12 + targetMonth;
+          const visibleMatch = panelStates.find((state) => state.year === targetYear && state.month === targetMonth);
+          if (visibleMatch) return 'visible';
+
+          const serials = panelStates.map((state) => state.serial);
+          const minSerial = Math.min(...serials);
+          const maxSerial = Math.max(...serials);
+
+          if (targetSerial < minSerial) {
+            const leftPanel = panelStates[0].panel;
+            const prevButtons = Array.from(leftPanel.querySelectorAll('.eds-picker-header__prev')).filter(isVisible);
+            const button = prevButtons.reverse().find((item) => !item.classList.contains('disabled'));
+            if (button) {
+              button.click();
+              return 'prev';
+            }
+            return 'blocked_prev';
+          }
+
+          if (targetSerial > maxSerial) {
+            const rightPanel = panelStates[panelStates.length - 1].panel;
+            const nextButtons = Array.from(rightPanel.querySelectorAll('.eds-picker-header__next')).filter(isVisible);
+            const button = nextButtons.find((item) => !item.classList.contains('disabled'));
+            if (button) {
+              button.click();
+              return 'next';
+            }
+            return 'blocked_next';
+          }
+
+          const sortedPanels = [...panelStates].sort((a, b) => a.serial - b.serial);
+          for (let index = 0; index < sortedPanels.length - 1; index += 1) {
+            const current = sortedPanels[index];
+            const next = sortedPanels[index + 1];
+            if (next.serial - current.serial <= 1) continue;
+            if (targetSerial > current.serial && targetSerial < next.serial) {
+              const leftNextButtons = Array.from(current.panel.querySelectorAll('.eds-picker-header__next')).filter(isVisible);
+              const leftNext = leftNextButtons.find((item) => !item.classList.contains('disabled'));
+              if (leftNext) {
+                leftNext.click();
+                return 'bridge_next';
+              }
+              const rightPrevButtons = Array.from(next.panel.querySelectorAll('.eds-picker-header__prev')).filter(isVisible);
+              const rightPrev = rightPrevButtons.reverse().find((item) => !item.classList.contains('disabled'));
+              if (rightPrev) {
+                rightPrev.click();
+                return 'bridge_prev';
+              }
+              return 'blocked_bridge';
+            }
+          }
+
+          return 'not_found';
+        }
+        """
+
+        for _ in range(18):
+            try:
+                result = picker_root.evaluate(
+                    script,
+                    {"targetYear": target_date.year, "targetMonth": target_date.month},
+                )
+            except Exception:
+                result = "not_found"
+
+            if result == "visible":
+                return True
+            if result in {"prev", "next", "bridge_next", "bridge_prev"}:
+                time.sleep(0.8)
+                self._ads_log("RANGE", f"已調整月份面板：{result}", range_label)
+                continue
+            break
+
+        return False
+
+    def _click_ads_calendar_day(self, target_date, range_label):
+        day_text = str(target_date.day)
+        month_label = self._ads_month_label(target_date)
+        year_text = str(target_date.year)
+        if not self._ensure_ads_month_visible(target_date, range_label):
+            return False
+
+        picker_root = self._find_ads_date_picker_root()
+        if picker_root is None:
+            return False
+
+        script = """
+        (root, { monthLabel, yearText, dayText }) => {
+          const isVisible = (el) => {
+            if (!el) return false;
+            const style = window.getComputedStyle(el);
+            return style && style.display !== 'none' && style.visibility !== 'hidden' && style.opacity !== '0';
+          };
+          const monthMap = {
+            '一月': 1, '二月': 2, '三月': 3, '四月': 4, '五月': 5, '六月': 6,
+            '七月': 7, '八月': 8, '九月': 9, '十月': 10, '十一月': 11, '十二月': 12,
+          };
+          const panels = Array.from(root.querySelectorAll('.eds-date-picker-panel__date'))
+            .filter(isVisible);
+          const panel = panels.find((item) => {
+            const labels = Array.from(item.querySelectorAll('.eds-picker-header__label.clickable'))
+              .map((label) => (label.textContent || '').trim())
+              .filter(Boolean);
+            const currentMonth = labels.find((label) => monthMap[label]);
+            const currentYear = labels.find((label) => /^\\d{4}$/.test(label));
+            return currentMonth === monthLabel && currentYear === yearText;
+          }) || panels[0];
+          if (!panel) return false;
+
+          const cells = Array.from(panel.querySelectorAll('.eds-date-table__cell, .eds-date-table__cell-inner'));
+          for (const cell of cells) {
+            const text = (cell.innerText || cell.textContent || '').trim();
+            if (text !== dayText) continue;
+            const target = cell.classList.contains('eds-date-table__cell-inner') ? cell.parentElement : cell;
+            const classText = `${cell.className || ''} ${target?.className || ''}`;
+            if (/disabled|out-of-month|is-empty/.test(classText)) continue;
+            const clickable = target || cell;
+            clickable.scrollIntoView({ block: 'center' });
+            clickable.click();
+            return true;
+          }
+          return false;
+        }
+        """
+        try:
+            clicked = picker_root.evaluate(
+                script,
+                {
+                    "monthLabel": month_label,
+                    "yearText": year_text,
+                    "dayText": day_text,
+                },
+            )
+        except Exception:
+            clicked = False
+
+        if clicked:
+            time.sleep(0.8)
+            self._ads_log("RANGE", f"已選取日期：{target_date.isoformat()}", range_label)
+        return clicked
+
+    def _apply_ads_custom_date_range(self, range_label):
+        locators = [
+            self.page.locator('.adopt-button'),
+            self.page.get_by_text(re.compile(r"^套用$")),
+            self.page.get_by_role("button", name=re.compile(r"套用|確定")),
+        ]
+        if self._click_first_visible_locator(locators, "套用日期區間", timeout=5000):
+            time.sleep(2)
+            self._ads_log("RANGE", "已套用自訂日期區間", range_label)
+            return True
+        return False
+
+    def _select_ads_custom_date_range(self, range_config):
+        range_label = range_config["label"]
+        self._ads_log(
+            "RANGE",
+            f"正在設定自訂日期區間：{range_config['start_date'].isoformat()} ~ {range_config['end_date'].isoformat()}",
+            range_label,
+        )
+
+        if not self._open_ads_date_picker():
+            self._capture_debug_snapshot("ads_custom_date_picker_not_found")
+            self._capture_debug_html("ads_custom_date_picker_not_found")
+            raise RuntimeError("ADS_DATE_PICKER_NOT_FOUND: 找不到日期選擇器")
+
+        time.sleep(1)
+        self._ensure_ads_custom_mode(range_label)
+
+        if not self._click_ads_calendar_day(range_config["start_date"], range_label):
+            self._capture_debug_snapshot(f"ads_{range_config['key']}_start_date_not_found")
+            self._capture_debug_html(f"ads_{range_config['key']}_start_date_not_found")
+            raise RuntimeError(f"ADS_CUSTOM_START_DATE_NOT_FOUND: 找不到起始日期 {range_config['start_date']}")
+
+        if not self._click_ads_calendar_day(range_config["end_date"], range_label):
+            self._capture_debug_snapshot(f"ads_{range_config['key']}_end_date_not_found")
+            self._capture_debug_html(f"ads_{range_config['key']}_end_date_not_found")
+            raise RuntimeError(f"ADS_CUSTOM_END_DATE_NOT_FOUND: 找不到結束日期 {range_config['end_date']}")
+
+        if not self._apply_ads_custom_date_range(range_label):
+            self._capture_debug_snapshot(f"ads_{range_config['key']}_apply_not_found")
+            self._capture_debug_html(f"ads_{range_config['key']}_apply_not_found")
+            raise RuntimeError("ADS_CUSTOM_APPLY_NOT_FOUND: 找不到套用按鈕")
+
+        return True
+
     def _select_ads_date_range(self, range_config):
         range_label = range_config["label"]
         self._ads_log("RANGE", f"正在設定日期範圍為 {range_label}", range_label)
+
+        if range_config.get("custom_only"):
+            return self._select_ads_custom_date_range(range_config)
 
         if not self._open_ads_date_picker():
             self._capture_debug_snapshot("ads_date_picker_not_found")
@@ -1240,10 +1548,19 @@ class ShopeeCrawler:
         raise RuntimeError(f"ADS_DOWNLOAD_TIMEOUT: {range_config['label']} 等待下載按鈕超時")
 
     def _export_single_ads_range(self, range_config):
+        if range_config.get("custom_only"):
+            self._ads_log("RANGE", "此區間需強制走自訂日期面板", range_config["label"])
+            self._navigate_to_ads_center()
+            self._select_ads_date_range(range_config)
+            result = self._wait_for_ads_report_download(range_config)
+            self._ads_log("DONE", f"{range_config['label']} 完成，動作：{result.get('action_taken', 'downloaded')}", range_config["label"])
+            return result
+
         try:
             self._navigate_to_ads_range_page(range_config)
         except Exception as e:
             self._ads_log("RANGE", f"直接進頁失敗，改回 UI 選擇模式: {e}", range_config["label"])
+            self._navigate_to_ads_center()
             self._select_ads_date_range(range_config)
         result = self._wait_for_ads_report_download(range_config)
         self._ads_log("DONE", f"{range_config['label']} 完成，動作：{result.get('action_taken', 'downloaded')}", range_config["label"])
@@ -1268,6 +1585,34 @@ class ShopeeCrawler:
             "results": results,
         }
 
+    def _export_ads_ranges(self, range_configs, range_order, unit_label="範圍"):
+        results = []
+        for index, range_key in enumerate(range_order, start=1):
+            range_config = range_configs[range_key]
+            self._ads_log("NEXT", f"開始第 {index}/{len(range_order)} 個{unit_label}：{range_config['label']}")
+            try:
+                range_result = self._export_single_ads_range(range_config)
+                results.append(range_result)
+            except Exception as e:
+                self._ads_log("ERROR", str(e), range_config["label"])
+                results.append({
+                    "range_key": range_config["key"],
+                    "range_label": range_config["label"],
+                    "status": "error",
+                    "message": str(e),
+                    "file_path": "",
+                    "file_name": "",
+                    "action_taken": "failed",
+                })
+                remaining_keys = range_order[index:]
+                for remaining_key in remaining_keys:
+                    skipped_config = range_configs[remaining_key]
+                    skipped_reason = f"前一個{unit_label}失敗，未繼續執行 {skipped_config['label']}"
+                    self._ads_log("STOP", skipped_reason)
+                    results.append(self._build_skipped_ads_result(skipped_config, skipped_reason))
+                break
+        return results
+
     def _build_skipped_ads_result(self, range_config, reason):
         return {
             "range_key": range_config["key"],
@@ -1281,42 +1626,45 @@ class ShopeeCrawler:
 
     def export_ads_report(self):
         """
-        執行蝦皮廣告多時間範圍總體報表匯出流程
+        執行蝦皮廣告完整分析資料集匯出流程：
+        昨天 + 過去一個月 + 過去 6 週滾動周報
         退出碼：0 = 成功；77 = Cookies 失效；1 = 其他錯誤
         """
-        results = []
         try:
-            self._ads_log("INIT", "開始初始化廣告匯出流程")
+            self._ads_log("INIT", "開始初始化廣告匯出流程（摘要 + 6 週趨勢）")
             self.login()
             self._ads_log("LOGIN", "登入賣家中心成功")
             self._navigate_to_ads_center()
             self._ads_log("NAV", "已進入蝦皮廣告頁面")
 
-            range_configs = self._build_ads_range_configs()
-            for index, range_key in enumerate(ADS_EXPORT_RANGE_ORDER, start=1):
-                range_config = range_configs[range_key]
-                self._ads_log("NEXT", f"開始第 {index}/{len(ADS_EXPORT_RANGE_ORDER)} 個範圍：{range_config['label']}")
-                try:
-                    range_result = self._export_single_ads_range(range_config)
-                    results.append(range_result)
-                except Exception as e:
-                    self._ads_log("ERROR", str(e), range_config["label"])
-                    results.append({
-                        "range_key": range_config["key"],
-                        "range_label": range_config["label"],
-                        "status": "error",
-                        "message": str(e),
-                        "file_path": "",
-                        "file_name": "",
-                        "action_taken": "failed",
-                    })
-                    remaining_keys = ADS_EXPORT_RANGE_ORDER[index:]
-                    for remaining_key in remaining_keys:
-                        skipped_config = range_configs[remaining_key]
-                        skipped_reason = f"前一個範圍失敗，未繼續執行 {skipped_config['label']}"
-                        self._ads_log("STOP", skipped_reason)
-                        results.append(self._build_skipped_ads_result(skipped_config, skipped_reason))
-                    break
+            summary_configs = self._build_ads_range_configs()
+            trend_configs = self._build_ads_trend_range_configs(DEFAULT_TREND_EXPORT_WEEKS)
+            combined_configs = {**summary_configs, **trend_configs}
+            combined_order = ADS_EXPORT_RANGE_ORDER + list(trend_configs.keys())
+            results = self._export_ads_ranges(combined_configs, combined_order, unit_label="資料區間")
+
+            summary = self._summarize_ads_export_results(results)
+            self._ads_log("SUMMARY", summary["message"])
+            return summary
+
+        except RuntimeError as e:
+            if "COOKIES_EXPIRED" in str(e):
+                print("COOKIES_EXPIRED: Cookies 已失效，請重新取得並更新 cookies.json")
+                import sys
+                sys.exit(77)
+            raise
+
+    def export_ads_trend_report(self, week_count=DEFAULT_TREND_EXPORT_WEEKS):
+        try:
+            self._ads_log("INIT", f"開始初始化廣告趨勢匯出流程（{week_count} 週）")
+            self.login()
+            self._ads_log("LOGIN", "登入賣家中心成功")
+            self._navigate_to_ads_center()
+            self._ads_log("NAV", "已進入蝦皮廣告頁面")
+
+            range_configs = self._build_ads_trend_range_configs(week_count)
+            range_order = list(range_configs.keys())
+            results = self._export_ads_ranges(range_configs, range_order, unit_label="趨勢區間")
 
             summary = self._summarize_ads_export_results(results)
             self._ads_log("SUMMARY", summary["message"])
@@ -2295,9 +2643,13 @@ def main():
                             default=4,
                             help='庫存月份')
         parser.add_argument('--mode',
-                            choices=['inventory', 'ads-export'],
+                            choices=['inventory', 'ads-export', 'ads-trend-export'],
                             default='inventory',
                             help='執行模式')
+        parser.add_argument('--trend-weeks',
+                            type=int,
+                            default=DEFAULT_TREND_EXPORT_WEEKS,
+                            help='廣告趨勢匯出週數')
 
         args = parser.parse_args()
 
@@ -2328,6 +2680,10 @@ def main():
         # 運行指定流程
         if args.mode == 'ads-export':
             result = crawler.export_ads_report()
+            with open(args.output, 'w', encoding='utf-8') as f:
+                json.dump(result, f, ensure_ascii=False, indent=4)
+        elif args.mode == 'ads-trend-export':
+            result = crawler.export_ads_trend_report(week_count=max(1, args.trend_weeks))
             with open(args.output, 'w', encoding='utf-8') as f:
                 json.dump(result, f, ensure_ascii=False, indent=4)
         else:
