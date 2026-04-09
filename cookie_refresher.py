@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
 Cookie Refresher - 自動刷新蝦皮 Cookies
-功能：每隔 10-30 分鐘隨機時間去 ping 蝦皮 API，獲取最新 cookies 並保存
+功能：以較低頻、帶抖動的方式刷新蝦皮 Cookies，降低固定規律行為
 """
 
 import json
 import os
 import time
 import random
+import threading
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 
@@ -26,11 +27,68 @@ class CookieRefresher:
     def __init__(self, cookies_path, shopee_url="https://seller.shopee.tw"):
         self.cookies_path = cookies_path
         self.shopee_url = shopee_url
+        self.state_path = os.path.join(
+            os.path.dirname(os.path.abspath(cookies_path)),
+            ".cookie_refresh_state.json"
+        )
         self.running = False
         self._browser = None
         self._context = None
         self._page = None
         self._playwright = None
+        self._refresh_lock = threading.Lock()
+
+    def _format_timestamp(self, timestamp):
+        """將 timestamp 格式化為可讀時間"""
+        return datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
+
+    def _load_state(self):
+        """讀取下次排程狀態"""
+        try:
+            with open(self.state_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    def _save_state(self, state):
+        """保存排程狀態"""
+        try:
+            with open(self.state_path, 'w', encoding='utf-8') as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+        except Exception as e:
+            print(f"⚠️ 保存刷新排程狀態失敗: {e}")
+
+    def _schedule_next_refresh(self, min_interval_hours, max_interval_hours, reason):
+        """建立並保存下一次自動刷新時間"""
+        wait_seconds = random.randint(
+            int(min_interval_hours * 3600),
+            int(max_interval_hours * 3600)
+        )
+        next_refresh = time.time() + wait_seconds
+        self._save_state({
+            "next_refresh_ts": next_refresh,
+            "scheduled_at": time.time(),
+            "reason": reason,
+        })
+        wait_hours = wait_seconds / 3600
+        print(
+            f"⏰ 下次自動刷新時間：{self._format_timestamp(next_refresh)} "
+            f"（約 {wait_hours:.1f} 小時後，原因：{reason}）"
+        )
+        return next_refresh
+
+    def _get_next_refresh_time(self, min_interval_hours, max_interval_hours):
+        """取得既有排程；若沒有則建立新的隨機排程"""
+        state = self._load_state()
+        next_refresh = state.get("next_refresh_ts")
+        if isinstance(next_refresh, (int, float)) and next_refresh > time.time():
+            print(f"📅 使用既有排程，下次自動刷新時間：{self._format_timestamp(next_refresh)}")
+            return next_refresh
+        return self._schedule_next_refresh(
+            min_interval_hours,
+            max_interval_hours,
+            reason="initial_schedule"
+        )
 
     def _load_cookies(self):
         """從 cookies.json 載入 cookies"""
@@ -223,19 +281,23 @@ class CookieRefresher:
         4. 關閉可能出現的彈窗
         5. 獲取最新 cookies 並保存
         """
+        if not self._refresh_lock.acquire(blocking=False):
+            print("⚠️ 已有 Cookie 刷新作業進行中，略過重複請求")
+            return False
+
         print(f"\n🔄 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 開始刷新 Cookies...")
 
-        # 1. 載入現有 cookies
-        cookies = self._load_cookies()
-        if not cookies:
-            print("⚠️ 無法載入 cookies，跳過此次刷新")
-            return False
-
-        # 2. 初始化瀏覽器
-        if not self._init_browser():
-            return False
-
         try:
+            # 1. 載入現有 cookies
+            cookies = self._load_cookies()
+            if not cookies:
+                print("⚠️ 無法載入 cookies，跳過此次刷新")
+                return False
+
+            # 2. 初始化瀏覽器
+            if not self._init_browser():
+                return False
+
             # 3. 先訪問目標域名（建立域名上下文）
             self._page.goto(self.shopee_url, wait_until="domcontentloaded", timeout=15000)
             time.sleep(1)
@@ -314,43 +376,59 @@ class CookieRefresher:
             return False
         finally:
             self._close_browser()
+            self._refresh_lock.release()
 
-    def start(self, min_interval_min=10, max_interval_min=30):
+    def start(self, min_interval_hours=18, max_interval_hours=30, retry_min_hours=2, retry_max_hours=6):
         """
         啟動自動刷新循環
-        :param min_interval_min: 最小間隔（分鐘）
-        :param max_interval_min: 最大間隔（分鐘）
+        :param min_interval_hours: 成功後最小間隔（小時）
+        :param max_interval_hours: 成功後最大間隔（小時）
+        :param retry_min_hours: 失敗後最小重試間隔（小時）
+        :param retry_max_hours: 失敗後最大重試間隔（小時）
         """
         self.running = True
         print(f"🚀 Cookie Refresher 已啟動")
-        print(f"   刷新間隔：{min_interval_min}-{max_interval_min} 分鐘（隨機）")
+        print(f"   成功刷新間隔：{min_interval_hours}-{max_interval_hours} 小時（隨機）")
+        print(f"   失敗重試間隔：{retry_min_hours}-{retry_max_hours} 小時（隨機）")
         print(f"   Cookies 路徑：{self.cookies_path}")
+
+        next_refresh_ts = self._get_next_refresh_time(min_interval_hours, max_interval_hours)
 
         while self.running:
             try:
-                # 執行刷新
-                self.refresh_cookies()
-
-                # 隨機等待時間
-                wait_seconds = random.randint(min_interval_min * 60, max_interval_min * 60)
-                wait_minutes = wait_seconds / 60
-                next_refresh = datetime.now().timestamp() + wait_seconds
-                next_time = datetime.fromtimestamp(next_refresh).strftime('%Y-%m-%d %H:%M:%S')
-
-                print(f"⏰ 下次刷新時間：{next_time}（等待 {wait_minutes:.1f} 分鐘）")
-
-                # 分段睡眠，以便及時響應停止信號
-                while wait_seconds > 0 and self.running:
-                    sleep_time = min(wait_seconds, 10)
+                now = time.time()
+                if now < next_refresh_ts:
+                    remaining_seconds = int(next_refresh_ts - now)
+                    sleep_time = min(remaining_seconds, 60)
                     time.sleep(sleep_time)
-                    wait_seconds -= sleep_time
+                    continue
+
+                # 到點才執行刷新，避免每次啟動 bot 都立刻觸發
+                success = self.refresh_cookies()
+                if success:
+                    next_refresh_ts = self._schedule_next_refresh(
+                        min_interval_hours,
+                        max_interval_hours,
+                        reason="refresh_success"
+                    )
+                else:
+                    next_refresh_ts = self._schedule_next_refresh(
+                        retry_min_hours,
+                        retry_max_hours,
+                        reason="refresh_failed_retry"
+                    )
 
             except KeyboardInterrupt:
                 print("\n⚠️ 收到中斷信號，停止 Cookie Refresher")
                 self.running = False
             except Exception as e:
                 print(f"❌ Cookie Refresher 出錯: {e}")
-                time.sleep(60)  # 出錯後等待 1 分鐘再重試
+                next_refresh_ts = self._schedule_next_refresh(
+                    retry_min_hours,
+                    retry_max_hours,
+                    reason="loop_exception_retry"
+                )
+                time.sleep(60)
 
         print("👋 Cookie Refresher 已停止")
 

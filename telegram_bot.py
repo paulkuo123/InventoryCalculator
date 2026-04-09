@@ -174,7 +174,12 @@ def start_cookie_refresher():
         # 在背景執行緒運行
         refresh_thread = threading.Thread(
             target=cookie_refresher.start,
-            kwargs={"min_interval_min": 10, "max_interval_min": 30},
+            kwargs={
+                "min_interval_hours": 18,
+                "max_interval_hours": 30,
+                "retry_min_hours": 2,
+                "retry_max_hours": 6,
+            },
             daemon=True
         )
         refresh_thread.start()
@@ -1287,8 +1292,7 @@ def main():
     print(f"📡 開始監聽訊息...")
     print(f"💡 指令格式：/搜尋 <產品> <月數>")
     print(f"   例如：/搜尋 牙刷 4")
-    print(f"💡 廣告指令：/廣告匯出、/廣告分析、/廣告分析 無AI")
-    print(f"🔄 Cookie 自動刷新已啟用（10-30 分鐘隨機間隔）")
+    print(f"🔄 Cookie 自動刷新已啟用（18-30 小時隨機間隔，失敗後 2-6 小時重試）")
     print(f"⚠️ 按 Ctrl+C 停止\n")
 
     # 啟動 Cookie 自動刷新
