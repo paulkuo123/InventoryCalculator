@@ -339,6 +339,26 @@ def estimate_monthly_sales(product_info, model_info):
     return monthly_sales
 
 
+def load_alibaba_links():
+    """從 shopee_products.xlsx 讀取 型號ID→阿里巴巴連結 的映射"""
+    try:
+        import pandas as pd
+        xlsx_path = os.path.join(WORK_DIR, "shopee_products.xlsx")
+        if not os.path.exists(xlsx_path):
+            return {}
+        df = pd.read_excel(xlsx_path)
+        links_map = {}
+        for _, row in df.iterrows():
+            model_id = str(row.get("型號ID", "")).strip()
+            alibaba_link = str(row.get("阿里巴巴連結", "")).strip()
+            if model_id and model_id not in ("", "nan", "None"):
+                links_map[model_id] = alibaba_link if alibaba_link and alibaba_link not in ("", "nan", "None") else ""
+        return links_map
+    except Exception as e:
+        print(f"⚠️ 載入阿里巴巴連結失敗: {e}")
+        return {}
+
+
 def classify_inventory_status(current_stock, monthly_sales):
     """依照庫存可支撐月數給出狀態標籤"""
     if current_stock == 0 and monthly_sales > 0:
@@ -358,8 +378,10 @@ def classify_inventory_status(current_stock, monthly_sales):
     return "充足", "healthy", stock_months
 
 
-def build_inventory_analysis(data, months):
+def build_inventory_analysis(data, months, alibaba_links=None):
     """從 JSON 建立摘要與商品明細，供訊息與 HTML 共用"""
+    if alibaba_links is None:
+        alibaba_links = {}
     products = []
     summary = {
         "total_products": len(data),
@@ -422,6 +444,7 @@ def build_inventory_analysis(data, months):
                 "status_text": status_text,
                 "status_level": status_level,
                 "stock_months": stock_months,
+                "alibaba_link": alibaba_links.get(str(model.get("規格ID", "")), ""),
             })
 
         if any(model["restock"] > 0 for model in product_models):
@@ -579,6 +602,14 @@ def generate_html_report(keyword, months, summary, products, output_path):
                 f"{model['stock_months']} 月"
                 if model["stock_months"] is not None else "無法估算"
             )
+            alibaba_cell = ""
+            if model.get("alibaba_link"):
+                alibaba_cell = (
+                    f'<td><a class="alibaba-link" href="{html.escape(model["alibaba_link"], quote=True)}" '
+                    f'target="_blank" rel="noopener noreferrer">🔗 阿里巴巴</a></td>'
+                )
+            else:
+                alibaba_cell = '<td class="no-link">—</td>'
             model_rows.append(
                 "<tr>"
                 f"<td>{html.escape(model['model_name'])}</td>"
@@ -588,6 +619,7 @@ def generate_html_report(keyword, months, summary, products, output_path):
                 f"<td>{stock_months}</td>"
                 f"<td>{model['expected_stock']:,}</td>"
                 f"<td>{model['restock']:,}</td>"
+                f"{alibaba_cell}"
                 "</tr>"
             )
 
@@ -641,6 +673,7 @@ def generate_html_report(keyword, months, summary, products, output_path):
                       <th>可撐月數</th>
                       <th>目標庫存</th>
                       <th>建議補貨</th>
+                      <th>阿里巴巴</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -851,6 +884,25 @@ def generate_html_report(keyword, months, summary, products, output_path):
     }}
     tr:hover td {{
       background: rgba(255, 241, 235, 0.7);
+    }}
+    a.alibaba-link {{
+      display: inline-block;
+      background: #ff6a00;
+      color: #fff;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      text-decoration: none;
+      white-space: nowrap;
+    }}
+    a.alibaba-link:hover {{
+      background: #e55d00;
+      text-decoration: none;
+    }}
+    td.no-link {{
+      color: #bbb;
+      text-align: center;
     }}
     .footer-note {{
       color: rgba(255, 255, 255, 0.82);
@@ -1265,7 +1317,8 @@ def generate_report(keyword, months, output_file, html_output_file):
         return f"⚠️ 未找到任何與「{html.escape(keyword)}」相關的商品", None, None
 
     try:
-        summary, products = build_inventory_analysis(data, months)
+        alibaba_links = load_alibaba_links()
+        summary, products = build_inventory_analysis(data, months, alibaba_links)
     except Exception as e:
         return None, None, f"❌ 分析庫存資料時出錯：\n{html.escape(str(e))}"
 

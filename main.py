@@ -233,6 +233,27 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     }, ensure_ascii=False).encode('utf-8'))
                 return
 
+        # 處理阿里巴巴連結查詢
+        if self.path == '/api/alibaba-links':
+            try:
+                links_map = self._load_alibaba_links()
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps(links_map, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json')
+                self.end_headers()
+                self.wfile.write(
+                    json.dumps({
+                        "status": "error",
+                        "message": str(e)
+                    }, ensure_ascii=False).encode('utf-8'))
+                return
+
         # 處理中斷爬蟲請求
         if self.path == '/stop_crawler':
             self.send_response(200)
@@ -480,6 +501,25 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             timeout=5400,
             script_name=script_name,
         )
+
+    def _load_alibaba_links(self):
+        """從 shopee_products.xlsx 讀取 型號ID→阿里巴巴連結 的映射"""
+        try:
+            import pandas as pd
+            xlsx_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shopee_products.xlsx")
+            if not os.path.exists(xlsx_path):
+                return {}
+            df = pd.read_excel(xlsx_path)
+            links_map = {}
+            for _, row in df.iterrows():
+                model_id = str(row.get("型號ID", "")).strip()
+                alibaba_link = str(row.get("阿里巴巴連結", "")).strip()
+                if model_id and model_id not in ("", "nan", "None"):
+                    links_map[model_id] = alibaba_link if alibaba_link and alibaba_link not in ("", "nan", "None") else ""
+            return links_map
+        except Exception as e:
+            logger.warning(f"載入阿里巴巴連結失敗: {e}")
+            return {}
 
     def run_worker_process(self, worker_args, output_path, task_name="任務", timeout=20000, script_name="crawler.py"):
         """執行 worker 子程序並讀取 JSON 結果"""

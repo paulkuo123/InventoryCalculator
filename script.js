@@ -20,6 +20,24 @@ document.addEventListener('DOMContentLoaded', function() {
     window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
     window.currentSearchOption = 'product'; // 預設搜尋選項為商品名稱
     window.isPieChartVisible = false; // 圓餅圖顯示狀態
+    window.alibabaLinks = {}; // 型號ID → 阿里巴巴連結映射
+
+    // 載入阿里巴巴連結映射
+    function loadAlibabaLinks() {
+        if (Object.keys(window.alibabaLinks).length > 0) return; // 已載入過
+        fetch('/api/alibaba-links')
+            .then(r => r.json())
+            .then(data => {
+                window.alibabaLinks = data;
+            })
+            .catch(err => console.warn('載入阿里巴巴連結失敗:', err));
+    }
+
+    // 根據規格ID取得阿里巴巴連結
+    function getAlibabaLink(specId) {
+        if (!specId || !window.alibabaLinks) return '';
+        return window.alibabaLinks[String(specId)] || '';
+    }
     
     // 整體庫存水位統計計算函數
     function calculateInventoryStatistics(products, advancedKeyword = '', searchOption = 'product') {
@@ -753,6 +771,26 @@ document.addEventListener('DOMContentLoaded', function() {
                                 }
                             }
 
+                            // 阿里巴巴連結按鈕
+                            const specId = modelData.規格ID || '';
+                            const alibabaLink = getAlibabaLink(specId);
+                            if (alibabaLink) {
+                                // 添加空格
+                                modelText.appendChild(document.createTextNode(' '));
+
+                                const alibabaBtn = document.createElement('a');
+                                alibabaBtn.href = alibabaLink;
+                                alibabaBtn.target = '_blank';
+                                alibabaBtn.rel = 'noopener noreferrer';
+                                alibabaBtn.className = 'badge badge-alibaba';
+                                alibabaBtn.textContent = '🔗 阿里巴巴';
+                                alibabaBtn.title = `規格ID: ${specId}`;
+                                alibabaBtn.onclick = function(e) {
+                                    e.stopPropagation();
+                                };
+                                modelText.appendChild(alibabaBtn);
+                            }
+
                             modelItem.appendChild(modelText);
                             modelsDiv.appendChild(modelItem);
                         } catch (modelError) {
@@ -1023,6 +1061,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 短暫延遲後隱藏載入提示
                 setTimeout(() => {
                     if (loading) loading.style.display = 'none';
+                    loadAlibabaLinks(); // 載入阿里巴巴連結
                     displayProducts(data, '', 'product'); // 傳遞正確的參數
                     
                     // 顯示進階搜尋區塊

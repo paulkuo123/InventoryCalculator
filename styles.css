@@ -802,6 +802,18 @@ input:checked + .toggle-slider:before {
     color: #7b1fa2;
 }
 
+.badge-alibaba {
+    background-color: #ff6a00;
+    color: #fff;
+    text-decoration: none;
+    cursor: pointer;
+}
+
+.badge-alibaba:hover {
+    background-color: #e55d00;
+    text-decoration: none;
+}
+
 .empty-state {
     text-align: center;
     padding: 40px 20px;
