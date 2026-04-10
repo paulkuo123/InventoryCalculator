@@ -2444,6 +2444,7 @@ class ShopeeCrawler:
             for variation in variation_list:
                 model_info = {
                     '型號名稱': '未知型號',
+                    '規格ID': '未找到',
                     '已售出數量': '未找到',
                     '商品庫存': '未找到',
                     '型號圖片網址': '未找到'
@@ -2456,6 +2457,20 @@ class ShopeeCrawler:
                         model_name = name_elements[0].text.strip()
                         model_info['型號名稱'] = model_name
                         model_info['型號圖片網址'] = golden_models.get(model_name, "未找到")
+                except Exception:
+                    pass  # 預期的例外：元素不存在或無法點擊
+
+                # 提取規格 ID
+                try:
+                    sku_elements = variation.find_elements(
+                        By.CLASS_NAME, 'variation-name-info-sku')
+                    for sku_el in sku_elements:
+                        sku_text = sku_el.text.strip()
+                        if sku_text.startswith('規格 ID:'):
+                            spec_id = sku_text.replace('規格 ID:', '').strip()
+                            if spec_id and spec_id != '-':
+                                model_info['規格ID'] = spec_id
+                                break
                 except Exception:
                     pass  # 預期的例外：元素不存在或無法點擊
 
