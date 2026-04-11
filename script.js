@@ -33,10 +33,16 @@ document.addEventListener('DOMContentLoaded', function() {
             .catch(err => console.warn('載入阿里巴巴連結失敗:', err));
     }
 
-    // 根據規格ID取得阿里巴巴連結
-    function getAlibabaLink(specId) {
-        if (!specId || !window.alibabaLinks) return '';
-        return window.alibabaLinks[String(specId)] || '';
+    // 依序根據規格ID、商品名稱+型號名稱取得阿里巴巴連結
+    function getAlibabaLink(specId, productName, modelName) {
+        if (!window.alibabaLinks) return '';
+        if (specId && window.alibabaLinks[String(specId)]) {
+            return window.alibabaLinks[String(specId)];
+        }
+        if (productName && modelName) {
+            return window.alibabaLinks[`${productName}|||${modelName}`] || '';
+        }
+        return '';
     }
     
     // 整體庫存水位統計計算函數
@@ -773,7 +779,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                             // 阿里巴巴連結按鈕
                             const specId = modelData.規格ID || '';
-                            const alibabaLink = getAlibabaLink(specId);
+                            const alibabaLink = getAlibabaLink(specId, product.商品名稱 || '', modelData.型號名稱 || '');
                             if (alibabaLink) {
                                 // 添加空格
                                 modelText.appendChild(document.createTextNode(' '));

@@ -270,6 +270,19 @@ def safe_int(value, default=0):
         return default
 
 
+def normalize_identifier(value):
+    """將 Excel 讀出的 ID 正規化成不帶 .0 的字串。"""
+    text = str(value).strip()
+    if text in ("", "nan", "None"):
+        return ""
+    if text.endswith(".0"):
+        try:
+            return str(int(float(text)))
+        except (TypeError, ValueError):
+            return text
+    return text
+
+
 def sanitize_filename(value):
     """將文字轉為可安全用於檔名的格式"""
     cleaned = []
@@ -348,7 +361,10 @@ def estimate_monthly_sales(product_info, model_info):
 
 
 def load_alibaba_links():
-    """從 shopee_products.xlsx 讀取 型號ID→阿里巴巴連結 的映射"""
+    """從 shopee_products.xlsx 讀取阿里巴巴連結映射。
+
+    優先使用 型號ID；若缺少型號ID，則退回 商品名稱+型號名稱。
+    """
     try:
         import pandas as pd
         xlsx_path = os.path.join(WORK_DIR, "shopee_products.xlsx")
@@ -357,14 +373,33 @@ def load_alibaba_links():
         df = pd.read_excel(xlsx_path)
         links_map = {}
         for _, row in df.iterrows():
-            model_id = str(row.get("型號ID", "")).strip()
+            product_name = str(row.get("商品名稱", "")).strip()
+            model_name = str(row.get("型號名稱", "")).strip()
+            model_id = normalize_identifier(row.get("型號ID", ""))
             alibaba_link = str(row.get("阿里巴巴連結", "")).strip()
+            if not alibaba_link or alibaba_link in ("", "nan", "None"):
+                continue
             if model_id and model_id not in ("", "nan", "None"):
-                links_map[model_id] = alibaba_link if alibaba_link and alibaba_link not in ("", "nan", "None") else ""
+                links_map[model_id] = alibaba_link
+            if product_name and product_name not in ("nan", "None") and model_name and model_name not in ("nan", "None"):
+                links_map[f"{product_name}|||{model_name}"] = alibaba_link
         return links_map
     except Exception as e:
         print(f"⚠️ 載入阿里巴巴連結失敗: {e}")
         return {}
+
+
+def get_alibaba_link(alibaba_links, product_name, model):
+    """依序用 規格ID、商品名稱+型號名稱 取得阿里巴巴連結。"""
+    spec_id = str(model.get("規格ID", "")).strip()
+    if spec_id and spec_id in alibaba_links:
+        return alibaba_links[spec_id]
+
+    model_name = str(model.get("型號名稱", "")).strip()
+    if product_name and model_name:
+        return alibaba_links.get(f"{product_name}|||{model_name}", "")
+
+    return ""
 
 
 def classify_inventory_status(current_stock, monthly_sales):
@@ -452,7 +487,7 @@ def build_inventory_analysis(data, months, alibaba_links=None):
                 "status_text": status_text,
                 "status_level": status_level,
                 "stock_months": stock_months,
-                "alibaba_link": alibaba_links.get(str(model.get("規格ID", "")), ""),
+                "alibaba_link": get_alibaba_link(alibaba_links, product_name, model),
             })
 
         if any(model["restock"] > 0 for model in product_models):

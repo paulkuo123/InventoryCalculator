@@ -78,6 +78,19 @@ import logging
 import datetime
 
 # 導入版本管理
+
+
+def normalize_identifier(value):
+    """將 Excel 讀出的 ID 正規化成不帶 .0 的字串。"""
+    text = str(value).strip()
+    if text in ("", "nan", "None"):
+        return ""
+    if text.endswith(".0"):
+        try:
+            return str(int(float(text)))
+        except (TypeError, ValueError):
+            return text
+    return text
 from version import check_for_updates, CURRENT_VERSION
 
 # 設置日誌記錄
@@ -503,7 +516,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         )
 
     def _load_alibaba_links(self):
-        """從 shopee_products.xlsx 讀取 型號ID→阿里巴巴連結 的映射"""
+        """從 shopee_products.xlsx 讀取阿里巴巴連結映射。
+
+        優先使用 型號ID；若缺少型號ID，則退回 商品名稱+型號名稱。
+        """
         try:
             import pandas as pd
             xlsx_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shopee_products.xlsx")
@@ -512,10 +528,16 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             df = pd.read_excel(xlsx_path)
             links_map = {}
             for _, row in df.iterrows():
-                model_id = str(row.get("型號ID", "")).strip()
+                product_name = str(row.get("商品名稱", "")).strip()
+                model_name = str(row.get("型號名稱", "")).strip()
+                model_id = normalize_identifier(row.get("型號ID", ""))
                 alibaba_link = str(row.get("阿里巴巴連結", "")).strip()
+                if not alibaba_link or alibaba_link in ("", "nan", "None"):
+                    continue
                 if model_id and model_id not in ("", "nan", "None"):
-                    links_map[model_id] = alibaba_link if alibaba_link and alibaba_link not in ("", "nan", "None") else ""
+                    links_map[model_id] = alibaba_link
+                if product_name and product_name not in ("nan", "None") and model_name and model_name not in ("nan", "None"):
+                    links_map[f"{product_name}|||{model_name}"] = alibaba_link
             return links_map
         except Exception as e:
             logger.warning(f"載入阿里巴巴連結失敗: {e}")
