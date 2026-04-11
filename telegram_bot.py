@@ -657,12 +657,12 @@ def generate_html_report(keyword, months, summary, products, output_path):
                 "<tr>"
                 f"<td>{html.escape(model['model_name'])}</td>"
                 f"<td>{render_status_badge(model['status_level'], model['status_text'])}</td>"
-                f"<td>{model['current_stock']:,}</td>"
                 f"<td>{model['monthly_sales']:,}</td>"
+                f"{alibaba_cell}"
+                f"<td>{model['current_stock']:,}</td>"
                 f"<td>{stock_months}</td>"
                 f"<td>{model['expected_stock']:,}</td>"
                 f"<td>{model['restock']:,}</td>"
-                f"{alibaba_cell}"
                 "</tr>"
             )
 
@@ -711,12 +711,12 @@ def generate_html_report(keyword, months, summary, products, output_path):
                     <tr>
                       <th>型號</th>
                       <th>狀態</th>
-                      <th>目前庫存</th>
                       <th>月銷量</th>
+                      <th>阿里巴巴</th>
+                      <th>目前庫存</th>
                       <th>可撐月數</th>
                       <th>目標庫存</th>
                       <th>建議補貨</th>
-                      <th>阿里巴巴</th>
                     </tr>
                   </thead>
                   <tbody>

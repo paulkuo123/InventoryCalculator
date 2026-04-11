@@ -562,6 +562,55 @@ document.addEventListener('DOMContentLoaded', function() {
                 // 創建行元素
                 const row = document.createElement('tr');
 
+                // 計算商品整體庫存狀態（使用型號總庫存和總月銷量）
+                let totalModelStock = 0;
+                if (product.型號 && Array.isArray(product.型號)) {
+                    product.型號.forEach(model => {
+                        totalModelStock += parseInt(model.商品庫存, 10) || 0;
+                    });
+                }
+                const totalMonthlySales = parseInt(product.總月銷量, 10) || 0;
+                
+                // 判斷狀態
+                let statusText = '未知';
+                let statusClass = 'badge-secondary';
+                
+                if (totalModelStock === 0 && totalMonthlySales > 0) {
+                    statusText = '已缺貨';
+                    statusClass = 'badge-danger';
+                } else if (totalMonthlySales <= 0) {
+                    if (totalModelStock <= 0) {
+                        statusText = '待確認';
+                        statusClass = 'badge-secondary';
+                    } else {
+                        statusText = '低流動';
+                        statusClass = 'badge-success';
+                    }
+                } else {
+                    const stockMonths = Math.round(totalModelStock / totalMonthlySales * 10) / 10;
+                    if (stockMonths < 1) {
+                        statusText = '危急';
+                        statusClass = 'badge-danger';
+                    } else if (stockMonths < 2) {
+                        statusText = '偏低';
+                        statusClass = 'badge-warning';
+                    } else if (stockMonths < 3) {
+                        statusText = '正常';
+                        statusClass = 'badge-success';
+                    } else {
+                        statusText = '充足';
+                        statusClass = 'badge-success';
+                    }
+                }
+                
+                // 狀態欄位
+                const statusCell = document.createElement('td');
+                const statusBadge = document.createElement('span');
+                statusBadge.className = `badge ${statusClass}`;
+                statusBadge.textContent = statusText;
+                statusCell.appendChild(statusBadge);
+                row.appendChild(statusCell);
+
                 // 商品名稱和圖片
                 const nameCell = document.createElement('td');
                 const nameDiv = document.createElement('div');
@@ -855,7 +904,7 @@ document.addEventListener('DOMContentLoaded', function() {
         } else {
             productList.innerHTML = `
                 <tr>
-                    <td colspan="3">
+                    <td colspan="5">
                         <div class="empty-state">
                             <i class="fas fa-filter"></i>
                             <p>沒有符合過濾條件的商品</p>
