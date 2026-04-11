@@ -209,6 +209,14 @@ def save_last_update_id(update_id):
         pass
 
 
+def get_authorized_chat_ids():
+    """回傳允許的 chat_id 集合，會自動納入 TG_CHAT_ID。"""
+    authorized = {str(uid).strip() for uid in AUTHORIZED_USERS if str(uid).strip()}
+    if str(TG_CHAT_ID).strip():
+        authorized.add(str(TG_CHAT_ID).strip())
+    return authorized
+
+
 def parse_search_command(text):
     """解析 /搜尋 指令
     返回: (keyword, months) 或 None
@@ -1339,12 +1347,15 @@ def generate_report(keyword, months, output_file, html_output_file):
 def main():
     global running, current_task
 
+    authorized_chat_ids = get_authorized_chat_ids()
+
     print("="*50)
     print("🤖 Shopee 庫存 / 廣告 Telegram Bot")
     print("="*50)
     print(f"📡 開始監聽訊息...")
     print(f"💡 指令格式：/搜尋 <產品> <月數>")
     print(f"   例如：/搜尋 牙刷 4")
+    print(f"🔐 允許的 chat_id：{', '.join(sorted(authorized_chat_ids))}")
     print(f"🔄 Cookie 自動刷新已啟用（18-30 小時隨機間隔，失敗後 2-6 小時重試）")
     print(f"⚠️ 按 Ctrl+C 停止\n")
 
@@ -1375,7 +1386,17 @@ def main():
                 text = message.get("text", "")
 
                 # 只处理授权用户的消息
-                if str(chat_id) not in [str(uid) for uid in AUTHORIZED_USERS]:
+                if str(chat_id) not in authorized_chat_ids:
+                    user = message.get("from", {})
+                    username = user.get("username") or "(no username)"
+                    full_name = " ".join(
+                        part for part in [user.get("first_name", ""), user.get("last_name", "")]
+                        if part
+                    ).strip() or "(no name)"
+                    print(
+                        f"⚠️ 忽略未授權訊息: chat_id={chat_id}, "
+                        f"user_id={user.get('id')}, username={username}, name={full_name}, text={text!r}"
+                    )
                     continue
                 
                 # 处理 /搜尋 指令
