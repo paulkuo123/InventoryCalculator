@@ -531,7 +531,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 product_name = str(row.get("商品名稱", "")).strip()
                 model_name = str(row.get("型號名稱", "")).strip()
                 model_id = normalize_identifier(row.get("型號ID", ""))
-                alibaba_link = str(row.get("阿里巴巴連結", "")).strip()
+                alibaba_link = str(row.get("阿里巴巴商品URL", "")).strip()
                 if not alibaba_link or alibaba_link in ("", "nan", "None"):
                     continue
                 if model_id and model_id not in ("", "nan", "None"):

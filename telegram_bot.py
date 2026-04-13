@@ -376,7 +376,7 @@ def load_alibaba_links():
             product_name = str(row.get("商品名稱", "")).strip()
             model_name = str(row.get("型號名稱", "")).strip()
             model_id = normalize_identifier(row.get("型號ID", ""))
-            alibaba_link = str(row.get("阿里巴巴連結", "")).strip()
+            alibaba_link = str(row.get("阿里巴巴商品URL", "")).strip()
             if not alibaba_link or alibaba_link in ("", "nan", "None"):
                 continue
             if model_id and model_id not in ("", "nan", "None"):
@@ -390,7 +390,11 @@ def load_alibaba_links():
 
 
 def get_alibaba_link(alibaba_links, product_name, model):
-    """依序用 規格ID、商品名稱+型號名稱 取得阿里巴巴連結。"""
+    """依序用 golden_table、規格ID、商品名稱+型號名稱 取得阿里巴巴連結。"""
+    model_url = str(model.get("阿里巴巴商品URL", "")).strip()
+    if model_url and model_url not in ("nan", "None"):
+        return model_url
+
     spec_id = str(model.get("規格ID", "")).strip()
     if spec_id and spec_id in alibaba_links:
         return alibaba_links[spec_id]

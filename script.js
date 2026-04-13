@@ -20,9 +20,9 @@ document.addEventListener('DOMContentLoaded', function() {
     window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
     window.currentSearchOption = 'product'; // 預設搜尋選項為商品名稱
     window.isPieChartVisible = false; // 圓餅圖顯示狀態
-    window.alibabaLinks = {}; // 型號ID → 阿里巴巴連結映射
+    window.alibabaLinks = {}; // 型號ID → 阿里巴巴商品URL 映射
 
-    // 載入阿里巴巴連結映射
+    // 載入阿里巴巴商品URL 映射
     function loadAlibabaLinks() {
         if (Object.keys(window.alibabaLinks).length > 0) return; // 已載入過
         fetch('/api/alibaba-links')
@@ -33,9 +33,12 @@ document.addEventListener('DOMContentLoaded', function() {
             .catch(err => console.warn('載入阿里巴巴連結失敗:', err));
     }
 
-    // 依序根據規格ID、商品名稱+型號名稱取得阿里巴巴連結
-    function getAlibabaLink(specId, productName, modelName) {
+    // 依序根據 golden_table、規格ID、商品名稱+型號名稱取得阿里巴巴連結
+    function getAlibabaLink(modelData, productName, modelName) {
+        const modelUrl = (modelData && modelData.阿里巴巴商品URL) ? String(modelData.阿里巴巴商品URL).trim() : '';
+        if (modelUrl) return modelUrl;
         if (!window.alibabaLinks) return '';
+        const specId = modelData ? modelData.規格ID || '' : '';
         if (specId && window.alibabaLinks[String(specId)]) {
             return window.alibabaLinks[String(specId)];
         }
@@ -828,7 +831,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
                             // 阿里巴巴連結按鈕
                             const specId = modelData.規格ID || '';
-                            const alibabaLink = getAlibabaLink(specId, product.商品名稱 || '', modelData.型號名稱 || '');
+                            const alibabaLink = getAlibabaLink(modelData, product.商品名稱 || '', modelData.型號名稱 || '');
                             if (alibabaLink) {
                                 // 添加空格
                                 modelText.appendChild(document.createTextNode(' '));
