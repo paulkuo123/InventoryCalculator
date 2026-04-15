@@ -2432,9 +2432,23 @@ class ShopeeCrawler:
         except:
             total_sales = golden_info.get("已售出總數量", "0")
 
-        # Create a quick lookup for model images from golden table
-        golden_models = {m.get("型號名稱"): m.get("型號圖片網址", "未找到") 
-                         for m in golden_info.get("型號", []) if "型號名稱" in m}
+        # Create quick lookups for model metadata from golden table
+        golden_model_list = golden_info.get("型號", [])
+        golden_models_by_name = {
+            m.get("型號名稱"): m
+            for m in golden_model_list if m.get("型號名稱")
+        }
+        golden_models_by_spec = {
+            str(m.get("規格ID")): m
+            for m in golden_model_list if m.get("規格ID")
+        }
+
+        def apply_golden_model_fields(model_info, golden_model):
+            if not isinstance(golden_model, dict):
+                return
+            model_info['型號圖片網址'] = golden_model.get("型號圖片網址", model_info.get("型號圖片網址", "未找到"))
+            model_info['阿里巴巴商品名稱'] = golden_model.get("阿里巴巴商品名稱", "")
+            model_info['阿里巴巴商品URL'] = golden_model.get("阿里巴巴商品URL", "")
 
         # Extract model info
         models = []
@@ -2447,7 +2461,9 @@ class ShopeeCrawler:
                     '規格ID': '未找到',
                     '已售出數量': '未找到',
                     '商品庫存': '未找到',
-                    '型號圖片網址': '未找到'
+                    '型號圖片網址': '未找到',
+                    '阿里巴巴商品名稱': '',
+                    '阿里巴巴商品URL': ''
                 }
 
                 try:
@@ -2456,7 +2472,10 @@ class ShopeeCrawler:
                     if name_elements:
                         model_name = name_elements[0].text.strip()
                         model_info['型號名稱'] = model_name
-                        model_info['型號圖片網址'] = golden_models.get(model_name, "未找到")
+                        apply_golden_model_fields(
+                            model_info,
+                            golden_models_by_name.get(model_name)
+                        )
                 except Exception:
                     pass  # 預期的例外：元素不存在或無法點擊
 
@@ -2470,6 +2489,10 @@ class ShopeeCrawler:
                             spec_id = sku_text.replace('規格 ID:', '').strip()
                             if spec_id and spec_id != '-':
                                 model_info['規格ID'] = spec_id
+                                apply_golden_model_fields(
+                                    model_info,
+                                    golden_models_by_spec.get(spec_id)
+                                )
                                 break
                 except Exception:
                     pass  # 預期的例外：元素不存在或無法點擊

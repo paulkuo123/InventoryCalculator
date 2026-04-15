@@ -814,6 +814,126 @@ input:checked + .toggle-slider:before {
     text-decoration: none;
 }
 
+.badge-edit-alibaba {
+    background-color: #eef2f7;
+    color: #455a64;
+    border: 1px solid #cfd8dc;
+    cursor: pointer;
+    display: inline-block;
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.badge-edit-alibaba:hover {
+    background-color: #dfe6ee;
+}
+
+.alibaba-modal.hidden {
+    display: none;
+}
+
+.alibaba-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+}
+
+.alibaba-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+}
+
+.alibaba-modal-panel {
+    position: relative;
+    width: min(560px, 100%);
+    max-height: 90vh;
+    overflow: auto;
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+}
+
+.alibaba-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--medium-gray);
+}
+
+.alibaba-modal-header h3 {
+    margin: 0;
+    font-size: 20px;
+}
+
+.alibaba-modal-close {
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border-radius: 6px;
+    background: #f1f3f5;
+    color: var(--text-color);
+    font-size: 22px;
+    line-height: 1;
+}
+
+.alibaba-model-summary {
+    padding: 16px 20px 0;
+    color: var(--dark-gray);
+    font-size: 14px;
+}
+
+.alibaba-model-summary div {
+    margin-bottom: 6px;
+}
+
+.alibaba-edit-form {
+    display: grid;
+    gap: 10px;
+    padding: 16px 20px 20px;
+}
+
+.alibaba-edit-form label {
+    font-weight: 600;
+    color: var(--text-color);
+}
+
+.alibaba-edit-form input,
+.alibaba-edit-form select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--medium-gray);
+    border-radius: 6px;
+    font-size: 14px;
+}
+
+.alibaba-edit-message {
+    min-height: 20px;
+    color: var(--dark-gray);
+    font-size: 14px;
+}
+
+.alibaba-edit-message.error {
+    color: var(--danger-color);
+}
+
+.alibaba-modal-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 8px;
+}
+
+.alibaba-modal-actions button {
+    min-width: 88px;
+}
+
 .empty-state {
     text-align: center;
     padding: 40px 20px;

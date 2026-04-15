@@ -47,6 +47,186 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         return '';
     }
+
+    function rerenderCurrentProducts() {
+        if (!window.lastSearchResults) return;
+        displayProducts(
+            window.lastSearchResults,
+            window.currentAdvancedKeyword || '',
+            window.currentSearchOption || 'product'
+        );
+    }
+
+    function ensureAlibabaEditModal() {
+        let modal = document.getElementById('alibabaEditModal');
+        if (modal) return modal;
+
+        modal = document.createElement('div');
+        modal.id = 'alibabaEditModal';
+        modal.className = 'alibaba-modal hidden';
+        modal.innerHTML = `
+            <div class="alibaba-modal-backdrop" data-alibaba-close="true"></div>
+            <div class="alibaba-modal-panel" role="dialog" aria-modal="true" aria-labelledby="alibabaEditTitle">
+                <div class="alibaba-modal-header">
+                    <h3 id="alibabaEditTitle">編輯阿里巴巴資料</h3>
+                    <button type="button" class="alibaba-modal-close" data-alibaba-close="true" aria-label="關閉">×</button>
+                </div>
+                <div class="alibaba-model-summary">
+                    <div><strong>商品：</strong><span id="alibabaEditProductName"></span></div>
+                    <div><strong>型號：</strong><span id="alibabaEditModelName"></span></div>
+                    <div><strong>規格 ID：</strong><span id="alibabaEditSpecId"></span></div>
+                </div>
+                <form id="alibabaEditForm" class="alibaba-edit-form">
+                    <label for="alibabaProductNameInput">阿里巴巴商品名稱</label>
+                    <input type="text" id="alibabaProductNameInput" autocomplete="off">
+
+                    <label for="alibabaProductUrlInput">阿里巴巴商品URL</label>
+                    <input type="url" id="alibabaProductUrlInput" placeholder="https://detail.1688.com/offer/...html">
+
+                    <label for="alibabaApplyScopeInput">套用範圍</label>
+                    <select id="alibabaApplyScopeInput">
+                        <option value="single">只更新此型號</option>
+                        <option value="fill_missing">套用到此商品缺漏型號</option>
+                        <option value="overwrite_all">覆蓋此商品全部型號</option>
+                    </select>
+
+                    <div id="alibabaEditMessage" class="alibaba-edit-message" aria-live="polite"></div>
+
+                    <div class="alibaba-modal-actions">
+                        <button type="button" class="btn-secondary" data-alibaba-close="true">取消</button>
+                        <button type="submit" class="btn-primary" id="alibabaEditSaveButton">保存</button>
+                    </div>
+                </form>
+            </div>
+        `;
+        document.body.appendChild(modal);
+
+        modal.addEventListener('click', function(e) {
+            if (e.target.dataset.alibabaClose === 'true') {
+                closeAlibabaEditor();
+            }
+        });
+
+        modal.querySelector('#alibabaEditForm').addEventListener('submit', saveAlibabaEdit);
+        return modal;
+    }
+
+    function openAlibabaEditor(productId, product, modelData) {
+        const modal = ensureAlibabaEditModal();
+        const productName = product.商品名稱 || '';
+        const modelName = modelData.型號名稱 || '';
+        const specId = modelData.規格ID || '';
+        const effectiveUrl = getAlibabaLink(modelData, productName, modelName);
+
+        window.currentAlibabaEdit = {
+            productId,
+            productName,
+            modelName,
+            specId
+        };
+
+        modal.querySelector('#alibabaEditProductName').textContent = productName || '未知商品';
+        modal.querySelector('#alibabaEditModelName').textContent = modelName || '未知型號';
+        modal.querySelector('#alibabaEditSpecId').textContent = specId || '未找到';
+        modal.querySelector('#alibabaProductNameInput').value = modelData.阿里巴巴商品名稱 || '';
+        modal.querySelector('#alibabaProductUrlInput').value = modelData.阿里巴巴商品URL || effectiveUrl || '';
+        modal.querySelector('#alibabaApplyScopeInput').value = 'single';
+        modal.querySelector('#alibabaEditMessage').textContent = '';
+        modal.classList.remove('hidden');
+        modal.querySelector('#alibabaProductUrlInput').focus();
+    }
+
+    function closeAlibabaEditor() {
+        const modal = document.getElementById('alibabaEditModal');
+        if (modal) modal.classList.add('hidden');
+        window.currentAlibabaEdit = null;
+    }
+
+    function applyAlibabaUpdatesToCurrentResults(productId, updatedModels) {
+        const product = window.lastSearchResults && window.lastSearchResults[productId];
+        if (!product || !Array.isArray(product.型號) || !Array.isArray(updatedModels)) return;
+
+        updatedModels.forEach(updatedModel => {
+            const updatedSpecId = String(updatedModel.規格ID || '').trim();
+            const updatedModelName = String(updatedModel.型號名稱 || '').trim();
+            const localModel = product.型號.find(model => {
+                const localSpecId = String(model.規格ID || '').trim();
+                const localModelName = String(model.型號名稱 || '').trim();
+                return (updatedSpecId && localSpecId === updatedSpecId) ||
+                    (!updatedSpecId && updatedModelName && localModelName === updatedModelName);
+            });
+            if (localModel) {
+                localModel.阿里巴巴商品名稱 = updatedModel.阿里巴巴商品名稱 || '';
+                localModel.阿里巴巴商品URL = updatedModel.阿里巴巴商品URL || '';
+            }
+        });
+    }
+
+    function saveAlibabaEdit(e) {
+        e.preventDefault();
+        const modal = ensureAlibabaEditModal();
+        const context = window.currentAlibabaEdit;
+        if (!context) return;
+
+        const nameInput = modal.querySelector('#alibabaProductNameInput');
+        const urlInput = modal.querySelector('#alibabaProductUrlInput');
+        const scopeInput = modal.querySelector('#alibabaApplyScopeInput');
+        const message = modal.querySelector('#alibabaEditMessage');
+        const saveButton = modal.querySelector('#alibabaEditSaveButton');
+        const alibabaProductUrl = urlInput.value.trim();
+        const applyScope = scopeInput.value;
+
+        if (alibabaProductUrl && !/^https?:\/\//i.test(alibabaProductUrl)) {
+            message.textContent = 'URL 必須以 http:// 或 https:// 開頭';
+            message.className = 'alibaba-edit-message error';
+            return;
+        }
+
+        if (applyScope === 'overwrite_all' && !confirm('確定要覆蓋此商品全部型號的阿里巴巴資料嗎？')) {
+            return;
+        }
+
+        saveButton.disabled = true;
+        message.textContent = '保存中...';
+        message.className = 'alibaba-edit-message';
+
+        fetch('/api/golden-table/model-alibaba', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                productId: context.productId,
+                specId: context.specId,
+                modelName: context.modelName,
+                alibabaProductName: nameInput.value.trim(),
+                alibabaProductUrl,
+                applyScope
+            })
+        })
+            .then(async response => {
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.message || '保存失敗');
+                }
+                return data;
+            })
+            .then(data => {
+                applyAlibabaUpdatesToCurrentResults(context.productId, data.updatedModels);
+                window.alibabaLinks = {};
+                loadAlibabaLinks();
+                closeAlibabaEditor();
+                rerenderCurrentProducts();
+                alert(`已更新 ${data.updatedCount || 0} 個型號`);
+            })
+            .catch(error => {
+                message.textContent = error.message || '保存失敗';
+                message.className = 'alibaba-edit-message error';
+            })
+            .finally(() => {
+                saveButton.disabled = false;
+            });
+    }
     
     // 整體庫存水位統計計算函數
     function calculateInventoryStatistics(products, advancedKeyword = '', searchOption = 'product') {
@@ -848,6 +1028,18 @@ document.addEventListener('DOMContentLoaded', function() {
                                 };
                                 modelText.appendChild(alibabaBtn);
                             }
+
+                            modelText.appendChild(document.createTextNode(' '));
+                            const alibabaEditBtn = document.createElement('button');
+                            alibabaEditBtn.type = 'button';
+                            alibabaEditBtn.className = 'badge badge-edit-alibaba';
+                            alibabaEditBtn.textContent = '編輯';
+                            alibabaEditBtn.title = '編輯此型號的阿里巴巴資料';
+                            alibabaEditBtn.onclick = function(e) {
+                                e.stopPropagation();
+                                openAlibabaEditor(productId, product, modelData);
+                            };
+                            modelText.appendChild(alibabaEditBtn);
 
                             modelItem.appendChild(modelText);
                             modelsDiv.appendChild(modelItem);

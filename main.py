@@ -76,6 +76,7 @@ import atexit
 import socket
 import logging
 import datetime
+import shutil
 
 # 導入版本管理
 
@@ -331,6 +332,31 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
 
     def do_POST(self):
+        if self.path == '/api/golden-table/model-alibaba':
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                post_data = self.rfile.read(content_length).decode('utf-8')
+                data = json.loads(post_data) if post_data else {}
+                response = self._update_golden_table_model_alibaba(data)
+                self._send_json_response(200, response)
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except FileNotFoundError as e:
+                self._send_json_response(404, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"更新 golden_table.json 阿里巴巴資料失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
         # 處理中斷爬蟲請求
         if self.path == '/stop_crawler':
             content_length = int(self.headers['Content-Length'])
@@ -362,6 +388,94 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                         "error": str(e)
                     }, ensure_ascii=False).encode('utf-8'))
             return
+
+    def _send_json_response(self, status_code, payload):
+        self.send_response(status_code)
+        self.send_header('Content-type', 'application/json; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+
+    def _update_golden_table_model_alibaba(self, payload):
+        product_id = normalize_identifier(payload.get("productId", ""))
+        spec_id = normalize_identifier(payload.get("specId", ""))
+        model_name = str(payload.get("modelName", "")).strip()
+        alibaba_product_name = str(payload.get("alibabaProductName", "")).strip()
+        alibaba_product_url = str(payload.get("alibabaProductUrl", "")).strip()
+        apply_scope = str(payload.get("applyScope", "single")).strip()
+
+        if apply_scope not in ("single", "fill_missing", "overwrite_all"):
+            raise ValueError("套用範圍不正確")
+        if not product_id:
+            raise ValueError("缺少商品ID")
+        if not spec_id and not model_name:
+            raise ValueError("缺少規格ID或型號名稱")
+        if alibaba_product_url and not re.match(r'^https?://', alibaba_product_url, re.IGNORECASE):
+            raise ValueError("阿里巴巴商品URL 必須以 http:// 或 https:// 開頭")
+
+        golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
+        if not os.path.exists(golden_path):
+            raise FileNotFoundError("找不到 golden_table.json")
+
+        with open(golden_path, "r", encoding="utf-8") as f:
+            golden_table = json.load(f)
+
+        product = golden_table.get(product_id)
+        if not isinstance(product, dict):
+            raise FileNotFoundError(f"找不到商品ID: {product_id}")
+
+        models = product.get("型號", [])
+        if not isinstance(models, list):
+            raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
+
+        target_model = self._find_golden_model(models, spec_id, model_name)
+        if target_model is None:
+            raise FileNotFoundError("找不到對應型號")
+
+        if apply_scope == "single":
+            models_to_update = [target_model]
+        elif apply_scope == "fill_missing":
+            models_to_update = [
+                model for model in models
+                if not str(model.get("阿里巴巴商品URL", "")).strip()
+            ]
+        else:
+            models_to_update = models
+
+        if target_model not in models_to_update:
+            models_to_update.append(target_model)
+
+        for model in models_to_update:
+            model["阿里巴巴商品名稱"] = alibaba_product_name
+            model["阿里巴巴商品URL"] = alibaba_product_url
+
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_path = f"{golden_path}.bak_{timestamp}"
+        shutil.copy2(golden_path, backup_path)
+
+        with open(golden_path, "w", encoding="utf-8") as f:
+            json.dump(golden_table, f, ensure_ascii=False, indent=4)
+
+        return {
+            "status": "success",
+            "message": "已更新阿里巴巴資料",
+            "productId": product_id,
+            "applyScope": apply_scope,
+            "updatedCount": len(models_to_update),
+            "updatedModels": models_to_update
+        }
+
+    def _find_golden_model(self, models, spec_id, model_name):
+        if spec_id:
+            for model in models:
+                if normalize_identifier(model.get("規格ID", "")) == spec_id:
+                    return model
+
+        if model_name:
+            for model in models:
+                if str(model.get("型號名稱", "")).strip() == model_name:
+                    return model
+
+        return None
 
     def shutdown_server(self):
         """關閉伺服器並釋放端口"""
