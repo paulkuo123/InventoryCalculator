@@ -182,10 +182,6 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        if (applyScope === 'overwrite_all' && !confirm('確定要覆蓋此商品全部型號的阿里巴巴資料嗎？')) {
-            return;
-        }
-
         saveButton.disabled = true;
         message.textContent = '保存中...';
         message.className = 'alibaba-edit-message';
@@ -217,7 +213,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 loadAlibabaLinks();
                 closeAlibabaEditor();
                 rerenderCurrentProducts();
-                alert(`已更新 ${data.updatedCount || 0} 個型號`);
             })
             .catch(error => {
                 message.textContent = error.message || '保存失敗';

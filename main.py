@@ -448,8 +448,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             model["阿里巴巴商品名稱"] = alibaba_product_name
             model["阿里巴巴商品URL"] = alibaba_product_url
 
-        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_path = f"{golden_path}.bak_{timestamp}"
+        backup_path = f"{golden_path}.bak"
         shutil.copy2(golden_path, backup_path)
 
         with open(golden_path, "w", encoding="utf-8") as f:
