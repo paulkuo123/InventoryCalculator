@@ -403,7 +403,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         alibaba_product_url = str(payload.get("alibabaProductUrl", "")).strip()
         apply_scope = str(payload.get("applyScope", "single")).strip()
 
-        if apply_scope not in ("single", "fill_missing", "overwrite_all"):
+        if apply_scope not in ("single", "fill_missing", "overwrite_all", "selected_models"):
             raise ValueError("套用範圍不正確")
         if not product_id:
             raise ValueError("缺少商品ID")
@@ -438,11 +438,35 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 model for model in models
                 if not str(model.get("阿里巴巴商品URL", "")).strip()
             ]
-        else:
+            if target_model not in models_to_update:
+                models_to_update.append(target_model)
+        elif apply_scope == "overwrite_all":
             models_to_update = models
+        else:
+            selected_models = payload.get("selectedModels")
+            if not isinstance(selected_models, list) or len(selected_models) == 0:
+                raise ValueError("請至少選擇一個要套用的型號")
 
-        if target_model not in models_to_update:
-            models_to_update.append(target_model)
+            models_to_update = []
+            seen_model_ids = set()
+            for selected_model in selected_models:
+                if not isinstance(selected_model, dict):
+                    continue
+
+                selected_spec_id = normalize_identifier(selected_model.get("specId", ""))
+                selected_model_name = str(selected_model.get("modelName", "")).strip()
+                selected_golden_model = self._find_golden_model(
+                    models, selected_spec_id, selected_model_name)
+                if selected_golden_model is None:
+                    continue
+
+                model_identity = id(selected_golden_model)
+                if model_identity not in seen_model_ids:
+                    models_to_update.append(selected_golden_model)
+                    seen_model_ids.add(model_identity)
+
+            if len(models_to_update) == 0:
+                raise ValueError("找不到勾選的型號")
 
         for model in models_to_update:
             model["阿里巴巴商品名稱"] = alibaba_product_name

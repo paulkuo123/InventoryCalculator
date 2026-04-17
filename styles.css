@@ -850,7 +850,7 @@ input:checked + .toggle-slider:before {
 
 .alibaba-modal-panel {
     position: relative;
-    width: min(560px, 100%);
+    width: min(680px, 100%);
     max-height: 90vh;
     overflow: auto;
     background: #fff;
@@ -910,6 +910,111 @@ input:checked + .toggle-slider:before {
     padding: 10px 12px;
     border: 1px solid var(--medium-gray);
     border-radius: 6px;
+    font-size: 14px;
+}
+
+.alibaba-selected-models.hidden {
+    display: none;
+}
+
+.alibaba-selected-models {
+    border: 1px solid var(--medium-gray);
+    border-radius: 6px;
+    overflow: hidden;
+}
+
+.alibaba-selected-models-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 12px;
+    background: #f8f9fa;
+    border-bottom: 1px solid var(--medium-gray);
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.alibaba-selected-models-actions {
+    display: flex;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.alibaba-selected-models-actions button {
+    min-width: 56px;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+.alibaba-selected-models-list {
+    max-height: 260px;
+    overflow: auto;
+}
+
+.alibaba-selected-model-option {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #edf0f2;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.alibaba-selected-model-option:last-child {
+    border-bottom: 0;
+}
+
+.alibaba-selected-model-option input {
+    width: auto;
+    margin: 0;
+}
+
+.alibaba-selected-model-details {
+    min-width: 0;
+    display: grid;
+    gap: 3px;
+}
+
+.alibaba-selected-model-name,
+.alibaba-selected-model-meta {
+    overflow-wrap: anywhere;
+}
+
+.alibaba-selected-model-name {
+    color: var(--text-color);
+    font-size: 14px;
+}
+
+.alibaba-selected-model-meta {
+    color: var(--dark-gray);
+    font-size: 12px;
+}
+
+.alibaba-selected-model-status {
+    justify-self: end;
+    white-space: nowrap;
+    border-radius: 6px;
+    padding: 4px 8px;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.alibaba-selected-model-status.has-url {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.alibaba-selected-model-status.missing-url {
+    background: #fff3e0;
+    color: #ef6c00;
+}
+
+.alibaba-selected-models-empty {
+    padding: 14px 12px;
+    color: var(--dark-gray);
     font-size: 14px;
 }
 

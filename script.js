@@ -88,7 +88,19 @@ document.addEventListener('DOMContentLoaded', function() {
                         <option value="single">只更新此型號</option>
                         <option value="fill_missing">套用到此商品缺漏型號</option>
                         <option value="overwrite_all">覆蓋此商品全部型號</option>
+                        <option value="selected_models">自選型號</option>
                     </select>
+
+                    <div id="alibabaSelectedModelsPanel" class="alibaba-selected-models hidden">
+                        <div class="alibaba-selected-models-header">
+                            <span>選擇要套用的型號</span>
+                            <div class="alibaba-selected-models-actions">
+                                <button type="button" class="btn-outline" id="alibabaSelectAllModelsButton">全選</button>
+                                <button type="button" class="btn-outline" id="alibabaClearModelsButton">清除</button>
+                            </div>
+                        </div>
+                        <div id="alibabaSelectedModelsList" class="alibaba-selected-models-list"></div>
+                    </div>
 
                     <div id="alibabaEditMessage" class="alibaba-edit-message" aria-live="polite"></div>
 
@@ -108,7 +120,97 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         modal.querySelector('#alibabaEditForm').addEventListener('submit', saveAlibabaEdit);
+        modal.querySelector('#alibabaApplyScopeInput').addEventListener('change', function() {
+            toggleAlibabaSelectedModelsPanel(modal);
+        });
+        modal.querySelector('#alibabaSelectAllModelsButton').addEventListener('click', function() {
+            modal.querySelectorAll('#alibabaSelectedModelsList input[type="checkbox"]').forEach(checkbox => {
+                checkbox.checked = true;
+            });
+        });
+        modal.querySelector('#alibabaClearModelsButton').addEventListener('click', function() {
+            modal.querySelectorAll('#alibabaSelectedModelsList input[type="checkbox"]').forEach(checkbox => {
+                checkbox.checked = false;
+            });
+        });
         return modal;
+    }
+
+    function toggleAlibabaSelectedModelsPanel(modal) {
+        const scopeInput = modal.querySelector('#alibabaApplyScopeInput');
+        const panel = modal.querySelector('#alibabaSelectedModelsPanel');
+        if (!scopeInput || !panel) return;
+        panel.classList.toggle('hidden', scopeInput.value !== 'selected_models');
+    }
+
+    function isSameAlibabaModel(model, specId, modelName) {
+        const currentSpecId = String(specId || '').trim();
+        const currentModelName = String(modelName || '').trim();
+        const modelSpecId = String(model.規格ID || '').trim();
+        const modelModelName = String(model.型號名稱 || '').trim();
+        return (currentSpecId && modelSpecId === currentSpecId) ||
+            (!currentSpecId && currentModelName && modelModelName === currentModelName);
+    }
+
+    function renderAlibabaSelectedModels(modal, product, activeModelData) {
+        const list = modal.querySelector('#alibabaSelectedModelsList');
+        if (!list) return;
+        list.innerHTML = '';
+
+        const productName = product.商品名稱 || '';
+        const models = Array.isArray(product.型號) ? product.型號 : [];
+        if (models.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'alibaba-selected-models-empty';
+            empty.textContent = '此商品沒有可選型號';
+            list.appendChild(empty);
+            return;
+        }
+
+        models.forEach(model => {
+            const modelName = String(model.型號名稱 || '').trim();
+            const specId = String(model.規格ID || '').trim();
+            const hasAlibabaUrl = Boolean(getAlibabaLink(model, productName, modelName));
+            const isActive = isSameAlibabaModel(model, activeModelData.規格ID || '', activeModelData.型號名稱 || '');
+
+            const option = document.createElement('label');
+            option.className = 'alibaba-selected-model-option';
+
+            const checkbox = document.createElement('input');
+            checkbox.type = 'checkbox';
+            checkbox.dataset.specId = specId;
+            checkbox.dataset.modelName = modelName;
+            checkbox.checked = isActive;
+
+            const details = document.createElement('span');
+            details.className = 'alibaba-selected-model-details';
+
+            const title = document.createElement('span');
+            title.className = 'alibaba-selected-model-name';
+            title.textContent = modelName || '未命名型號';
+
+            const meta = document.createElement('span');
+            meta.className = 'alibaba-selected-model-meta';
+            meta.textContent = `規格 ID: ${specId || '未找到'}`;
+
+            const status = document.createElement('span');
+            status.className = `alibaba-selected-model-status ${hasAlibabaUrl ? 'has-url' : 'missing-url'}`;
+            status.textContent = hasAlibabaUrl ? '已有連結' : '缺漏';
+
+            details.appendChild(title);
+            details.appendChild(meta);
+            option.appendChild(checkbox);
+            option.appendChild(details);
+            option.appendChild(status);
+            list.appendChild(option);
+        });
+    }
+
+    function getSelectedAlibabaModels(modal) {
+        return Array.from(modal.querySelectorAll('#alibabaSelectedModelsList input[type="checkbox"]:checked')).map(checkbox => ({
+            specId: checkbox.dataset.specId || '',
+            modelName: checkbox.dataset.modelName || ''
+        }));
     }
 
     function openAlibabaEditor(productId, product, modelData) {
@@ -131,6 +233,8 @@ document.addEventListener('DOMContentLoaded', function() {
         modal.querySelector('#alibabaProductNameInput').value = modelData.阿里巴巴商品名稱 || '';
         modal.querySelector('#alibabaProductUrlInput').value = modelData.阿里巴巴商品URL || effectiveUrl || '';
         modal.querySelector('#alibabaApplyScopeInput').value = 'single';
+        renderAlibabaSelectedModels(modal, product, modelData);
+        toggleAlibabaSelectedModelsPanel(modal);
         modal.querySelector('#alibabaEditMessage').textContent = '';
         modal.classList.remove('hidden');
         modal.querySelector('#alibabaProductUrlInput').focus();
@@ -175,9 +279,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const saveButton = modal.querySelector('#alibabaEditSaveButton');
         const alibabaProductUrl = urlInput.value.trim();
         const applyScope = scopeInput.value;
+        const selectedModels = applyScope === 'selected_models' ? getSelectedAlibabaModels(modal) : [];
 
         if (alibabaProductUrl && !/^https?:\/\//i.test(alibabaProductUrl)) {
             message.textContent = 'URL 必須以 http:// 或 https:// 開頭';
+            message.className = 'alibaba-edit-message error';
+            return;
+        }
+
+        if (applyScope === 'selected_models' && selectedModels.length === 0) {
+            message.textContent = '請至少選擇一個要套用的型號';
             message.className = 'alibaba-edit-message error';
             return;
         }
@@ -197,7 +308,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 modelName: context.modelName,
                 alibabaProductName: nameInput.value.trim(),
                 alibabaProductUrl,
-                applyScope
+                applyScope,
+                selectedModels
             })
         })
             .then(async response => {
