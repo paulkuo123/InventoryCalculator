@@ -38,13 +38,15 @@ class ShopeeCrawler:
                  driver_path=None,  # 保留參數以兼容呼叫端，但不再使用
                  output_path="shopee_products.json",
                  search_keyword="",
-                 headless=False):
+                 headless=False,
+                 inventory_month=4):
         self.shopee_url = shopee_url
         self.cookies_path = cookies_path
         self.my_products_url = my_products_url
         self.output_path = output_path
         self.search_keyword = search_keyword  # 保存搜尋關鍵字
         self.headless = headless
+        self.inventory_month = inventory_month
         self.products_data = {}
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
@@ -230,7 +232,46 @@ class ShopeeCrawler:
         
         print("已關閉可能出現的彈窗")
 
-    def convert_sales_number(self, sales_text):
+    def _parse_number_text(self, value, preferred_label=None):
+        """
+        從 Shopee 文字中取出數字，支援 1,234、20.4k、2.1萬，以及新版合併欄位文字。
+        """
+        if value is None:
+            return 0
+
+        if isinstance(value, (int, float)):
+            return int(value)
+
+        text = str(value).strip()
+        if not text or text in ("未找到", "未知", "-"):
+            return 0
+
+        normalized = text.replace(",", "").replace("，", "").replace("＋", "+")
+
+        search_text = normalized
+        if preferred_label:
+            label_pattern = re.compile(
+                rf"{re.escape(preferred_label)}\s*([0-9]+(?:\.[0-9]+)?\s*(?:[kK]|萬|万)?)"
+            )
+            label_match = label_pattern.search(normalized)
+            if label_match:
+                search_text = label_match.group(1)
+
+        number_pattern = re.compile(r"([0-9]+(?:\.[0-9]+)?)\s*([kK]|萬|万)?")
+        match = number_pattern.search(search_text)
+        if not match:
+            return 0
+
+        number = float(match.group(1))
+        unit = match.group(2)
+        if unit and unit.lower() == "k":
+            number *= 1000
+        elif unit in ("萬", "万"):
+            number *= 10000
+
+        return int(number)
+
+    def convert_sales_number(self, sales_text, preferred_label=None):
         """
         將銷售數字從 "4.2K" 或 "4.2k" 格式轉換為 "4200" 格式
         
@@ -241,13 +282,7 @@ class ShopeeCrawler:
             str: 轉換後的銷售數字
         """
         try:
-            # 檢查是否包含 "K" 或 "k"
-            if 'K' in sales_text.upper() or 'k' in sales_text:
-                # 移除 "K" 或 "k" 並轉換為浮點數
-                number = float(sales_text.lower().replace('k', ''))
-                # 乘以 1000 並轉換為整數字串
-                return str(int(number * 1000))
-            return sales_text
+            return str(self._parse_number_text(sales_text, preferred_label))
         except Exception as e:
             print(f"轉換銷售數字時出錯: {e}")
         return sales_text
@@ -407,34 +442,12 @@ class ShopeeCrawler:
                     model_name = model.get('型號名稱', '未知')
                     if "月銷量" in model:
                         try:
-                            # 將月銷量轉換為整數並累加
-                            sales_text = model["月銷量"].strip()
-                            monthly_sales = 0
-
-                            # 處理可能包含 K 或 k 的情況 (例如 1.2K)
-                            if 'K' in sales_text.upper() or 'k' in sales_text:
-                                # 移除 K 或 k 並轉換為浮點數，然後乘以 1000
-                                sales_value = float(sales_text.lower().replace(
-                                    'k', '')) * 1000
-                                monthly_sales = int(sales_value)
-                                model_sales_details.append(
-                                    f"{model_name}: {sales_text} -> {monthly_sales}"
-                                )
-                            else:
-                                # 處理可能包含逗號的情況 (例如 1,234)
-                                sales_value = sales_text.replace(",", "")
-                                if sales_value.isdigit():
-                                    monthly_sales = int(sales_value)
-                                    model_sales_details.append(
-                                        f"{model_name}: {sales_text} -> {monthly_sales}"
-                                    )
-                                else:
-                                    print(
-                                        f"警告: 商品 {product_id} 的型號 {model_name} 的月銷量 '{sales_text}' 不是有效數字，設為 0"
-                                    )
-                                    model_sales_details.append(
-                                        f"{model_name}: {sales_text} -> 0 (無效數字)"
-                                    )
+                            sales_text = str(model["月銷量"]).strip()
+                            monthly_sales = self._parse_number_text(sales_text)
+                            model["月銷量"] = str(monthly_sales)
+                            model_sales_details.append(
+                                f"{model_name}: {sales_text} -> {monthly_sales}"
+                            )
 
                             total_monthly_sales += monthly_sales
                         except (ValueError, TypeError) as e:
@@ -449,28 +462,31 @@ class ShopeeCrawler:
             product_info["總月銷量"] = str(total_monthly_sales)
 
             # 計算並添加建議補貨數量到每個型號
-            total_sold = int(product_info.get("已售出總數量", "0"))
-            expected_months = 4  # 預設維持 4 個月庫存
+            total_sold = self._parse_number_text(
+                product_info.get("已售出總數量", "0"),
+                preferred_label="已售出"
+            )
+            product_info["已售出總數量"] = str(total_sold)
+            expected_months = self.inventory_month or 4
             
             if "型號" in product_info and isinstance(product_info["型號"], list):
                 for model in product_info["型號"]:
                     model_name = model.get('型號名稱', '未知')
-                    model_sold = int(model.get('已售出數量', '0'))
-                    current_inventory = int(model.get('商品庫存', '0'))
+                    model_sold = self._parse_number_text(
+                        model.get('已售出數量', '0'),
+                        preferred_label="已售出"
+                    )
+                    current_inventory = self._parse_number_text(
+                        model.get('商品庫存', '0')
+                    )
+                    model['已售出數量'] = str(model_sold)
+                    model['商品庫存'] = str(current_inventory)
                     monthly_sales = 0
                     
                     # 獲取月銷量
                     if "月銷量" in model:
-                        try:
-                            sales_text = model["月銷量"].strip()
-                            if 'K' in sales_text.upper() or 'k' in sales_text:
-                                monthly_sales = int(float(sales_text.lower().replace('k', '')) * 1000)
-                            else:
-                                sales_value = sales_text.replace(",", "")
-                                if sales_value.isdigit():
-                                    monthly_sales = int(sales_value)
-                        except (ValueError, TypeError):
-                            monthly_sales = 0
+                        monthly_sales = self._parse_number_text(model["月銷量"])
+                        model["月銷量"] = str(monthly_sales)
                     
                     # 計算建議補貨數量
                     restock_qty = self.calculate_restock_quantity(
@@ -2426,7 +2442,7 @@ class ShopeeCrawler:
         try:
             total_sales = product_row.find_element(By.CLASS_NAME,
                                                    'list-view-sales').text
-            total_sales = self.convert_sales_number(total_sales)
+            total_sales = self.convert_sales_number(total_sales, preferred_label="已售出")
             if not total_sales.strip():
                 total_sales = golden_info.get("已售出總數量", "0")
         except:
@@ -2502,7 +2518,8 @@ class ShopeeCrawler:
                         By.CLASS_NAME, 'list-view-model-sales')
                     if sales_elements:
                         model_info['已售出數量'] = self.convert_sales_number(
-                            sales_elements[0].text)
+                            sales_elements[0].text,
+                            preferred_label="已售出")
                 except Exception:
                     pass  # 預期的例外：元素不存在或無法點擊
 
@@ -2713,7 +2730,8 @@ def main():
         # 創建爬蟲實例 (直接傳入 headless 參數)
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
                                 driver_path, args.output, args.keyword.strip(),
-                                headless=headless_mode)
+                                headless=headless_mode,
+                                inventory_month=args.inventory_month)
 
         # 運行指定流程
         if args.mode == 'ads-export':
