@@ -2,6 +2,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
+.venv/
 
 # Distribution / Packaging
 dist/
@@ -21,6 +23,8 @@ data/*
 .last_update_id
 .qwen/
 shopee_products.json
+procurement.db
+procurement.db-*
 進貨紀錄.txt
 telegram_alert.sh
 todolist.txt
@@ -33,3 +37,9 @@ ads_analysis_report*.pdf
 ads_export_result*.json
 debug_snapshots/
 .env.local
+alibaba_browser_profile/
+alibaba_chrome_profile/
+shopee_chrome_profile/
+golden_table.json.bak
+golden_table.json.backup*
+CODEX_HANDOFF.md
