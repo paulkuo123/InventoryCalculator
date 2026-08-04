@@ -178,6 +178,89 @@ h1 {
     height: 40px;
 }
 
+.procurement-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 18px;
+}
+
+.auth-ready {
+    color: var(--success-color);
+}
+
+.auth-missing {
+    color: var(--danger-color);
+}
+
+.alibaba-field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.alibaba-field-grid label {
+    display: block;
+    margin-bottom: 5px;
+}
+
+.procurement-modal-panel {
+    max-width: 980px;
+    width: min(980px, calc(100vw - 32px));
+}
+
+.procurement-summary {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 14px;
+}
+
+.procurement-draft-content {
+    max-height: 52vh;
+    overflow: auto;
+    border: 1px solid var(--medium-gray);
+    border-radius: 8px;
+}
+
+.procurement-offer-group + .procurement-offer-group {
+    border-top: 1px solid var(--medium-gray);
+}
+
+.procurement-offer-header {
+    background: #f5f5f5;
+    font-weight: 700;
+    padding: 10px 12px;
+}
+
+.procurement-line {
+    display: grid;
+    grid-template-columns: minmax(220px, 2fr) repeat(5, minmax(100px, 1fr));
+    gap: 10px;
+    align-items: center;
+    padding: 10px 12px;
+    border-top: 1px solid #f0f0f0;
+    font-size: 13px;
+}
+
+.procurement-line strong,
+.procurement-line span {
+    display: block;
+}
+
+.procurement-line.blocked {
+    background: #fff5f5;
+    color: #b91c1c;
+}
+
+.alibaba-edit-message.success {
+    color: var(--success-color);
+}
+
 @keyframes fadeIn {
     from { opacity: 0; transform: translateY(-10px); }
     to { opacity: 1; transform: translateY(0); }
@@ -227,6 +310,17 @@ h1 {
     .module-entry-card {
         flex-direction: column;
         align-items: stretch;
+    }
+
+    .procurement-card {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .alibaba-field-grid,
+    .procurement-summary,
+    .procurement-line {
+        grid-template-columns: 1fr;
     }
 
     .module-entry-button {
@@ -733,6 +827,38 @@ input:checked + .toggle-slider:before {
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
+.badge-alibaba-restock {
+    background-color: #0f766e;
+    color: #fff;
+    border: 1px solid #0f766e;
+    cursor: pointer;
+    display: inline-block;
+    font-size: 12px;
+    padding: 4px 8px;
+}
+
+.badge-alibaba-restock:hover {
+    background-color: #0b5f59;
+}
+
+.model-batch-actions {
+    margin: 0 0 10px 42px;
+}
+
+.batch-restock-button {
+    border-radius: 6px;
+    font-size: 13px;
+    padding: 7px 12px;
+}
+
+.batch-restock-button:disabled {
+    background: #fff3e0;
+    border-color: #ffcc80;
+    color: #b45309;
+    cursor: not-allowed;
+    opacity: 1;
+}
+
 .actions {
     display: flex;
     gap: 10px;
@@ -814,6 +940,38 @@ input:checked + .toggle-slider:before {
     text-decoration: none;
 }
 
+.badge-1688-sku {
+    border: 1px solid transparent;
+    cursor: pointer;
+    display: inline-block;
+    max-width: 260px;
+    overflow: hidden;
+    padding: 4px 8px;
+    text-overflow: ellipsis;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.badge-1688-sku.is-mapped {
+    background: #e8f5e9;
+    border-color: #a5d6a7;
+    color: #1b5e20;
+}
+
+.badge-1688-sku.is-mapped:hover {
+    background: #d7efda;
+}
+
+.badge-1688-sku.is-missing {
+    background: #fff8e1;
+    border-color: #ffcc80;
+    color: #b45309;
+}
+
+.badge-1688-sku.is-missing:hover {
+    background: #ffefc1;
+}
+
 .badge-edit-alibaba {
     background-color: #eef2f7;
     color: #455a64;
@@ -826,6 +984,261 @@ input:checked + .toggle-slider:before {
 
 .badge-edit-alibaba:hover {
     background-color: #dfe6ee;
+}
+
+.sku-review-card {
+    display: block;
+}
+
+.sku-review-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 18px;
+    align-items: flex-start;
+}
+
+.sku-review-actions,
+.sku-review-toolbar {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+}
+
+.sku-review-actions {
+    justify-content: flex-end;
+}
+
+.sku-review-toolbar {
+    margin-top: 16px;
+    padding: 14px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    border-radius: 16px;
+}
+
+.sku-review-toolbar label {
+    display: grid;
+    gap: 6px;
+    color: #7c4a12;
+    font-weight: 700;
+}
+
+.sku-review-toolbar select {
+    min-width: 220px;
+    padding: 9px 12px;
+    border: 1px solid #e6c39a;
+    border-radius: 12px;
+    background: white;
+}
+
+.sku-review-checkbox {
+    display: inline-flex !important;
+    grid-template-columns: none !important;
+    gap: 8px !important;
+    align-items: center;
+    margin-left: auto;
+}
+
+.sku-review-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.sku-review-summary-item,
+.sku-review-summary-warning {
+    background: #fff;
+    border: 1px solid #f1dfc8;
+    border-radius: 14px;
+    padding: 12px;
+}
+
+.sku-review-summary-item strong {
+    display: block;
+    font-size: 22px;
+    color: #c25a00;
+}
+
+.sku-review-summary-item span {
+    color: #6f6258;
+    font-size: 13px;
+}
+
+.sku-review-summary-warning {
+    color: #9a3412;
+    background: #fff7ed;
+    grid-column: 1 / -1;
+}
+
+.sku-review-message {
+    margin-top: 12px;
+    min-height: 22px;
+    color: #6b625a;
+    font-weight: 700;
+}
+
+.sku-review-message.success {
+    color: #166534;
+}
+
+.sku-review-message.error {
+    color: #b91c1c;
+}
+
+.sku-review-list {
+    margin-top: 12px;
+    display: grid;
+    gap: 12px;
+}
+
+.sku-review-product {
+    background: #fff;
+    border: 1px solid #eadbc9;
+    border-radius: 18px;
+    padding: 12px;
+}
+
+.sku-review-product summary {
+    cursor: pointer;
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    font-weight: 800;
+    color: #35261d;
+}
+
+.sku-review-product summary em {
+    font-style: normal;
+    color: #8a5a2b;
+    font-size: 13px;
+    white-space: nowrap;
+}
+
+.sku-review-product-rows {
+    display: grid;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.sku-review-row {
+    border: 1px solid #eee0d0;
+    border-left: 6px solid #d6d3d1;
+    border-radius: 14px;
+    padding: 12px;
+    background: #fffdfb;
+}
+
+.sku-review-row.high {
+    border-left-color: #16a34a;
+}
+
+.sku-review-row.actionable {
+    border-left-color: #f97316;
+}
+
+.sku-review-row.error {
+    border-left-color: #dc2626;
+    background: #fff7f7;
+}
+
+.sku-review-row-top {
+    display: grid;
+    grid-template-columns: auto minmax(180px, 1.3fr) minmax(110px, .7fr) minmax(190px, 1fr) auto;
+    gap: 12px;
+    align-items: center;
+}
+
+.sku-review-select {
+    width: 18px;
+    height: 18px;
+}
+
+.sku-review-model {
+    display: grid;
+    gap: 4px;
+}
+
+.sku-review-model strong {
+    color: #2b211a;
+}
+
+.sku-review-model span,
+.sku-review-current span,
+.sku-review-input-wrap span {
+    font-size: 12px;
+    color: #7f7168;
+}
+
+.sku-review-current strong {
+    display: block;
+    margin-top: 4px;
+    color: #0f766e;
+}
+
+.sku-review-input-wrap {
+    display: grid;
+    gap: 5px;
+}
+
+.sku-review-input-wrap input {
+    width: 100%;
+    padding: 9px 10px;
+    border: 1px solid #d8c3ab;
+    border-radius: 10px;
+}
+
+.sku-review-apply-row {
+    white-space: nowrap;
+}
+
+.sku-review-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.sku-review-chip {
+    border: 1px solid #fed7aa;
+    background: #fff7ed;
+    color: #9a3412;
+    border-radius: 999px;
+    padding: 6px 10px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.sku-review-chip:hover {
+    background: #ffedd5;
+    border-color: #fb923c;
+}
+
+.sku-review-chip.suggested {
+    background: #ecfdf5;
+    border-color: #86efac;
+    color: #166534;
+}
+
+.sku-review-empty-options {
+    color: #8d7c70;
+    font-size: 13px;
+}
+
+.sku-review-row-meta {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-top: 10px;
+    font-size: 13px;
+    color: #7c6f64;
+}
+
+.sku-review-row-meta a {
+    color: #ea580c;
+    font-weight: 800;
 }
 
 .alibaba-modal.hidden {
@@ -856,6 +1269,65 @@ input:checked + .toggle-slider:before {
     background: #fff;
     border-radius: 8px;
     box-shadow: 0 16px 40px rgba(0, 0, 0, 0.25);
+}
+
+.sku-mapping-modal-panel {
+    width: min(920px, 100%);
+}
+
+.sku-mapping-product-link.disabled {
+    color: var(--dark-gray);
+    pointer-events: none;
+    text-decoration: none;
+}
+
+.sku-mapping-help {
+    margin: -2px 0 2px;
+    color: var(--dark-gray);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.sku-mapping-rows {
+    display: grid;
+    gap: 10px;
+    max-height: 52vh;
+    overflow: auto;
+    padding: 2px;
+}
+
+.sku-mapping-row {
+    display: grid;
+    grid-template-columns: minmax(140px, 0.75fr) minmax(180px, 1fr) minmax(180px, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    border: 1px solid var(--medium-gray);
+    border-radius: 6px;
+    background: #fff;
+}
+
+.sku-mapping-row.is-active {
+    border-color: #f59e0b;
+    background: #fffbeb;
+}
+
+.sku-mapping-model-name {
+    font-weight: 700;
+    overflow-wrap: anywhere;
+}
+
+.sku-mapping-product-link {
+    color: #ea580c;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+@media (max-width: 640px) {
+    .sku-mapping-row {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
 }
 
 .alibaba-modal-header {
@@ -1037,6 +1509,15 @@ input:checked + .toggle-slider:before {
 
 .alibaba-modal-actions button {
     min-width: 88px;
+}
+
+#startAlibabaCartButton {
+    background: #0f766e;
+    color: white;
+}
+
+#startAlibabaCartButton:hover:not(:disabled) {
+    background: #0d5f59;
 }
 
 .empty-state {
@@ -1843,6 +2324,40 @@ input:checked + .toggle-slider:before {
 }
 
 @media (max-width: 768px) {
+    .sku-review-header,
+    .sku-review-product summary {
+        display: grid;
+        gap: 10px;
+    }
+
+    .sku-review-actions {
+        justify-content: flex-start;
+    }
+
+    .sku-review-toolbar {
+        display: grid;
+        align-items: stretch;
+    }
+
+    .sku-review-toolbar select {
+        min-width: 0;
+        width: 100%;
+    }
+
+    .sku-review-checkbox {
+        margin-left: 0;
+    }
+
+    .sku-review-row-top {
+        grid-template-columns: auto 1fr;
+    }
+
+    .sku-review-current,
+    .sku-review-input-wrap,
+    .sku-review-apply-row {
+        grid-column: 2;
+    }
+
     .ads-analysis-actions {
         width: 100%;
         justify-content: flex-start;

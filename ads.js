@@ -9,6 +9,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const adsExportResult = document.getElementById('adsExportResult');
     const adsAnalyzeButton = document.getElementById('adsAnalyzeButton');
     const includeAiAnalysis = document.getElementById('includeAiAnalysis');
+    const openaiStatus = document.getElementById('openaiStatus');
+    const openaiModel = document.getElementById('openaiModel');
+    const openaiReasoningEffort = document.getElementById('openaiReasoningEffort');
     const adsAnalysisStatusCard = document.getElementById('adsAnalysisStatusCard');
     const adsAnalysisStatusBadge = document.getElementById('adsAnalysisStatusBadge');
     const adsAnalysisStatusStep = document.getElementById('adsAnalysisStatusStep');
@@ -19,6 +22,57 @@ document.addEventListener('DOMContentLoaded', function() {
 
     window.adsExportRunning = false;
     window.adsAnalysisRunning = false;
+    let openaiStatusData = null;
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replaceAll('&', '&amp;')
+            .replaceAll('<', '&lt;')
+            .replaceAll('>', '&gt;')
+            .replaceAll('"', '&quot;')
+            .replaceAll("'", '&#039;');
+    }
+
+    function syncAiControlState() {
+        const aiEnabled = includeAiAnalysis ? includeAiAnalysis.checked : true;
+        openaiModel.disabled = !aiEnabled || window.adsAnalysisRunning;
+        openaiReasoningEffort.disabled = !aiEnabled || window.adsAnalysisRunning;
+    }
+
+    function renderOpenAIStatus(data) {
+        openaiStatusData = data;
+        if (data.configured) {
+            openaiStatus.className = 'openai-status configured';
+            openaiStatus.innerHTML = `<i class="fas fa-circle-check"></i> OpenAI API 已設定（${escapeHtml(data.key_source)}）；報告會顯示實際回應模型。`;
+        } else {
+            openaiStatus.className = 'openai-status missing';
+            openaiStatus.innerHTML = `<i class="fas fa-triangle-exclamation"></i> 尚未設定 API Key。請在專案終端執行 <code>${escapeHtml(data.setup_command || 'python3 setup_openai_key.py')}</code>。`;
+        }
+        if (data.default_model && openaiModel.querySelector(`option[value="${CSS.escape(data.default_model)}"]`)) {
+            openaiModel.value = data.default_model;
+        }
+        if (data.default_reasoning_effort && openaiReasoningEffort.querySelector(`option[value="${CSS.escape(data.default_reasoning_effort)}"]`)) {
+            openaiReasoningEffort.value = data.default_reasoning_effort;
+        }
+        syncAiControlState();
+    }
+
+    function loadOpenAIStatus() {
+        fetch('/openai_status')
+            .then(async (response) => {
+                const data = await response.json();
+                if (!response.ok || data.status === 'error') {
+                    throw new Error(data.message || '無法檢查 OpenAI 設定');
+                }
+                return data;
+            })
+            .then(renderOpenAIStatus)
+            .catch((error) => {
+                openaiStatusData = null;
+                openaiStatus.className = 'openai-status error';
+                openaiStatus.innerHTML = `<i class="fas fa-circle-exclamation"></i> ${escapeHtml(error.message || '無法檢查 OpenAI 設定')}`;
+            });
+    }
 
     function updateAdsExportUI(step, message, progress) {
         adsExportStatusCard.style.display = 'block';
@@ -64,13 +118,14 @@ document.addEventListener('DOMContentLoaded', function() {
     function setAdsButtonsDisabled(disabled) {
         adsExportButton.disabled = disabled;
         adsAnalyzeButton.disabled = disabled;
+        syncAiControlState();
     }
 
     function startAdsExportProgressSimulation() {
         const steps = [
             { progress: 10, step: '登入中', message: '正在使用現有 cookies 進入蝦皮賣家中心...' },
             { progress: 28, step: '進入廣告後台', message: '正在尋找並點擊蝦皮廣告入口...' },
-            { progress: 46, step: '批次導出', message: '正在依序處理過去一個月、昨天與近 6 週趨勢...' },
+            { progress: 46, step: '批次導出', message: '正在依序處理過去一個月、昨天與近 4 週趨勢，共 6 份...' },
             { progress: 68, step: '輪詢報表', message: '正在檢查是否已有可下載報表，避免重複導出...' },
             { progress: 84, step: '等待下載', message: '若報表仍在處理中，系統會持續輪詢直到可下載...' },
             { progress: 95, step: '整理檔案', message: '正在保存檔案並整理批次結果...' }
@@ -88,12 +143,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function startAdsAnalysisProgressSimulation() {
         const steps = [
-            { progress: 10, step: '載入來源', message: '正在讀取現有昨天、過去一個月與過去 6 週滾動周報...' },
+            { progress: 10, step: '載入來源', message: '正在讀取現有昨天、過去一個月與過去 4 週滾動周報...' },
             { progress: 26, step: '解析 CSV', message: '正在拆解 Shopee 報表 metadata 與正式表頭...' },
             { progress: 42, step: '標準化資料', message: '正在整理商品 ID、花費、銷售與直接轉換指標...' },
-            { progress: 58, step: '周趨勢建模', message: '正在計算近 6 週 ROAS、CTR、CVR、CPC、CPA 趨勢...' },
+            { progress: 58, step: '周趨勢建模', message: '正在計算近 4 週 ROAS、CTR、CVR、CPC、CPA 趨勢...' },
             { progress: 76, step: '映射商品圖', message: '正在將商品 ID 對應到 golden_table.json 的圖片與名稱...' },
-            { progress: 90, step: '生成報告', message: '正在整理當前快照 + 6 週趨勢卡片與 AI 建議...' }
+            { progress: 90, step: '生成報告', message: '正在整理當前快照 + 4 週趨勢卡片與 AI 建議...' }
         ];
 
         let index = 0;
@@ -141,12 +196,14 @@ document.addEventListener('DOMContentLoaded', function() {
         const current = summary.current_window || {};
         const narrative = report.narrative || {};
         const rankings = report.rankings || {};
+        const runtime = data.analysis_runtime || {};
         const files = data.output_files || {};
         const htmlPath = files.html_report ? `/${files.html_report.split('/').pop()}` : '';
         const actionableCount =
             (rankings.scale_up || []).length +
             (rankings.reduce_budget || []).length +
-            (rankings.indirect_dependency || []).length;
+            (rankings.indirect_dependency || []).length +
+            (rankings.watchlist || []).length;
         const excluded = Array.isArray(narrative.excluded_but_reviewed_products)
             ? narrative.excluded_but_reviewed_products
             : [];
@@ -157,7 +214,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <div class="ads-analysis-summary-card">
                     <span>主決策基準</span>
                     <strong>${current.window_label || '昨天'}</strong>
-                    <p>已額外納入過去 6 週滾動趨勢</p>
+                    <p>已額外納入過去 4 週滾動趨勢</p>
                 </div>
                 <div class="ads-analysis-summary-card">
                     <span>昨日 ROAS</span>
@@ -171,8 +228,8 @@ document.addEventListener('DOMContentLoaded', function() {
                 </div>
                 <div class="ads-analysis-summary-card">
                     <span>分析來源</span>
-                    <strong>${narrative.source === 'openai' ? 'ChatGPT API' : '規則層'}</strong>
-                    <p>${data.has_ai_enhancement ? '已套用 AI 強化建議' : '未啟用或未設定 API'}</p>
+                    <strong>${narrative.source === 'openai' ? escapeHtml(runtime.response_model || runtime.model || 'OpenAI API') : '本機規則'}</strong>
+                    <p>${data.has_ai_enhancement ? `${escapeHtml(runtime.reasoning_effort || '-')} 推理・${Number(runtime.api_latency_seconds || 0).toFixed(1)} 秒・${runtime.attempts || 1} 次` : '此次未呼叫 OpenAI API'}</p>
                 </div>
                 <div class="ads-analysis-summary-card">
                     <span>先觀察</span>
@@ -183,9 +240,9 @@ document.addEventListener('DOMContentLoaded', function() {
 
             <div class="ads-analysis-section">
                 <h3><i class="fas fa-file-lines"></i> HTML 報告已生成</h3>
-                <p>${narrative.executive_summary || data.message || '廣告分析完成。'}</p>
+                <p>${escapeHtml(narrative.executive_summary || data.message || '廣告分析完成。')}</p>
                 <ul class="ads-analysis-action-list">
-                    ${(narrative.next_actions || []).map((item) => `<li>${item}</li>`).join('')}
+                    ${(narrative.next_actions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
                 </ul>
                 <div class="ads-analysis-files">
                     <div><strong>HTML：</strong>${files.html_report || '-'}</div>
@@ -199,7 +256,7 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="ads-analysis-section">
                 <h3><i class="fas fa-eye"></i> 已檢查但暫不列入</h3>
                 <ul class="ads-analysis-action-list">
-                    ${excluded.slice(0, 10).map((item) => `<li>${item.product_id}: ${item.reason}</li>`).join('')}
+                    ${excluded.slice(0, 10).map((item) => `<li>${escapeHtml(item.product_id)}: ${escapeHtml(item.reason)}</li>`).join('')}
                 </ul>
             </div>` : ''}
         `;
@@ -248,7 +305,17 @@ document.addEventListener('DOMContentLoaded', function() {
     function performAdsAnalysis() {
         if (window.adsAnalysisRunning) return;
         const includeAI = includeAiAnalysis ? includeAiAnalysis.checked : true;
-        const analysisUrl = `/analyze_ads?includeAI=${includeAI}`;
+        if (includeAI && (!openaiStatusData || !openaiStatusData.configured)) {
+            adsAnalysisReport.style.display = 'block';
+            adsAnalysisReport.innerHTML = '<div class="ads-analysis-error"><strong>尚未連接 OpenAI API</strong><br>請先在專案終端執行 <code>python3 setup_openai_key.py</code>，完成後重新整理這個廣告頁。API Key 不要貼到聊天或網頁中。</div>';
+            return;
+        }
+        const query = new URLSearchParams({
+            includeAI: String(includeAI),
+            model: openaiModel.value,
+            reasoningEffort: openaiReasoningEffort.value,
+        });
+        const analysisUrl = `/analyze_ads?${query.toString()}`;
 
         window.adsAnalysisRunning = true;
         resetAdsAnalysisUI();
@@ -277,7 +344,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 adsAnalysisStatusBadge.className = 'ads-status-badge error';
                 updateAdsAnalysisUI('分析失敗', error.message || '請稍後再試', 100);
                 adsAnalysisReport.style.display = 'block';
-                adsAnalysisReport.innerHTML = `<div class="ads-analysis-error"><strong>分析失敗</strong><br>${error.message || '請稍後再試'}</div>`;
+                adsAnalysisReport.innerHTML = `<div class="ads-analysis-error"><strong>分析失敗</strong><br>${escapeHtml(error.message || '請稍後再試')}</div>`;
             })
             .finally(() => {
                 window.adsAnalysisRunning = false;
@@ -287,5 +354,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     adsExportButton.addEventListener('click', performAdsExport);
     adsAnalyzeButton.addEventListener('click', performAdsAnalysis);
+    includeAiAnalysis.addEventListener('change', syncAiControlState);
+    loadOpenAIStatus();
 
 });

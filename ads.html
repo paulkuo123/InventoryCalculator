@@ -40,7 +40,7 @@
             <div class="ads-export-header">
                 <div>
                     <h3><i class="fas fa-file-download"></i> 蝦皮廣告數據匯出</h3>
-                    <p>一鍵批次導出昨天、過去一個月，以及過去 6 週滾動區間的總體廣告數據，並優先復用已存在的報表。</p>
+                    <p>一鍵批次導出昨天、過去一個月，以及過去 4 週滾動區間的總體廣告數據，共 6 份，並優先復用已存在的報表。</p>
                 </div>
                 <div class="ads-toolbar">
                     <div class="headless-option">
@@ -52,7 +52,7 @@
                     </div>
                     <button id="adsExportButton" class="btn-secondary ads-export-button">
                         <i class="fas fa-file-arrow-down"></i>
-                        匯出摘要與 6 週趨勢報表
+                        匯出 6 份摘要與趨勢報表
                     </button>
                 </div>
             </div>
@@ -74,18 +74,43 @@
             <div class="ads-export-header">
                 <div>
                     <h3><i class="fas fa-chart-pie"></i> 廣告 AI 分析報告</h3>
-                    <p>讀取目前已下載的廣告 CSV，結合商品圖片、規則診斷與 ChatGPT API，輸出完整的投放調整建議。</p>
+                    <p>讀取目前已下載的 6 份廣告 CSV，先做本機指標驗算，再透過 OpenAI API 輸出可查核的投放調整建議。</p>
                 </div>
-                <div class="ads-analysis-actions">
-                    <label class="toggle-switch ai-toggle">
-                        <input type="checkbox" id="includeAiAnalysis" checked>
-                        <span class="toggle-slider"></span>
-                    </label>
-                    <span class="ai-toggle-label">啟用 ChatGPT API</span>
-                    <button id="adsAnalyzeButton" class="btn-primary ads-export-button">
-                        <i class="fas fa-magnifying-glass-chart"></i>
-                        分析現有廣告報表
-                    </button>
+                <div class="ads-analysis-control-panel">
+                    <div id="openaiStatus" class="openai-status checking">
+                        <i class="fas fa-circle-notch fa-spin"></i>
+                        正在檢查 OpenAI API 設定…
+                    </div>
+                    <div class="ads-model-controls">
+                        <label class="ads-field-label" for="openaiModel">
+                            AI 模型
+                            <select id="openaiModel" class="ads-select">
+                                <option value="gpt-5.6-sol" selected>GPT-5.6 Sol（品質優先）</option>
+                                <option value="gpt-5.6-terra">GPT-5.6 Terra（平衡）</option>
+                                <option value="gpt-5.6-luna">GPT-5.6 Luna（快速省成本）</option>
+                            </select>
+                        </label>
+                        <label class="ads-field-label" for="openaiReasoningEffort">
+                            推理強度
+                            <select id="openaiReasoningEffort" class="ads-select">
+                                <option value="medium">Medium</option>
+                                <option value="high">High</option>
+                                <option value="xhigh" selected>XHigh（建議）</option>
+                                <option value="max">Max（最慢、最貴）</option>
+                            </select>
+                        </label>
+                    </div>
+                    <div class="ads-analysis-actions">
+                        <label class="toggle-switch ai-toggle">
+                            <input type="checkbox" id="includeAiAnalysis" checked>
+                            <span class="toggle-slider"></span>
+                        </label>
+                        <span class="ai-toggle-label">啟用 OpenAI API</span>
+                        <button id="adsAnalyzeButton" class="btn-primary ads-export-button">
+                            <i class="fas fa-magnifying-glass-chart"></i>
+                            分析現有廣告報表
+                        </button>
+                    </div>
                 </div>
             </div>
             <div id="adsAnalysisStatusCard" class="ads-status-card" style="display: none;">

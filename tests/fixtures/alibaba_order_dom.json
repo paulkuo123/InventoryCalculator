@@ -1,0 +1,19 @@
+[
+  {
+    "sourceLineId": "1688-line-1",
+    "offerUrl": "https://detail.1688.com/offer/682877407287.html",
+    "skuId": "sku-white-m",
+    "skuParts": ["颜色：2349白色", "尺码：M"],
+    "productName": "純色棉襪",
+    "orderedQty": "20",
+    "rawText": "純色棉襪 颜色：2349白色 尺码：M 数量：20"
+  },
+  {
+    "sourceLineId": "1688-line-2",
+    "offerId": "682877407287",
+    "skuParts": ["颜色：2349黑色；尺码：L"],
+    "productName": "純色棉襪",
+    "orderedQty": 12,
+    "rawText": "純色棉襪 颜色：2349黑色；尺码：L 数量：12"
+  }
+]

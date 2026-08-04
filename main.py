@@ -77,6 +77,21 @@ import socket
 import logging
 import datetime
 import shutil
+import uuid
+from pathlib import Path
+from alibaba_client import AlibabaApiClient
+from alibaba_review_report import clean_options, classify, is_sock_product_name
+from procurement_store import ProcurementStore, parse_offer_id
+from inbound_store import InboundStore
+from ads_analysis import (
+    DEFAULT_OPENAI_MODEL,
+    DEFAULT_OPENAI_REASONING_EFFORT,
+    OPENAI_MODEL_OPTIONS,
+    OPENAI_REASONING_EFFORTS,
+    validate_openai_model,
+    validate_reasoning_effort,
+)
+from config_loader import load_openai_api_key, load_openai_config_value
 
 # 導入版本管理
 
@@ -92,6 +107,22 @@ def normalize_identifier(value):
         except (TypeError, ValueError):
             return text
     return text
+
+
+def requires_alibaba_second_sku(product_name, model_name):
+    """手機殼等雙規格商品必須同時指定樣式與機型，不能只選第一規格。"""
+    parts = [part.strip() for part in re.split(r"[,，]", str(model_name or "")) if part.strip()]
+    if len(parts) < 2:
+        return False
+    return bool(
+        re.search(r"(手機殼|手机壳|iphone|ipad)", str(product_name or ""), re.IGNORECASE) and
+        re.match(r"^(?:iphone)?(?:\d{1,2}|x(?:r|s(?:\s*max)?)?|se\d*)", parts[1], re.IGNORECASE)
+    )
+
+
+def is_alibaba_sku_discontinued(value):
+    """停售標記不可當作實際 1688 SKU 送進補貨流程。"""
+    return str(value or "").strip().lower() in {"停售", "已停售", "以後不賣了", "以后不卖了"}
 from version import check_for_updates, CURRENT_VERSION
 
 # 設置日誌記錄
@@ -120,6 +151,12 @@ if len(sys.argv) > 1 and sys.argv[1] == '--worker':
     crawler.main()
     sys.exit(0)
 
+if len(sys.argv) > 1 and sys.argv[1] == '--inbound-worker':
+    import inbound_worker
+    sys.argv.pop(1)
+    inbound_worker.main()
+    sys.exit(0)
+
 # 檢查是否存在舊的日誌文件，如果存在則刪除
 if os.path.exists(LOG_FILE):
     try:
@@ -139,6 +176,41 @@ logging.basicConfig(
     ])
 logger = logging.getLogger(__name__)
 
+
+def build_openai_status():
+    """回傳可安全顯示在前端的 OpenAI 設定，不包含 API Key 本身。"""
+    api_key, key_source = load_openai_api_key()
+    configured_model, model_source = load_openai_config_value(
+        "OPENAI_MODEL", DEFAULT_OPENAI_MODEL
+    )
+    configured_effort, effort_source = load_openai_config_value(
+        "OPENAI_REASONING_EFFORT", DEFAULT_OPENAI_REASONING_EFFORT
+    )
+    config_errors = []
+    try:
+        configured_model = validate_openai_model(configured_model)
+    except ValueError as exc:
+        config_errors.append(str(exc))
+        configured_model = DEFAULT_OPENAI_MODEL
+    try:
+        configured_effort = validate_reasoning_effort(configured_effort)
+    except ValueError as exc:
+        config_errors.append(str(exc))
+        configured_effort = DEFAULT_OPENAI_REASONING_EFFORT
+    return {
+        "status": "success",
+        "configured": bool(api_key),
+        "key_source": key_source or "not_configured",
+        "default_model": configured_model,
+        "model_source": model_source,
+        "default_reasoning_effort": configured_effort,
+        "reasoning_effort_source": effort_source,
+        "models": OPENAI_MODEL_OPTIONS,
+        "reasoning_efforts": OPENAI_REASONING_EFFORTS,
+        "setup_command": "python3 setup_openai_key.py",
+        "config_errors": config_errors,
+    }
+
 # 記錄啟動信息
 logger.info(
     f"===== 程序啟動於 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')} ====="
@@ -148,6 +220,8 @@ logger.info(f"操作系統: {os.name}, Python版本: {sys.version}")
 PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
 FILE_NAME = get_resource_path("index.html")
 current_crawler_process = None
+inbound_jobs = {}
+inbound_jobs_lock = threading.Lock()
 
 # 確保 index.html 存在 (僅在非打包環境檢查，或確保打包時已包含)
 if not os.path.exists(FILE_NAME) and not getattr(sys, 'frozen', False):
@@ -160,6 +234,148 @@ if not os.path.exists(FILE_NAME) and not getattr(sys, 'frozen', False):
 class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
+        parsed_path = urllib.parse.urlparse(self.path)
+        request_path = parsed_path.path
+
+        if request_path == '/api/inbound/status':
+            self._send_json_response(200, self._inbound_status())
+            return
+
+        inbound_job_match = re.match(r'^/api/inbound/jobs/([a-f0-9]+)$', request_path)
+        if inbound_job_match:
+            try:
+                self._send_json_response(200, self._read_inbound_job(inbound_job_match.group(1)))
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/inbound/orders':
+            self._send_json_response(200, {
+                "status": "success",
+                "orders": self._inbound_store().list_orders(),
+            })
+            return
+
+        inbound_order_match = re.match(r'^/api/inbound/orders/(\d+)$', request_path)
+        if inbound_order_match:
+            try:
+                self._send_json_response(
+                    200, self._inbound_store().get_order(int(inbound_order_match.group(1)))
+                )
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            return
+
+        inbound_receipt_match = re.match(r'^/api/inbound/receipts/(\d+)$', request_path)
+        if inbound_receipt_match:
+            try:
+                self._send_json_response(
+                    200, self._inbound_store().get_receipt(int(inbound_receipt_match.group(1)))
+                )
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/inbound/shopee-models':
+            params = urllib.parse.parse_qs(parsed_path.query)
+            query = params.get("query", [""])[0]
+            self._send_json_response(200, {
+                "status": "success",
+                "models": self._inbound_store().catalog_models(query=query),
+            })
+            return
+
+        if request_path == '/api/alibaba/sku-review/reports':
+            try:
+                self._send_json_response(200, self._list_sku_review_reports())
+            except Exception as e:
+                logger.exception(f"載入 1688 SKU review reports 失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if request_path == '/api/alibaba/sku-review':
+            try:
+                params = urllib.parse.parse_qs(parsed_path.query)
+                report_name = params.get("report", ["latest"])[0]
+                filter_name = params.get("filter", ["review"])[0]
+                self._send_json_response(200, self._load_sku_review(report_name, filter_name))
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except FileNotFoundError as e:
+                self._send_json_response(404, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"載入 1688 SKU review 失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/alibaba/auth/status':
+            try:
+                self._send_json_response(200, self._alibaba_client().auth_status())
+            except Exception as e:
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/alibaba/bindings':
+            try:
+                self._send_json_response(200, self._list_alibaba_bindings())
+            except Exception as e:
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path.startswith('/api/procurement/drafts/'):
+            try:
+                match = re.match(r'^/api/procurement/drafts/(\d+)$', self.path)
+                if not match:
+                    self._send_json_response(404, {
+                        "status": "error",
+                        "message": "找不到採購草稿 API"
+                    })
+                    return
+                draft = self._procurement_store().get_draft(int(match.group(1)))
+                self._send_json_response(200, draft)
+            except FileNotFoundError as e:
+                self._send_json_response(404, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/procurement/orders':
+            try:
+                self._send_json_response(200, {
+                    "status": "success",
+                    "orders": self._procurement_store().list_orders()
+                })
+            except Exception as e:
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
         # 處理搜尋請求
         if self.path.startswith('/search'):
             try:
@@ -221,13 +437,44 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     }, ensure_ascii=False).encode('utf-8'))
                 return
 
+        if self.path.startswith('/openai_status'):
+            try:
+                result = build_openai_status()
+                self.send_response(200)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(json.dumps(result, ensure_ascii=False).encode('utf-8'))
+                return
+            except Exception as e:
+                self.send_response(500)
+                self.send_header('Content-type', 'application/json; charset=utf-8')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "error",
+                    "message": str(e),
+                }, ensure_ascii=False).encode('utf-8'))
+                return
+
         if self.path.startswith('/analyze_ads'):
             try:
-                include_ai = urllib.parse.parse_qs(
-                    urllib.parse.urlparse(self.path).query
-                ).get('includeAI', ['true'])[0].lower() == 'true'
+                query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                include_ai = query.get('includeAI', ['true'])[0].lower() == 'true'
+                model = validate_openai_model(query.get('model', [''])[0])
+                reasoning_effort = validate_reasoning_effort(
+                    query.get('reasoningEffort', [''])[0]
+                )
 
-                result = self.run_ads_analysis(include_ai=include_ai)
+                if include_ai and not build_openai_status()["configured"]:
+                    raise RuntimeError(
+                        "尚未設定 OpenAI API Key。請先在專案終端執行 "
+                        "python3 setup_openai_key.py；Key 不要貼到網頁或聊天中。"
+                    )
+
+                result = self.run_ads_analysis(
+                    include_ai=include_ai,
+                    model=model,
+                    reasoning_effort=reasoning_effort,
+                )
 
                 status_code = 200 if result.get("status") == "success" else 500
                 self.send_response(status_code)
@@ -332,11 +579,160 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
 
     def do_POST(self):
+        request_path = urllib.parse.urlparse(self.path).path
+
+        if request_path == '/api/inbound/orders/import':
+            try:
+                data = self._read_json_body()
+                if not str(data.get("reference") or data.get("orderReference") or "").strip() and not isinstance(data.get("order"), dict):
+                    raise ValueError("請輸入 1688 訂單編號或連結")
+                job = self._start_inbound_job("import", data)
+                self._send_json_response(202, job)
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except RuntimeError as e:
+                self._send_json_response(409, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"啟動 1688 訂單匯入失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/inbound/receipts':
+            try:
+                receipt = self._inbound_store().create_receipt(self._read_json_body())
+                self._send_json_response(201, {"status": "success", "receipt": receipt})
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"建立到貨單失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        inbound_preview_match = re.match(r'^/api/inbound/receipts/(\d+)/preview$', request_path)
+        if inbound_preview_match:
+            try:
+                receipt_id = int(inbound_preview_match.group(1))
+                payload = self._inbound_store().build_preview_payload(receipt_id)
+                job = self._start_inbound_job("preview", payload)
+                self._send_json_response(202, job)
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except RuntimeError as e:
+                self._send_json_response(409, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"啟動蝦皮庫存預覽失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        inbound_apply_match = re.match(r'^/api/inbound/receipts/(\d+)/apply$', request_path)
+        if inbound_apply_match:
+            try:
+                if not self._inbound_write_enabled():
+                    raise PermissionError(
+                        "蝦皮入庫寫入目前為唯讀模式；請在 .env.local 設定 "
+                        "SHOPEE_INBOUND_WRITE_ENABLED=true 後重新啟動"
+                    )
+                if self._inbound_worker_busy():
+                    raise RuntimeError("目前已有其他瀏覽器流程在執行，請稍後再試")
+                data = self._read_json_body()
+                receipt_id = int(inbound_apply_match.group(1))
+                payload = self._inbound_store().prepare_apply(
+                    receipt_id,
+                    str(data.get("previewVersion") or ""),
+                    data.get("confirmed") is True,
+                )
+                payload["confirmed"] = True
+                job = self._start_inbound_job("apply", payload)
+                self._send_json_response(202, job)
+            except PermissionError as e:
+                self._send_json_response(403, {"status": "error", "message": str(e)})
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except RuntimeError as e:
+                self._send_json_response(409, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"啟動蝦皮入庫更新失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if self.path == '/api/golden-table/model-1688-sku':
+            try:
+                data = self._read_json_body()
+                response = self._update_golden_table_model_1688_sku(data)
+                self._send_json_response(200, response)
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except FileNotFoundError as e:
+                self._send_json_response(404, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"更新 golden_table.json 1688 SKU 對應失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/golden-table/product-1688-skus':
+            try:
+                data = self._read_json_body()
+                response = self._update_golden_table_product_1688_skus(data)
+                self._send_json_response(200, response)
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except FileNotFoundError as e:
+                self._send_json_response(404, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"批次更新 golden_table.json 1688 SKU 對應失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/alibaba/sku-review/apply':
+            try:
+                data = self._read_json_body()
+                response = self._apply_sku_review_updates(data)
+                self._send_json_response(200, response)
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except FileNotFoundError as e:
+                self._send_json_response(404, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"寫入 1688 SKU review 結果失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
         if self.path == '/api/golden-table/model-alibaba':
             try:
-                content_length = int(self.headers.get('Content-Length', 0))
-                post_data = self.rfile.read(content_length).decode('utf-8')
-                data = json.loads(post_data) if post_data else {}
+                data = self._read_json_body()
                 response = self._update_golden_table_model_alibaba(data)
                 self._send_json_response(200, response)
             except ValueError as e:
@@ -351,6 +747,112 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 })
             except Exception as e:
                 logger.exception(f"更新 golden_table.json 阿里巴巴資料失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/alibaba/bindings':
+            try:
+                data = self._read_json_body()
+                response = self._procurement_store().upsert_binding(data)
+                self._send_json_response(200, {
+                    "status": "success",
+                    "binding": response
+                })
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"儲存 1688 綁定失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/procurement/drafts':
+            try:
+                data = self._read_json_body()
+                draft = self._procurement_store().create_draft(data)
+                self._send_json_response(200, {
+                    "status": "success",
+                    "draft": draft
+                })
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"建立採購草稿失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        submit_match = re.match(r'^/api/procurement/drafts/(\d+)/submit$', self.path)
+        if submit_match:
+            try:
+                order = self._procurement_store().submit_draft(
+                    int(submit_match.group(1)),
+                    self._alibaba_client(),
+                )
+                self._send_json_response(200, {
+                    "status": "success",
+                    "order": order
+                })
+            except PermissionError as e:
+                self._send_json_response(403, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"送出採購草稿失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/procurement/orders/sync':
+            try:
+                result = self._procurement_store().sync_orders(self._alibaba_client())
+                self._send_json_response(200, result)
+            except Exception as e:
+                logger.exception(f"同步 1688 訂單失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            return
+
+        if self.path == '/api/alibaba-restock':
+            try:
+                data = self._read_json_body()
+                response = self.start_alibaba_restock(data)
+                self._send_json_response(200, response)
+            except ValueError as e:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except FileNotFoundError as e:
+                self._send_json_response(404, {
+                    "status": "error",
+                    "message": str(e)
+                })
+            except Exception as e:
+                logger.exception(f"啟動 1688 採購車流程失敗: {e}")
                 self._send_json_response(500, {
                     "status": "error",
                     "message": str(e)
@@ -395,12 +897,892 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
 
+    def _read_json_body(self):
+        content_length = int(self.headers.get('Content-Length', 0))
+        post_data = self.rfile.read(content_length).decode('utf-8')
+        return json.loads(post_data) if post_data else {}
+
+    def _procurement_store(self):
+        return ProcurementStore(os.path.dirname(os.path.abspath(__file__)))
+
+    def _inbound_store(self):
+        return InboundStore(os.path.dirname(os.path.abspath(__file__)))
+
+    def _inbound_write_enabled(self):
+        value, _ = load_openai_config_value(
+            "SHOPEE_INBOUND_WRITE_ENABLED",
+            "false",
+            os.path.dirname(os.path.abspath(__file__)),
+        )
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+    def _inbound_worker_busy(self):
+        global current_crawler_process
+        return current_crawler_process is not None and current_crawler_process.poll() is None
+
+    def _inbound_status(self):
+        active_job_id = ""
+        with inbound_jobs_lock:
+            for job_id, job in inbound_jobs.items():
+                if job.get("status") in ("reading_order", "awaiting_login", "applying"):
+                    active_job_id = job_id
+                    break
+        return {
+            "status": "success",
+            "writeEnabled": self._inbound_write_enabled(),
+            "busy": self._inbound_worker_busy(),
+            "activeJobId": active_job_id,
+            "message": (
+                "蝦皮入庫寫入已啟用"
+                if self._inbound_write_enabled()
+                else "目前為唯讀模式；完成真實訂單預覽驗證後，再設定 SHOPEE_INBOUND_WRITE_ENABLED=true"
+            ),
+        }
+
+    @staticmethod
+    def _load_json_if_exists(path):
+        if not path or not os.path.exists(path):
+            return {}
+        try:
+            with open(path, "r", encoding="utf-8") as handle:
+                data = json.load(handle)
+            return data if isinstance(data, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+    def _read_inbound_job(self, job_id):
+        with inbound_jobs_lock:
+            job = inbound_jobs.get(job_id)
+            if not job:
+                raise FileNotFoundError("找不到入庫工作")
+            status_file = job.get("_statusFile")
+            public = {key: value for key, value in job.items() if not key.startswith("_")}
+        if public.get("status") in ("reading_order", "awaiting_login", "applying"):
+            worker_status = self._load_json_if_exists(status_file)
+            if worker_status.get("status"):
+                public["status"] = worker_status["status"]
+                public["message"] = worker_status.get("message", public.get("message", ""))
+                public["progress"] = {
+                    key: value
+                    for key, value in worker_status.items()
+                    if key not in ("status", "message", "updatedAt")
+                }
+        return public
+
+    def _start_inbound_job(self, action, payload):
+        global current_crawler_process
+        if self._inbound_worker_busy():
+            raise RuntimeError("目前已有其他瀏覽器流程在執行，請稍後再試")
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(base_dir, "inbound_worker.py")
+        if not os.path.exists(script_path):
+            raise FileNotFoundError("找不到 inbound_worker.py")
+        job_id = uuid.uuid4().hex
+        input_path = os.path.join(tempfile.gettempdir(), f"inbound_{job_id}_input.json")
+        output_path = os.path.join(tempfile.gettempdir(), f"inbound_{job_id}_output.json")
+        status_path = os.path.join(tempfile.gettempdir(), f"inbound_{job_id}_status.json")
+        with open(input_path, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+
+        initial_status = "reading_order" if action == "import" else "applying"
+        initial_message = {
+            "import": "正在讀取 1688 訂單",
+            "preview": "正在讀取蝦皮即時庫存",
+            "apply": "正在更新蝦皮庫存",
+        }[action]
+        job = {
+            "jobId": job_id,
+            "action": action,
+            "status": initial_status,
+            "message": initial_message,
+            "createdAt": int(time.time()),
+            "updatedAt": int(time.time()),
+            "result": None,
+            "_inputFile": input_path,
+            "_outputFile": output_path,
+            "_statusFile": status_path,
+            "_workerPayload": payload,
+        }
+        with inbound_jobs_lock:
+            inbound_jobs[job_id] = job
+
+        cmd = [os.path.abspath(sys.executable)]
+        if getattr(sys, 'frozen', False):
+            cmd.append("--inbound-worker")
+        else:
+            cmd.append(script_path)
+        cmd.extend([
+            "--action", action,
+            "--input", input_path,
+            "--output", output_path,
+            "--status-file", status_path,
+        ])
+        try:
+            process = subprocess.Popen(
+                cmd,
+                cwd=base_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                preexec_fn=None if os.name == "nt" else os.setsid,
+            )
+        except Exception:
+            with inbound_jobs_lock:
+                inbound_jobs.pop(job_id, None)
+            raise
+        current_crawler_process = process
+        with inbound_jobs_lock:
+            inbound_jobs[job_id]["_process"] = process
+
+        def drain(pipe, label):
+            try:
+                for line in pipe:
+                    text = line.strip()
+                    if text:
+                        logger.info(f"入庫{label}: {text}")
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        threading.Thread(target=drain, args=(process.stdout, "輸出"), daemon=True).start()
+        threading.Thread(target=drain, args=(process.stderr, "錯誤"), daemon=True).start()
+        threading.Thread(
+            target=self._finish_inbound_job,
+            args=(job_id, process),
+            daemon=True,
+        ).start()
+        return {"status": initial_status, "jobId": job_id, "message": initial_message}
+
+    def _finish_inbound_job(self, job_id, process):
+        global current_crawler_process
+        process.wait()
+        with inbound_jobs_lock:
+            job = inbound_jobs.get(job_id)
+            if not job:
+                return
+            action = job["action"]
+            payload = job.get("_workerPayload", {})
+            output_path = job.get("_outputFile")
+            cleanup_paths = [job.get("_inputFile"), output_path, job.get("_statusFile")]
+        worker_result = self._load_json_if_exists(output_path)
+        try:
+            if process.returncode != 0 or worker_result.get("status") != "success":
+                message = str(worker_result.get("message") or "入庫瀏覽器工作失敗")
+                if action == "preview":
+                    receipt = self._inbound_store().record_preview(int(payload["receiptId"]), [])
+                    final_status = receipt["status"]
+                    final_result = {"receipt": receipt}
+                elif action == "apply":
+                    fallback = [
+                        {"updateId": item.get("id"), "status": "manual_review", "message": message}
+                        for item in payload.get("updates", [])
+                    ]
+                    receipt = self._inbound_store().record_apply_results(int(payload["receiptId"]), fallback)
+                    final_status = receipt["status"]
+                    final_result = {"receipt": receipt}
+                else:
+                    final_status = "partial_failed"
+                    final_result = None
+                raise RuntimeError(message)
+
+            if action == "import":
+                order = self._inbound_store().import_order(worker_result.get("order") or {})
+                final_status = "completed" if order["status"] == "ready" else "needs_review"
+                final_result = {"order": order}
+                final_message = "1688 訂單已匯入" if final_status == "completed" else "訂單已匯入，部分品項需要確認蝦皮對照"
+            elif action == "preview":
+                receipt = self._inbound_store().record_preview(
+                    int(payload["receiptId"]), worker_result.get("results") or []
+                )
+                final_status = receipt["status"]
+                final_result = {"receipt": receipt}
+                final_message = "蝦皮庫存預覽完成" if final_status == "preview_ready" else "部分規格需要人工確認"
+            else:
+                receipt = self._inbound_store().record_apply_results(
+                    int(payload["receiptId"]), worker_result.get("results") or []
+                )
+                final_status = receipt["status"]
+                final_result = {"receipt": receipt}
+                final_message = "蝦皮入庫完成" if final_status == "completed" else "部分庫存更新未完成"
+            with inbound_jobs_lock:
+                job = inbound_jobs.get(job_id)
+                if job:
+                    job.update({
+                        "status": final_status,
+                        "message": final_message,
+                        "result": final_result,
+                        "updatedAt": int(time.time()),
+                    })
+        except Exception as exc:
+            logger.exception(f"入庫工作 {job_id} 完成處理失敗: {exc}")
+            with inbound_jobs_lock:
+                job = inbound_jobs.get(job_id)
+                if job:
+                    # preview/apply 可能已在上方寫入更精確的 receipt 狀態。
+                    job.update({
+                        "status": locals().get("final_status", "partial_failed"),
+                        "message": str(exc),
+                        "result": locals().get("final_result"),
+                        "updatedAt": int(time.time()),
+                    })
+        finally:
+            if current_crawler_process is process:
+                current_crawler_process = None
+            for path in cleanup_paths:
+                if path and os.path.exists(path):
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+
+    def _list_alibaba_bindings(self):
+        """以 golden_table.json 補強採購 binding，讓批次掃描結果立即反映到前端。"""
+        bindings = self._procurement_store().list_bindings()
+        golden_path = self._golden_table_path()
+        if not golden_path.exists():
+            return bindings
+        try:
+            golden_table = self._load_json_file(golden_path)
+        except (OSError, json.JSONDecodeError):
+            return bindings
+
+        for product_id, product in golden_table.items():
+            if not isinstance(product, dict):
+                continue
+            product_name = str(product.get("商品名稱") or "")
+            for model in product.get("型號", []):
+                if not isinstance(model, dict):
+                    continue
+                sku_name = str(model.get("1688_sku_name") or "").strip()
+                sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
+                if not sku_name and not sku_second_name:
+                    continue
+                model_id = normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱") or "").strip()
+                if not model_id:
+                    continue
+                key = f"{product_id}|||{model_id}"
+                binding = dict(bindings.get(key) or {})
+                binding.setdefault("productId", str(product_id))
+                binding.setdefault("modelId", model_id)
+                binding.setdefault("productName", product_name)
+                binding.setdefault("modelName", str(model.get("型號名稱") or ""))
+                binding.setdefault("alibabaProductName", str(model.get("阿里巴巴商品名稱") or ""))
+                binding.setdefault("alibabaProductUrl", str(model.get("阿里巴巴商品URL") or ""))
+                # golden_table.json 是人工編輯與批次掃描共用的唯一 SKU 來源。
+                if sku_name:
+                    binding["alibabaSkuName"] = sku_name
+                if sku_second_name:
+                    binding["alibabaSkuSecondName"] = sku_second_name
+                bindings[key] = binding
+        return bindings
+
+    def _alibaba_client(self):
+        return AlibabaApiClient(os.path.dirname(os.path.abspath(__file__)))
+
+    def _debug_snapshots_dir(self):
+        return Path(os.path.dirname(os.path.abspath(__file__))) / "debug_snapshots"
+
+    def _golden_table_path(self):
+        return Path(os.path.dirname(os.path.abspath(__file__))) / "golden_table.json"
+
+    def _load_json_file(self, path):
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    def _review_report_paths(self):
+        debug_dir = self._debug_snapshots_dir()
+        if not debug_dir.exists():
+            return []
+        return sorted(
+            debug_dir.glob("alibaba_sku_mapping_report_*.json"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+
+    def _summarize_sku_review_report(self, path):
+        report = self._load_json_file(path)
+        items = [
+            item
+            for result in report.get("results", [])
+            for item in result.get("items", [])
+            if isinstance(item, dict)
+        ]
+        sock_items = [
+            item for item in items
+            if is_sock_product_name(str(item.get("productName", "")))
+        ]
+        mapped = [
+            item for item in sock_items
+            if item.get("mappingStatus") == "mapped"
+        ]
+        high = [
+            item for item in mapped
+            if item.get("confidence") == "high"
+        ]
+        errors = [
+            item for item in sock_items
+            if item.get("mappingStatus") == "error"
+        ]
+        needs_review = [
+            item for item in sock_items
+            if item.get("mappingStatus") != "mapped" or item.get("confidence") != "high"
+        ]
+        report_status = str(report.get("status") or "legacy").strip()
+        valid = len(sock_items) > 0 and len(high) > 0 and report_status not in ("aborted", "fatal")
+        invalid_reason = ""
+        if not valid:
+            if report_status in ("aborted", "fatal"):
+                invalid_reason = report.get("abortedReason") or "報告已中止"
+            elif len(sock_items) == 0:
+                invalid_reason = "報告沒有襪子型號"
+            elif len(high) == 0:
+                invalid_reason = "沒有任何 high confidence 對應，可能是 1688 驗證碼攔截或抓取失敗"
+
+        return {
+            "fileName": path.name,
+            "path": str(path),
+            "createdAt": report.get("createdAt", ""),
+            "status": report_status,
+            "valid": valid,
+            "invalidReason": invalid_reason,
+            "mtime": int(path.stat().st_mtime),
+            "productCount": len({item.get("productId", "") for item in sock_items}),
+            "modelCount": len(sock_items),
+            "mappedCount": len(mapped),
+            "highConfidenceCount": len(high),
+            "needsReviewCount": len(needs_review),
+            "errorCount": len(errors),
+        }
+
+    def _list_sku_review_reports(self):
+        reports = []
+        for path in self._review_report_paths():
+            try:
+                reports.append(self._summarize_sku_review_report(path))
+            except Exception as e:
+                reports.append({
+                    "fileName": path.name,
+                    "path": str(path),
+                    "valid": False,
+                    "invalidReason": str(e),
+                    "mtime": int(path.stat().st_mtime),
+                    "status": "read_error",
+                    "productCount": 0,
+                    "modelCount": 0,
+                    "mappedCount": 0,
+                    "highConfidenceCount": 0,
+                    "needsReviewCount": 0,
+                    "errorCount": 0,
+                })
+        recommended = next((report for report in reports if report.get("valid")), None)
+        return {
+            "status": "success",
+            "reports": reports,
+            "recommendedReport": recommended.get("fileName") if recommended else "",
+        }
+
+    def _resolve_sku_review_report_path(self, report_name):
+        reports = self._list_sku_review_reports().get("reports", [])
+        if report_name in ("", "latest"):
+            selected = next((report for report in reports if report.get("valid")), None)
+            if not selected:
+                raise FileNotFoundError("找不到可用的 1688 SKU mapping report")
+            return Path(selected["path"])
+
+        safe_name = os.path.basename(str(report_name))
+        if safe_name != report_name:
+            raise ValueError("report 檔名不正確")
+        if not re.match(r"^alibaba_sku_mapping_report_\d+\.json$", safe_name):
+            raise ValueError("report 檔名格式不正確")
+
+        path = self._debug_snapshots_dir() / safe_name
+        if not path.exists():
+            raise FileNotFoundError(f"找不到 report: {safe_name}")
+        return path
+
+    def _sku_review_item_category(self, item, result):
+        if item.get("mappingStatus") == "mapped" and item.get("confidence") == "high":
+            return "High confidence"
+        return classify(item, result)
+
+    def _current_golden_sku_map(self):
+        golden_path = self._golden_table_path()
+        if not golden_path.exists():
+            return {}
+        try:
+            golden_table = self._load_json_file(golden_path)
+        except Exception:
+            return {}
+        sku_map = {}
+        for product_id, product in golden_table.items():
+            if not isinstance(product, dict):
+                continue
+            for model in product.get("型號", []):
+                if not isinstance(model, dict):
+                    continue
+                sku_name = str(model.get("1688_sku_name") or "").strip()
+                spec_id = normalize_identifier(model.get("規格ID", ""))
+                model_name = str(model.get("型號名稱") or "").strip()
+                if spec_id:
+                    sku_map[f"{product_id}|||spec|||{spec_id}"] = sku_name
+                if model_name:
+                    sku_map[f"{product_id}|||name|||{model_name}"] = sku_name
+        return sku_map
+
+    def _current_sku_for_review_item(self, sku_map, item):
+        product_id = str(item.get("productId", ""))
+        spec_id = normalize_identifier(item.get("specId", ""))
+        model_name = str(item.get("modelName", "")).strip()
+        if spec_id:
+            value = sku_map.get(f"{product_id}|||spec|||{spec_id}")
+            if value is not None:
+                return value
+        return sku_map.get(f"{product_id}|||name|||{model_name}", str(item.get("existingSkuName", "")))
+
+    def _build_sku_review_rows(self, report, filter_name, current_sku_map=None):
+        rows = []
+        current_sku_map = current_sku_map or {}
+        allowed_filters = {"all", "high", "review", "actionable", "error"}
+        if filter_name not in allowed_filters:
+            filter_name = "review"
+
+        for result in report.get("results", []):
+            clean_option_list = clean_options(result.get("colorOptions", []))
+            for item in result.get("items", []):
+                if not isinstance(item, dict):
+                    continue
+                if not is_sock_product_name(str(item.get("productName", ""))):
+                    continue
+                is_high = item.get("mappingStatus") == "mapped" and item.get("confidence") == "high"
+                category = self._sku_review_item_category(item, result)
+
+                if filter_name == "high" and not is_high:
+                    continue
+                if filter_name == "review" and is_high:
+                    continue
+                if filter_name == "actionable" and not category.startswith("A."):
+                    continue
+                if filter_name == "error" and not category.startswith("C."):
+                    continue
+
+                rows.append({
+                    "productId": str(item.get("productId", "")),
+                    "productName": str(item.get("productName", "")),
+                    "modelName": str(item.get("modelName", "")),
+                    "specId": str(item.get("specId", "")),
+                    "url": str(item.get("url", "")),
+                    "urlSource": str(item.get("urlSource", "")),
+                    "existingSkuName": str(self._current_sku_for_review_item(current_sku_map, item) or ""),
+                    "suggestedSkuName": str(item.get("suggestedSkuName", "")),
+                    "mappingStatus": str(item.get("mappingStatus", "")),
+                    "confidence": str(item.get("confidence", "")),
+                    "reason": str(item.get("reason", "")),
+                    "reviewCategory": category,
+                    "colorOptions": clean_option_list,
+                    "urlStatus": str(result.get("status", "")),
+                    "urlMessage": str(result.get("message", "")),
+                })
+        return rows
+
+    def _group_sku_review_rows(self, rows):
+        groups = {}
+        for row in rows:
+            product_id = row["productId"]
+            if product_id not in groups:
+                groups[product_id] = {
+                    "productId": product_id,
+                    "productName": row["productName"],
+                    "rows": [],
+                    "counts": {
+                        "total": 0,
+                        "high": 0,
+                        "actionable": 0,
+                        "error": 0,
+                    }
+                }
+            group = groups[product_id]
+            group["rows"].append(row)
+            group["counts"]["total"] += 1
+            if row["reviewCategory"] == "High confidence":
+                group["counts"]["high"] += 1
+            elif row["reviewCategory"].startswith("A."):
+                group["counts"]["actionable"] += 1
+            elif row["reviewCategory"].startswith("C."):
+                group["counts"]["error"] += 1
+        return sorted(
+            groups.values(),
+            key=lambda group: (-group["counts"]["total"], group["productId"])
+        )
+
+    def _load_sku_review(self, report_name, filter_name):
+        path = self._resolve_sku_review_report_path(report_name)
+        report = self._load_json_file(path)
+        report_summary = self._summarize_sku_review_report(path)
+        current_sku_map = self._current_golden_sku_map()
+        rows = self._build_sku_review_rows(report, filter_name, current_sku_map)
+        all_rows = self._build_sku_review_rows(report, "all", current_sku_map)
+        summary = {
+            "total": len(all_rows),
+            "high": len([row for row in all_rows if row["reviewCategory"] == "High confidence"]),
+            "review": len([row for row in all_rows if row["reviewCategory"] != "High confidence"]),
+            "actionable": len([row for row in all_rows if row["reviewCategory"].startswith("A.")]),
+            "error": len([row for row in all_rows if row["reviewCategory"].startswith("C.")]),
+            "shown": len(rows),
+        }
+        return {
+            "status": "success",
+            "report": report_summary,
+            "filter": filter_name,
+            "summary": summary,
+            "groups": self._group_sku_review_rows(rows),
+        }
+
+    def _apply_sku_review_updates(self, payload):
+        items = payload.get("items")
+        overwrite = bool(payload.get("overwrite", True))
+        if not isinstance(items, list) or not items:
+            raise ValueError("沒有要寫入的 SKU 對應")
+
+        golden_path = self._golden_table_path()
+        if not golden_path.exists():
+            raise FileNotFoundError("找不到 golden_table.json")
+
+        golden_table = self._load_json_file(golden_path)
+        backup_path = golden_path.with_name(
+            f"golden_table.json.backup_before_sku_review_{int(time.time())}"
+        )
+        updated = []
+        skipped = []
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            product_id = normalize_identifier(item.get("productId", ""))
+            spec_id = normalize_identifier(item.get("specId", ""))
+            model_name = str(item.get("modelName", "")).strip()
+            sku_name = str(item.get("skuName") or item.get("suggestedSkuName") or "").strip()
+            if not product_id or (not spec_id and not model_name) or not sku_name:
+                skipped.append({
+                    "productId": product_id,
+                    "specId": spec_id,
+                    "modelName": model_name,
+                    "reason": "缺少商品ID、型號或 SKU 名稱",
+                })
+                continue
+
+            product = golden_table.get(product_id)
+            if not isinstance(product, dict):
+                skipped.append({
+                    "productId": product_id,
+                    "specId": spec_id,
+                    "modelName": model_name,
+                    "reason": "找不到商品",
+                })
+                continue
+
+            target_model = self._find_golden_model(product.get("型號", []), spec_id, model_name)
+            if target_model is None:
+                skipped.append({
+                    "productId": product_id,
+                    "specId": spec_id,
+                    "modelName": model_name,
+                    "reason": "找不到型號",
+                })
+                continue
+
+            current_sku = str(target_model.get("1688_sku_name") or "").strip()
+            if current_sku and current_sku != sku_name and not overwrite:
+                skipped.append({
+                    "productId": product_id,
+                    "specId": spec_id,
+                    "modelName": model_name,
+                    "reason": f"已有 SKU：{current_sku}",
+                })
+                continue
+
+            target_model["1688_sku_name"] = sku_name
+            updated.append({
+                "productId": product_id,
+                "specId": normalize_identifier(target_model.get("規格ID", "")),
+                "modelName": str(target_model.get("型號名稱", "")).strip(),
+                "skuName": sku_name,
+            })
+
+        if not updated:
+            return {
+                "status": "success",
+                "message": "沒有寫入任何 SKU 對應",
+                "updatedCount": 0,
+                "skipped": skipped,
+            }
+
+        shutil.copy2(golden_path, backup_path)
+        with open(golden_path, "w", encoding="utf-8") as f:
+            json.dump(golden_table, f, ensure_ascii=False, indent=4)
+            f.write("\n")
+
+        return {
+            "status": "success",
+            "message": f"已寫入 {len(updated)} 筆 1688 SKU 對應",
+            "updatedCount": len(updated),
+            "updated": updated,
+            "skipped": skipped,
+            "backupPath": str(backup_path),
+        }
+
+    def start_alibaba_restock(self, payload):
+        """啟動 1688 瀏覽器採購車流程，不會付款或送出正式訂單。"""
+        global current_crawler_process
+
+        if current_crawler_process is not None and current_crawler_process.poll() is None:
+            raise ValueError("目前已有其他流程在執行，請稍後再試")
+
+        restock_payload = self._build_alibaba_restock_payload(payload)
+        items = restock_payload["items"]
+        if not items:
+            raise ValueError("沒有可啟動 1688 採購車流程的有效型號")
+
+        script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alibaba_restocker.py")
+        if not os.path.exists(script_path):
+            raise FileNotFoundError("找不到 alibaba_restocker.py")
+
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+            json.dump(restock_payload, f, ensure_ascii=False, indent=2)
+            input_path = f.name
+
+        product_id = normalize_identifier(restock_payload.get("productId", "batch")) or "batch"
+        output_path = os.path.join(
+            tempfile.gettempdir(),
+            f"alibaba_restock_result_{product_id}_{int(time.time())}.json"
+        )
+
+        cmd = [
+            os.path.abspath(sys.executable),
+            script_path,
+            "--input", input_path,
+            "--output", output_path,
+            "--headless", "false",
+            "--pause-seconds", str(int(payload.get("pauseSeconds") or 300)),
+        ]
+        if restock_payload.get("addToCart", True):
+            cmd.append("--add-to-cart")
+
+        process = subprocess.Popen(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            bufsize=1,
+            preexec_fn=None if os.name == "nt" else os.setsid
+        )
+        current_crawler_process = process
+
+        def read_output(pipe, prefix):
+            try:
+                for line in pipe:
+                    line_text = line.strip()
+                    if line_text:
+                        print(f"{prefix}: {line_text}")
+                        logger.info(f"{prefix}: {line_text}")
+            finally:
+                try:
+                    pipe.close()
+                except Exception:
+                    pass
+
+        def wait_and_clear():
+            global current_crawler_process
+            try:
+                process.wait()
+                logger.info(f"1688 採購車流程完成，返回碼: {process.returncode}")
+            finally:
+                if current_crawler_process is process:
+                    current_crawler_process = None
+
+        threading.Thread(target=read_output, args=(process.stdout, "1688採購車輸出"), daemon=True).start()
+        threading.Thread(target=read_output, args=(process.stderr, "1688採購車錯誤"), daemon=True).start()
+        threading.Thread(target=wait_and_clear, daemon=True).start()
+
+        return {
+            "status": "success",
+            "message": f"已啟動 1688 採購車流程：{len(items)} 個型號。瀏覽器會保留約 {payload.get('pauseSeconds') or 300} 秒供檢查。",
+            "draftId": restock_payload.get("draftId"),
+            "productId": restock_payload.get("productId", ""),
+            "itemCount": len(items),
+            "totalQty": sum(item["restockQty"] for item in items),
+            "outputPath": output_path
+        }
+
+    def _build_alibaba_restock_payload(self, payload):
+        draft_id = payload.get("draftId")
+        add_to_cart = bool(payload.get("addToCart", True))
+        raw_lines = payload.get("items") or payload.get("lines") or []
+        product_id = normalize_identifier(payload.get("productId", ""))
+        product_name = str(payload.get("productName", "")).strip()
+
+        if draft_id:
+            draft = self._procurement_store().get_draft(int(draft_id))
+            raw_lines = draft.get("lines", [])
+            first_line = raw_lines[0] if raw_lines else {}
+            product_id = product_id or normalize_identifier(first_line.get("shopee_product_id", ""))
+            product_name = product_name or str(first_line.get("shopee_product_name", "")).strip()
+
+        if not isinstance(raw_lines, list) or len(raw_lines) == 0:
+            raise ValueError("缺少補貨型號")
+
+        first_url_by_product = {}
+        for line in raw_lines:
+            if not isinstance(line, dict):
+                continue
+            line_product_id = self._line_product_id(line, product_id)
+            line_url = self._line_alibaba_url(line)
+            if line_product_id and line_url and line_product_id not in first_url_by_product:
+                first_url_by_product[line_product_id] = line_url
+
+        items = []
+        for line in raw_lines:
+            if not isinstance(line, dict):
+                continue
+
+            line_product_id = self._line_product_id(line, product_id)
+            line_model_name = str(line.get("shopee_model_name") or line.get("modelName") or "").strip()
+            line_model_id = normalize_identifier(line.get("shopee_model_id") or line.get("modelId") or line.get("specId"))
+            line_url = self._line_alibaba_url(line)
+            if not line_url and self._has_sku_mapping(line_product_id):
+                line_url = first_url_by_product.get(line_product_id, "")
+            fallback_selection = self._fallback_sku_selection(line_product_id, line_model_name)
+            line_sku_name = (
+                fallback_selection["primary"]
+                or str(line.get("alibaba_sku_name") or line.get("alibabaSkuName") or "").strip()
+            )
+            line_sku_second_name = (
+                fallback_selection["secondary"]
+                or str(line.get("alibaba_sku_second_name") or line.get("alibabaSkuSecondName") or "").strip()
+            )
+            restock_qty = self._line_restock_qty(line)
+
+            if restock_qty <= 0:
+                continue
+            if not line_model_name and not line_model_id:
+                continue
+            if not re.match(r'^https?://', line_url, re.IGNORECASE):
+                continue
+            if not line_sku_name:
+                continue
+
+            if is_alibaba_sku_discontinued(line_sku_name):
+                continue
+
+            line_product_name = str(line.get("shopee_product_name") or line.get("productName") or product_name).strip()
+            if requires_alibaba_second_sku(line_product_name, line_model_name) and not line_sku_second_name:
+                raise ValueError(f"{line_model_name} 缺少 1688 第二規格（手機型號）")
+
+            items.append({
+                "productId": line_product_id,
+                "productName": line_product_name,
+                "modelId": line_model_id,
+                "modelName": line_model_name,
+                "alibabaSkuName": line_sku_name,
+                "alibabaSkuSecondName": line_sku_second_name,
+                "restockQty": restock_qty,
+                "alibabaUrl": line_url,
+            })
+
+        return {
+            "draftId": draft_id,
+            "productId": product_id,
+            "productName": product_name,
+            "addToCart": add_to_cart,
+            "items": items,
+        }
+
+    def _line_product_id(self, line, fallback_product_id):
+        return normalize_identifier(line.get("shopee_product_id") or line.get("productId") or fallback_product_id)
+
+    def _line_alibaba_url(self, line):
+        return str(line.get("alibaba_product_url") or line.get("alibabaProductUrl") or line.get("alibabaUrl") or "").strip()
+
+    def _line_restock_qty(self, line):
+        for key in ("adjusted_qty", "adjustedQty", "restockQty", "suggested_qty", "suggestedQty"):
+            try:
+                qty = int(float(line.get(key) or 0))
+            except (TypeError, ValueError):
+                qty = 0
+            if qty > 0:
+                return self._round_restock_qty(qty)
+        return 0
+
+    def _round_restock_qty(self, quantity):
+        qty = int(quantity or 0)
+        if qty <= 0:
+            return 0
+        return ((qty + 5) // 10) * 10
+
+    def _fallback_sku_selection(self, product_id, model_name):
+        sku_mapping = self._sku_mapping_for_product(product_id)
+        selection = sku_mapping.get(str(model_name or "").strip(), {})
+        if not isinstance(selection, dict):
+            return {"primary": str(selection or "").strip(), "secondary": ""}
+        return {
+            "primary": str(selection.get("primary") or "").strip(),
+            "secondary": str(selection.get("secondary") or "").strip(),
+        }
+
+    def _fallback_sku_name(self, product_id, model_name):
+        return self._fallback_sku_selection(product_id, model_name)["primary"]
+
+    def _has_sku_mapping(self, product_id):
+        return bool(self._sku_mapping_for_product(product_id))
+
+    def _sku_mapping_for_product(self, product_id):
+        golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
+        try:
+            with open(golden_path, "r", encoding="utf-8") as f:
+                golden_table = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {}
+
+        product = golden_table.get(str(product_id or ""), {})
+        if not isinstance(product, dict):
+            return {}
+
+        sku_mapping = {}
+        models = product.get("型號", [])
+        if not isinstance(models, list):
+            return {}
+        for model in models:
+            if not isinstance(model, dict):
+                continue
+            model_name = str(model.get("型號名稱") or "").strip()
+            sku_name = str(model.get("1688_sku_name") or "").strip()
+            sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
+            if model_name and sku_name:
+                sku_mapping[model_name] = {
+                    "primary": sku_name,
+                    "secondary": sku_second_name,
+                }
+        return sku_mapping
+
     def _update_golden_table_model_alibaba(self, payload):
         product_id = normalize_identifier(payload.get("productId", ""))
         spec_id = normalize_identifier(payload.get("specId", ""))
         model_name = str(payload.get("modelName", "")).strip()
         alibaba_product_name = str(payload.get("alibabaProductName", "")).strip()
         alibaba_product_url = str(payload.get("alibabaProductUrl", "")).strip()
+        alibaba_offer_id = normalize_identifier(payload.get("alibabaOfferId", "")) or parse_offer_id(alibaba_product_url)
+        alibaba_sku_id = normalize_identifier(payload.get("alibabaSkuId", ""))
+        alibaba_sku_name = str(payload.get("alibabaSkuName", "")).strip()
+        alibaba_min_order_qty = int(payload.get("alibabaMinOrderQty") or 1)
+        alibaba_package_multiple = int(payload.get("alibabaPackageMultiple") or 1)
+        alibaba_last_price_cny = payload.get("alibabaLastPriceCny")
         apply_scope = str(payload.get("applyScope", "single")).strip()
 
         if apply_scope not in ("single", "fill_missing", "overwrite_all", "selected_models"):
@@ -419,9 +1801,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         with open(golden_path, "r", encoding="utf-8") as f:
             golden_table = json.load(f)
 
-        product = golden_table.get(product_id)
-        if not isinstance(product, dict):
-            raise FileNotFoundError(f"找不到商品ID: {product_id}")
+        product, product_created = self._ensure_golden_table_product(
+            golden_table, product_id, spec_id, model_name
+        )
 
         models = product.get("型號", [])
         if not isinstance(models, list):
@@ -471,6 +1853,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         for model in models_to_update:
             model["阿里巴巴商品名稱"] = alibaba_product_name
             model["阿里巴巴商品URL"] = alibaba_product_url
+            model["1688_offer_id"] = alibaba_offer_id
+            model["1688_sku_id"] = alibaba_sku_id
+            model["1688_sku_name"] = alibaba_sku_name
+            model["1688_min_order_qty"] = alibaba_min_order_qty
+            model["1688_package_multiple"] = alibaba_package_multiple
+            model["1688_last_price_cny"] = alibaba_last_price_cny
 
         backup_path = f"{golden_path}.bak"
         shutil.copy2(golden_path, backup_path)
@@ -478,14 +1866,228 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         with open(golden_path, "w", encoding="utf-8") as f:
             json.dump(golden_table, f, ensure_ascii=False, indent=4)
 
+        store = self._procurement_store()
+        for model in models_to_update:
+            store.upsert_binding({
+                "productId": product_id,
+                "modelId": normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱", "")).strip(),
+                "productName": product.get("商品名稱", ""),
+                "modelName": model.get("型號名稱", ""),
+                "alibabaProductName": alibaba_product_name,
+                "alibabaProductUrl": alibaba_product_url,
+                "alibabaOfferId": alibaba_offer_id,
+                "alibabaSkuId": alibaba_sku_id,
+                "alibabaSkuName": alibaba_sku_name,
+                "alibabaMinOrderQty": alibaba_min_order_qty,
+                "alibabaPackageMultiple": alibaba_package_multiple,
+                "alibabaLastPriceCny": alibaba_last_price_cny,
+            })
+
         return {
             "status": "success",
-            "message": "已更新阿里巴巴資料",
+            "message": "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料",
             "productId": product_id,
+            "productCreated": product_created,
             "applyScope": apply_scope,
             "updatedCount": len(models_to_update),
             "updatedModels": models_to_update
         }
+
+    def _update_golden_table_model_1688_sku(self, payload):
+        """只更新單一型號的 1688 顯示名稱，保留網址與其他採購欄位。"""
+        product_id = normalize_identifier(payload.get("productId", ""))
+        spec_id = normalize_identifier(payload.get("specId", ""))
+        model_name = str(payload.get("modelName", "")).strip()
+        alibaba_sku_name = str(payload.get("alibabaSkuName", "")).strip()
+
+        if not product_id:
+            raise ValueError("缺少商品ID")
+        if not spec_id and not model_name:
+            raise ValueError("缺少規格ID或型號名稱")
+
+        golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
+        if not os.path.exists(golden_path):
+            raise FileNotFoundError("找不到 golden_table.json")
+
+        with open(golden_path, "r", encoding="utf-8") as f:
+            golden_table = json.load(f)
+
+        product, product_created = self._ensure_golden_table_product(
+            golden_table, product_id, spec_id, model_name
+        )
+
+        models = product.get("型號", [])
+        if not isinstance(models, list):
+            raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
+
+        target_model = self._find_golden_model(models, spec_id, model_name)
+        if target_model is None:
+            raise FileNotFoundError("找不到對應型號")
+
+        current_sku_name = str(target_model.get("1688_sku_name") or "").strip()
+        changed = current_sku_name != alibaba_sku_name
+        backup_path = ""
+        if changed or product_created:
+            backup_path = f"{golden_path}.bak"
+            shutil.copy2(golden_path, backup_path)
+            if alibaba_sku_name:
+                target_model["1688_sku_name"] = alibaba_sku_name
+            else:
+                target_model.pop("1688_sku_name", None)
+
+            with open(golden_path, "w", encoding="utf-8") as f:
+                json.dump(golden_table, f, ensure_ascii=False, indent=4)
+
+        self._sync_model_1688_sku_binding(product_id, product, target_model, alibaba_sku_name)
+
+        return {
+            "status": "success",
+            "message": (
+                "已新增商品並更新 1688 對應型號" if product_created else
+                ("已更新 1688 對應型號" if changed else "1688 對應型號未變更")
+            ),
+            "productId": product_id,
+            "productCreated": product_created,
+            "changed": changed,
+            "backupPath": backup_path,
+            "updatedModel": target_model
+        }
+
+    def _sync_model_1688_sku_binding(self, product_id, product, target_model, alibaba_sku_name):
+        """同步採購草稿資料庫，讓批次與單筆編輯共用相同行為。"""
+        model_id = normalize_identifier(target_model.get("規格ID", "")) or str(target_model.get("型號名稱", "")).strip()
+        store = self._procurement_store()
+        existing_binding = store.get_binding(product_id, model_id) or {}
+        store.upsert_binding({
+            "productId": product_id,
+            "modelId": model_id,
+            "productName": product.get("商品名稱", ""),
+            "modelName": target_model.get("型號名稱", ""),
+            "alibabaProductName": existing_binding.get("alibabaProductName") or target_model.get("阿里巴巴商品名稱", ""),
+            "alibabaProductUrl": existing_binding.get("alibabaProductUrl") or target_model.get("阿里巴巴商品URL", ""),
+            "alibabaOfferId": existing_binding.get("alibabaOfferId") or target_model.get("1688_offer_id", ""),
+            "alibabaSkuId": existing_binding.get("alibabaSkuId") or target_model.get("1688_sku_id", ""),
+            "alibabaSkuName": alibaba_sku_name,
+            "alibabaMinOrderQty": existing_binding.get("alibabaMinOrderQty") or target_model.get("1688_min_order_qty", 1),
+            "alibabaPackageMultiple": existing_binding.get("alibabaPackageMultiple") or target_model.get("1688_package_multiple", 1),
+            "alibabaLastPriceCny": existing_binding.get("alibabaLastPriceCny")
+            if existing_binding.get("alibabaLastPriceCny") is not None
+            else target_model.get("1688_last_price_cny"),
+        })
+
+    def _update_golden_table_product_1688_skus(self, payload):
+        """一次更新同商品的所有 1688 型號對應，確保寫檔與備份只發生一次。"""
+        product_id = normalize_identifier(payload.get("productId", ""))
+        mappings = payload.get("mappings")
+        if not product_id:
+            raise ValueError("缺少商品ID")
+        if not isinstance(mappings, list) or not mappings:
+            raise ValueError("缺少要更新的型號對應")
+
+        golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
+        if not os.path.exists(golden_path):
+            raise FileNotFoundError("找不到 golden_table.json")
+
+        with open(golden_path, "r", encoding="utf-8") as f:
+            golden_table = json.load(f)
+        product, product_created = self._ensure_golden_table_product(golden_table, product_id)
+
+        models = product.get("型號", [])
+        if not isinstance(models, list):
+            raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
+
+        resolved = []
+        seen_model_ids = set()
+        for index, mapping in enumerate(mappings, 1):
+            if not isinstance(mapping, dict):
+                raise ValueError(f"第 {index} 筆型號對應格式不正確")
+            spec_id = normalize_identifier(mapping.get("specId", ""))
+            model_name = str(mapping.get("modelName", "")).strip()
+            if not spec_id and not model_name:
+                raise ValueError(f"第 {index} 筆缺少規格ID或型號名稱")
+            target_model = self._find_golden_model(models, spec_id, model_name)
+            if target_model is None:
+                raise FileNotFoundError(f"找不到型號：{model_name or spec_id}")
+            model_id = normalize_identifier(target_model.get("規格ID", "")) or str(target_model.get("型號名稱", "")).strip()
+            if model_id in seen_model_ids:
+                raise ValueError(f"型號重複：{target_model.get('型號名稱', model_id)}")
+            seen_model_ids.add(model_id)
+            resolved.append((
+                target_model,
+                str(mapping.get("alibabaSkuName", "")).strip(),
+                str(mapping.get("alibabaSkuSecondName", "")).strip(),
+            ))
+
+        changed_models = []
+        for target_model, sku_name, sku_second_name in resolved:
+            current_sku_name = str(target_model.get("1688_sku_name") or "").strip()
+            current_sku_second_name = str(target_model.get("1688_sku_second_name") or "").strip()
+            if current_sku_name == sku_name and current_sku_second_name == sku_second_name:
+                continue
+            if sku_name:
+                target_model["1688_sku_name"] = sku_name
+            else:
+                target_model.pop("1688_sku_name", None)
+            if sku_second_name:
+                target_model["1688_sku_second_name"] = sku_second_name
+            else:
+                target_model.pop("1688_sku_second_name", None)
+            changed_models.append(target_model)
+
+        backup_path = ""
+        if changed_models or product_created:
+            backup_path = f"{golden_path}.bak"
+            shutil.copy2(golden_path, backup_path)
+            with open(golden_path, "w", encoding="utf-8") as f:
+                json.dump(golden_table, f, ensure_ascii=False, indent=4)
+
+        for target_model, sku_name, _ in resolved:
+            self._sync_model_1688_sku_binding(product_id, product, target_model, sku_name)
+
+        return {
+            "status": "success",
+            "message": (
+                f"已新增商品並更新 {len(changed_models)} 個 1688 型號對應"
+                if product_created else f"已更新 {len(changed_models)} 個 1688 型號對應"
+            ),
+            "productId": product_id,
+            "productCreated": product_created,
+            "changedCount": len(changed_models),
+            "backupPath": backup_path,
+            "updatedModels": [target_model for target_model, _, _ in resolved],
+        }
+
+    def _ensure_golden_table_product(self, golden_table, product_id, spec_id="", model_name=""):
+        """必要時從本次蝦皮搜尋快取匯入新商品，讓編輯 API 可直接寫入 golden table。"""
+        product = golden_table.get(product_id)
+        if isinstance(product, dict):
+            return product, False
+
+        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shopee_products.json")
+        if not os.path.exists(source_path):
+            raise FileNotFoundError(f"找不到商品ID: {product_id}（且沒有本次蝦皮搜尋快取）")
+        try:
+            with open(source_path, "r", encoding="utf-8") as f:
+                source_table = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            raise FileNotFoundError(f"找不到商品ID: {product_id}（無法讀取蝦皮搜尋快取）") from e
+
+        source_product = source_table.get(product_id)
+        if not isinstance(source_product, dict):
+            raise FileNotFoundError(f"找不到商品ID: {product_id}")
+
+        source_models = source_product.get("型號", [])
+        if not isinstance(source_models, list):
+            raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
+        if spec_id or model_name:
+            source_model = self._find_golden_model(source_models, spec_id, model_name)
+            if source_model is None:
+                raise FileNotFoundError(f"商品ID {product_id} 在蝦皮搜尋快取中找不到對應型號")
+
+        # 使用 JSON round-trip 複製，避免直接共用快取物件並保留既有欄位結構。
+        product = json.loads(json.dumps(source_product, ensure_ascii=False))
+        golden_table[product_id] = product
+        return product, True
 
     def _find_golden_model(self, models, spec_id, model_name):
         if spec_id:
@@ -632,7 +2234,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             timeout=5400,
         )
 
-    def run_ads_analysis(self, include_ai=True):
+    def run_ads_analysis(
+        self,
+        include_ai=True,
+        model=DEFAULT_OPENAI_MODEL,
+        reasoning_effort=DEFAULT_OPENAI_REASONING_EFFORT,
+    ):
         """執行蝦皮廣告分析程序"""
         output_path = "ads_analysis_latest.json"
         script_name = "ads_analysis.py"
@@ -642,7 +2249,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "--markdown-output", "ads_analysis_report.md",
             "--include-ai", str(include_ai).lower(),
             "--refresh-source", "false",
-            "--trend-weeks", "6",
+            "--trend-weeks", "4",
+            "--model", validate_openai_model(model),
+            "--reasoning-effort", validate_reasoning_effort(reasoning_effort),
         ]
         return self.run_worker_process(
             mode_args,
@@ -657,13 +2266,25 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
         優先使用 型號ID；若缺少型號ID，則退回 商品名稱+型號名稱。
         """
+        links_map = {}
+        try:
+            bindings = self._procurement_store().list_bindings()
+            for key, binding in bindings.items():
+                url = binding.get("alibabaProductUrl")
+                if url:
+                    links_map[key] = url
+                    model_id = binding.get("modelId")
+                    if model_id:
+                        links_map[str(model_id)] = url
+        except Exception as e:
+            logger.warning(f"載入 SQLite 1688 綁定失敗: {e}")
+
         try:
             import pandas as pd
             xlsx_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shopee_products.xlsx")
             if not os.path.exists(xlsx_path):
-                return {}
-            df = pd.read_excel(xlsx_path)
-            links_map = {}
+                return links_map
+            df = pd.read_excel(xlsx_path, engine="calamine")
             for _, row in df.iterrows():
                 product_name = str(row.get("商品名稱", "")).strip()
                 model_name = str(row.get("型號名稱", "")).strip()
@@ -678,7 +2299,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             return links_map
         except Exception as e:
             logger.warning(f"載入阿里巴巴連結失敗: {e}")
-            return {}
+            return links_map
 
     def run_worker_process(self, worker_args, output_path, task_name="任務", timeout=20000, script_name="crawler.py"):
         """執行 worker 子程序並讀取 JSON 結果"""
@@ -755,6 +2376,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             logger.info(f"{task_name}進程已完成，返回碼: {process.returncode}")
 
             if process.returncode != 0:
+                if os.path.exists(output_path):
+                    try:
+                        with open(output_path, 'r', encoding='utf-8') as f:
+                            error_result = json.load(f)
+                        if error_result.get("status") == "error":
+                            return error_result
+                    except Exception as e:
+                        logger.warning(f"讀取{task_name}錯誤結果失敗: {e}")
                 if process.returncode == 77:
                     message = "Cookies 已失效，請重新更新 cookies.json"
                 else:

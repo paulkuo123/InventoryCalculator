@@ -6,6 +6,10 @@ import re
 from config_loader import LOCAL_ENV_FILE, load_openai_api_key
 
 
+DEFAULT_OPENAI_MODEL = "gpt-5.6-sol"
+DEFAULT_REASONING_EFFORT = "xhigh"
+
+
 def read_existing_lines(path: str) -> list[str]:
     if not os.path.exists(path):
         return []
@@ -13,22 +17,27 @@ def read_existing_lines(path: str) -> list[str]:
         return f.read().splitlines()
 
 
-def write_local_env(path: str, key_value: str) -> None:
-    lines = read_existing_lines(path)
-    new_lines: list[str] = []
+def upsert_env_value(lines: list[str], name: str, value: str) -> list[str]:
+    result: list[str] = []
     replaced = False
-
     for line in lines:
-        if re.match(r"(?:export\s+)?OPENAI_API_KEY=", line.strip()):
-            new_lines.append(f'OPENAI_API_KEY="{key_value}"')
+        if re.match(rf"(?:export\s+)?{re.escape(name)}=", line.strip()):
+            result.append(f'{name}="{value}"')
             replaced = True
         else:
-            new_lines.append(line)
-
+            result.append(line)
     if not replaced:
-        if new_lines and new_lines[-1].strip():
-            new_lines.append("")
-        new_lines.append(f'OPENAI_API_KEY="{key_value}"')
+        if result and result[-1].strip():
+            result.append("")
+        result.append(f'{name}="{value}"')
+    return result
+
+
+def write_local_env(path: str, key_value: str) -> None:
+    lines = read_existing_lines(path)
+    new_lines = upsert_env_value(lines, "OPENAI_API_KEY", key_value)
+    new_lines = upsert_env_value(new_lines, "OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+    new_lines = upsert_env_value(new_lines, "OPENAI_REASONING_EFFORT", DEFAULT_REASONING_EFFORT)
 
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(new_lines).rstrip() + "\n")
@@ -58,6 +67,8 @@ def main() -> None:
 
     write_local_env(LOCAL_ENV_FILE, key)
     print(f"已寫入專案本地設定：{LOCAL_ENV_FILE}")
+    print(f"預設模型：{DEFAULT_OPENAI_MODEL}")
+    print(f"推理強度：{DEFAULT_REASONING_EFFORT}")
     print("之後程式會優先讀取環境變數，其次讀取 .env.local，最後才回退到 shell 設定。")
 
 

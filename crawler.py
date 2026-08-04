@@ -4,6 +4,7 @@ import json
 from calendar import monthrange
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+from urllib.parse import parse_qs, urlencode, urlparse
 import re
 import sys
 import os
@@ -27,7 +28,7 @@ USER_AGENTS = [
 ]
 
 ADS_EXPORT_RANGE_ORDER = ["past_month", "yesterday"]
-DEFAULT_TREND_EXPORT_WEEKS = 6
+DEFAULT_TREND_EXPORT_WEEKS = 4
 
 class ShopeeCrawler:
 
@@ -928,10 +929,31 @@ class ShopeeCrawler:
     def _build_ads_range_url(self, range_config):
         from_ts = self._to_taipei_unix_timestamp(range_config["start_date"], end_of_day=False)
         to_ts = self._to_taipei_unix_timestamp(range_config["end_date"], end_of_day=True)
-        return (
-            "https://seller.shopee.tw/portal/marketing/pas/index"
-            f"?from={from_ts}&to={to_ts}&type=new_cpc_homepage&group={range_config['group']}"
-        )
+        query = urlencode({
+            "source_page_id": "1",
+            "from": str(from_ts),
+            "to": str(to_ts),
+            "type": "new_cpc_homepage",
+            "group": range_config["group"],
+        })
+        return f"https://seller.shopee.tw/portal/marketing/pas/index?{query}"
+
+    def _ads_range_url_matches(self, current_url, range_config):
+        """確認廣告頁沒有把要求的日期範圍導回其他預設區間。"""
+        try:
+            query = parse_qs(urlparse(current_url).query)
+            expected_from = str(self._to_taipei_unix_timestamp(range_config["start_date"], end_of_day=False))
+            expected_to = str(self._to_taipei_unix_timestamp(range_config["end_date"], end_of_day=True))
+            return query.get("from", [""])[0] == expected_from and query.get("to", [""])[0] == expected_to
+        except Exception:
+            return False
+
+    def _ads_export_trigger_locators(self):
+        return [
+            self.page.locator('[data-testid="export-data-dropdown-trigger"]'),
+            self.page.get_by_role("button", name=re.compile(r"^\s*匯出數據")),
+            self.page.get_by_text(re.compile(r"^\s*匯出數據\s*$")),
+        ]
 
     def _navigate_to_ads_range_page(self, range_config):
         target_url = self._build_ads_range_url(range_config)
@@ -952,16 +974,31 @@ class ShopeeCrawler:
             except Exception as e:
                 self._ads_log("RANGE", f"{range_config['label']} 報表頁 networkidle 等待超時，繼續操作: {e}", range_config["label"])
 
-            export_button = self.page.locator('[data-testid="export-data-dropdown-trigger"]')
-            try:
-                export_button.first.wait_for(state="visible", timeout=30000)
+            if not self._ads_range_url_matches(self.page.url, range_config):
+                last_error = RuntimeError(f"頁面日期參數與要求的 {range_config['label']} 不一致")
+                self._ads_log("RANGE", f"第 {attempt} 次載入後日期參數不一致，將重試", range_config["label"])
+                time.sleep(3)
+                continue
+
+            ready = False
+            for export_button in self._ads_export_trigger_locators():
+                try:
+                    if not self._locator_exists(export_button):
+                        continue
+                    export_button.first.wait_for(state="visible", timeout=10000)
+                    ready = True
+                    break
+                except Exception as e:
+                    last_error = navigation_error or e
+
+            if ready:
                 time.sleep(2)
                 self._ads_log("RANGE", f"已透過 URL 進入 {range_config['label']} 報表頁", range_config["label"])
                 return True
-            except Exception as e:
-                last_error = navigation_error or e
-                self._ads_log("RANGE", f"第 {attempt} 次仍未等到匯出按鈕，將重試: {last_error}", range_config["label"])
-                time.sleep(3)
+
+            last_error = last_error or navigation_error or RuntimeError("找不到匯出數據按鈕")
+            self._ads_log("RANGE", f"第 {attempt} 次仍未等到匯出按鈕，將重試: {last_error}", range_config["label"])
+            time.sleep(3)
 
         raise RuntimeError(f"ADS_RANGE_URL_FAILED: {range_config['label']} 報表頁未就緒，最後錯誤：{last_error}")
 
@@ -1310,8 +1347,7 @@ class ShopeeCrawler:
         raise RuntimeError(f"ADS_DATE_OPTION_NOT_FOUND: 找不到「{range_label}」選項")
 
     def _open_ads_export_dropdown(self):
-        dropdown = self.page.locator('[data-testid="export-data-dropdown-trigger"]')
-        if self._click_first_visible_locator([dropdown], "匯出數據按鈕", timeout=8000):
+        if self._click_first_visible_locator(self._ads_export_trigger_locators(), "匯出數據按鈕", timeout=8000):
             time.sleep(1)
             return True
 
@@ -1361,16 +1397,28 @@ class ShopeeCrawler:
             try:
                 if not row.is_visible():
                     continue
-                report_name = row.locator(".name").inner_text(timeout=3000).strip()
-                status_text = row.locator(".status").inner_text(timeout=3000).strip()
+                row_text = row.inner_text(timeout=3000).strip()
+                report_name = ""
+                status_text = row_text
+
+                name_locator = row.locator(".name")
+                if self._locator_exists(name_locator):
+                    report_name = name_locator.first.inner_text(timeout=3000).strip()
+                if not report_name:
+                    report_name = self._extract_ads_report_name(row_text)
+
+                status_locator = row.locator(".status")
+                if self._locator_exists(status_locator):
+                    status_text = status_locator.first.inner_text(timeout=3000).strip()
+
                 timestamp = row.get_attribute("data-test-timestamp") or ""
                 entries.append({
                     "report_name": report_name,
-                    "row_text": f"{report_name} {status_text}".strip(),
+                    "row_text": row_text,
                     "status_text": status_text,
-                    "has_download": "下載" in status_text,
-                    "has_processing": ("處理中" in status_text) or ("处理中" in status_text),
-                    "has_failed": "失敗" in status_text,
+                    "has_download": "下載" in row_text,
+                    "has_processing": ("處理中" in row_text) or ("处理中" in row_text),
+                    "has_failed": ("失敗" in row_text) or ("失败" in row_text),
                     "timestamp": int(timestamp) if str(timestamp).isdigit() else 0,
                     "row_index": index,
                 })
@@ -1379,6 +1427,17 @@ class ShopeeCrawler:
 
         entries.sort(key=lambda item: item.get("timestamp", 0), reverse=True)
         return entries
+
+    def _extract_ads_report_name(self, row_text):
+        if not row_text:
+            return ""
+        for line in row_text.splitlines():
+            cleaned = line.strip()
+            if re.search(r"\.csv(?:\s|$)", cleaned, re.IGNORECASE):
+                match = re.search(r"[^\r\n]*?\.csv", cleaned, re.IGNORECASE)
+                return match.group(0).strip() if match else cleaned
+        match = re.search(r"[^\r\n]*?\.csv", row_text, re.IGNORECASE)
+        return match.group(0).strip() if match else ""
 
     def _report_matches_range(self, report_name, range_config):
         if not report_name:
@@ -1431,12 +1490,21 @@ class ShopeeCrawler:
             try:
                 if not row.is_visible():
                     continue
-                name_text = row.locator(".name").inner_text(timeout=3000).strip()
+                name_locator = row.locator(".name")
+                if self._locator_exists(name_locator):
+                    name_text = name_locator.first.inner_text(timeout=3000).strip()
+                else:
+                    name_text = self._extract_ads_report_name(row.inner_text(timeout=3000))
                 if name_text != report_name:
                     continue
-                button = row.get_by_role("button", name=re.compile(r"下載"))
-                if self._locator_exists(button):
-                    return button.first
+                download_locators = [
+                    row.get_by_role("button", name=re.compile(r"下載")),
+                    row.get_by_role("link", name=re.compile(r"下載")),
+                    row.get_by_text(re.compile(r"^\s*下載\s*$")),
+                ]
+                for button in download_locators:
+                    if self._locator_exists(button):
+                        return button.first
             except Exception:
                 continue
 
@@ -1488,14 +1556,18 @@ class ShopeeCrawler:
 
         overall_clicked = self._click_first_visible_locator(
             [
-                self.page.locator('[data-testid="export-data-dropdown-item"]').filter(has_text=re.compile(r"總體廣告數據|整體廣告數據")),
-                self.page.locator('[data-testid="export-data-dropdown-item"]'),
-                *self._find_text_button_locators([r"總體廣告數據", r"整體廣告數據", r"總體", r"整體"]),
+                self.page.locator('[data-testid="export-data-dropdown-item"]').filter(
+                    has_text=re.compile(r"(總體廣告數據|整體廣告數據)")
+                ),
+                self.page.get_by_role("menuitem", name=re.compile(r"(總體廣告數據|整體廣告數據)")),
+                self.page.get_by_text(re.compile(r"(總體廣告數據|整體廣告數據)")),
             ],
             "總體廣告數據選項",
             timeout=6000,
         )
         if not overall_clicked:
+            self._capture_debug_snapshot(f"ads_{range_config['key']}_overall_export_not_found")
+            self._capture_debug_html(f"ads_{range_config['key']}_overall_export_not_found")
             raise RuntimeError("ADS_EXPORT_MODAL_NOT_FOUND: 找不到總體廣告數據選項")
 
         self._ads_log("EXPORT", "已觸發總體廣告數據匯出", range_config["label"])
@@ -1539,6 +1611,11 @@ class ShopeeCrawler:
             if processing_entry:
                 self._ads_log("CHECK", f"發現處理中報表：{processing_entry['report_name']}", range_config["label"])
             elif not export_triggered:
+                try:
+                    self.page.keyboard.press("Escape")
+                    time.sleep(0.5)
+                except Exception:
+                    pass
                 self._trigger_ads_overall_export(range_config)
                 export_triggered = True
             else:
@@ -1564,17 +1641,16 @@ class ShopeeCrawler:
         raise RuntimeError(f"ADS_DOWNLOAD_TIMEOUT: {range_config['label']} 等待下載按鈕超時")
 
     def _export_single_ads_range(self, range_config):
-        if range_config.get("custom_only"):
-            self._ads_log("RANGE", "此區間需強制走自訂日期面板", range_config["label"])
-            self._navigate_to_ads_center()
-            self._select_ads_date_range(range_config)
-            result = self._wait_for_ads_report_download(range_config)
-            self._ads_log("DONE", f"{range_config['label']} 完成，動作：{result.get('action_taken', 'downloaded')}", range_config["label"])
-            return result
-
         try:
             self._navigate_to_ads_range_page(range_config)
         except Exception as e:
+            if range_config.get("custom_only"):
+                self._ads_log(
+                    "RANGE",
+                    f"自訂區間直接網址載入失敗；為避免不穩定的逐日點選，不改走日期面板: {e}",
+                    range_config["label"],
+                )
+                raise
             self._ads_log("RANGE", f"直接進頁失敗，改回 UI 選擇模式: {e}", range_config["label"])
             self._navigate_to_ads_center()
             self._select_ads_date_range(range_config)
@@ -1603,13 +1679,16 @@ class ShopeeCrawler:
 
     def _export_ads_ranges(self, range_configs, range_order, unit_label="範圍"):
         results = []
+        consecutive_failures = 0
         for index, range_key in enumerate(range_order, start=1):
             range_config = range_configs[range_key]
             self._ads_log("NEXT", f"開始第 {index}/{len(range_order)} 個{unit_label}：{range_config['label']}")
             try:
                 range_result = self._export_single_ads_range(range_config)
                 results.append(range_result)
+                consecutive_failures = 0
             except Exception as e:
+                consecutive_failures += 1
                 self._ads_log("ERROR", str(e), range_config["label"])
                 results.append({
                     "range_key": range_config["key"],
@@ -1620,13 +1699,16 @@ class ShopeeCrawler:
                     "file_name": "",
                     "action_taken": "failed",
                 })
-                remaining_keys = range_order[index:]
-                for remaining_key in remaining_keys:
-                    skipped_config = range_configs[remaining_key]
-                    skipped_reason = f"前一個{unit_label}失敗，未繼續執行 {skipped_config['label']}"
-                    self._ads_log("STOP", skipped_reason)
-                    results.append(self._build_skipped_ads_result(skipped_config, skipped_reason))
-                break
+                if consecutive_failures >= 2:
+                    remaining_keys = range_order[index:]
+                    for remaining_key in remaining_keys:
+                        skipped_config = range_configs[remaining_key]
+                        skipped_reason = f"連續 2 個{unit_label}失敗，為避免持續重試而停止 {skipped_config['label']}"
+                        self._ads_log("STOP", skipped_reason)
+                        results.append(self._build_skipped_ads_result(skipped_config, skipped_reason))
+                    break
+                self._ads_log("NEXT", f"本次{unit_label}失敗，稍後改處理下一個區間")
+                time.sleep(3)
         return results
 
     def _build_skipped_ads_result(self, range_config, reason):
@@ -1643,11 +1725,11 @@ class ShopeeCrawler:
     def export_ads_report(self):
         """
         執行蝦皮廣告完整分析資料集匯出流程：
-        昨天 + 過去一個月 + 過去 6 週滾動周報
+        昨天 + 過去一個月 + 過去 4 週滾動周報（共 6 份）
         退出碼：0 = 成功；77 = Cookies 失效；1 = 其他錯誤
         """
         try:
-            self._ads_log("INIT", "開始初始化廣告匯出流程（摘要 + 6 週趨勢）")
+            self._ads_log("INIT", "開始初始化廣告匯出流程（2 份摘要 + 4 週趨勢，共 6 份）")
             self.login()
             self._ads_log("LOGIN", "登入賣家中心成功")
             self._navigate_to_ads_center()
@@ -2465,6 +2547,12 @@ class ShopeeCrawler:
             model_info['型號圖片網址'] = golden_model.get("型號圖片網址", model_info.get("型號圖片網址", "未找到"))
             model_info['阿里巴巴商品名稱'] = golden_model.get("阿里巴巴商品名稱", "")
             model_info['阿里巴巴商品URL'] = golden_model.get("阿里巴巴商品URL", "")
+            model_info['1688_offer_id'] = golden_model.get("1688_offer_id", "")
+            model_info['1688_sku_id'] = golden_model.get("1688_sku_id", "")
+            model_info['1688_sku_name'] = golden_model.get("1688_sku_name", "")
+            model_info['1688_min_order_qty'] = golden_model.get("1688_min_order_qty", 1)
+            model_info['1688_package_multiple'] = golden_model.get("1688_package_multiple", 1)
+            model_info['1688_last_price_cny'] = golden_model.get("1688_last_price_cny", None)
 
         # Extract model info
         models = []
@@ -2479,7 +2567,13 @@ class ShopeeCrawler:
                     '商品庫存': '未找到',
                     '型號圖片網址': '未找到',
                     '阿里巴巴商品名稱': '',
-                    '阿里巴巴商品URL': ''
+                    '阿里巴巴商品URL': '',
+                    '1688_offer_id': '',
+                    '1688_sku_id': '',
+                    '1688_sku_name': '',
+                    '1688_min_order_qty': 1,
+                    '1688_package_multiple': 1,
+                    '1688_last_price_cny': None
                 }
 
                 try:
