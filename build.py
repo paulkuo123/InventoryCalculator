@@ -40,6 +40,12 @@ def build():
         f'index.html{separator}.',
         f'script.js{separator}.',
         f'styles.css{separator}.',
+        f'inbound.html{separator}.',
+        f'inbound.js{separator}.',
+        f'inbound.css{separator}.',
+        f'ads.html{separator}.',
+        f'ads.js{separator}.',
+        f'ads.css{separator}.',
         f'version.py{separator}.'  # 加入 version.py 以便執行檔能檢查版本
     ]
 

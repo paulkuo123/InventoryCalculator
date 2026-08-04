@@ -1,11 +1,13 @@
 import argparse
 import base64
 import csv
+import hashlib
 import json
 import os
 import re
 import subprocess
 import sys
+import time
 from io import BytesIO
 from dataclasses import dataclass
 from datetime import datetime
@@ -13,7 +15,188 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
-from config_loader import load_openai_api_key
+from config_loader import load_openai_api_key, load_openai_config_value
+
+
+OPENAI_MODEL_OPTIONS = [
+    {
+        "id": "gpt-5.6-sol",
+        "label": "GPT-5.6 Sol（品質優先）",
+        "description": "適合複雜、需要深度商業判斷的分析。",
+    },
+    {
+        "id": "gpt-5.6-terra",
+        "label": "GPT-5.6 Terra（平衡）",
+        "description": "兼顧分析品質、速度與成本。",
+    },
+    {
+        "id": "gpt-5.6-luna",
+        "label": "GPT-5.6 Luna（快速）",
+        "description": "適合高頻、成本敏感的例行分析。",
+    },
+]
+OPENAI_MODEL_IDS = {item["id"] for item in OPENAI_MODEL_OPTIONS}
+OPENAI_REASONING_EFFORTS = ["medium", "high", "xhigh", "max"]
+DEFAULT_OPENAI_MODEL = "gpt-5.6-sol"
+DEFAULT_OPENAI_REASONING_EFFORT = "xhigh"
+
+
+OPENAI_ANALYSIS_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "overall_health": {
+            "type": "string",
+            "enum": ["強勢", "穩健", "偏弱", "資料不足"],
+        },
+        "executive_summary": {"type": "string"},
+        "account_diagnosis": {
+            "type": "object",
+            "properties": {
+                "decision": {"type": "string"},
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "primary_risk": {"type": "string"},
+                "primary_opportunity": {"type": "string"},
+                "evidence": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 2,
+                    "maxItems": 8,
+                },
+                "data_limitations": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 8,
+                },
+            },
+            "required": [
+                "decision",
+                "confidence",
+                "primary_risk",
+                "primary_opportunity",
+                "evidence",
+                "data_limitations",
+            ],
+            "additionalProperties": False,
+        },
+        "scale_up": {"type": "array", "items": {"$ref": "#/$defs/product_decision"}},
+        "reduce_or_fix": {"type": "array", "items": {"$ref": "#/$defs/product_decision"}},
+        "indirect_dependency": {"type": "array", "items": {"$ref": "#/$defs/product_decision"}},
+        "watchlist": {"type": "array", "items": {"$ref": "#/$defs/product_decision"}},
+        "next_actions": {
+            "type": "array",
+            "items": {"type": "string"},
+            "minItems": 3,
+            "maxItems": 8,
+        },
+        "excluded_but_reviewed_products": {
+            "type": "array",
+            "items": {"$ref": "#/$defs/excluded_product"},
+        },
+        "reviewed_product_count": {"type": "integer", "minimum": 0},
+        "analysis_limitations": {
+            "type": "array",
+            "items": {"type": "string"},
+            "maxItems": 10,
+        },
+    },
+    "required": [
+        "overall_health",
+        "executive_summary",
+        "account_diagnosis",
+        "scale_up",
+        "reduce_or_fix",
+        "indirect_dependency",
+        "watchlist",
+        "next_actions",
+        "excluded_but_reviewed_products",
+        "reviewed_product_count",
+        "analysis_limitations",
+    ],
+    "additionalProperties": False,
+    "$defs": {
+        "product_decision": {
+            "type": "object",
+            "properties": {
+                "product_id": {"type": "string"},
+                "primary_issue": {
+                    "type": "string",
+                    "enum": [
+                        "素材吸引力不足",
+                        "商品頁轉換偏弱",
+                        "成本過高",
+                        "間接轉換占比過高",
+                        "回收穩定可擴量",
+                        "需繼續觀察",
+                        "資料不足",
+                    ],
+                },
+                "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                "reason": {"type": "string"},
+                "why_not_other_issue": {"type": "string"},
+                "evidence": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 2,
+                    "maxItems": 8,
+                },
+                "direct_actions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "minItems": 2,
+                    "maxItems": 4,
+                },
+                "budget_change_pct": {"type": "integer", "minimum": -30, "maximum": 20},
+                "observation_days": {"type": "integer", "minimum": 1, "maximum": 7},
+                "risk_if_wrong": {"type": "string"},
+                "rule_disagreement": {"type": "boolean"},
+                "rule_disagreement_reason": {"type": "string"},
+            },
+            "required": [
+                "product_id",
+                "primary_issue",
+                "confidence",
+                "reason",
+                "why_not_other_issue",
+                "evidence",
+                "direct_actions",
+                "budget_change_pct",
+                "observation_days",
+                "risk_if_wrong",
+                "rule_disagreement",
+                "rule_disagreement_reason",
+            ],
+            "additionalProperties": False,
+        },
+        "excluded_product": {
+            "type": "object",
+            "properties": {
+                "product_id": {"type": "string"},
+                "reason": {"type": "string"},
+                "evidence": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "maxItems": 5,
+                },
+            },
+            "required": ["product_id", "reason", "evidence"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def validate_openai_model(value: str) -> str:
+    model = str(value or "").strip() or DEFAULT_OPENAI_MODEL
+    if model not in OPENAI_MODEL_IDS:
+        raise ValueError(f"不支援的 OpenAI 模型：{model}")
+    return model
+
+
+def validate_reasoning_effort(value: str) -> str:
+    effort = str(value or "").strip() or DEFAULT_OPENAI_REASONING_EFFORT
+    if effort not in OPENAI_REASONING_EFFORTS:
+        raise ValueError(f"不支援的推理強度：{effort}")
+    return effort
 
 
 WINDOW_KEY_BY_PREFIX = {
@@ -174,7 +357,9 @@ class AdsAnalyzer:
         html_output_path: str = "ads_analysis_report.html",
         include_ai: bool = True,
         refresh_source: bool = True,
-        trend_weeks: int = 6,
+        trend_weeks: int = 4,
+        openai_model: str = "",
+        reasoning_effort: str = "",
     ):
         self.ads_export_dir = ads_export_dir
         self.golden_table_path = golden_table_path
@@ -185,6 +370,25 @@ class AdsAnalyzer:
         self.include_ai = include_ai
         self.refresh_source = refresh_source
         self.trend_weeks = max(1, trend_weeks)
+        configured_model, _ = load_openai_config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
+        configured_effort, _ = load_openai_config_value(
+            "OPENAI_REASONING_EFFORT",
+            DEFAULT_OPENAI_REASONING_EFFORT,
+        )
+        self.openai_model = validate_openai_model(openai_model or configured_model)
+        self.reasoning_effort = validate_reasoning_effort(reasoning_effort or configured_effort)
+        self.openai_runtime: Dict[str, Any] = {
+            "enabled": self.include_ai,
+            "source": "pending" if self.include_ai else "rules",
+            "model": self.openai_model if self.include_ai else "",
+            "reasoning_effort": self.reasoning_effort if self.include_ai else "",
+            "api_latency_seconds": 0.0,
+            "request_id": "",
+            "response_model": "",
+            "usage": {},
+            "attempts": 0,
+            "validation_errors": [],
+        }
         self.trend_window_order = build_trend_window_keys(self.trend_weeks)
         self.window_order = CURRENT_WINDOW_ORDER + self.trend_window_order
         self.golden_table = self._load_golden_table()
@@ -245,19 +449,12 @@ class AdsAnalyzer:
             self._log("EXPORT", "略過來源刷新，直接使用現有 ads_exports")
             return
 
-        self._log("EXPORT", "開始刷新分析來源：先匯出摘要報表，再匯出 6 週滾動趨勢")
-        current_result = self._run_crawler_export_mode(
+        self._log("EXPORT", "開始刷新分析來源：匯出過去一個月、昨天與 4 週趨勢，共 6 份")
+        export_result = self._run_crawler_export_mode(
             "ads-export",
             "ads_analysis_current_export.json",
         )
-        self._log("EXPORT", f"摘要報表刷新完成：{current_result.get('message', '')}")
-
-        trend_result = self._run_crawler_export_mode(
-            "ads-trend-export",
-            "ads_analysis_trend_export.json",
-            extra_args=["--trend-weeks", str(self.trend_weeks)],
-        )
-        self._log("EXPORT", f"趨勢報表刷新完成：{trend_result.get('message', '')}")
+        self._log("EXPORT", f"6 份分析來源刷新完成：{export_result.get('message', '')}")
 
     def _parse_csv_file(self, path: str) -> ParsedAdsReport:
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
@@ -651,7 +848,7 @@ class AdsAnalyzer:
         if not trend_flags:
             trend_flags.append("近幾週趨勢相對平穩")
 
-        confidence = "high" if len(recent) >= 5 else ("medium" if len(recent) >= 3 else "low")
+        confidence = "high" if len(recent) >= 4 else ("medium" if len(recent) >= 2 else "low")
         return {
             "trend_flags": trend_flags,
             "trend_summary": "；".join(trend_flags),
@@ -869,7 +1066,7 @@ class AdsAnalyzer:
                 f"驗算：昨天 ROAS={yesterday_roas:.2f}、直接 ROAS={yesterday_direct_roas:.2f}，"
                 f"最近一週 ROAS={week_roas:.2f}、直接 ROAS={week_direct_roas:.2f}，"
                 f"過去一個月 ROAS={month_roas:.2f}、直接 ROAS={month_direct_roas:.2f}。"
-                f" 近 6 週有 {stable_strong_weeks} 週穩定達標，且未出現連續走弱，可擴量。"
+                f" 近 {self.trend_weeks} 週有 {stable_strong_weeks} 週穩定達標，且未出現連續走弱，可擴量。"
             )
             if spend_growth_pct <= 10:
                 detail += f" 昨天相對近月日均花費只變動 {spend_growth_pct:.1f}%，表示回收不是靠短期暴衝撐出來的。"
@@ -900,7 +1097,7 @@ class AdsAnalyzer:
             detail = (
                 f"驗算：昨天花費={yesterday_spend:.2f}，昨天 ROAS={yesterday_roas:.2f}，直接 ROAS={yesterday_direct_roas:.2f}。"
                 f" 最近一週 ROAS={week_roas:.2f}，過去一個月 ROAS={month_roas:.2f}。"
-                f" 近 6 週有 {weak_weeks} 週未達標，趨勢判定不是單日雜訊。"
+                f" 近 {self.trend_weeks} 週有 {weak_weeks} 週未達標，趨勢判定不是單日雜訊。"
             )
             return "優先降預算", 95, "控制花費", detail, [
                 "先降預算 10% 到 30%，不要再用原金額硬跑。",
@@ -917,7 +1114,7 @@ class AdsAnalyzer:
             detail = (
                 f"驗算：昨天總 ROAS={yesterday_roas:.2f} 達標，但直接 ROAS={yesterday_direct_roas:.2f} 未達 3，"
                 f"最近一週直接 ROAS={week_direct_roas:.2f}，過去一個月直接 ROAS={month_direct_roas:.2f}，"
-                f"直接銷售占比={direct_share * 100:.1f}%。近 6 週有 {indirect_dependency_weeks} 週出現類似結構。"
+                f"直接銷售占比={direct_share * 100:.1f}%。近 {self.trend_weeks} 週有 {indirect_dependency_weeks} 週出現類似結構。"
                 " 這支商品主要吃間接轉換，總 ROAS 好看不代表可以擴量。"
             )
             return "依賴間接轉換", 88, "檢查真實回收", detail, [
@@ -937,7 +1134,7 @@ class AdsAnalyzer:
         ):
             detail = (
                 f"驗算：昨天 ROAS={yesterday_roas:.2f}，最近一週 ROAS={week_roas:.2f}，過去一個月 ROAS={month_roas:.2f}，"
-                f"昨天相對近月日均銷售變動 {yesterday_vs_month_sales_pct:.1f}%。近 6 週有 {stable_strong_weeks} 週維持達標。"
+                f"昨天相對近月日均銷售變動 {yesterday_vs_month_sales_pct:.1f}%。近 {self.trend_weeks} 週有 {stable_strong_weeks} 週維持達標。"
                 " 短中期表現都不差，可列入候選擴量。"
             )
             return "立即加碼", 72, "候選擴量", detail, [
@@ -952,7 +1149,7 @@ class AdsAnalyzer:
         ):
             detail = (
                 f"驗算：昨天 ROAS={yesterday_roas:.2f}、直接 ROAS={yesterday_direct_roas:.2f}。"
-                f" 但近 6 週只有 {weak_weeks} 週未達標，近期趨勢沒有明顯連續走弱，較像短期波動。"
+                f" 但近 {self.trend_weeks} 週只有 {weak_weeks} 週未達標，近期趨勢沒有明顯連續走弱，較像短期波動。"
             )
             return "先觀察", 60, "短期觀察", detail, [
                 "先不要大幅調整預算，連續觀察 2 到 3 天。",
@@ -1031,12 +1228,22 @@ class AdsAnalyzer:
             direct_actions = item.get("direct_actions", [])
             if not isinstance(direct_actions, list):
                 direct_actions = []
+            evidence = item.get("evidence", [])
+            if not isinstance(evidence, list):
+                evidence = []
             normalized.append({
                 "product_id": product_id,
                 "reason": reason,
                 "primary_issue": primary_issue,
                 "why_not_other_issue": why_not_other_issue,
                 "direct_actions": [str(action).strip() for action in direct_actions if str(action).strip()],
+                "confidence": str(item.get("confidence", "low")).strip() or "low",
+                "evidence": [str(value).strip() for value in evidence if str(value).strip()],
+                "budget_change_pct": int(item.get("budget_change_pct", 0) or 0),
+                "observation_days": int(item.get("observation_days", 3) or 3),
+                "risk_if_wrong": str(item.get("risk_if_wrong", "")).strip(),
+                "rule_disagreement": bool(item.get("rule_disagreement", False)),
+                "rule_disagreement_reason": str(item.get("rule_disagreement_reason", "")).strip(),
             })
         return normalized
 
@@ -1120,6 +1327,13 @@ class AdsAnalyzer:
                 if entry["direct_actions"]:
                     merged["action_steps"] = entry["direct_actions"]
                 merged["ai_reason"] = entry["reason"]
+                merged["ai_confidence"] = entry["confidence"]
+                merged["ai_evidence"] = entry["evidence"]
+                merged["budget_change_pct"] = entry["budget_change_pct"]
+                merged["observation_days"] = entry["observation_days"]
+                merged["risk_if_wrong"] = entry["risk_if_wrong"]
+                merged["rule_disagreement"] = entry["rule_disagreement"]
+                merged["rule_disagreement_reason"] = entry["rule_disagreement_reason"]
                 merged["priority"] = max(merged.get("priority", 0), 50)
                 merged_rankings[target_key].append(merged)
                 if entry["product_id"] not in seen_ids:
@@ -1141,38 +1355,59 @@ class AdsAnalyzer:
         product_analysis: Dict[str, Any],
         rule_summary: Dict[str, Any],
     ) -> Dict[str, Any]:
-        top_scale = product_analysis["rankings"]["scale_up"][:6]
-        top_reduce = product_analysis["rankings"]["reduce_budget"][:6]
-        top_indirect = product_analysis["rankings"]["indirect_dependency"][:6]
         compact_products = []
         llm_candidates = sorted(
             [item for item in product_analysis["products"] if self._should_include_for_llm(item)],
             key=self._llm_candidate_sort_key,
             reverse=True,
         )
-        for item in llm_candidates[:36]:
+        preliminary_must_review = self._build_must_review_products(llm_candidates)
+        must_review_ids = {str(item["product_id"]) for item in preliminary_must_review}
+        selected_candidates = [
+            item for item in llm_candidates if str(item["product_id"]) in must_review_ids
+        ]
+        selected_ids = {str(item["product_id"]) for item in selected_candidates}
+        selected_candidates.extend(
+            item for item in llm_candidates if str(item["product_id"]) not in selected_ids
+        )
+        selected_candidates = selected_candidates[:max(36, len(must_review_ids))]
+
+        for item in selected_candidates:
+            yesterday = item.get("decision_snapshot", {}).get("yesterday", {})
+            recent_week = item.get("decision_snapshot", {}).get("recent_week", {})
+            weekly_trend = item.get("weekly_trend_series", [])
+            if yesterday.get("clicks", 0) >= 50 and yesterday.get("conversions", 0) >= 3 and len(weekly_trend) >= 3:
+                data_confidence = "high"
+            elif yesterday.get("clicks", 0) >= 20 or recent_week.get("clicks", 0) >= 50 or len(weekly_trend) >= 2:
+                data_confidence = "medium"
+            else:
+                data_confidence = "low"
             compact_products.append({
                 "product_id": item["product_id"],
                 "product_name": item["product_name"],
-                "rule_category": item["category"],
-                "primary_issue": item.get("primary_issue", ""),
-                "rule_actions": item.get("action_steps", [])[:3],
-                "signals": item.get("signals", [])[:4],
-                "action_steps": item.get("action_steps", [])[:3],
-                "decision_snapshot": item.get("decision_snapshot", {}),
-                "llm_summary": item.get("llm_summary", {}),
+                "data_confidence": data_confidence,
+                "metrics": item.get("decision_snapshot", {}),
+                "weekly_trend": weekly_trend,
+                "derived_signals": item.get("signals", [])[:8],
+                "rule_screening": {
+                    "category": item.get("category", ""),
+                    "primary_issue": item.get("primary_issue", ""),
+                },
             })
-        must_review_products = self._build_must_review_products(llm_candidates)
+        must_review_products = self._build_must_review_products(selected_candidates)
         return {
             "store": {
                 "name": report_runs[0].get("store_name", ""),
                 "store_id": report_runs[0].get("store_id", ""),
             },
             "analysis_scope": {
-                "decision_baseline": "昨天為主，最近一週（week_01）與過去一個月用來驗證穩定性，並額外納入近 6 週滾動 7 天趨勢",
+                "goal": "找出真正需要調整的廣告，避免把單日雜訊誤判為趨勢，也避免只看總 ROAS 忽略直接成交",
+                "decision_baseline": f"昨天為主，week_01 與過去一個月驗證穩定性，week_01 至 week_{self.trend_weeks:02d} 判斷滾動趨勢",
                 "roas_threshold": 3,
                 "trend_window_count": self.trend_weeks,
                 "trend_window_mode": "rolling_7_day_weeks",
+                "overlapping_window_warning": "過去一個月、week_01 與昨天互相重疊，不得當成獨立樣本重複投票",
+                "minimum_evidence_for_budget_change": "至少引用昨天與另一個時間窗，且檢查點擊、轉換與花費樣本量",
                 "selected_metrics": [
                     "roas",
                     "direct_roas",
@@ -1185,6 +1420,16 @@ class AdsAnalyzer:
                     "impressions",
                     "conversions",
                 ],
+            },
+            "business_context": {
+                "currency": "TWD",
+                "profitability_priority": "先守住真實回收，再考慮擴量",
+                "platform_fee_rate_estimate": 0.16,
+                "store_roas_floor": 3,
+                "gross_margin_available": False,
+                "inventory_available": False,
+                "budget_cap_available": False,
+                "constraint": "缺少毛利、庫存或預算上限時，不得宣稱獲利或撞預算；只能提出需要檢查的條件",
             },
             "report_windows": report_runs,
             "metric_dictionary": {
@@ -1206,23 +1451,177 @@ class AdsAnalyzer:
             "account_summary": {
                 "health": account_summary.get("health"),
                 "current_window": account_summary.get("current_window"),
+                "windows": account_summary.get("windows"),
                 "comparison": account_summary.get("comparison"),
             },
-            "rule_summary": rule_summary,
-            "portfolio_summary": {
-                "scale_up_count": len(top_scale),
-                "reduce_budget_count": len(top_reduce),
-                "indirect_dependency_count": len(top_indirect),
-                "watchlist_count": len(product_analysis["rankings"]["watchlist"][:6]),
+            "rule_screening_summary": {
+                "purpose": "僅供比較，不是答案；模型必須獨立驗算並標記不同意的地方",
+                "overall_health": rule_summary.get("overall_health"),
+                "overview": rule_summary.get("overview"),
             },
-            "candidate_pool_size": len(compact_products),
+            "review_coverage": {
+                "total_products_in_reports": len(product_analysis.get("products", [])),
+                "candidate_pool_size": len(llm_candidates),
+                "candidate_count_sent_to_model": len(compact_products),
+                "selection_logic": "先納入所有必看商品，再依花費、點擊與月花費排序補足至少 36 個；其餘未送入模型，不可聲稱已逐項 AI 審核",
+            },
             "must_review_count": len(must_review_products),
-            "priority_products": compact_products[:18],
             "candidate_products": compact_products,
             "must_review_products": must_review_products,
         }
 
+    def _build_openai_system_prompt(self) -> str:
+        return f"""
+角色：你是 Shopee 平價零售的資深成效廣告分析師，負責做可稽核的投放決策，不是替既有規則背書。
+
+目標：從昨天、week_01、過去一個月與近 {self.trend_weeks} 週資料，找出應擴量、降預算／修正、依賴間接轉換、或先觀察的商品；降低把單日雜訊當趨勢的錯判。
+
+成功標準：
+- 每個商品結論至少引用 2 個時間窗、3 個具體指標，包含樣本量（花費、點擊或轉換）與回收品質。
+- 同時判讀 ROAS、直接 ROAS、CTR、CVR、CPC、CPA、直接成交占比；不可只看 ROAS。
+- 獨立驗算 rule_screening。若不同意，rule_disagreement=true 並說明原因。
+- must_review_products 每一項都必須出現在四個決策陣列之一，或 excluded_but_reviewed_products。
+- reviewed_product_count 必須等於 candidate_products 的實際筆數，不得把未送入模型的商品算成已審核。
+
+決策規則：
+- 店內 ROAS 及格線為 3，但缺少商品毛利、運費、折扣與退貨資料，因此不得宣稱真正獲利。
+- 過去一個月、week_01 與昨天是重疊視窗，不得把它們當三票獨立證據。
+- 昨天是主訊號；樣本不足或只壞一天時，優先 watchlist，而不是大幅調整。
+- scale_up 需要總 ROAS 與直接 ROAS 都有足夠樣本支持，且趨勢沒有明顯轉弱。
+- 總 ROAS 達標但直接 ROAS 不足時，優先判斷間接轉換依賴，不可直接擴量。
+- CTR 弱而曝光足夠時才優先判素材；CTR 尚可但 CVR 長期弱時才優先判商品頁／價格。
+- budget_change_pct 限制在 -30 到 +20。信心低、資料不足或缺少預算上限資訊時必須填 0。
+- 不得虛構庫存、毛利、預算上限、活動、競品或自然流量資訊；缺少的資料寫入限制與風險。
+
+輸出要求：
+- 使用繁體中文，結論先行，文字具體且可執行。
+- evidence 寫成簡短可查核句，例如「昨天花費 723、直接 ROAS 2.14；week_01 直接 ROAS 2.45」。
+- direct_actions 必須包含觀察期限與停止／回復條件，避免只有「優化素材」之類空話。
+- 只輸出指定的 JSON Schema，不要輸出額外說明或思考過程。
+""".strip()
+
+    def _build_openai_request(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        request_payload: Dict[str, Any] = {
+            "model": self.openai_model,
+            "reasoning": {"effort": self.reasoning_effort},
+            "input": [
+                {"role": "system", "content": self._build_openai_system_prompt()},
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "task": "依據提供的 Shopee 廣告資料完成獨立、證據型的投放分析",
+                            "data": payload,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ],
+            "text": {
+                "verbosity": "high",
+                "format": {
+                    "type": "json_schema",
+                    "name": "shopee_ads_analysis",
+                    "schema": OPENAI_ANALYSIS_SCHEMA,
+                    "strict": True,
+                },
+            },
+            "max_output_tokens": 30000,
+            "store": False,
+        }
+        store_id = str(payload.get("store", {}).get("store_id", "")).strip()
+        if store_id:
+            request_payload["safety_identifier"] = hashlib.sha256(
+                f"shopee-store:{store_id}".encode("utf-8")
+            ).hexdigest()
+        return request_payload
+
+    def _extract_openai_output_text(self, data: Dict[str, Any]) -> str:
+        output_text = str(data.get("output_text", "") or "").strip()
+        if output_text:
+            return output_text
+        fragments: List[str] = []
+        for item in data.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for content in item.get("content", []):
+                if content.get("type") == "refusal":
+                    raise RuntimeError(f"OPENAI_REFUSAL: {content.get('refusal', '模型拒絕分析')}")
+                if content.get("type") == "output_text":
+                    fragments.append(str(content.get("text", "")))
+        return "".join(fragments).strip()
+
+    def _validate_openai_analysis(
+        self,
+        result: Dict[str, Any],
+        payload: Dict[str, Any],
+    ) -> List[str]:
+        """驗收 Schema 之外的商業邏輯，避免完整 JSON 仍遺漏必看商品。"""
+        errors: List[str] = []
+        candidate_ids = {
+            str(item.get("product_id", ""))
+            for item in payload.get("candidate_products", [])
+            if item.get("product_id")
+        }
+        must_review_ids = {
+            str(item.get("product_id", ""))
+            for item in payload.get("must_review_products", [])
+            if item.get("product_id")
+        }
+        reviewed_ids: List[str] = []
+        for key in ("scale_up", "reduce_or_fix", "indirect_dependency", "watchlist"):
+            entries = result.get(key, [])
+            if not isinstance(entries, list):
+                errors.append(f"{key} 必須是陣列")
+                continue
+            for item in entries:
+                product_id = str(item.get("product_id", "")) if isinstance(item, dict) else ""
+                if not product_id:
+                    errors.append(f"{key} 有商品缺少 product_id")
+                    continue
+                reviewed_ids.append(product_id)
+                if product_id not in candidate_ids:
+                    errors.append(f"{product_id} 不在 candidate_products，不能列入決策")
+                if item.get("confidence") == "low" and item.get("budget_change_pct") != 0:
+                    errors.append(f"{product_id} 信心低時 budget_change_pct 必須為 0")
+                if item.get("rule_disagreement") and not str(
+                    item.get("rule_disagreement_reason", "")
+                ).strip():
+                    errors.append(f"{product_id} 不同意規則時必須解釋原因")
+
+        excluded = result.get("excluded_but_reviewed_products", [])
+        if not isinstance(excluded, list):
+            errors.append("excluded_but_reviewed_products 必須是陣列")
+            excluded = []
+        excluded_ids = [
+            str(item.get("product_id", ""))
+            for item in excluded
+            if isinstance(item, dict) and item.get("product_id")
+        ]
+        all_reviewed_ids = reviewed_ids + excluded_ids
+        duplicates = sorted({item for item in reviewed_ids if reviewed_ids.count(item) > 1})
+        if duplicates:
+            errors.append(f"商品不可重複出現在不同決策分類：{', '.join(duplicates)}")
+        unknown_excluded = sorted(set(excluded_ids) - candidate_ids)
+        if unknown_excluded:
+            errors.append(f"排除清單包含未提供商品：{', '.join(unknown_excluded)}")
+        missing_must_review = sorted(must_review_ids - set(all_reviewed_ids))
+        if missing_must_review:
+            errors.append(f"必看商品尚未完成判讀：{', '.join(missing_must_review)}")
+        expected_count = len(candidate_ids)
+        if result.get("reviewed_product_count") != expected_count:
+            errors.append(
+                f"reviewed_product_count 應為 {expected_count}，"
+                f"目前是 {result.get('reviewed_product_count')}"
+            )
+        return errors
+
     def _call_openai(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        if not self.include_ai:
+            self.openai_runtime["source"] = "rules"
+            self._log("AI", "使用者停用 ChatGPT API，執行規則分析")
+            return None
+
         api_key, source = load_openai_api_key()
         if api_key and source and source != "env":
             os.environ["OPENAI_API_KEY"] = api_key
@@ -1230,79 +1629,94 @@ class AdsAnalyzer:
                 self._log("AI", "已從專案 .env.local 載入 OPENAI_API_KEY")
             elif source == "shell_rc":
                 self._log("AI", "已從 shell 設定檔載入 OPENAI_API_KEY")
-        if not self.include_ai or not api_key:
-            self._log("AI", "未設定 OPENAI_API_KEY，改用規則摘要")
-            return None
-
-        model = os.environ.get("OPENAI_MODEL", "gpt-4.1-mini").strip() or "gpt-4.1-mini"
-        system_prompt = (
-            "你是資深電商廣告顧問，專長 Shopee 平價零售。"
-            "請只根據提供的結構化數據給出保守、可執行的建議。"
-            "你必須同時考慮 ROAS、直接 ROAS、CTR、CVR、CPC、CPA、點擊量、曝光量與直接銷售占比，不要只看單一指標。"
-            "昨天是主要決策基準，最近一週（week_01）與過去一個月只用來驗證穩定性，並額外納入近 6 週滾動近 7 天窗口做趨勢判讀。"
-            "不可虛構預算欄位，不可斷言一定撞到預算上限；只能用『可能』『建議檢查』。"
-            "請輸出 JSON，欄位固定為 overall_health, executive_summary, scale_up, reduce_or_fix, indirect_dependency, watchlist, next_actions, excluded_but_reviewed_products。"
-            "每個區塊都要明確指出主要問題是流量、素材、商品頁、成本或間接轉換，不要空話。"
-            "如果結論主要只依賴 ROAS、沒有提到其他指標的作用，視為分析不完整。"
-            "判讀順序固定為：1. 流量基礎（曝光、點擊）2. 素材吸引力（CTR）3. 轉換效率（CVR、直接CVR）4. 成本效率（CPC、CPA）5. 回收效率（ROAS、直接ROAS）6. 直接與間接成交結構。"
-            "對每個商品的建議，至少要引用兩個非 ROAS 指標，並說明它們如何影響決策。"
-            "你必須結合 weekly_trend_series、trend_flags、trend_summary 判斷這是單週異常還是連續趨勢。"
-            "如果昨天失準，但過去幾週穩定，應優先考慮 watchlist，而不是直接 reduce_or_fix。"
-            "若連續數週 CTR 下滑，優先懷疑素材疲勞；若 CTR 尚可但 CVR 長期偏弱，優先懷疑商品頁或價格問題。"
-            "scale_up / reduce_or_fix / indirect_dependency / watchlist 這四個欄位都必須是陣列，陣列元素格式固定為 {product_id, primary_issue, reason, why_not_other_issue, direct_actions}。"
-            "direct_actions 必須是 2 到 4 條可執行短句。"
-            "你可以從 candidate_products 裡挑出比 rule_category 更多的商品，只要你認為它應該出現在報告中。"
-            "不要被 rule_category 綁死；它只是初判，不是最終答案。"
-            "如果商品出現在 must_review_products，除非你能明確判斷它不需要調整，否則應優先把它列進 scale_up / reduce_or_fix / indirect_dependency 其中一組。"
-            "不要只挑最前面的少數商品；對於高花費、直接ROAS未達3、CTR明顯偏低、CVR明顯偏低或總ROAS與直接ROAS差距大的商品，要盡量完整列出。"
-            "只要是明顯需要處理的商品，就應該放進報告，不要因為篇幅而省略。"
-            "primary_issue 必須從以下集合中挑最主要的一個：素材吸引力不足、商品頁轉換偏弱、成本過高、間接轉換占比過高、回收穩定可擴量、需繼續觀察。"
-            "why_not_other_issue 必須明確說明為什麼主因不是其他常見問題，例如：CTR低所以先判素材，不先判商品頁；或 CTR/CVR 都好，所以先判預算限制。"
-            "excluded_but_reviewed_products 需列出你看過但暫不建議放入報告的商品，格式為 {product_id, reason}。若 must_review_products 中有商品沒被列入三大清單，就一定要出現在這裡。"
-        )
-        user_prompt = json.dumps(payload, ensure_ascii=False)
-        response_payload = {
-            "model": model,
-            "input": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        }
-        try:
-            response = requests.post(
-                "https://api.openai.com/v1/responses",
-                headers={
-                    "Authorization": f"Bearer {api_key}",
-                    "Content-Type": "application/json",
-                },
-                json=response_payload,
-                timeout=90,
+        if not api_key:
+            self.openai_runtime["source"] = "error"
+            raise RuntimeError(
+                "OPENAI_API_KEY_MISSING: 尚未設定 OpenAI API Key。"
+                "請在專案資料夾執行 python3 setup_openai_key.py 後再重新分析。"
             )
-            response.raise_for_status()
-            data = response.json()
-            text = data.get("output_text", "")
-            if not text:
-                outputs = data.get("output", [])
-                fragments = []
-                for item in outputs:
-                    for content in item.get("content", []):
-                        if content.get("type") == "output_text":
-                            fragments.append(content.get("text", ""))
-                    if fragments:
-                        break
-                text = "".join(fragments).strip()
-            if not text:
-                return None
-            return json.loads(text)
+
+        response_payload = self._build_openai_request(payload)
+        started_at = time.monotonic()
+        try:
+            attempt_usage: List[Dict[str, Any]] = []
+            for attempt in (1, 2):
+                response = requests.post(
+                    "https://api.openai.com/v1/responses",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=response_payload,
+                    timeout=300,
+                )
+                response.raise_for_status()
+                data = response.json()
+                usage = data.get("usage", {}) if isinstance(data.get("usage"), dict) else {}
+                attempt_usage.append(usage)
+                self.openai_runtime.update({
+                    "source": "openai",
+                    "api_latency_seconds": round(time.monotonic() - started_at, 2),
+                    "request_id": response.headers.get("x-request-id", ""),
+                    "response_model": str(data.get("model", "")),
+                    "usage": usage,
+                    "attempt_usage": attempt_usage,
+                    "attempts": attempt,
+                })
+                if data.get("status") == "incomplete":
+                    reason = data.get("incomplete_details", {}).get("reason", "unknown")
+                    raise RuntimeError(f"OPENAI_INCOMPLETE_RESPONSE: {reason}")
+                output_text = self._extract_openai_output_text(data)
+                if not output_text:
+                    raise RuntimeError("OPENAI_EMPTY_RESPONSE: API 沒有回傳分析內容")
+                parsed = json.loads(output_text)
+                if not isinstance(parsed, dict):
+                    raise RuntimeError("OPENAI_INVALID_OUTPUT: 分析結果不是 JSON 物件")
+                validation_errors = self._validate_openai_analysis(parsed, payload)
+                self.openai_runtime["validation_errors"] = validation_errors
+                if not validation_errors:
+                    return parsed
+                if attempt == 2:
+                    raise RuntimeError(
+                        "OPENAI_LOGIC_VALIDATION_FAILED: " + "；".join(validation_errors)
+                    )
+                response_payload = json.loads(json.dumps(response_payload, ensure_ascii=False))
+                response_payload["input"].append({
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "correction_required": "上一版未通過程式驗收，請只修正下列問題並重新輸出完整 JSON",
+                            "validation_errors": validation_errors,
+                            "previous_output": parsed,
+                        },
+                        ensure_ascii=False,
+                    ),
+                })
+            raise RuntimeError("OPENAI_ANALYSIS_MISSING: 未取得可通過驗收的分析")
         except Exception as e:
-            self._log("AI", f"OpenAI 分析失敗，改用規則摘要: {e}")
-            return None
+            self.openai_runtime["source"] = "error"
+            self.openai_runtime["api_latency_seconds"] = round(time.monotonic() - started_at, 2)
+            self._log("AI", f"OpenAI 分析失敗: {e}")
+            if isinstance(e, RuntimeError):
+                raise
+            error_detail = ""
+            response_obj = getattr(e, "response", None)
+            if response_obj is not None:
+                try:
+                    error_detail = str(response_obj.json().get("error", {}).get("message", ""))
+                except Exception:
+                    error_detail = str(getattr(response_obj, "text", ""))[:500]
+            suffix = f"：{error_detail}" if error_detail else ""
+            raise RuntimeError(f"OPENAI_API_REQUEST_FAILED: {e}{suffix}") from e
 
     def _build_narrative(self, rule_summary: Dict[str, Any], ai_sections: Optional[Dict[str, Any]]) -> Dict[str, Any]:
         if ai_sections:
             ai_sections["source"] = "openai"
             ai_sections.setdefault("watchlist", [])
             return ai_sections
+
+        if self.include_ai:
+            raise RuntimeError("OPENAI_ANALYSIS_MISSING: 已要求 AI 分析，但沒有取得 AI 結果")
 
         return {
             "source": "rules",
@@ -1324,6 +1738,7 @@ class AdsAnalyzer:
         account = report["report"]["account_summary"]
         rankings = report["report"]["rankings"]
         narrative = report["report"]["narrative"]
+        runtime = report.get("analysis_runtime", {})
         narrative_reason_map: Dict[str, str] = {}
         narrative_issue_map: Dict[str, str] = {}
         for key in ("scale_up", "reduce_or_fix", "indirect_dependency", "watchlist"):
@@ -1340,6 +1755,9 @@ class AdsAnalyzer:
             "",
             f"- 生成時間: {report['generated_at']}",
             f"- 分析來源: {narrative.get('source', 'rules')}",
+            f"- 實際模型: {runtime.get('response_model') or runtime.get('model') or '未使用 OpenAI'}",
+            f"- 推理強度: {runtime.get('reasoning_effort') or '-'}",
+            f"- API 耗時: {runtime.get('api_latency_seconds', 0)} 秒",
             "",
             "## 帳戶概況",
             "",
@@ -1391,6 +1809,7 @@ class AdsAnalyzer:
         account = report["report"]["account_summary"]
         narrative = report["report"]["narrative"]
         rankings = report["report"]["rankings"]
+        runtime = report.get("analysis_runtime", {})
         current = account.get("current_window", {})
         image_cache: Dict[str, str] = {}
         actionable_total = sum(
@@ -1479,6 +1898,25 @@ class AdsAnalyzer:
                 display_detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
                 primary_issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
                 why_not = narrative_why_not_map.get(str(item["product_id"]), item.get("why_not_other_issue", ""))
+                ai_confidence = item.get("ai_confidence", "")
+                evidence_html = "".join(f"<li>{value}</li>" for value in item.get("ai_evidence", []))
+                budget_change = item.get("budget_change_pct")
+                observation_days = item.get("observation_days")
+                risk_if_wrong = item.get("risk_if_wrong", "")
+                disagreement = item.get("rule_disagreement_reason", "") if item.get("rule_disagreement") else ""
+                decision_meta = ""
+                if narrative.get("source") == "openai":
+                    budget_text = f"{int(budget_change):+d}%" if isinstance(budget_change, (int, float)) else "0%"
+                    decision_meta = f"""
+                    <div class="decision-grid">
+                      <div><strong>信心</strong><br>{ai_confidence or '-'}</div>
+                      <div><strong>預算建議</strong><br>{budget_text}</div>
+                      <div><strong>觀察期</strong><br>{observation_days or '-'} 天</div>
+                    </div>
+                    {f'<div class="detail"><strong>可查核證據：</strong><ul>{evidence_html}</ul></div>' if evidence_html else ''}
+                    {f'<div class="detail"><strong>判錯風險：</strong>{risk_if_wrong}</div>' if risk_if_wrong else ''}
+                    {f'<div class="detail"><strong>與規則不同：</strong>{disagreement}</div>' if disagreement else ''}
+                    """
                 cards.append(f"""
                 <div class="card">
                   <div class="action-banner">{item['action_title']}</div>
@@ -1497,12 +1935,13 @@ class AdsAnalyzer:
                     {render_window_strip(snapshot.get('past_month', {}))}
                   </div>
                   <div class="trend-panel">
-                    <div class="steps-title">近 6 週滾動趨勢</div>
+                    <div class="steps-title">近 {self.trend_weeks} 週滾動趨勢</div>
                     <div class="detail"><strong>趨勢摘要：</strong>{item.get('trend_summary', '資料不足')}</div>
                     {render_trend_strip(item.get('weekly_trend_series', []))}
                   </div>
                   <div class="detail"><strong>{'OpenAI 判讀' if narrative.get('source') == 'openai' else '驗算摘要'}：</strong>{display_detail}</div>
                   {f'<div class="detail"><strong>為何不是其他問題：</strong>{why_not}</div>' if why_not else ''}
+                  {decision_meta}
                   <div class="steps">
                     <div class="steps-title">直接動作</div>
                     <ul>{step_items}</ul>
@@ -1540,6 +1979,9 @@ class AdsAnalyzer:
               .metric-value {{ font-size:18px; font-weight:800; margin-top:6px; }}
               .metric-sub {{ font-size:12px; color:#555; margin-top:4px; }}
               .detail {{ margin-top:14px; font-size:13px; line-height:1.8; background:#faf7f4; padding:12px; border-radius:12px; }}
+              .detail ul {{ margin:6px 0 0; padding-left:20px; }}
+              .decision-grid {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:12px; }}
+              .decision-grid div {{ border:1px solid #eadfd5; border-radius:10px; padding:10px; background:#fffaf6; font-size:13px; }}
               .trend-panel {{ margin-top:14px; }}
               .trend-grid {{ display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-top:10px; }}
               .trend-cell {{ border:1px solid #eadfd5; border-radius:10px; padding:10px; background:#fffaf6; }}
@@ -1559,7 +2001,8 @@ class AdsAnalyzer:
           <body>
             <h1>Shopee 廣告調整報告</h1>
             <div class="note">生成時間：{report['generated_at']}</div>
-            <div class="note">主要決策基準：昨天完整日報表，最近一週（week_01）與過去一個月用來驗證穩定性，另納入近 6 週滾動 7 天趨勢判斷。</div>
+            <div class="note">分析來源：{'OpenAI API' if narrative.get('source') == 'openai' else '本機規則'} ｜ 實際模型：{runtime.get('response_model') or runtime.get('model') or '未使用'} ｜ 推理強度：{runtime.get('reasoning_effort') or '-'} ｜ API 耗時：{runtime.get('api_latency_seconds', 0)} 秒</div>
+            <div class="note">主要決策基準：昨天完整日報表，最近一週（week_01）與過去一個月用來驗證穩定性，另納入近 {self.trend_weeks} 週滾動 7 天趨勢判斷。</div>
             <div class="summary">
               <div class="summary-box"><strong>觀察視窗</strong><br>{current.get('window_label', '-')}</div>
               <div class="summary-box"><strong>總花費</strong><br>{current.get('spend', 0):,.2f}</div>
@@ -1611,6 +2054,7 @@ class AdsAnalyzer:
             "source": narrative.get("source"),
             "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "has_ai_enhancement": narrative.get("source") == "openai",
+            "analysis_runtime": dict(self.openai_runtime),
             "output_files": {
                 "history_json": os.path.abspath(self.history_output_path),
                 "analysis_json": os.path.abspath(self.output_path),
@@ -1650,7 +2094,9 @@ def main() -> None:
     parser.add_argument("--html-output", default="ads_analysis_report.html")
     parser.add_argument("--include-ai", default="true")
     parser.add_argument("--refresh-source", default="false")
-    parser.add_argument("--trend-weeks", type=int, default=6)
+    parser.add_argument("--trend-weeks", type=int, default=4)
+    parser.add_argument("--model", default="")
+    parser.add_argument("--reasoning-effort", default="")
     args = parser.parse_args()
 
     analyzer = AdsAnalyzer(
@@ -1663,9 +2109,24 @@ def main() -> None:
         include_ai=args.include_ai.lower() == "true",
         refresh_source=args.refresh_source.lower() == "true",
         trend_weeks=args.trend_weeks,
+        openai_model=args.model,
+        reasoning_effort=args.reasoning_effort,
     )
-    result = analyzer.run()
-    print(json.dumps({"status": result["status"], "message": result["message"]}, ensure_ascii=False))
+    try:
+        result = analyzer.run()
+        print(json.dumps({"status": result["status"], "message": result["message"]}, ensure_ascii=False))
+    except Exception as exc:
+        error_result = {
+            "status": "error",
+            "message": str(exc),
+            "source": "error",
+            "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "has_ai_enhancement": False,
+            "analysis_runtime": dict(analyzer.openai_runtime),
+        }
+        analyzer._write_json(args.output, error_result)
+        print(json.dumps(error_result, ensure_ascii=False), file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -29,7 +29,7 @@ BASE_URL = f"https://api.telegram.org/bot{TG_TOKEN}"
 # ===== 設定 =====
 POLL_INTERVAL = 3  # 輪詢間隔（秒）
 CRAWLER_TIMEOUT = 600  # 一般爬蟲超時（秒）
-ADS_EXPORT_TIMEOUT = 5400  # 廣告匯出需涵蓋摘要與 6 週趨勢匯出
+ADS_EXPORT_TIMEOUT = 5400  # 廣告匯出需涵蓋 2 份摘要與 4 週趨勢，共 6 份
 ADS_ANALYSIS_TIMEOUT = 5400  # 廣告分析（含趨勢報表刷新）超時（秒）
 WORK_DIR = os.path.dirname(os.path.abspath(__file__))
 LAST_UPDATE_FILE = os.path.join(WORK_DIR, ".last_update_id")
@@ -47,7 +47,7 @@ HELP_TEXT = (
     "🤖 <b>Shopee 庫存 / 廣告 Bot</b>\n\n"
     "📝 可用指令：\n"
     "<code>/搜尋 產品 月數</code> - 搜尋商品庫存\n"
-    "<code>/廣告匯出</code> - 下載昨天、過去一個月與過去 6 週滾動周報\n"
+    "<code>/廣告匯出</code> - 下載昨天、過去一個月與過去 4 週滾動周報，共 6 份\n"
     "<code>/廣告分析</code> - 使用現有廣告報表做 OpenAI 分析並輸出 HTML 報告\n"
     "<code>/廣告分析 無AI</code> - 只用規則層分析，不呼叫 OpenAI\n"
     "<code>/refresh</code> - 手動刷新 Cookies\n\n"
@@ -57,7 +57,7 @@ HELP_TEXT = (
     "<code>/廣告分析</code>\n"
     "<code>/廣告分析 無AI</code>\n\n"
     "💡 庫存搜尋月數範圍：1-12，預設為 4\n"
-    "📌 廣告分析以昨天為主要決策基準，最近一週（week_01）與過去一個月作為輔助視窗，並參考 week_02 ~ week_06 趨勢\n"
+    "📌 廣告分析以昨天為主要決策基準，最近一週（week_01）與過去一個月作為輔助視窗，並參考 week_02 ~ week_04 趨勢\n"
     "🔄 Cookies 會自動刷新，永久有效"
 )
 
@@ -1136,7 +1136,7 @@ def run_ads_export_task(chat_id):
     send_message(
         chat_id,
         "📣 開始匯出蝦皮廣告報表\n"
-        "範圍：過去一個月 → 昨天 → 近第 1 週 ~ 近第 6 週\n"
+        "範圍：過去一個月 → 昨天 → 近第 1 週 ~ 近第 4 週（共 6 份）\n"
         "⏳ 會依序等待 Shopee 處理完成後下載，請稍候..."
     )
 
@@ -1257,7 +1257,7 @@ def run_ads_analysis_task(chat_id, include_ai=True):
     send_message(
         chat_id,
         f"🧠 開始執行廣告分析\n模式：<b>{ai_label}</b>\n"
-        "📌 會直接使用現有昨天 / 過去一個月 / 近 6 週滾動周報做 OpenAI 分析，並輸出 HTML 報告。"
+        "📌 會直接使用現有昨天 / 過去一個月 / 近 4 週滾動周報做 OpenAI 分析，並輸出 HTML 報告。"
     )
 
     cmd = [
@@ -1270,7 +1270,7 @@ def run_ads_analysis_task(chat_id, include_ai=True):
         "--html-output", html_output_file,
         "--include-ai", "true" if include_ai else "false",
         "--refresh-source", "false",
-        "--trend-weeks", "6",
+        "--trend-weeks", "4",
     ]
 
     try:
@@ -1319,7 +1319,7 @@ def run_ads_analysis_task(chat_id, include_ai=True):
             "📈 <b>廣告分析完成</b>",
             f"來源：<b>{html.escape(source)}</b>",
             f"需調整商品：<b>{actionable_total}</b> 筆",
-            "📊 已納入過去 6 週滾動趨勢分析",
+            "📊 已納入過去 4 週滾動趨勢分析",
             "📄 已附上 HTML 報告，建議直接打開報告查看圖片與完整調整建議。",
         ]
         if not include_ai:
