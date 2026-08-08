@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>1688 SKU Mapping 工作台</title>
-  <link rel="stylesheet" href="sku-mapping.css">
+  <link rel="stylesheet" href="sku-mapping.css?v=20260809-full-spec2">
   <style>.select-row{grid-column:1/-1;color:#475569;font-size:.88rem}.source-placeholder{width:100px;height:100px;border-radius:10px;background:#eef3f8;display:grid;place-items:center;color:#789}</style>
 </head>
 <body>
@@ -14,17 +14,22 @@
       <h1>1688 SKU Mapping 工作台</h1>
       <p>建立整個賣場的 SKU mapping：先掃描全部有 1688 URL 的型號，依商品月銷量排序並將同商品型號集中；未核准項目不會進入購物車。</p>
     </div>
-    <nav><a href="/">庫存首頁</a><a href="/inbound.html">到貨入庫</a></nav>
+    <nav><a href="/">庫存首頁</a><a href="/golden-import.html">新增 Golden 商品</a><a href="/inbound.html">到貨入庫</a></nav>
   </header>
 
   <main class="page-shell">
     <section class="toolbar panel">
       <div class="toolbar-row">
-        <button id="scanAll" class="primary">掃描全部有 URL 型號</button>
+        <button id="scanAll" class="primary">重建全部名稱 mapping（掃描 1688）</button>
+        <button id="reanalyzeExisting">用現有快照重建名稱 mapping（規則→AI，不連 1688）</button>
+        <button id="reanalyzeExistingAi">用現有 SKU 清單重判（直接 AI，不連 1688）</button>
         <button id="selectGreen">選取本頁綠色項目</button>
         <button id="batchApprove" class="primary">批次核准選取</button>
+        <button id="batchDefer">批次稍後處理</button>
+        <button id="batchNoMatch">批次標記無匹配</button>
+        <button id="batchDiscontinued">批次標記停售</button>
         <label class="check"><input id="forceScan" type="checkbox"> 強制重抓 1688</label>
-        <label class="check"><input id="useAi" type="checkbox" checked> AI 初判</label>
+        <label class="check"><input id="useAi" type="checkbox" checked> Gemini 初判（僅規則無候選時）</label>
         <span id="jobStatus" class="status"></span>
       </div>
       <div class="filters">
@@ -37,9 +42,11 @@
 
     <section id="summary" class="metrics panel"></section>
     <section id="message" class="message" aria-live="polite"></section>
+    <section id="operationStatus" class="operation-status" aria-live="polite" hidden></section>
     <section id="queue" class="queue"></section>
+    <section id="pagination" class="pagination panel" aria-label="mapping 分頁"></section>
     <div id="empty" class="empty panel" hidden>目前沒有符合篩選條件的型號。</div>
   </main>
-  <script src="sku-mapping.js?v=20260808-manual14"></script>
+  <script src="sku-mapping.js?v=20260809-name-primary27"></script>
 </body>
 </html>

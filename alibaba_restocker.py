@@ -100,6 +100,21 @@ def normalize_text(value: Any) -> str:
     return re.sub(r"\s+", "", html.unescape(str(value or "").translate(CHAR_TRANSLATION))).replace(">", ",").replace("＞", ",").lower()
 
 
+def spec_parts(value: Any) -> List[str]:
+    text = html.unescape(str(value or "")).replace("&gt", ">")
+    parts = []
+    for part in re.split(r"[|,，;；>＞]", text):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            part = part.split(":", 1)[1]
+        if "：" in part:
+            part = part.split("：", 1)[1]
+        parts.append(part.strip())
+    return parts
+
+
 def requires_second_sku(product_name: str, model_name: str) -> bool:
     """手機殼雙規格未完整時不可只選第一規格，以免落到錯誤機型。"""
     parts = [part.strip() for part in re.split(r"[,，]", str(model_name or "")) if part.strip()]
@@ -154,7 +169,7 @@ def load_sku_mappings(base_dir: str) -> Dict[str, Dict[str, Dict[str, str]]]:
             sku_name = str(model.get("1688_sku_name") or "").strip()
             sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
             sku_id = str(model.get("1688_sku_id") or "").strip()
-            mapping_status = str(model.get("1688_mapping_status") or ("approved" if sku_id else "missing")).strip()
+            mapping_status = str(model.get("1688_mapping_status") or ("legacy_pending_name" if sku_name else "missing")).strip()
             if model_name:
                 product_mapping[model_name] = {
                     "primary": sku_name,
@@ -191,7 +206,7 @@ def mapped_sku_selection(
 
 
 def extract_page_sku_catalog(page) -> Dict[str, Dict[str, Any]]:
-    """Read the live structured SKU catalog used for ID-level preflight checks."""
+    """Read the live structured SKU catalog for name-pair preflight checks."""
     script = """
     () => {
       const data = window.context?.result?.data || {};
@@ -214,10 +229,15 @@ def extract_page_sku_catalog(page) -> Dict[str, Dict[str, Any]]:
         sku_id = str(row.get("skuId") or row.get("sku_id") or "").strip()
         if not sku_id:
             continue
+        raw_spec = html.unescape(str(row.get("specText") or row.get("spec_text") or "").strip()).replace("&gt", ">")
+        parts = spec_parts(raw_spec)
         result[sku_id] = {
             "sku_id": sku_id,
-            "sku_name": str(row.get("skuName") or row.get("sku_name") or "").strip(),
-            "spec_text": str(row.get("specText") or row.get("spec_text") or "").strip(),
+            "sku_name": (parts[0] if parts else html.unescape(str(row.get("skuName") or row.get("sku_name") or "")).strip()),
+            "second_name": parts[1] if len(parts) > 1 else "",
+            "parts": parts,
+            "dimension_count": len(parts),
+            "spec_text": raw_spec,
             "image_url": str(row.get("imageUrl") or row.get("image_url") or "").strip(),
             "price": row.get("price"),
             "stock": row.get("stock"),
@@ -227,16 +247,49 @@ def extract_page_sku_catalog(page) -> Dict[str, Dict[str, Any]]:
 
 def catalog_mapping_check(selection: Dict[str, str], catalog: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     sku_id = str(selection.get("sku_id") or "").strip()
+    primary = str(selection.get("sku_name") or selection.get("primary") or "").strip()
+    secondary = str(selection.get("sku_second_name") or selection.get("secondary") or "").strip()
+    legacy_spec_only = not primary and not secondary and bool(selection.get("spec_text"))
+    if legacy_spec_only:
+        if sku_id and sku_id not in catalog:
+            return {"ok": False, "reason": "sku_id_not_on_live_page", "sku_id": sku_id}
+        old_parts = spec_parts(selection.get("spec_text"))
+        primary = old_parts[0] if old_parts else ""
+        secondary = old_parts[1] if len(old_parts) > 1 else ""
+    if primary:
+        expected_primary = normalize_text(primary)
+        expected_secondary = normalize_text(secondary)
+        matches = []
+        for row in catalog.values():
+            row_parts = row.get("parts") or spec_parts(row.get("spec_text"))
+            current_primary = normalize_text(row.get("sku_name") or (row_parts[0] if row_parts else ""))
+            current_secondary = normalize_text(row.get("second_name") or (row_parts[1] if len(row_parts) > 1 else ""))
+            if current_primary != expected_primary:
+                continue
+            if expected_secondary:
+                if current_secondary == expected_secondary:
+                    matches.append(row)
+            elif not current_secondary:
+                matches.append(row)
+        if not matches:
+            same_primary = [row for row in catalog.values() if normalize_text(row.get("sku_name") or ((row.get("parts") or spec_parts(row.get("spec_text")) or [""])[0])) == expected_primary]
+            reason = "missing_second_name" if same_primary and not secondary and any(row.get("second_name") for row in same_primary) else "name_pair_not_on_live_page"
+            return {"ok": False, "reason": "spec_fingerprint_mismatch" if legacy_spec_only else reason, "sku_name": primary, "sku_second_name": secondary}
+        if len(matches) > 1:
+            return {"ok": False, "reason": "ambiguous_name_pair", "sku_name": primary, "sku_second_name": secondary, "matches": len(matches)}
+        current = matches[0]
+        result = {"ok": True, "sku_id": str(current.get("sku_id") or sku_id), "current": current}
+        if sku_id and sku_id != str(current.get("sku_id") or ""):
+            result["warning"] = "sku_id_changed_but_name_pair_still_exists"
+        return result
+    # Compatibility for old callers.  New approvals should always provide the
+    # two names, but an ID can still be inspected in a dry-run.
     if not sku_id:
-        return {"ok": False, "reason": "missing_sku_id"}
+        return {"ok": False, "reason": "missing_sku_name"}
     current = catalog.get(sku_id)
     if not current:
         return {"ok": False, "reason": "sku_id_not_on_live_page", "sku_id": sku_id}
-    expected = normalize_text(selection.get("spec_text"))
-    actual = normalize_text(current.get("spec_text"))
-    if expected and actual and expected != actual:
-        return {"ok": False, "reason": "spec_fingerprint_mismatch", "sku_id": sku_id, "expected": expected, "actual": actual}
-    return {"ok": True, "sku_id": sku_id, "current": current}
+    return {"ok": True, "sku_id": sku_id, "current": current, "warning": "legacy_id_only_check"}
 
 
 def sku_catalog_fingerprint(offer_id: str, catalog: Dict[str, Dict[str, Any]]) -> str:
@@ -927,7 +980,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                     group_result["items"].append(item_result)
                     debug.log("item_blocked_mapping_status", item_result)
                     continue
-                check = catalog_mapping_check({"sku_id": alibaba_sku_id, "spec_text": spec_text}, live_catalog)
+                check = catalog_mapping_check({"sku_id": alibaba_sku_id, "sku_name": alibaba_sku_name, "sku_second_name": alibaba_sku_second_name, "spec_text": spec_text}, live_catalog)
                 if not check.get("ok"):
                     item_result = {
                         "status": "blocked_live_catalog",
@@ -935,31 +988,19 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                         "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": alibaba_sku_name,
                         "quantity": quantity,
-                        "message": f"目前 1688 頁面未通過 SKU ID/規格驗證：{check.get('reason')}",
+                        "message": f"目前 1688 頁面未通過完整規格名稱驗證：{check.get('reason')}",
                         "catalogCheck": check,
                     }
                     group_result["items"].append(item_result)
                     debug.log("item_blocked_live_catalog", item_result)
                     continue
-                if expected_fingerprint:
-                    current_fingerprint = sku_catalog_fingerprint(offer_id, live_catalog)
-                    if current_fingerprint != expected_fingerprint:
-                        item_result = {
-                            "status": "blocked_stale_mapping",
-                            "modelName": model_name,
-                            "alibabaSkuId": alibaba_sku_id,
-                            "quantity": quantity,
-                            "message": "1688 offer SKU fingerprint 已變更，請重新掃描並人工核准",
-                            "expectedFingerprint": expected_fingerprint,
-                            "currentFingerprint": current_fingerprint,
-                        }
-                        group_result["items"].append(item_result)
-                        debug.log("item_blocked_stale_mapping", item_result)
-                        continue
                 live_row = check.get("current") or {}
-                # 若名稱未保存，從當前頁面的完整規格補上可讀標籤；ID 仍是唯一選取依據。
+                # 名稱組合是正式選取依據；ID 與 offer fingerprint 僅保留作
+                # 診斷資料，不因無 ID 或無關 SKU 變動而阻擋。
                 if not alibaba_sku_name:
                     alibaba_sku_name = str(live_row.get("sku_name") or "").strip()
+                if not alibaba_sku_second_name:
+                    alibaba_sku_second_name = str(live_row.get("second_name") or "").strip()
                 if not spec_text:
                     spec_text = str(live_row.get("spec_text") or "").strip()
                 if is_discontinued_sku(alibaba_sku_name):

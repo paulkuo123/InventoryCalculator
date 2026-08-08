@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>新增商品到 Golden Table</title>
+  <link rel="stylesheet" href="golden-import.css?v=20260809-1">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">莉莉安蝦皮庫存管理系統</div>
+      <h1>新增商品到 Golden Table</h1>
+      <p>先更新蝦皮資料，再貼上 1688 商品網址；系統會自動找出未收錄商品與可配對的 SKU。</p>
+    </div>
+    <nav><a href="/">庫存首頁</a><a href="/sku-mapping.html">1688 SKU Mapping</a></nav>
+  </header>
+
+  <main class="page-shell">
+    <section class="toolbar panel">
+      <div class="toolbar-row">
+        <button id="reload" class="primary">重新檢查新商品</button>
+        <span id="summary" class="summary"></span>
+      </div>
+      <p class="hint">商品清單來自最近一次蝦皮搜尋／更新產生的 <code>shopee_products.json</code>。若沒有看到剛上架商品，先回首頁執行一次搜尋。</p>
+    </section>
+
+    <section id="message" class="message" aria-live="polite"></section>
+    <section id="candidates" class="candidate-list"></section>
+    <div id="empty" class="empty panel" hidden>目前沒有待加入的蝦皮商品。</div>
+  </main>
+  <script src="golden-import.js?v=20260809-1"></script>
+</body>
+</html>

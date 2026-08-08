@@ -9,6 +9,7 @@ dependencies are loaded lazily by the live scanner and AI adapter.
 from __future__ import annotations
 
 import hashlib
+import base64
 import html
 import json
 import os
@@ -26,7 +27,7 @@ from urllib.parse import urlparse
 
 import requests
 
-from config_loader import load_openai_api_key, load_openai_config_value
+from config_loader import load_gemini_api_key, load_openai_api_key, load_openai_config_value, load_xai_api_key
 
 
 GOLDEN_TABLE_FILE = "golden_table.json"
@@ -34,7 +35,11 @@ MAPPING_DB_FILE = "procurement.db"
 SCAN_CACHE_SECONDS = 7 * 24 * 60 * 60
 OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 OPENAI_REASONING = {"medium", "high", "xhigh", "max"}
+XAI_MODELS = {"grok-4.5", "grok-4.5-latest", "grok-4.20-0309-non-reasoning", "grok-4.20-0309-reasoning"}
+XAI_REASONING = {"low", "medium", "high"}
+GEMINI_MODELS = {"gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash"}
 REVIEW_TIERS = {"green", "yellow", "red", "approved"}
+MAX_REVIEW_CANDIDATES = 4
 
 CHAR_TRANSLATION = str.maketrans({
     "纯": "純", "浅": "淺", "蓝": "藍", "绿": "綠", "黄": "黃",
@@ -64,14 +69,38 @@ MAPPING_SCHEMA = {
     "type": "object",
     "properties": {
         "decision": {"type": "string", "enum": ["match", "abstain"]},
+        "selected_candidate_key": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "selected_sku_name": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+        "selected_sku_second_name": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "selected_sku_id": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "matched_dimensions": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
         "evidence": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
         "warnings": {"type": "array", "items": {"type": "string"}, "maxItems": 8},
     },
-    "required": ["decision", "selected_sku_id", "confidence", "matched_dimensions", "evidence", "warnings"],
+    "required": ["decision", "selected_candidate_key", "selected_sku_name", "selected_sku_second_name", "selected_sku_id", "confidence", "matched_dimensions", "evidence", "warnings"],
     "additionalProperties": False,
+}
+
+# Gemini's REST structured-output schema accepts a JSON-schema subset.  In
+# particular, nullable fields use a type array instead of OpenAI's anyOf form.
+GEMINI_MAPPING_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decision": {"type": "string", "enum": ["match", "abstain"]},
+        # Keep nullable-looking fields as strings for compatibility with the
+        # REST responseSchema subset.  The prompt asks Gemini to return an
+        # empty string when decision=abstain; the validator accepts either.
+        "selected_candidate_key": {"type": "string"},
+        "selected_sku_name": {"type": "string"},
+        "selected_sku_second_name": {"type": "string"},
+        "selected_sku_id": {"type": "string"},
+        "confidence": {"type": "number"},
+        "matched_dimensions": {"type": "array", "items": {"type": "string"}},
+        "evidence": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["decision", "selected_candidate_key", "selected_sku_name", "selected_sku_second_name", "selected_sku_id", "confidence", "matched_dimensions", "evidence", "warnings"],
 }
 
 
@@ -91,6 +120,24 @@ def normalize_text(value: Any) -> str:
     text = html.unescape(unicodedata.normalize("NFKC", str(value or ""))).translate(CHAR_TRANSLATION)
     text = re.sub(r"\s+", "", text).replace("，", ",").replace("、", ",").replace("＞", ",").replace(">", ",")
     return text.lower().strip()
+
+
+def display_text(value: Any) -> str:
+    """Return the exact human-facing option label after HTML decoding."""
+    text = html.unescape(str(value or "")).strip()
+    # Some 1688 responses omit the semicolon in ``&gt``.  html.unescape still
+    # decodes it, but keep this explicit for older recorded fixtures.
+    return text.replace("&gt", ">").replace("&lt", "<").strip()
+
+
+def mapping_candidate_key(offer_id: Any, sku_name: Any, second_name: Any = "") -> str:
+    """Stable identity for a clickable 1688 name combination.
+
+    The SKU id is intentionally excluded: it is an auxiliary value and may
+    change while the two option labels remain the same.
+    """
+    payload = "\x1f".join((normalize_id(offer_id), display_text(sku_name), display_text(second_name)))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:24]
 
 
 def numeric_value(value: Any) -> float:
@@ -130,6 +177,31 @@ def _tokens(value: Any) -> List[str]:
 def _phone_tokens(value: Any) -> List[str]:
     text = normalize_text(value).replace("iphone", "")
     return re.findall(r"\d{1,2}(?:promax|pro|max|plus|mini|air)?|xr|xs|max|pro|plus|se\d*", text)
+
+
+def _alphanumeric_code_tokens(value: Any) -> List[str]:
+    """Extract model-like codes such as K62, S29 and 14Plus.
+
+    These tokens are a hard identity boundary.  A plain substring rule must
+    not map K62 to K6 (or iPhone 11 Pro to iPhone 11 Pro Max) merely because
+    the shorter code appears inside the longer Shopee label.
+    """
+    text = html.unescape(unicodedata.normalize("NFKC", str(value or ""))).lower()
+    return re.findall(r"(?<![a-z0-9])(?:[a-z]+\d+[a-z0-9]*|\d+[a-z]+[a-z0-9]*)", text)
+
+
+def _alphanumeric_code_mismatch(source: Any, candidate: Any) -> bool:
+    source_codes = _alphanumeric_code_tokens(source)
+    candidate_codes = _alphanumeric_code_tokens(candidate)
+    if not source_codes or not candidate_codes:
+        return False
+    for source_code in source_codes:
+        for candidate_code in candidate_codes:
+            if source_code == candidate_code:
+                continue
+            if min(len(source_code), len(candidate_code)) >= 2 and (source_code.startswith(candidate_code) or candidate_code.startswith(source_code)):
+                return True
+    return False
 
 
 def _phone_signature(value: Any) -> Tuple[str, str]:
@@ -206,6 +278,39 @@ def _spec_parts(value: Any) -> List[str]:
     return parts
 
 
+def clean_mapping_name(value: Any, spec_text: Any = "", index: int = 0) -> str:
+    """Repair legacy SKU labels that were saved from an HTML entity suffix.
+
+    Older imports accidentally persisted values such as ``黑色&gt`` instead of
+    the first option name.  The actual structured ``spec_text`` still contains
+    the complete option pair, so use that only for the malformed legacy shape.
+    Normal names (including legitimate ``>`` separators in spec text) are left
+    untouched.
+    """
+    raw = str(value or "").strip()
+    text = display_text(raw)
+    malformed = bool(re.search(r"&gt;?$|&lt;?$", raw, flags=re.IGNORECASE)) or text.endswith(">") or text.endswith("<")
+    if not malformed:
+        return text
+    # Keep the human-facing spelling/case here; ``_spec_parts`` is purposely
+    # normalized for comparisons and would turn labels such as iPhone into
+    # lowercase text in the Golden Table.
+    raw_parts = []
+    for part in re.split(r"[|,，;；>＞]", html.unescape(str(spec_text or "")).strip()):
+        part = part.strip()
+        if not part:
+            continue
+        if ":" in part:
+            part = part.split(":", 1)[1]
+        if "：" in part:
+            part = part.split("：", 1)[1]
+        raw_parts.append(part.strip())
+    parts = raw_parts
+    if 0 <= int(index) < len(parts):
+        return display_text(parts[int(index)])
+    return text.rstrip(">< ").strip()
+
+
 def _is_neutral_dimension(value: Any) -> bool:
     """Dimensions such as one-size that add no ambiguity to a colour match."""
     text = normalize_text(value)
@@ -236,9 +341,13 @@ class SkuMappingService:
         self.db_path = Path(db_path or self.base_dir / MAPPING_DB_FILE)
         self._job_lock = threading.Lock()
         self._jobs: Dict[str, Dict[str, Any]] = {}
+        self._gemini_blocked_until = 0.0
+        self._gemini_block_reason = ""
         self._init_db()
         self.migrate_legacy_mappings()
         self._repair_suggestion_statuses()
+        self._sync_golden_terminal_statuses()
+        self._refresh_legacy_suggestions()
         self._revalidate_stale_suggestions()
         self._refresh_review_tiers()
 
@@ -289,6 +398,7 @@ class SkuMappingService:
                     product_name TEXT NOT NULL DEFAULT '',
                     offer_id TEXT NOT NULL DEFAULT '',
                     snapshot_id INTEGER,
+                    suggested_candidate_key TEXT NOT NULL DEFAULT '',
                     suggested_sku_id TEXT NOT NULL DEFAULT '',
                     suggested_sku_name TEXT NOT NULL DEFAULT '',
                     suggested_second_name TEXT NOT NULL DEFAULT '',
@@ -308,9 +418,13 @@ class SkuMappingService:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     suggestion_id INTEGER NOT NULL,
                     rank INTEGER NOT NULL,
+                    candidate_key TEXT NOT NULL DEFAULT '',
                     sku_id TEXT NOT NULL DEFAULT '',
                     sku_name TEXT NOT NULL DEFAULT '',
+                    second_name TEXT NOT NULL DEFAULT '',
                     spec_text TEXT NOT NULL DEFAULT '',
+                    dimension_count INTEGER NOT NULL DEFAULT 1,
+                    parts_json TEXT NOT NULL DEFAULT '[]',
                     image_url TEXT NOT NULL DEFAULT '',
                     price REAL,
                     stock REAL,
@@ -343,11 +457,19 @@ class SkuMappingService:
                 if name not in snapshot_columns:
                     conn.execute(f"ALTER TABLE alibaba_offer_snapshots ADD COLUMN {name} {declaration}")
             candidate_columns = {row["name"] for row in conn.execute("PRAGMA table_info(sku_mapping_candidates)").fetchall()}
-            for name, declaration in {"price": "REAL", "stock": "REAL"}.items():
+            for name, declaration in {
+                "candidate_key": "TEXT NOT NULL DEFAULT ''",
+                "second_name": "TEXT NOT NULL DEFAULT ''",
+                "dimension_count": "INTEGER NOT NULL DEFAULT 1",
+                "parts_json": "TEXT NOT NULL DEFAULT '[]'",
+                "price": "REAL",
+                "stock": "REAL",
+            }.items():
                 if name not in candidate_columns:
                     conn.execute(f"ALTER TABLE sku_mapping_candidates ADD COLUMN {name} {declaration}")
             suggestion_columns = {row["name"] for row in conn.execute("PRAGMA table_info(sku_mapping_suggestions)").fetchall()}
             for name, declaration in {
+                "suggested_candidate_key": "TEXT NOT NULL DEFAULT ''",
                 "review_tier": "TEXT NOT NULL DEFAULT 'red'",
                 "review_reason": "TEXT NOT NULL DEFAULT ''",
             }.items():
@@ -389,7 +511,7 @@ class SkuMappingService:
                     offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(url)
                     if not sku_name and not offer_id:
                         continue
-                    if sku_id and sku_name:
+                    if sku_name:
                         legacy_approved.append((str(product_id), model, product))
                     if (str(product_id), model_id) in existing_keys:
                         existing += 1
@@ -404,8 +526,8 @@ class SkuMappingService:
                             str(product_id), model_id, str(model.get("型號名稱") or ""),
                             str(product.get("商品名稱") or ""), offer_id, sku_name,
                             str(model.get("1688_sku_second_name") or ""),
-                            "approved" if sku_id and sku_name else ("legacy_pending_id" if sku_name else "missing"),
-                            "match" if sku_id and sku_name else "abstain", 0.5 if sku_name else 0,
+                            "legacy_pending_name" if sku_name else "missing",
+                            "match" if sku_name else "abstain", 0.5 if sku_name else 0,
                             json.dumps({"source": "golden_table", "legacy": True}, ensure_ascii=False),
                             now, now,
                         ),
@@ -430,14 +552,100 @@ class SkuMappingService:
         with self.connect() as conn:
             conn.execute("UPDATE sku_mapping_suggestions SET status='no_match' WHERE status='ok' AND suggested_sku_id='' AND decision='abstain'")
 
+    def _sync_golden_terminal_statuses(self) -> None:
+        """Restore manual terminal decisions after an older rebuild reset SQLite.
+
+        The Golden Table is the durable user-facing record.  A prior scanner
+        version could leave a row as ``pending`` in SQLite even though the
+        Golden model was already marked ``discontinued``.  Sync only this
+        explicit Golden status back into the suggestion table; automatically
+        detected unavailable pages are intentionally *not* copied in the
+        other direction because those are not yet human decisions.
+        """
+        terminal_keys = set()
+        golden = self._golden()
+        for product_id, product in golden.items():
+            if not isinstance(product, dict):
+                continue
+            for model in product.get("型號", []) or []:
+                if not isinstance(model, dict) or str(model.get("1688_mapping_status") or "") != "discontinued":
+                    continue
+                model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+                if model_id:
+                    terminal_keys.add((str(product_id), model_id))
+        if not terminal_keys:
+            return
+        now = int(time.time())
+        with self.connect() as conn:
+            for product_id, model_id in terminal_keys:
+                row = conn.execute(
+                    "SELECT * FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                    (product_id, model_id),
+                ).fetchone()
+                if not row or str(row["status"] or "") == "discontinued":
+                    continue
+                conn.execute(
+                    "UPDATE sku_mapping_suggestions SET status='discontinued', decision='abstain', review_tier='red', review_reason='人工標記：discontinued', version=version+1, updated_at=? WHERE id=?",
+                    (now, row["id"]),
+                )
+                conn.execute(
+                    "INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)",
+                    (row["id"], "status_sync", json.dumps(dict(row), ensure_ascii=False), json.dumps({"status": "discontinued", "review_reason": "人工標記：discontinued"}, ensure_ascii=False), "scanner", now),
+                )
+
+    def _refresh_legacy_suggestions(self) -> None:
+        """Re-run current matching rules for old name-only rows when a snapshot exists."""
+        model_lookup = {
+            (str(model["product_id"]), str(model["model_id"])): model
+            for model in self._scope_models("all")
+        }
+        with self.connect() as conn:
+            rows = [dict(row) for row in conn.execute(
+                "SELECT * FROM sku_mapping_suggestions WHERE status IN ('legacy_pending_id','legacy_pending_name','missing')"
+            ).fetchall()]
+        for row in rows:
+            model = model_lookup.get((str(row.get("product_id")), str(row.get("model_id"))))
+            offer_id = normalize_id(row.get("offer_id"))
+            if not model or not offer_id:
+                continue
+            with self.connect() as conn:
+                snapshot = conn.execute(
+                    "SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? AND status='ok' ORDER BY fetched_at DESC LIMIT 1",
+                    (offer_id,),
+                ).fetchone()
+            if not snapshot or int(time.time()) - int(snapshot["fetched_at"] or 0) > SCAN_CACHE_SECONDS:
+                continue
+            skus = self._json_load(snapshot["skus_json"], [])
+            candidates = self.generate_candidates(model, skus)
+            if not candidates:
+                continue
+            snapshot_data = {
+                "id": snapshot["id"], "offer_id": snapshot["offer_id"],
+                "product_url": snapshot["product_url"], "product_name": snapshot["product_name"],
+                "status": snapshot["status"], "fingerprint": snapshot["fingerprint"],
+                "skus": skus, "raw": self._json_load(snapshot["raw_json"], {}),
+            }
+            try:
+                self._save_suggestion(model, snapshot_data, candidates, None, {"legacy_rule_refresh": True})
+            except Exception:
+                continue
+            with self.connect() as conn:
+                current = conn.execute(
+                    "SELECT id FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                    (row["product_id"], row["model_id"]),
+                ).fetchone()
+                conn.execute(
+                    "INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)",
+                    (current["id"], "legacy_rule_refresh", json.dumps(row, ensure_ascii=False), json.dumps({"snapshot_id": snapshot["id"], "status": "pending", "candidate_count": len(candidates)}, ensure_ascii=False), "scanner", int(time.time())),
+                )
+
     def _revalidate_stale_suggestions(self) -> None:
         """Reuse a newer live snapshot when a stale mapping still matches exactly.
 
-        A changed offer fingerprint does not automatically mean the selected SKU
-        disappeared.  If a newer stored live snapshot already exists, re-run the
-        deterministic matcher for stale rows.  A single exact candidate with the
-        same existing SKU ID becomes a normal pending/green review row; rows with
-        no current proof remain red and still require a fresh scan.
+        A changed offer fingerprint does not automatically mean the selected name
+        pair disappeared.  If a newer stored live snapshot already exists, re-run
+        the deterministic matcher for stale rows.  The two human-facing names are
+        the identity; SKU ID changes alone do not invalidate the mapping.
         """
         model_lookup = {
             (str(model["product_id"]), str(model["model_id"])): model
@@ -463,8 +671,11 @@ class SkuMappingService:
                 continue
             skus = self._json_load(latest["skus_json"], [])
             candidates = self.generate_candidates(model, skus)
-            existing_id = normalize_id(model.get("existing_sku_id")) or normalize_id(row.get("suggested_sku_id"))
-            if len(candidates) != 1 or not existing_id or normalize_id(candidates[0].get("sku_id")) != existing_id:
+            existing_name = display_text(model.get("existing_sku_name")) or display_text(row.get("suggested_sku_name"))
+            existing_second = display_text(model.get("existing_second_name")) or display_text(row.get("suggested_second_name"))
+            if len(candidates) != 1 or not existing_name:
+                continue
+            if display_text(candidates[0].get("sku_name")) != existing_name or display_text(candidates[0].get("second_name")) != existing_second:
                 continue
             snapshot = {
                 "id": latest["id"], "offer_id": latest["offer_id"],
@@ -514,17 +725,16 @@ class SkuMappingService:
         # action required: rescan the offer and verify the current SKU.
         if status == "stale":
             return "red", "1688 SKU 快照已變更；需重新掃描並重新核准"
-        if status in {"missing", "no_match", "error", "stale", "waiting_for_login", "discontinued", "empty"}:
+        if status in {"missing", "legacy_pending_name", "no_match", "error", "stale", "waiting_for_login", "discontinued", "empty"}:
             reasons = {
                 "missing": "尚未取得可用 SKU 候選",
+                "legacy_pending_name": "舊名稱紀錄尚未依 v2 名稱組合重新核准",
                 "no_match": "沒有候選 SKU 通過規則",
                 "error": "擷取錯誤，禁止猜測",
                 "waiting_for_login": "等待登入或人工驗證",
                 "discontinued": "商品或 SKU 疑似下架",
                 "empty": "頁面沒有結構化 SKU",
             }
-            if existing_sku_name and not existing_sku_id:
-                return "red", "舊 mapping 只有名稱，缺少 SKU ID；需重新核准"
             return "red", reasons.get(status, "資料不足，禁止猜測")
         if snapshot_status and snapshot_status != "ok":
             return "red", f"Live 快照狀態為 {snapshot_status}"
@@ -533,11 +743,18 @@ class SkuMappingService:
         if len(candidates) == 1:
             candidate = candidates[0]
             evidence = candidate.get("evidence") or {}
+            candidate_parts = evidence.get("candidate_parts") or candidate.get("parts") or _spec_parts(candidate.get("spec_text"))
+            candidate_primary = display_text(candidate.get("sku_name") or (candidate_parts[0] if candidate_parts else ""))
+            candidate_second = display_text(candidate.get("second_name") or (candidate_parts[1] if len(candidate_parts) > 1 else ""))
+            dimension_count = max(int(candidate.get("dimension_count") or 0), len(candidate_parts), 1)
+            if dimension_count > 2:
+                return "red", "此商品超過兩層規格，現行名稱欄位無法安全保存完整組合"
+            if not candidate_primary or (dimension_count >= 2 and not candidate_second):
+                return "red", "候選規格名稱不完整"
             complete = evidence.get("complete") is True
             exact = int(evidence.get("exact") or 0)
             required = int(evidence.get("required") or max(1, len(evidence.get("source_parts") or [])))
             score = float(candidate.get("deterministic_score") or 0)
-            candidate_parts = evidence.get("candidate_parts") or _spec_parts(candidate.get("spec_text"))
             source_parts = evidence.get("source_parts") or []
             # Re-evaluate old candidate evidence with the current dimension
             # rules.  Older scans treated a numeric code prefix as a loose
@@ -551,14 +768,16 @@ class SkuMappingService:
                 exact = max(exact, recomputed_exact)
             meaningful_candidate_parts = [part for part in candidate_parts if not _is_neutral_dimension(part)]
             same_dimension_count = len(meaningful_candidate_parts) == required
-            # Older snapshots did not persist exact/required counters.  A complete
-            # score of 70+ can only come from exact matching under the v1 scorer;
-            # reconstruct that metadata without treating loose score-50 matches as
-            # safe.
-            if complete and exact >= required and score < 70:
-                score = 70
-            if complete and exact >= required and same_dimension_count and score >= 70:
-                return "green", "唯一候選且所有規格維度精確匹配"
+            # A single candidate is safe to batch-review when every Shopee
+            # source dimension is accounted for.  A substring/keyword match is
+            # intentionally accepted here: names such as「木耳邊黑色」often
+            # contain a harmless prefix around the actual colour「黑色」.
+            # Alibaba may expose one additional option (for example a hang-tag
+            # type) even when Shopee only names the colour; the chosen full
+            # name pair is still preserved for the later human approval.
+            matched_dimensions = max(exact, recomputed_exact, int(evidence.get("loose") or 0))
+            if complete and matched_dimensions >= required and score >= 50:
+                return "green", "唯一候選且所有來源規格已匹配；1688 額外規格會完整保留"
             return "yellow", "只有一個候選，但規格維度仍需人工確認"
         if ai.get("decision") == "abstain":
             return "yellow", f"有 {len(candidates)} 個候選，AI／規則未能安全決定"
@@ -604,9 +823,21 @@ class SkuMappingService:
                 if not isinstance(model, dict) or not canonical_url(model.get("阿里巴巴商品URL")):
                     continue
                 sku_id = normalize_id(model.get("1688_sku_id"))
-                sku_name = str(model.get("1688_sku_name") or "").strip()
+                spec_text = model.get("1688_spec_text") or ""
+                raw_name = model.get("1688_sku_name") or ""
+                raw_second = model.get("1688_sku_second_name") or ""
+                sku_name = clean_mapping_name(raw_name, spec_text, 0)
+                second_name = clean_mapping_name(raw_second, spec_text, 1)
+                if sku_name != str(raw_name or "").strip():
+                    model["1688_sku_name"] = sku_name
+                    changed = True
+                if second_name != str(raw_second or "").strip():
+                    model["1688_sku_second_name"] = second_name
+                    changed = True
                 if "1688_mapping_status" not in model:
-                    model["1688_mapping_status"] = "approved" if sku_id and sku_name else "missing"
+                    # Existing names are preserved but must pass the v2
+                    # name-pair review before they can be used for purchasing.
+                    model["1688_mapping_status"] = "legacy_pending_name" if sku_name else "missing"
                     changed = True
                 if "1688_mapping_source" not in model:
                     model["1688_mapping_source"] = "legacy_import"
@@ -642,9 +873,9 @@ class SkuMappingService:
                 if scope == "restock" and restock_qty <= 0:
                     continue
                 if pending_only:
-                    current_sku_id = normalize_id(model.get("1688_sku_id"))
-                    current_status = str(model.get("1688_mapping_status") or ("approved" if current_sku_id else "missing")).strip()
-                    if current_sku_id and current_status == "approved":
+                    current_sku_name = str(model.get("1688_sku_name") or "").strip()
+                    current_status = str(model.get("1688_mapping_status") or ("legacy_pending_name" if current_sku_name else "missing")).strip()
+                    if current_sku_name and current_status == "approved":
                         continue
                 model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
                 rows.append({
@@ -660,7 +891,7 @@ class SkuMappingService:
                     "existing_sku_id": normalize_id(model.get("1688_sku_id")),
                     "existing_sku_name": str(model.get("1688_sku_name") or ""),
                     "existing_second_name": str(model.get("1688_sku_second_name") or ""),
-                    "mapping_status": str(model.get("1688_mapping_status") or ("approved" if model.get("1688_sku_id") else "missing")),
+                    "mapping_status": str(model.get("1688_mapping_status") or ("legacy_pending_name" if model.get("1688_sku_name") else "missing")),
                 })
         return rows
 
@@ -707,7 +938,7 @@ class SkuMappingService:
             "yellow": tier_counts.get("yellow", 0),
             "red": tier_counts.get("red", 0),
             "approved": counts.get("approved", 0),
-            "pending": counts.get("pending", 0) + counts.get("legacy_pending_id", 0) + counts.get("missing", 0) + counts.get("waiting_for_login", 0),
+            "pending": counts.get("pending", 0) + counts.get("legacy_pending_id", 0) + counts.get("legacy_pending_name", 0) + counts.get("missing", 0) + counts.get("waiting_for_login", 0),
             "stale": counts.get("stale", 0),
             "errors": counts.get("error", 0),
             "blockedRestockQty": blocked_restock_qty,
@@ -731,7 +962,10 @@ class SkuMappingService:
         params: List[Any] = []
         clauses = []
         if status == "review":
-            clauses.append("s.status IN ('pending','legacy_pending_id','missing','no_match','error','stale','waiting_for_login','discontinued')")
+            # Discontinued is a terminal user decision.  Keep it available via
+            # the explicit 「停售」 filter, but never show it in the default
+            # 待處理 queue after a single or batch status action.
+            clauses.append("s.status IN ('pending','legacy_pending_id','legacy_pending_name','missing','no_match','error','stale','waiting_for_login')")
         elif status == "deferred":
             clauses.append("s.status = 'pending' AND s.review_reason = ?")
             params.append("人工保留，稍後比較候選")
@@ -778,7 +1012,7 @@ class SkuMappingService:
                     "SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank",
                     (item["id"],),
                 ).fetchall()
-                item["candidates"] = [self._candidate_public(dict(candidate)) for candidate in candidates]
+                item["candidates"] = [self._candidate_public(dict(candidate), item.get("offer_id", "")) for candidate in candidates]
                 item["restockQty"] = int(metadata.get("restockQty") or 0)
                 item["monthlySales"] = metadata.get("monthlySales", 0)
                 item["productMonthlySales"] = metadata.get("productMonthlySales", 0)
@@ -789,7 +1023,45 @@ class SkuMappingService:
                 item["existing_sku_id"] = str(metadata.get("existingSkuId") or "")
                 item["existing_sku_name"] = str(metadata.get("existingSkuName") or "")
                 item["existing_second_name"] = str(metadata.get("existingSecondName") or "")
+                item["existing_spec_text"] = str(metadata.get("existingSpecText") or "")
                 item["mapping_status"] = str(metadata.get("mappingStatus") or "missing")
+                # A legacy approved row may predate candidate persistence, so
+                # it has no rows in sku_mapping_candidates.  Show its current
+                # approved name pair as a read-only display fallback; approval
+                # still re-validates against the live/snapshot catalog in the
+                # decision service and cannot rely on this synthetic card.
+                if not item["candidates"] and item["mapping_status"] == "approved" and item["existing_sku_name"]:
+                    fallback_name = clean_mapping_name(item["existing_sku_name"], item["existing_spec_text"], 0)
+                    fallback_second = clean_mapping_name(item["existing_second_name"], item["existing_spec_text"], 1)
+                    fallback_parts = [part for part in (fallback_name, fallback_second) if part]
+                    item["candidates"] = [{
+                        "candidate_key": mapping_candidate_key(item.get("offer_id"), fallback_name, fallback_second),
+                        "sku_id": item["existing_sku_id"],
+                        "sku_name": fallback_name,
+                        "second_name": fallback_second,
+                        "spec_text": item["existing_spec_text"] or " / ".join(fallback_parts),
+                        "dimension_count": len(fallback_parts) or 1,
+                        "parts": fallback_parts,
+                        "image_url": "",
+                        "price": None,
+                        "stock": None,
+                        "deterministic_score": 0,
+                        "evidence": {"approved_mapping": True},
+                    }]
+                    item["approved_mapping_fallback"] = True
+                # Older AI reruns may have persisted the entire catalog before
+                # the four-card limit was added.  Cap and reorder at read time
+                # as a backwards-compatible safety net, with the AI suggestion
+                # kept first when one exists.
+                ai_evidence = item["evidence"].get("ai") if isinstance(item["evidence"], dict) else {}
+                if not isinstance(ai_evidence, dict):
+                    ai_evidence = {}
+                ai_display = {
+                    **ai_evidence,
+                    "selected_candidate_key": ai_evidence.get("selected_candidate_key") or item.get("suggested_candidate_key", ""),
+                    "selected_sku_id": ai_evidence.get("selected_sku_id") or item.get("suggested_sku_id", ""),
+                }
+                item["candidates"] = self._review_candidates(item["candidates"], ai_display)
                 result.append(item)
         tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
         # Keep each product together.  Products are ordered by total monthly
@@ -836,9 +1108,10 @@ class SkuMappingService:
                     "productImageUrl": product_image,
                     "modelImageUrl": str(model.get("型號圖片網址") or ""),
                     "existingSkuId": normalize_id(model.get("1688_sku_id")),
-                    "existingSkuName": str(model.get("1688_sku_name") or ""),
-                    "existingSecondName": str(model.get("1688_sku_second_name") or ""),
-                    "mappingStatus": str(model.get("1688_mapping_status") or ("approved" if model.get("1688_sku_id") else "missing")),
+                    "existingSkuName": clean_mapping_name(model.get("1688_sku_name"), model.get("1688_spec_text"), 0),
+                    "existingSecondName": clean_mapping_name(model.get("1688_sku_second_name"), model.get("1688_spec_text"), 1),
+                    "existingSpecText": display_text(model.get("1688_spec_text") or ""),
+                    "mappingStatus": str(model.get("1688_mapping_status") or ("legacy_pending_name" if model.get("1688_sku_name") else "missing")),
                 }
         return lookup
 
@@ -866,19 +1139,62 @@ class SkuMappingService:
     @staticmethod
     def _catalog_candidate(sku: Dict[str, Any]) -> Dict[str, Any]:
         """Convert a live snapshot SKU into a reviewable manual candidate."""
-        spec_text = str(sku.get("spec_text") or "")
+        spec_text = display_text(sku.get("spec_text") or "")
         parts = list(sku.get("parts") or _spec_parts(spec_text))
+        sku_name = display_text(sku.get("sku_name") or (parts[0] if parts else spec_text))
+        second_name = display_text(sku.get("second_name") or (parts[1] if len(parts) > 1 else ""))
+        offer_id = normalize_id(sku.get("offer_id"))
         return {
             "sku_id": normalize_id(sku.get("sku_id")),
-            "sku_name": str(sku.get("sku_name") or (parts[0] if parts else spec_text)),
-            "second_name": str(sku.get("second_name") or (parts[1] if len(parts) > 1 else "")),
+            "sku_name": sku_name,
+            "second_name": second_name,
             "spec_text": spec_text,
+            "parts": parts,
+            "dimension_count": len(parts),
+            "candidate_key": str(sku.get("candidate_key") or mapping_candidate_key(offer_id, sku_name, second_name)),
             "image_url": str(sku.get("image_url") or ""),
             "price": sku.get("price"),
             "stock": sku.get("stock"),
             "deterministic_score": float(sku.get("deterministic_score") or 0),
             "evidence": {"manual_catalog": True},
         }
+
+    def _ai_catalog_candidates(self, skus: Sequence[Dict[str, Any]], limit: Optional[int] = None, offer_id: str = "") -> List[Dict[str, Any]]:
+        """Build a bounded candidate list when rules found no match.
+
+        The AI receives the complete catalog for the known offer.  This avoids
+        the old failure mode where the correct name was outside an arbitrary
+        top-five/top-twenty slice.  A caller may still provide a limit for a
+        provider-specific payload budget.
+        """
+        candidates = []
+        seen = set()
+        for sku in skus:
+            candidate = self._catalog_candidate({**sku, "offer_id": offer_id})
+            key = candidate.get("candidate_key")
+            if not key or key in seen:
+                continue
+            candidate["evidence"] = {"ai_full_catalog": True, "manual_catalog": True}
+            candidates.append(candidate)
+            seen.add(key)
+            if limit is not None and len(candidates) >= max(1, int(limit)):
+                break
+        return candidates
+
+    @staticmethod
+    def _review_candidates(candidates: Sequence[Dict[str, Any]], ai: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """Keep the review UI compact while preserving the AI-selected SKU first."""
+        candidates = list(candidates or [])
+        if len(candidates) <= MAX_REVIEW_CANDIDATES and not ai:
+            return candidates
+        ai = ai if isinstance(ai, dict) else {}
+        selected_key = str(ai.get("selected_candidate_key") or "")
+        selected_id = normalize_id(ai.get("selected_sku_id"))
+        selected = next((item for item in candidates if selected_key and str(item.get("candidate_key") or "") == selected_key), None)
+        if selected is None and selected_id:
+            selected = next((item for item in candidates if normalize_id(item.get("sku_id")) == selected_id), None)
+        ordered = ([selected] if selected else []) + [item for item in candidates if item is not selected]
+        return ordered[:MAX_REVIEW_CANDIDATES]
 
     def _snapshot_catalog(self, snapshot_id: Any = None, offer_id: str = "") -> Dict[str, Any]:
         """Return the complete SKU catalog from the latest stored live snapshot."""
@@ -894,11 +1210,12 @@ class SkuMappingService:
         if not row:
             return {"catalogStatus": "not_scanned", "snapshotId": None, "offerId": normalize_id(offer_id), "fingerprint": "", "productUrl": "", "skus": []}
         raw_skus = self._json_load(row["skus_json"], [])
-        skus = [self._catalog_candidate(sku) for sku in raw_skus if isinstance(sku, dict) and normalize_id(sku.get("sku_id"))]
+        skus = [self._catalog_candidate({**sku, "offer_id": row["offer_id"]}) for sku in raw_skus if isinstance(sku, dict) and normalize_id(sku.get("sku_id"))]
         return {
             "catalogStatus": str(row["status"] or "unknown"),
             "snapshotId": row["id"],
             "offerId": str(row["offer_id"] or offer_id),
+            "productName": str(row["product_name"] or ""),
             "fingerprint": str(row["fingerprint"] or ""),
             "productUrl": str(row["product_url"] or ""),
             "skus": skus,
@@ -920,6 +1237,89 @@ class SkuMappingService:
         catalog.update({"status": "success", "productId": product_id, "modelId": model_id, "version": int(row["version"])})
         return catalog
 
+    def rerun_ai(self, product_id: str, model_id: str) -> Dict[str, Any]:
+        """Run AI against an existing live SKU snapshot without opening 1688."""
+        product_id = normalize_id(product_id)
+        model_id = normalize_id(model_id)
+        if not product_id or not model_id:
+            raise ValueError("缺少 productId 或 modelId")
+        model = next((item for item in self._scope_models("all") if item["product_id"] == product_id and item["model_id"] == model_id), None)
+        if not model:
+            raise FileNotFoundError(f"找不到 URL 型號：{product_id}/{model_id}")
+        with self.connect() as conn:
+            suggestion = conn.execute(
+                "SELECT snapshot_id, offer_id, status FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                (product_id, model_id),
+            ).fetchone()
+            if not suggestion:
+                raise FileNotFoundError(f"找不到 mapping suggestion：{product_id}/{model_id}")
+            snapshot = conn.execute(
+                "SELECT * FROM alibaba_offer_snapshots WHERE id=?",
+                (suggestion["snapshot_id"],),
+            ).fetchone() if suggestion["snapshot_id"] else None
+            if snapshot is None:
+                snapshot = conn.execute(
+                    "SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? AND status='ok' ORDER BY fetched_at DESC LIMIT 1",
+                    (model["offer_id"],),
+                ).fetchone()
+        if not snapshot or str(snapshot["status"] or "") != "ok":
+            raise ValueError("目前沒有可用的 SKU 快照，請先重新掃描此商品")
+        if str(suggestion["status"] or "") == "approved":
+            raise ValueError("這筆 mapping 已核准；如需重判請先確認不要覆蓋既有核准結果")
+        skus = self._json_load(snapshot["skus_json"], [])
+        rule_candidates = self.generate_candidates(model, skus)
+        snapshot_data = {
+            "id": snapshot["id"], "offer_id": snapshot["offer_id"],
+            "product_url": snapshot["product_url"], "product_name": snapshot["product_name"],
+            "status": snapshot["status"], "fingerprint": snapshot["fingerprint"],
+            "skus": skus, "raw": self._json_load(snapshot["raw_json"], {}),
+        }
+
+        # Keep this explicit action consistent with the normal scan: rules
+        # are the first gate, and AI is used only when rules find no candidate.
+        if rule_candidates:
+            self._save_suggestion(model, snapshot_data, rule_candidates, None, {"rule_rerun": True, "ai_full_catalog": False})
+            return {
+                "status": "success",
+                "productId": product_id,
+                "modelId": model_id,
+                "snapshotId": snapshot["id"],
+                "candidateCount": len(rule_candidates),
+                "decision": "abstain",
+                "usedAi": False,
+                "message": "規則已有候選，未呼叫 AI",
+            }
+
+        ai_candidates = self._ai_catalog_candidates(skus, offer_id=model.get("offer_id"))
+        if not ai_candidates:
+            raise ValueError("目前快照沒有可供 AI 判定的 SKU")
+        ai = self._maybe_ai_decide(model, snapshot_data, ai_candidates)
+        if not ai or ai.get("source") not in {"openai", "grok", "gemini"}:
+            warnings = (ai or {}).get("warnings") or ["AI 沒有回傳結果"]
+            raise RuntimeError("；".join(str(item) for item in warnings))
+        review_candidates = self._review_candidates(ai_candidates, ai)
+        self._save_suggestion(
+            model,
+            snapshot_data,
+            review_candidates,
+            ai,
+            {"ai_rerun": True, "ai_full_catalog": not bool(rule_candidates)},
+        )
+        return {
+            "status": "success",
+            "productId": product_id,
+            "modelId": model_id,
+            "snapshotId": snapshot["id"],
+            "candidateCount": len(review_candidates),
+            "decision": ai.get("decision"),
+            "usedAi": True,
+            "selectedCandidateKey": ai.get("selected_candidate_key"),
+            "selectedSkuName": ai.get("selected_sku_name"),
+            "selectedSkuSecondName": ai.get("selected_sku_second_name"),
+            "selectedSkuId": normalize_id(ai.get("selected_sku_id")),
+            "confidence": ai.get("confidence", 0),
+        }
+
     @staticmethod
     def _json_load(value: Any, fallback: Any) -> Any:
         try:
@@ -928,8 +1328,18 @@ class SkuMappingService:
             return fallback
 
     @staticmethod
-    def _candidate_public(row: Dict[str, Any]) -> Dict[str, Any]:
+    def _candidate_public(row: Dict[str, Any], offer_id: Any = "") -> Dict[str, Any]:
         row["evidence"] = SkuMappingService._json_load(row.pop("evidence_json", "{}"), {})
+        stored_parts = SkuMappingService._json_load(row.pop("parts_json", "[]"), [])
+        spec_text = display_text(row.get("spec_text") or "")
+        parts = list(stored_parts or _spec_parts(spec_text))
+        row["parts"] = parts
+        row["spec_text"] = spec_text
+        row["sku_name"] = clean_mapping_name(row.get("sku_name") or (parts[0] if parts else spec_text), spec_text, 0)
+        row["second_name"] = clean_mapping_name(row.get("second_name") or (parts[1] if len(parts) > 1 else ""), spec_text, 1)
+        row["dimension_count"] = max(int(row.get("dimension_count") or 0), len(parts), 1)
+        if not row.get("candidate_key"):
+            row["candidate_key"] = mapping_candidate_key(offer_id, row.get("sku_name", ""), row.get("second_name", ""))
         return row
 
     def start_scan(
@@ -937,6 +1347,7 @@ class SkuMappingService:
         scope: str = "all",
         force: bool = False,
         use_ai: bool = True,
+        rebuild: bool = False,
         product_id: str = "",
         model_id: str = "",
         offer_id: str = "",
@@ -951,14 +1362,39 @@ class SkuMappingService:
                     raise RuntimeError("目前已有 SKU mapping 掃描工作執行中")
             job_id = f"sku-map-{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             now = int(time.time())
-            job = {"jobId": job_id, "status": "queued", "scope": scope, "productId": product_id, "modelId": model_id, "offerId": offer_id, "completed": 0, "total": 0, "message": "排入掃描", "createdAt": now, "updatedAt": now}
+            job = {"jobId": job_id, "status": "queued", "scope": scope, "rebuild": bool(rebuild), "productId": product_id, "modelId": model_id, "offerId": offer_id, "completed": 0, "total": 0, "message": "排入掃描", "createdAt": now, "updatedAt": now}
             self._jobs[job_id] = job
             with self.connect() as conn:
                 conn.execute(
                     "INSERT INTO sku_mapping_runs(job_id,status,scope,created_at,updated_at) VALUES (?,?,?,?,?)",
                     (job_id, "queued", scope, now, now),
                 )
-            thread = threading.Thread(target=self._scan_worker, args=(job_id, scope, force, use_ai, product_id, model_id, offer_id), daemon=True)
+            thread = threading.Thread(target=self._scan_worker, args=(job_id, scope, force, use_ai, product_id, model_id, offer_id, bool(rebuild)), daemon=True)
+            thread.start()
+        return job
+
+    def start_snapshot_reanalysis(self, use_ai: bool = True, rebuild: bool = False, ai_only: bool = False) -> Dict[str, Any]:
+        """Re-run matching against stored snapshots without opening 1688.
+
+        This is deliberately separate from ``start_scan``.  A normal scan may
+        fetch an offer when its seven-day cache is missing or expired; this
+        operation never calls Playwright and simply skips models without a
+        stored OK snapshot.
+        """
+        with self._job_lock:
+            for job in self._jobs.values():
+                if job.get("status") in {"queued", "running"}:
+                    raise RuntimeError("目前已有 SKU mapping 工作執行中")
+            job_id = f"sku-map-review-{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+            now = int(time.time())
+            job = {"jobId": job_id, "status": "queued", "scope": "existing_snapshots", "rebuild": bool(rebuild), "aiOnly": bool(ai_only), "completed": 0, "total": 0, "message": "排入現有快照 AI 重判" if ai_only else "排入現有快照規則→AI 重判", "createdAt": now, "updatedAt": now}
+            self._jobs[job_id] = job
+            with self.connect() as conn:
+                conn.execute(
+                    "INSERT INTO sku_mapping_runs(job_id,status,scope,created_at,updated_at) VALUES (?,?,?,?,?)",
+                    (job_id, "queued", "existing_snapshots", now, now),
+                )
+            thread = threading.Thread(target=self._snapshot_reanalysis_worker, args=(job_id, bool(use_ai), bool(rebuild), bool(ai_only)), daemon=True)
             thread.start()
         return job
 
@@ -999,12 +1435,13 @@ class SkuMappingService:
         product_id: str = "",
         model_id: str = "",
         offer_id: str = "",
+        rebuild: bool = False,
     ) -> None:
         try:
-            # Approved mappings are already part of the golden table.  A full
-            # catalog scan must not demote them back to pending; live SKU
-            # changes are handled separately by snapshot fingerprint checks.
-            models = self._scope_models(scope, pending_only=True)
+            # Normal scans skip already-approved name pairs.  The explicit
+            # rebuild mode re-evaluates every URL model while leaving the
+            # currently active Golden Table mapping untouched until review.
+            models = self._scope_models(scope, pending_only=not rebuild)
             if offer_id:
                 models = [model for model in models if model["offer_id"] == offer_id]
             elif product_id:
@@ -1012,7 +1449,7 @@ class SkuMappingService:
             if model_id:
                 models = [model for model in models if model["model_id"] == model_id]
             if not models:
-                raise ValueError("找不到可掃描的 URL 型號，可能已核准、已下架或資料已更新")
+                raise ValueError("找不到可掃描的 1688 URL 型號，請確認 golden table 仍有商品 URL")
             self._update_job(job_id, status="running", total=len(models), completed=0, message="準備載入 1688 商品頁")
             grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for model in models:
@@ -1034,13 +1471,97 @@ class SkuMappingService:
                     continue
                 for model in rows:
                     candidates = self.generate_candidates(model, snapshot.get("skus", []))
-                    ai = self._maybe_ai_decide(model, snapshot, candidates) if use_ai and len(candidates) != 1 else None
-                    self._save_suggestion(model, snapshot, candidates, ai, {})
+                    # Deterministic matching is the first gate.  Any rule
+                    # candidate is cheaper and auditable, so keep it for human
+                    # review and do not call an AI provider during a normal
+                    # scan.  The configured AI provider is reserved for the genuinely unresolved
+                    # case where the rules found no candidate at all.
+                    ai_candidates = candidates
+                    ai = None
+                    if use_ai and not candidates:
+                        ai_candidates = self._ai_catalog_candidates(snapshot.get("skus", []), offer_id=snapshot.get("offer_id"))
+                        ai = self._maybe_ai_decide(model, snapshot, ai_candidates) if ai_candidates else None
+                    # A no-key/API-error fallback must stay no_match; only a real
+                    # AI response is allowed to promote the full catalog into
+                    # reviewable candidates.
+                    candidates_to_save = self._review_candidates(ai_candidates, ai) if ai and ai.get("source") in {"openai", "grok", "gemini"} else candidates
+                    self._save_suggestion(model, snapshot, candidates_to_save, ai, {"ai_full_catalog": bool(ai_candidates and not candidates)})
                     completed += 1
                     self._update_job(job_id, completed=completed, message=f"已處理 {completed}/{len(models)} 個型號")
             self._update_job(job_id, status="completed", completed=completed, total=len(models), message="SKU mapping 掃描完成")
         except Exception as exc:
             self._update_job(job_id, status="error", error=str(exc), message="SKU mapping 掃描失敗")
+
+    def _snapshot_reanalysis_worker(self, job_id: str, use_ai: bool, rebuild: bool = False, ai_only: bool = False) -> None:
+        """Apply rules/configured AI to existing snapshots only; never fetch live pages.
+
+        ``ai_only`` deliberately sends the complete stored offer catalog to the
+        configured provider even when deterministic rules already found a
+        candidate.  It is a separate opt-in path because it consumes API quota
+        and still never writes an approved mapping without human review.
+        """
+        try:
+            models = self._scope_models("all", pending_only=not rebuild)
+            self._update_job(
+                job_id,
+                status="running",
+                total=len(models),
+                completed=0,
+                message="使用現有 1688 快照直接 AI 判斷（不連線 1688）" if ai_only else "使用現有 1688 快照規則→AI 重新判斷（不連線 1688）",
+            )
+            completed = 0
+            skipped = 0
+            for model in models:
+                with self.connect() as conn:
+                    snapshot = conn.execute(
+                        "SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? AND status='ok' ORDER BY fetched_at DESC LIMIT 1",
+                        (model["offer_id"],),
+                    ).fetchone()
+                if snapshot is None:
+                    skipped += 1
+                    completed += 1
+                    self._update_job(job_id, completed=completed, message=f"已處理 {completed}/{len(models)}（無現有快照，略過 {skipped}）")
+                    continue
+                skus = self._json_load(snapshot["skus_json"], [])
+                snapshot_data = {
+                    "id": snapshot["id"], "offer_id": snapshot["offer_id"],
+                    "product_url": snapshot["product_url"], "product_name": snapshot["product_name"],
+                    "status": snapshot["status"], "fingerprint": snapshot["fingerprint"],
+                    "skus": skus, "raw": self._json_load(snapshot["raw_json"], {}),
+                }
+                candidates = self.generate_candidates(model, skus)
+                ai_candidates = candidates
+                ai = None
+                if ai_only:
+                    # Unlike the normal rules-first path, AI-only always sees
+                    # the complete current catalog, so the provider can find a
+                    # close option even when the rule matcher missed it.
+                    ai_candidates = self._ai_catalog_candidates(skus, offer_id=snapshot_data.get("offer_id"))
+                    ai = self._maybe_ai_decide(model, snapshot_data, ai_candidates) if use_ai and ai_candidates else None
+                    ai_succeeded = bool(ai and ai.get("source") in {"openai", "grok", "gemini"})
+                    # If the API fails or no key is configured, do not turn the
+                    # entire catalog into a false recommendation.  Keep the
+                    # manual picker available and persist the warning instead.
+                    candidates_to_save = self._review_candidates(ai_candidates, ai) if ai_succeeded else []
+                else:
+                    # Keep the existing rules-first policy: AI is called only
+                    # when deterministic matching found no candidate.
+                    if use_ai and not candidates:
+                        ai_candidates = self._ai_catalog_candidates(skus, offer_id=snapshot_data.get("offer_id"))
+                        ai = self._maybe_ai_decide(model, snapshot_data, ai_candidates) if ai_candidates else None
+                    candidates_to_save = self._review_candidates(ai_candidates, ai) if ai and ai.get("source") in {"openai", "grok", "gemini"} else candidates
+                self._save_suggestion(
+                    model,
+                    snapshot_data,
+                    candidates_to_save,
+                    ai,
+                    {"snapshot_reanalysis": True, "ai_only": bool(ai_only), "ai_full_catalog": bool(ai_candidates and (ai_only or not candidates))},
+                )
+                completed += 1
+                self._update_job(job_id, completed=completed, message=f"已處理 {completed}/{len(models)}（無現有快照，略過 {skipped}）")
+            self._update_job(job_id, status="completed", completed=completed, total=len(models), message=("現有快照 AI 重判完成；未連線 1688，仍需人工核准；" if ai_only else "現有快照規則→AI 重判完成；未連線 1688；") + f"略過 {skipped} 筆無快照型號")
+        except Exception as exc:
+            self._update_job(job_id, status="error", error=str(exc), message="現有快照重判失敗")
 
     def _get_cached_snapshot(self, offer_id: str, force: bool) -> Optional[Dict[str, Any]]:
         if not offer_id or force:
@@ -1109,16 +1630,22 @@ class SkuMappingService:
     @staticmethod
     def _normalize_live_sku(row: Dict[str, Any]) -> Dict[str, Any]:
         sku_id = normalize_id(row.get("skuId") or row.get("sku_id"))
-        spec_text = html.unescape(str(row.get("specAttrs") or row.get("specText") or row.get("spec_text") or "").strip())
+        spec_text = display_text(row.get("specAttrs") or row.get("specText") or row.get("spec_text") or "")
         parts = _spec_parts(spec_text)
-        sku_name = str(row.get("skuName") or row.get("sku_name") or row.get("name") or (parts[0] if parts else "")).strip()
+        # specAttrs is the authoritative ordered combination.  Prefer its
+        # decoded parts over skuName because 1688 sometimes returns a
+        # truncated HTML label such as ``黑色&gt`` in skuName.
+        sku_name = display_text(parts[0] if parts else (row.get("skuName") or row.get("sku_name") or row.get("name") or ""))
+        second_name = display_text(parts[1] if len(parts) > 1 else "")
         image_url = str(row.get("skuImageUrl") or row.get("imageUrl") or row.get("image_url") or "").strip()
-        return {"sku_id": sku_id, "sku_name": sku_name, "second_name": parts[1] if len(parts) > 1 else "", "spec_text": spec_text, "parts": parts, "image_url": image_url, "price": row.get("price") or row.get("salePrice") or row.get("priceCent"), "stock": row.get("stock") or row.get("quantity"), "raw": row}
+        return {"sku_id": sku_id, "sku_name": sku_name, "second_name": second_name, "spec_text": spec_text, "parts": parts, "dimension_count": len(parts), "image_url": image_url, "price": row.get("price") or row.get("salePrice") or row.get("priceCent"), "stock": row.get("stock") or row.get("quantity"), "raw": row}
 
     def _save_snapshot(self, offer_id: str, url: str, product_name: str, skus: List[Dict[str, Any]], raw: Dict[str, Any]) -> Dict[str, Any]:
+        skus = [{**sku, "offer_id": normalize_id(offer_id)} for sku in skus]
         fingerprint = offer_fingerprint(offer_id, skus)
         now = int(time.time())
         dimensions = sorted({part for sku in skus for part in (sku.get("parts") or _spec_parts(sku.get("spec_text"))) if part})
+        dimension_counts = sorted({len(sku.get("parts") or _spec_parts(sku.get("spec_text"))) for sku in skus})
         images = sorted({str(sku.get("image_url") or "") for sku in skus if sku.get("image_url")})
         prices = [sku.get("price") for sku in skus]
         stocks = [sku.get("stock") for sku in skus]
@@ -1126,7 +1653,7 @@ class SkuMappingService:
             previous = conn.execute("SELECT fingerprint FROM alibaba_offer_snapshots WHERE offer_id=? AND status='ok' ORDER BY fetched_at DESC LIMIT 1", (offer_id,)).fetchone()
             conn.execute(
                 "INSERT OR IGNORE INTO alibaba_offer_snapshots(offer_id,product_url,product_name,status,fingerprint,skus_json,dimensions_json,images_json,prices_json,stock_json,raw_json,fetched_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-                (offer_id, canonical_url(url), product_name, "ok", fingerprint, json.dumps(skus, ensure_ascii=False), json.dumps(dimensions, ensure_ascii=False), json.dumps(images, ensure_ascii=False), json.dumps(prices, ensure_ascii=False), json.dumps(stocks, ensure_ascii=False), json.dumps(raw, ensure_ascii=False), now),
+                (offer_id, canonical_url(url), product_name, "ok", fingerprint, json.dumps(skus, ensure_ascii=False), json.dumps({"values": dimensions, "counts": dimension_counts}, ensure_ascii=False), json.dumps(images, ensure_ascii=False), json.dumps(prices, ensure_ascii=False), json.dumps(stocks, ensure_ascii=False), json.dumps(raw, ensure_ascii=False), now),
             )
             row = conn.execute("SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? AND fingerprint=?", (offer_id, fingerprint)).fetchone()
         if previous and str(previous["fingerprint"] or "") != fingerprint:
@@ -1134,7 +1661,25 @@ class SkuMappingService:
         return {"id": row["id"], "offer_id": offer_id, "product_url": canonical_url(url), "product_name": product_name, "status": "ok", "fingerprint": fingerprint, "skus": skus, "raw": raw}
 
     def _mark_offer_stale(self, offer_id: str, new_fingerprint: str) -> None:
-        """Invalidate approved mappings when a live offer's SKU catalog changes."""
+        """Invalidate only mappings whose approved name pair disappeared.
+
+        A whole-offer fingerprint changes when an unrelated colour is added or
+        stock changes.  That must not invalidate every existing name mapping.
+        """
+        with self.connect() as conn:
+            latest = conn.execute("SELECT skus_json FROM alibaba_offer_snapshots WHERE offer_id=? AND fingerprint=? LIMIT 1", (str(offer_id), new_fingerprint)).fetchone()
+        live_skus = self._json_load(latest["skus_json"], []) if latest else []
+
+        def pair_exists(primary: Any, secondary: Any) -> bool:
+            expected = (normalize_text(primary), normalize_text(secondary))
+            matches = []
+            for sku in live_skus:
+                parts = sku.get("parts") or _spec_parts(sku.get("spec_text"))
+                current = (normalize_text(sku.get("sku_name") or (parts[0] if parts else "")), normalize_text(sku.get("second_name") or (parts[1] if len(parts) > 1 else "")))
+                if current == expected:
+                    matches.append(current)
+            return len(matches) == 1
+
         golden = self._golden()
         changed = False
         now = int(time.time())
@@ -1145,9 +1690,14 @@ class SkuMappingService:
                 if not isinstance(model, dict):
                     continue
                 current_offer = normalize_id(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL"))
-                if current_offer == str(offer_id) and model.get("1688_mapping_status") == "approved" and model.get("1688_offer_fingerprint") != new_fingerprint:
+                if current_offer != str(offer_id) or model.get("1688_mapping_status") != "approved" or model.get("1688_offer_fingerprint") == new_fingerprint:
+                    continue
+                if pair_exists(model.get("1688_sku_name"), model.get("1688_sku_second_name")):
+                    model["1688_offer_fingerprint"] = new_fingerprint
+                    model["1688_mapping_fingerprint"] = mapping_candidate_key(offer_id, model.get("1688_sku_name"), model.get("1688_sku_second_name"))
+                else:
                     model["1688_mapping_status"] = "stale"
-                    changed = True
+                changed = True
         if changed:
             backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_stale_{now}")
             shutil.copy2(self.golden_path, backup_path)
@@ -1157,10 +1707,23 @@ class SkuMappingService:
                 handle.write("\n")
             os.replace(tmp_path, self.golden_path)
         with self.connect() as conn:
-            rows = conn.execute("SELECT id FROM sku_mapping_suggestions WHERE offer_id=? AND status='approved'", (str(offer_id),)).fetchall()
+            rows = conn.execute("SELECT id, product_id, model_id FROM sku_mapping_suggestions WHERE offer_id=? AND status='approved'", (str(offer_id),)).fetchall()
             for row in rows:
-                conn.execute("UPDATE sku_mapping_suggestions SET status='stale', review_tier='red', review_reason='1688 SKU 快照已變更', version=version+1, updated_at=? WHERE id=?", (now, row["id"]))
-                conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,after_json,reviewer,created_at) VALUES(?,?,?,?,?)", (row["id"], "stale", json.dumps({"fingerprint": new_fingerprint}, ensure_ascii=False), "scanner", now))
+                # Suggestions store proposed names, so look them up in the
+                # golden table below rather than relying on the old SKU ID.
+                product = golden.get(str(row["product_id"]), {})
+                target = next(
+                    (
+                        m for m in product.get("型號", [])
+                        if (normalize_id(m.get("規格ID")) or str(m.get("型號名稱") or "").strip()) == str(row["model_id"])
+                    ),
+                    {},
+                ) if isinstance(product, dict) else {}
+                if pair_exists(target.get("1688_sku_name"), target.get("1688_sku_second_name")):
+                    conn.execute("UPDATE sku_mapping_suggestions SET status='approved', review_tier='approved', review_reason='名稱組合仍存在；已更新快照', version=version+1, updated_at=? WHERE id=?", (now, row["id"]))
+                else:
+                    conn.execute("UPDATE sku_mapping_suggestions SET status='stale', review_tier='red', review_reason='已核准名稱組合已從 1688 消失', version=version+1, updated_at=? WHERE id=?", (now, row["id"]))
+                conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,after_json,reviewer,created_at) VALUES(?,?,?,?,?)", (row["id"], "offer_changed", json.dumps({"fingerprint": new_fingerprint}, ensure_ascii=False), "scanner", now))
 
     def generate_candidates(self, model: Dict[str, Any], skus: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         source = f"{model.get('model_name', '')},{model.get('product_name', '')}"
@@ -1168,15 +1731,23 @@ class SkuMappingService:
         source_phones = _phone_tokens(model.get("model_name"))
         scored = []
         for sku in skus:
-            candidate_text = str(sku.get("spec_text") or "")
+            candidate_text = display_text(sku.get("spec_text") or "")
             candidate_parts = list(sku.get("parts") or _spec_parts(candidate_text))
             if _is_phone_product(str(model.get("product_name") or ""), str(model.get("model_name") or "")) and source_phones and _phone_mismatch(model.get("model_name", ""), candidate_text):
                 continue
+            if _alphanumeric_code_mismatch(model.get("model_name", ""), candidate_text):
+                continue
             exact = 0
+            strict_exact = 0
             loose = 0
             matched = []
             for source_part in source_parts:
                 for candidate_part in candidate_parts:
+                    if normalize_text(source_part) == normalize_text(candidate_part):
+                        exact += 1
+                        strict_exact += 1
+                        matched.append(candidate_part)
+                        break
                     if _synonym_equal(source_part, candidate_part):
                         exact += 1
                         matched.append(candidate_part)
@@ -1193,49 +1764,86 @@ class SkuMappingService:
                 continue
             scored.append({
                 "sku_id": normalize_id(sku.get("sku_id")),
-                "sku_name": str(sku.get("sku_name") or (candidate_parts[0] if candidate_parts else candidate_text)),
-                "second_name": str(sku.get("second_name") or (candidate_parts[1] if len(candidate_parts) > 1 else "")),
+                "sku_name": display_text(sku.get("sku_name") or (candidate_parts[0] if candidate_parts else candidate_text)),
+                "second_name": display_text(sku.get("second_name") or (candidate_parts[1] if len(candidate_parts) > 1 else "")),
                 "spec_text": candidate_text,
+                "parts": candidate_parts,
+                "dimension_count": len(candidate_parts),
+                "candidate_key": str(sku.get("candidate_key") or mapping_candidate_key(sku.get("offer_id") or model.get("offer_id"), candidate_parts[0] if candidate_parts else candidate_text, candidate_parts[1] if len(candidate_parts) > 1 else "")),
                 "image_url": str(sku.get("image_url") or ""),
                 "price": sku.get("price"),
                 "stock": sku.get("stock"),
                 "deterministic_score": score,
-                "evidence": {
-                    "matched": matched,
-                    "complete": complete,
-                    "source_parts": source_parts,
-                    "exact": exact,
-                    "loose": loose,
+                    "evidence": {
+                        "matched": matched,
+                        "complete": complete,
+                        "source_parts": source_parts,
+                        "exact": exact,
+                        "strict_exact": strict_exact,
+                        "loose": loose,
                     "required": required,
                     "candidate_parts": candidate_parts,
                 },
             })
+        # Prefer a complete literal match over broader colour aliases.  For
+        # example, when the source says 米色 and the offer contains both 米色
+        # and 奶白, the exact 米色 SKU is the only safe candidate.  Keep the
+        # synonym fallback when no complete literal candidate exists.
+        strict_candidates = [
+            item for item in scored
+            if int(item["evidence"].get("strict_exact") or 0) >= max(1, len(source_parts))
+        ]
+        if strict_candidates:
+            scored = strict_candidates
         scored.sort(key=lambda item: (-float(item["deterministic_score"]), item["sku_id"]))
-        return scored[:5]
+        return scored[:MAX_REVIEW_CANDIDATES]
 
-    def _maybe_ai_decide(self, model: Dict[str, Any], snapshot: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        if not candidates:
-            return None
-        api_key, _ = load_openai_api_key()
-        if not api_key:
-            return {"source": "rules", "decision": "abstain", "confidence": 0, "warnings": ["未設定 OPENAI_API_KEY"]}
-        configured_model, _ = load_openai_config_value("OPENAI_SKU_MAPPING_MODEL", "gpt-5.6-luna")
-        configured_effort, _ = load_openai_config_value("OPENAI_SKU_MAPPING_REASONING_EFFORT", "medium")
-        model_name = configured_model if configured_model in OPENAI_MODELS else "gpt-5.6-luna"
-        effort = configured_effort if configured_effort in OPENAI_REASONING else "medium"
-        content: List[Dict[str, Any]] = [{"type": "input_text", "text": json.dumps({"task": "將 Shopee 型號對應到同一 1688 offer 的 SKU；不確定時 abstain。", "shopee": {"product_name": model.get("product_name"), "model_name": model.get("model_name")}, "candidates": candidates}, ensure_ascii=False)}]
+    @staticmethod
+    def _validate_ai_selection(result: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        """Resolve an AI answer to an exact name pair from this offer."""
+        result = dict(result or {})
+        selected = None
+        requested_key = str(result.get("selected_candidate_key") or "").strip()
+        if requested_key:
+            selected = next((item for item in candidates if str(item.get("candidate_key") or "") == requested_key), None)
+        if selected is None and result.get("decision") == "match":
+            name = display_text(result.get("selected_sku_name"))
+            second = display_text(result.get("selected_sku_second_name"))
+            selected = next((item for item in candidates if display_text(item.get("sku_name")) == name and display_text(item.get("second_name")) == second), None)
+        # Backward compatibility for old provider responses.  The resolved
+        # name pair is still what gets persisted and used for purchasing.
+        if selected is None and result.get("decision") == "match":
+            requested_id = normalize_id(result.get("selected_sku_id"))
+            selected = next((item for item in candidates if normalize_id(item.get("sku_id")) == requested_id), None)
+        if result.get("decision") == "match" and selected is None:
+            result["decision"] = "abstain"
+            result["selected_candidate_key"] = None
+            result["selected_sku_name"] = None
+            result["selected_sku_second_name"] = None
+            result["selected_sku_id"] = None
+            result.setdefault("warnings", []).append("AI 選出的名稱組合不在該 1688 offer 的候選清單")
+            return result
+        if selected is not None:
+            result["selected_candidate_key"] = selected.get("candidate_key")
+            result["selected_sku_name"] = selected.get("sku_name", "")
+            result["selected_sku_second_name"] = selected.get("second_name", "")
+            result["selected_sku_id"] = normalize_id(selected.get("sku_id"))
+        return result
+
+    def _request_structured_ai(self, provider: str, api_key: str, endpoint: str, model_name: str, effort: str, model: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        content: List[Dict[str, Any]] = [{"type": "input_text", "text": json.dumps({"task": "將 Shopee 型號對應到同一 1688 offer 的完整規格名稱組合；不確定時 abstain。", "shopee": {"product_name": model.get("product_name"), "model_name": model.get("model_name")}, "candidates": candidates}, ensure_ascii=False)}]
         for image_url in (model.get("model_image_url"), model.get("product_image_url")):
             if image_url:
                 content.append({"type": "input_image", "image_url": image_url, "detail": "low"})
         for candidate in candidates:
             if candidate.get("image_url"):
-                content.append({"type": "input_text", "text": f"候選 SKU {candidate.get('sku_id')} 的圖片："})
+                content.append({"type": "input_text", "text": f"候選規格組合 {candidate.get('candidate_key')} 的圖片："})
                 content.append({"type": "input_image", "image_url": candidate["image_url"], "detail": "low"})
         request_payload = {
             "model": model_name,
             "reasoning": {"effort": effort},
             "input": [
-                {"role": "system", "content": "你是 1688 SKU 對應助手。只能選候選清單中的 sku_id；規格不完整、手機型號不一致或有疑問就 abstain。只輸出指定 JSON。"},
+                {"role": "system", "content": "你是 1688 SKU 對應助手。只能選候選清單中的 candidate_key 與完整名稱組合；規格不完整、手機型號不一致或有疑問就 abstain。只輸出指定 JSON。"},
                 {"role": "user", "content": content},
             ],
             "text": {"verbosity": "low", "format": {"type": "json_schema", "name": "sku_mapping_decision", "schema": MAPPING_SCHEMA, "strict": True}},
@@ -1243,7 +1851,7 @@ class SkuMappingService:
             "store": False,
         }
         try:
-            response = requests.post("https://api.openai.com/v1/responses", headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=request_payload, timeout=120)
+            response = requests.post(endpoint, headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}, json=request_payload, timeout=120)
             response.raise_for_status()
             data = response.json()
             text = str(data.get("output_text") or "").strip()
@@ -1253,28 +1861,226 @@ class SkuMappingService:
                         if block.get("type") == "output_text":
                             text += str(block.get("text") or "")
             result = json.loads(text)
-            valid_ids = {str(item.get("sku_id")) for item in candidates}
-            selected = normalize_id(result.get("selected_sku_id"))
-            if result.get("decision") == "match" and selected not in valid_ids:
-                result["decision"] = "abstain"
-                result["selected_sku_id"] = None
-                result.setdefault("warnings", []).append("AI 選出的 SKU 不在候選清單")
-            result["source"] = "openai"
+            result = self._validate_ai_selection(result, candidates)
+            result["source"] = provider
+            result["provider"] = provider
             result["response_model"] = data.get("model", model_name)
             return result
         except Exception as exc:
-            return {"source": "error", "decision": "abstain", "confidence": 0, "warnings": [str(exc)]}
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            status_text = f"HTTP {status}" if status else type(exc).__name__
+            return {"source": f"{provider}_error", "provider": provider, "decision": "abstain", "confidence": 0, "warnings": [f"{provider} API {status_text}"]}
+
+    @staticmethod
+    def _gemini_image_part(image_url: str) -> Optional[Dict[str, Any]]:
+        """Fetch one public product image for Gemini vision, best-effort only."""
+        parsed = urlparse(str(image_url or ""))
+        if parsed.scheme not in {"http", "https"}:
+            return None
+        try:
+            response = requests.get(
+                image_url,
+                headers={"User-Agent": "InventoryCalculater SKU mapping"},
+                timeout=15,
+            )
+            response.raise_for_status()
+            content = response.content
+            if not content or len(content) > 5 * 1024 * 1024:
+                return None
+            mime_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if mime_type not in {"image/jpeg", "image/png", "image/webp", "image/gif"}:
+                return None
+            return {
+                "inline_data": {
+                    "mime_type": mime_type,
+                    "data": base64.b64encode(content).decode("ascii"),
+                }
+            }
+        except Exception:
+            return None
+
+    def _request_gemini_structured_ai(self, api_key: str, model_name: str, model: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        payload_data = {
+            "task": "將 Shopee 型號對應到同一 1688 offer 的完整規格名稱組合；不確定時 abstain。",
+            "shopee": {"product_name": model.get("product_name"), "model_name": model.get("model_name")},
+            "candidates": candidates,
+        }
+        parts: List[Dict[str, Any]] = [{"text": json.dumps(payload_data, ensure_ascii=False)}]
+        source_images = [model.get("model_image_url"), model.get("product_image_url")]
+        for label, image_url in [("Shopee 商品／型號圖片", url) for url in source_images] + [(f"候選規格組合 {candidate.get('candidate_key')} 圖片", candidate.get("image_url")) for candidate in candidates[:5]]:
+            if not image_url:
+                continue
+            image_part = self._gemini_image_part(str(image_url))
+            if image_part:
+                parts.append({"text": label})
+                parts.append(image_part)
+        request_payload = {
+            "systemInstruction": {"parts": [{"text": "你是 1688 SKU 對應助手。只能選候選清單中的 candidate_key 與完整名稱組合；規格不完整、手機型號不一致或有疑問就 abstain。只輸出指定 JSON。"}]},
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {
+                "maxOutputTokens": 2000,
+                # Use the stable generateContent REST fields.  The newer
+                # responseFormat wrapper is not accepted consistently by all
+                # Gemini Flash-Lite deployments and was the source of the
+                # historical HTTP 400 spike shown in the dashboard.
+                "responseMimeType": "application/json",
+                "responseSchema": GEMINI_MAPPING_SCHEMA,
+            },
+        }
+        endpoint = f"https://generativelanguage.googleapis.com/v1beta/models/{model_name}:generateContent"
+        try:
+            response = requests.post(
+                endpoint,
+                headers={"x-goog-api-key": api_key, "Content-Type": "application/json"},
+                json=request_payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = ""
+            for candidate in data.get("candidates", []):
+                for block in candidate.get("content", {}).get("parts", []):
+                    if block.get("text"):
+                        text += str(block["text"])
+            if not text.strip():
+                raise ValueError("Gemini 沒有回傳文字結果")
+            result = json.loads(text)
+            result = self._validate_ai_selection(result, candidates)
+            result["source"] = "gemini"
+            result["provider"] = "gemini"
+            result["response_model"] = data.get("model", model_name)
+            return result
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            status_text = f"HTTP {status}" if status else type(exc).__name__
+            response = getattr(exc, "response", None)
+            if response is not None:
+                try:
+                    detail = str((response.json().get("error") or {}).get("message") or "").strip()
+                except Exception:
+                    detail = ""
+                if detail:
+                    status_text = f"{status_text}: {detail[:240]}"
+            return {"source": "gemini_error", "provider": "gemini", "decision": "abstain", "confidence": 0, "warnings": [f"Gemini API {status_text}"]}
+
+    def _openai_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        api_key, _ = load_openai_api_key()
+        if not api_key:
+            return {"source": "rules", "provider": "rules", "decision": "abstain", "selected_sku_id": None, "confidence": 0, "warnings": ["未設定 OPENAI_API_KEY"]}
+        configured_model, _ = load_openai_config_value("OPENAI_SKU_MAPPING_MODEL", "gpt-5.6-luna")
+        configured_effort, _ = load_openai_config_value("OPENAI_SKU_MAPPING_REASONING_EFFORT", "medium")
+        model_name = configured_model if configured_model in OPENAI_MODELS else "gpt-5.6-luna"
+        effort = configured_effort if configured_effort in OPENAI_REASONING else "medium"
+        return self._request_structured_ai("openai", api_key, "https://api.openai.com/v1/responses", model_name, effort, model, candidates)
+
+    def _grok_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        api_key, _ = load_xai_api_key()
+        if not api_key:
+            return {"source": "rules", "provider": "rules", "decision": "abstain", "selected_sku_id": None, "confidence": 0, "warnings": ["未設定 XAI_API_KEY"]}
+        configured_model, _ = load_openai_config_value("XAI_SKU_MAPPING_MODEL", "grok-4.5")
+        configured_effort, _ = load_openai_config_value("XAI_SKU_MAPPING_REASONING_EFFORT", "medium")
+        model_name = configured_model if configured_model in XAI_MODELS else "grok-4.5"
+        effort = configured_effort if configured_effort in XAI_REASONING else "medium"
+        return self._request_structured_ai("grok", api_key, "https://api.x.ai/v1/responses", model_name, effort, model, candidates)
+
+    def _gemini_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Dict[str, Any]:
+        api_key, _ = load_gemini_api_key()
+        if not api_key:
+            return {"source": "rules", "provider": "rules", "decision": "abstain", "selected_sku_id": None, "confidence": 0, "warnings": ["未設定 GEMINI_API_KEY"]}
+        configured_model, _ = load_openai_config_value("GEMINI_SKU_MAPPING_MODEL", "gemini-3.5-flash-lite")
+        model_name = configured_model if configured_model in GEMINI_MODELS else "gemini-3.5-flash-lite"
+        return self._request_gemini_structured_ai(api_key, model_name, model, candidates)
+
+    def _maybe_ai_decide(self, model: Dict[str, Any], snapshot: Dict[str, Any], candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if not candidates:
+            return None
+        provider, _ = load_openai_config_value("SKU_MAPPING_AI_PROVIDER", "gemini")
+        provider = str(provider or "gemini").strip().lower()
+        if provider == "openai":
+            return self._openai_decide(model, candidates)
+
+        if provider == "gemini":
+            if time.time() < self._gemini_blocked_until:
+                return {
+                    "source": "rules", "provider": "gemini", "fallback": "rules",
+                    "decision": "abstain", "selected_sku_id": None, "confidence": 0,
+                    "warnings": [f"Gemini 暫停呼叫：{self._gemini_block_reason or '目前額度或請求限制'}；已回退規則初判"],
+                }
+            gemini_key, _ = load_gemini_api_key()
+            if not gemini_key:
+                return {"source": "rules", "provider": "rules", "fallback": "rules", "decision": "abstain", "selected_sku_id": None, "confidence": 0, "warnings": ["未設定 GEMINI_API_KEY；已回退規則初判"]}
+            result = self._gemini_decide(model, candidates)
+            if result.get("source") == "gemini":
+                return result
+            warnings = result.get("warnings") or ["Gemini API 沒有回傳結果"]
+            warning_text = "；".join(str(warning) for warning in warnings)
+            if "HTTP 429" in warning_text:
+                self._gemini_blocked_until = time.time() + 60 * 60
+                self._gemini_block_reason = "本輪已達 Gemini 額度／速率限制"
+            elif "HTTP 400" in warning_text:
+                # A malformed request will fail identically for every next
+                # model; stop the storm and leave an auditable rule fallback.
+                self._gemini_blocked_until = time.time() + 10 * 60
+                self._gemini_block_reason = "Gemini 請求格式被拒絕"
+            return {
+                "source": "rules", "provider": "gemini", "fallback": "rules",
+                "decision": "abstain", "selected_sku_id": None, "confidence": 0,
+                "warnings": [f"{warning}；已回退規則初判" for warning in warnings],
+            }
+
+        # Official xAI remains available as an explicit provider.  Once a key exists, any xAI
+        # failure (including quota/rate-limit exhaustion) intentionally falls
+        # straight back to deterministic rules instead of silently spending on
+        # another provider.
+        xai_key, _ = load_xai_api_key()
+        if not xai_key:
+            return {"source": "rules", "provider": "rules", "decision": "abstain", "selected_sku_id": None, "confidence": 0, "warnings": ["未設定 XAI_API_KEY；已回退規則初判"]}
+        result = self._grok_decide(model, candidates)
+        if result.get("source") == "grok":
+            return result
+        warnings = result.get("warnings") or ["Grok API 沒有回傳結果"]
+        return {
+            "source": "rules", "provider": "grok", "fallback": "rules",
+            "decision": "abstain", "selected_sku_id": None, "confidence": 0,
+            "warnings": [f"{warning}；已回退規則初判" for warning in warnings],
+        }
 
     def _save_suggestion(self, model: Dict[str, Any], snapshot: Dict[str, Any], candidates: List[Dict[str, Any]], ai: Optional[Dict[str, Any]], extra: Dict[str, Any]) -> None:
         ai = ai or {}
-        selected_id = normalize_id(ai.get("selected_sku_id")) if ai.get("decision") == "match" else (candidates[0]["sku_id"] if len(candidates) == 1 else "")
-        selected = next((item for item in candidates if item["sku_id"] == selected_id), {})
+        # A rescan/reanalysis must never silently undo a manual terminal
+        # decision.  In particular, rebuild mode intentionally revisits every
+        # URL model; without this guard a previously discontinued row would be
+        # written back as pending and reappear in the default review queue.
+        with self.connect() as conn:
+            old = conn.execute(
+                "SELECT id, version, status, review_reason FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                (model["product_id"], model["model_id"]),
+            ).fetchone()
+        old_status = str(old["status"] or "") if old else ""
+        mapping_status = str(model.get("mapping_status") or "")
+        preserve_discontinued = old_status == "discontinued" or mapping_status == "discontinued"
+        selected_key = str(ai.get("selected_candidate_key") or "").strip() if ai.get("decision") == "match" else ""
+        selected = next((item for item in candidates if str(item.get("candidate_key") or "") == selected_key), None)
+        if selected is None and ai.get("decision") == "match":
+            selected_name = display_text(ai.get("selected_sku_name"))
+            selected_second = display_text(ai.get("selected_sku_second_name"))
+            selected = next((item for item in candidates if display_text(item.get("sku_name")) == selected_name and display_text(item.get("second_name")) == selected_second), None)
+        if selected is None and ai.get("decision") == "match":
+            selected_id = normalize_id(ai.get("selected_sku_id"))
+            selected = next((item for item in candidates if normalize_id(item.get("sku_id")) == selected_id), None)
+        if selected is None and len(candidates) == 1:
+            selected = candidates[0]
+        selected = selected or {}
+        selected_key = str(selected.get("candidate_key") or "")
+        selected_id = normalize_id(selected.get("sku_id"))
         confidence = float(ai.get("confidence") or (1 if len(candidates) == 1 else 0))
         status = "pending" if candidates else ("no_match" if snapshot.get("status") == "ok" else str(snapshot.get("status") or "no_match"))
         if snapshot.get("status") != "ok":
             status = snapshot.get("status") or "error"
             if status == "empty":
                 status = "missing"
+        if preserve_discontinued:
+            status = "discontinued"
         now = int(time.time())
         evidence = {"ai": ai, "rules": [item.get("evidence", {}) for item in candidates], **extra}
         review_tier, review_reason = self.classify_review_tier(
@@ -1285,31 +2091,36 @@ class SkuMappingService:
             existing_sku_id=model.get("existing_sku_id", ""),
             existing_sku_name=model.get("existing_sku_name", ""),
         )
+        if preserve_discontinued:
+            review_tier = "red"
+            review_reason = str((old["review_reason"] if old else "") or "人工標記：discontinued")
+        decision = str(ai.get("decision") or ("match" if selected_key else "abstain"))
+        if preserve_discontinued:
+            decision = "abstain"
         with self.connect() as conn:
-            old = conn.execute("SELECT id, version FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?", (model["product_id"], model["model_id"])).fetchone()
             version = int(old["version"] + 1) if old else 1
             conn.execute(
                 """INSERT INTO sku_mapping_suggestions
                 (product_id,model_id,model_name,product_name,offer_id,snapshot_id,
-                 suggested_sku_id,suggested_sku_name,suggested_second_name,status,decision,
+                 suggested_candidate_key,suggested_sku_id,suggested_sku_name,suggested_second_name,status,decision,
                  confidence,evidence_json,review_tier,review_reason,version,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(product_id,model_id) DO UPDATE SET
                  model_name=excluded.model_name, product_name=excluded.product_name,
                  offer_id=excluded.offer_id, snapshot_id=excluded.snapshot_id,
-                 suggested_sku_id=excluded.suggested_sku_id, suggested_sku_name=excluded.suggested_sku_name,
+                 suggested_candidate_key=excluded.suggested_candidate_key, suggested_sku_id=excluded.suggested_sku_id, suggested_sku_name=excluded.suggested_sku_name,
                  suggested_second_name=excluded.suggested_second_name, status=excluded.status,
                  decision=excluded.decision, confidence=excluded.confidence,
                  evidence_json=excluded.evidence_json, review_tier=excluded.review_tier,
                  review_reason=excluded.review_reason, version=excluded.version, updated_at=excluded.updated_at""",
-                 (model["product_id"], model["model_id"], model["model_name"], model["product_name"], model["offer_id"], snapshot.get("id"), selected_id, selected.get("sku_name", ""), selected.get("second_name") or selected.get("spec_text", ""), status, str(ai.get("decision") or ("match" if selected_id else "abstain")), confidence, json.dumps(evidence, ensure_ascii=False), review_tier, review_reason, version, now, now),
+                 (model["product_id"], model["model_id"], model["model_name"], model["product_name"], model["offer_id"], snapshot.get("id"), selected_key, selected_id, selected.get("sku_name", ""), selected.get("second_name", ""), status, decision, confidence, json.dumps(evidence, ensure_ascii=False), review_tier, review_reason, version, now, now),
             )
             suggestion = conn.execute("SELECT id FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?", (model["product_id"], model["model_id"])).fetchone()
             conn.execute("DELETE FROM sku_mapping_candidates WHERE suggestion_id=?", (suggestion["id"],))
             for rank, candidate in enumerate(candidates, 1):
                 conn.execute(
-                    "INSERT INTO sku_mapping_candidates(suggestion_id,rank,sku_id,sku_name,spec_text,image_url,price,stock,deterministic_score,evidence_json) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (suggestion["id"], rank, candidate["sku_id"], candidate.get("sku_name", ""), candidate.get("spec_text", ""), candidate.get("image_url", ""), candidate.get("price"), candidate.get("stock"), candidate.get("deterministic_score", 0), json.dumps(candidate.get("evidence", {}), ensure_ascii=False)),
+                    "INSERT INTO sku_mapping_candidates(suggestion_id,rank,candidate_key,sku_id,sku_name,second_name,spec_text,dimension_count,parts_json,image_url,price,stock,deterministic_score,evidence_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (suggestion["id"], rank, candidate.get("candidate_key") or mapping_candidate_key(model.get("offer_id"), candidate.get("sku_name", ""), candidate.get("second_name", "")), candidate.get("sku_id", ""), candidate.get("sku_name", ""), candidate.get("second_name", ""), candidate.get("spec_text", ""), int(candidate.get("dimension_count") or len(candidate.get("parts") or _spec_parts(candidate.get("spec_text")))), json.dumps(candidate.get("parts") or _spec_parts(candidate.get("spec_text")), ensure_ascii=False), candidate.get("image_url", ""), candidate.get("price"), candidate.get("stock"), candidate.get("deterministic_score", 0), json.dumps(candidate.get("evidence", {}), ensure_ascii=False)),
                 )
 
     def decisions(self, items: Iterable[Dict[str, Any]], reviewer: str = "local_user", batch: bool = False) -> Dict[str, Any]:
@@ -1339,13 +2150,32 @@ class SkuMappingService:
             if int(expected_version) != int(row["version"]):
                 raise MappingConflict("mapping 已被重新掃描，請重新載入")
             candidate_rows = conn.execute("SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank", (row["id"],)).fetchall()
-            candidates = [dict(candidate) for candidate in candidate_rows]
-            for candidate in candidates:
-                candidate["evidence"] = self._json_load(candidate.pop("evidence_json", "{}"), {})
-        # A rule mismatch does not mean the SKU is absent.  When the reviewer
-        # explicitly supplies a SKU ID, allow it only if that ID exists in the
-        # stored live catalog for this offer; arbitrary IDs remain rejected.
+            # Normalize legacy candidate rows on read.  Older scans left the
+            # candidate key, second name and parts_json empty even though
+            # spec_text contained the complete pair; sending that synthetic
+            # incomplete key from the UI caused safe batch approval to reject a
+            # valid mapping as "not in offer".
+            candidates = [self._candidate_public(dict(candidate), row.get("offer_id", "")) for candidate in candidate_rows]
+        # Manual selection is name-pair first.  Keep skuId as a compatibility
+        # fallback for older browser tabs and previously recorded decisions.
+        requested_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
+        requested_name = display_text(item.get("skuName") or item.get("sku_name"))
+        requested_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
         requested_id = normalize_id(item.get("skuId") or item.get("sku_id"))
+        if requested_key and requested_key not in {str(candidate.get("candidate_key") or "") for candidate in candidates}:
+            catalog = self._snapshot_catalog(None if row.get("status") == "stale" else row.get("snapshot_id"), row.get("offer_id", ""))
+            manual = next((sku for sku in catalog.get("skus", []) if str(sku.get("candidate_key") or "") == requested_key), None)
+            if manual:
+                manual = dict(manual)
+                manual["_snapshot_id"] = catalog.get("snapshotId")
+                candidates.append(manual)
+        if requested_name and not any(display_text(candidate.get("sku_name")) == requested_name and display_text(candidate.get("second_name")) == requested_second for candidate in candidates):
+            catalog = self._snapshot_catalog(None if row.get("status") == "stale" else row.get("snapshot_id"), row.get("offer_id", ""))
+            manual = next((sku for sku in catalog.get("skus", []) if display_text(sku.get("sku_name")) == requested_name and display_text(sku.get("second_name")) == requested_second), None)
+            if manual:
+                manual = dict(manual)
+                manual["_snapshot_id"] = catalog.get("snapshotId")
+                candidates.append(manual)
         if requested_id and requested_id not in {normalize_id(candidate.get("sku_id")) for candidate in candidates}:
             catalog = self._snapshot_catalog(None if row.get("status") == "stale" else row.get("snapshot_id"), row.get("offer_id", ""))
             manual = next((sku for sku in catalog.get("skus", []) if normalize_id(sku.get("sku_id")) == requested_id), None)
@@ -1363,26 +2193,44 @@ class SkuMappingService:
         user's explicit checkbox is the approval decision and the UI supplies the
         first candidate when no card was manually selected.
         """
-        if any(str(item.get("action") or "approve") != "approve" for item in items):
-            raise ValueError("批次核准只允許核准，不包含停售或無匹配操作")
+        actions = {str(item.get("action") or "approve").strip() for item in items}
+        if len(actions) != 1 or not actions.issubset({"approve", "defer", "no_match", "discontinued"}):
+            raise ValueError("批次處理一次只能選擇同一種動作：核准、稍後處理、無匹配或停售")
+        action = next(iter(actions))
         for item in items:
             product_id, model_id, row, candidates = self._decision_context(item)
-            if not candidates:
-                raise ValueError(f"{product_id}/{model_id} 沒有候選 SKU，不能批次核准")
-            selected_id = normalize_id(item.get("skuId") or item.get("sku_id"))
-            if selected_id not in {normalize_id(candidate.get("sku_id")) for candidate in candidates}:
-                raise ValueError(f"{product_id}/{model_id} 的 SKU ID 不在候選清單")
+            if action == "approve":
+                if not candidates:
+                    raise ValueError(f"{product_id}/{model_id} 沒有候選 SKU，不能批次核准")
+                selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
+                selected_name = display_text(item.get("skuName") or item.get("sku_name"))
+                selected_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
+                selected_id = normalize_id(item.get("skuId") or item.get("sku_id"))
+                if not selected_key and not selected_name and not selected_id:
+                    raise ValueError(f"{product_id}/{model_id} 沒有選定完整規格名稱")
+                if selected_key and selected_key not in {str(candidate.get("candidate_key") or "") for candidate in candidates}:
+                    raise ValueError(f"{product_id}/{model_id} 的名稱組合不在該 offer 清單")
 
     def _apply_decision(self, item: Dict[str, Any], reviewer: str, batch: bool = False) -> Dict[str, Any]:
         product_id, model_id, row, candidates = self._decision_context(item)
         action = str(item.get("action") or "approve").strip()
+        selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
+        selected_name = display_text(item.get("skuName") or item.get("sku_name"))
+        selected_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
         selected_id = normalize_id(item.get("skuId") or item.get("sku_id"))
-        selected = next((candidate for candidate in candidates if normalize_id(candidate.get("sku_id")) == selected_id), None)
+        selected = next((candidate for candidate in candidates if selected_key and str(candidate.get("candidate_key") or "") == selected_key), None)
+        selected = selected or next((candidate for candidate in candidates if selected_name and display_text(candidate.get("sku_name")) == selected_name and display_text(candidate.get("second_name")) == selected_second), None)
+        selected = selected or next((candidate for candidate in candidates if selected_id and normalize_id(candidate.get("sku_id")) == selected_id), None)
         if action in {"approve", "replace"}:
             if str(row.get("status") or "") in {"stale", "waiting_for_login", "error", "discontinued"}:
                 raise ValueError("目前快照不可用，請先重新掃描並確認登入／商品狀態")
             if not selected:
-                raise ValueError("核准的 SKU ID 不在候選清單")
+                raise ValueError("核准的 1688 規格名稱組合不在候選清單")
+            if not display_text(selected.get("sku_name")):
+                raise ValueError("核准的 1688 第一規格名稱為空")
+            selected_parts = selected.get("parts") or self._json_load(selected.get("parts_json"), []) or _spec_parts(selected.get("spec_text"))
+            if max(int(selected.get("dimension_count") or 0), len(selected_parts), 1) >= 2 and not display_text(selected.get("second_name")):
+                raise ValueError("此商品有第二規格，但核准資料缺少 1688_sku_second_name")
             self._write_approved_mapping(row, selected, action, reviewer)
             new_status = "approved"
         elif action == "discontinued":
@@ -1397,7 +2245,7 @@ class SkuMappingService:
                 conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (row["id"], action, json.dumps(row, ensure_ascii=False), json.dumps({"status": new_status, "review_tier": new_tier}, ensure_ascii=False), reviewer, int(time.time())))
         else:
             raise ValueError("不支援的 mapping action")
-        return {"productId": product_id, "modelId": model_id, "status": new_status, "skuId": selected_id}
+        return {"productId": product_id, "modelId": model_id, "status": new_status, "candidateKey": str(selected.get("candidate_key") or "") if selected else "", "skuId": selected_id, "skuName": str(selected.get("sku_name") or "") if selected else "", "skuSecondName": str(selected.get("second_name") or "") if selected else ""}
 
     def _write_approved_mapping(self, suggestion: Dict[str, Any], candidate: Dict[str, Any], action: str, reviewer: str) -> None:
         golden = self._golden()
@@ -1412,18 +2260,20 @@ class SkuMappingService:
                 break
         if target is None:
             raise FileNotFoundError("找不到 golden table 型號")
-        before_mapping = {key: target.get(key, "") for key in ("1688_offer_id", "1688_sku_id", "1688_sku_name", "1688_sku_second_name", "1688_spec_text", "1688_mapping_status", "1688_offer_fingerprint")}
+        before_mapping = {key: target.get(key, "") for key in ("1688_offer_id", "1688_sku_id", "1688_sku_name", "1688_sku_second_name", "1688_spec_text", "1688_dimension_count", "1688_mapping_status", "1688_mapping_fingerprint", "1688_offer_fingerprint")}
         now = int(time.time())
         target["1688_offer_id"] = str(suggestion.get("offer_id") or target.get("1688_offer_id") or parse_offer_id(target.get("阿里巴巴商品URL")))
         target["1688_sku_id"] = normalize_id(candidate.get("sku_id"))
-        target["1688_sku_name"] = str(candidate.get("sku_name") or "")
-        target["1688_spec_text"] = str(candidate.get("spec_text") or "")
-        parts = _spec_parts(candidate.get("spec_text"))
-        target["1688_sku_second_name"] = str(candidate.get("second_name") or (parts[1] if len(parts) > 1 else ""))
+        target["1688_sku_name"] = display_text(candidate.get("sku_name") or "")
+        target["1688_spec_text"] = display_text(candidate.get("spec_text") or "")
+        parts = self._json_load(candidate.get("parts_json"), []) or list(candidate.get("parts") or _spec_parts(candidate.get("spec_text")))
+        target["1688_sku_second_name"] = display_text(candidate.get("second_name") or (parts[1] if len(parts) > 1 else ""))
+        target["1688_dimension_count"] = max(int(candidate.get("dimension_count") or 0), len(parts), 1)
+        target["1688_mapping_fingerprint"] = mapping_candidate_key(target.get("1688_offer_id"), target.get("1688_sku_name"), target.get("1688_sku_second_name"))
         target["1688_mapping_status"] = "approved"
         evidence = self._json_load(suggestion.get("evidence_json"), {})
         ai_evidence = evidence.get("ai") if isinstance(evidence, dict) else {}
-        target["1688_mapping_source"] = "ai_reviewed" if action == "approve" and isinstance(ai_evidence, dict) and ai_evidence.get("source") == "openai" else "manual"
+        target["1688_mapping_source"] = "ai_reviewed" if action == "approve" and isinstance(ai_evidence, dict) and ai_evidence.get("source") in {"openai", "grok", "gemini"} else "manual"
         target["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
         snapshot_id = suggestion.get("snapshot_id") or candidate.get("_snapshot_id")
         target["1688_offer_fingerprint"] = self._snapshot_fingerprint(snapshot_id)
@@ -1443,7 +2293,7 @@ class SkuMappingService:
         try:
             self._sync_alibaba_binding(suggestion, target, candidate, now)
             with self.connect() as conn:
-                conn.execute("UPDATE sku_mapping_suggestions SET status='approved', review_tier='approved', review_reason='已核准', snapshot_id=COALESCE(?, snapshot_id), suggested_sku_id=?, suggested_sku_name=?, suggested_second_name=?, version=version+1, updated_at=? WHERE id=?", (snapshot_id, candidate["sku_id"], candidate.get("sku_name", ""), target.get("1688_sku_second_name", ""), now, suggestion["id"]))
+                conn.execute("UPDATE sku_mapping_suggestions SET status='approved', review_tier='approved', review_reason='已核准', snapshot_id=COALESCE(?, snapshot_id), suggested_candidate_key=?, suggested_sku_id=?, suggested_sku_name=?, suggested_second_name=?, version=version+1, updated_at=? WHERE id=?", (snapshot_id, candidate.get("candidate_key", ""), candidate.get("sku_id", ""), candidate.get("sku_name", ""), target.get("1688_sku_second_name", ""), now, suggestion["id"]))
                 conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (suggestion["id"], action, json.dumps(before_mapping, ensure_ascii=False), json.dumps({key: target.get(key, "") for key in before_mapping}, ensure_ascii=False), reviewer, now))
         except Exception:
             restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
@@ -1540,6 +2390,8 @@ __all__ = [
     "MappingConflict",
     "SkuMappingService",
     "canonical_url",
+    "display_text",
+    "mapping_candidate_key",
     "normalize_id",
     "normalize_text",
     "offer_fingerprint",
