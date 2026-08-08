@@ -38,7 +38,7 @@
     const manualTools = `<div class="manual-tools">
       <div class="manual-hint">${manualHint}</div>
       <div class="actions">${needsRescan ? '<button class="primary rescan" data-action="rescan">重新掃描此商品</button>' : ''}<button data-action="load_catalog">從完整 SKU 清單選擇</button></div>
-      <div class="catalog-picker" hidden><select class="catalog-select"><option value="">尚未載入，請先按上方按鈕</option></select><button data-action="approve_catalog" class="approve" disabled>核准手動選擇</button></div>
+      <div class="catalog-picker" hidden><select class="catalog-select"><option value="">尚未載入，請先按上方按鈕</option></select></div>
     </div>`;
     const existing = item.existing_sku_id
       ? `<div class="existing-mapping"><strong>現有 mapping</strong><br>SKU ID：${esc(item.existing_sku_id)}<br>${esc(item.existing_sku_name || item.existing_second_name || '未命名規格')}<br><span>${esc(item.mapping_status || 'approved')}</span></div>`
@@ -154,7 +154,8 @@
     const item = state.items.find(row => String(row.id) === String(cardElement.dataset.id));
     if (!item) return;
     const candidate = selectedSku(cardElement);
-    const skuId = explicitSkuId || candidate?.dataset.sku || '';
+    const manualSku = cardElement.querySelector('.catalog-select')?.value || '';
+    const skuId = explicitSkuId || manualSku || candidate?.dataset.sku || '';
     if (['approve','replace'].includes(action) && !skuId) { message('請先選擇一個 SKU 候選，或從完整 SKU 清單手動指定。', 'error'); return; }
     if (['replace','discontinued','no_match'].includes(action) && !window.confirm(`確定要${action === 'replace' ? '取代既有 mapping' : action === 'discontinued' ? '標記停售' : '標記無匹配'}嗎？`)) return;
     if (triggerButton) triggerButton.disabled = true;
@@ -221,19 +222,12 @@
       const item = state.items.find(row => String(row.id) === String(cardElement?.dataset.id));
       if (item) return scan('all', item);
     }
-    if (button.dataset.action === 'approve_catalog') {
-      const selected = cardElement?.querySelector('.catalog-select')?.value || '';
-      if (!selected) { message('請先從完整 SKU 清單選擇一個規格。', 'error'); return; }
-      return decide(cardElement, 'approve', selected, button);
-    }
     decide(cardElement, button.dataset.action, '', button);
   });
   $('queue').addEventListener('change', event => {
     const catalogSelect = event.target.closest('.catalog-select');
     if (catalogSelect) {
-      const cardElement = catalogSelect.closest('.card');
-      const approveButton = cardElement?.querySelector('[data-action="approve_catalog"]');
-      if (approveButton) approveButton.disabled = !catalogSelect.value;
+      message(catalogSelect.value ? '已選擇完整 SKU；請按下方綠色「核准選取 SKU」儲存。' : '請從完整 SKU 清單選擇一個規格。', catalogSelect.value ? 'success' : '');
       return;
     }
     const checkbox = event.target.closest('.select-item');
