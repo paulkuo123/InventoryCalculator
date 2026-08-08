@@ -1,4 +1,6 @@
 import argparse
+import hashlib
+import html
 import json
 import os
 import re
@@ -95,7 +97,7 @@ class DebugLogger:
 
 
 def normalize_text(value: Any) -> str:
-    return re.sub(r"\s+", "", str(value or "").translate(CHAR_TRANSLATION)).lower()
+    return re.sub(r"\s+", "", html.unescape(str(value or "").translate(CHAR_TRANSLATION))).replace(">", ",").replace("＞", ",").lower()
 
 
 def requires_second_sku(product_name: str, model_name: str) -> bool:
@@ -151,10 +153,16 @@ def load_sku_mappings(base_dir: str) -> Dict[str, Dict[str, Dict[str, str]]]:
             model_name = str(model.get("型號名稱") or "").strip()
             sku_name = str(model.get("1688_sku_name") or "").strip()
             sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
-            if model_name and sku_name:
+            sku_id = str(model.get("1688_sku_id") or "").strip()
+            mapping_status = str(model.get("1688_mapping_status") or ("approved" if sku_id else "missing")).strip()
+            if model_name:
                 product_mapping[model_name] = {
                     "primary": sku_name,
                     "secondary": sku_second_name,
+                    "sku_id": sku_id,
+                    "spec_text": str(model.get("1688_spec_text") or "").strip(),
+                    "status": mapping_status,
+                    "offer_fingerprint": str(model.get("1688_offer_fingerprint") or "").strip(),
                 }
         if product_mapping:
             mappings[str(product_id)] = product_mapping
@@ -168,14 +176,80 @@ def mapped_sku_selection(
 ) -> Dict[str, str]:
     product_mapping = mappings.get(str(product_id or ""), {})
     if not isinstance(product_mapping, dict):
-        return {"primary": "", "secondary": ""}
+        return {"primary": "", "secondary": "", "sku_id": "", "spec_text": "", "status": "missing", "offer_fingerprint": ""}
     selection = product_mapping.get(str(model_name or "").strip(), {})
     if not isinstance(selection, dict):
-        return {"primary": str(selection or "").strip(), "secondary": ""}
+        return {"primary": str(selection or "").strip(), "secondary": "", "sku_id": "", "spec_text": "", "status": "missing", "offer_fingerprint": ""}
     return {
         "primary": str(selection.get("primary") or "").strip(),
         "secondary": str(selection.get("secondary") or "").strip(),
+        "sku_id": str(selection.get("sku_id") or "").strip(),
+        "spec_text": str(selection.get("spec_text") or "").strip(),
+        "status": str(selection.get("status") or "missing").strip(),
+        "offer_fingerprint": str(selection.get("offer_fingerprint") or "").strip(),
     }
+
+
+def extract_page_sku_catalog(page) -> Dict[str, Dict[str, Any]]:
+    """Read the live structured SKU catalog used for ID-level preflight checks."""
+    script = """
+    () => {
+      const data = window.context?.result?.data || {};
+      const model = data?.mainPrice?.fields?.finalPriceModel || {};
+      let rows = model?.tradeWithoutPromotion?.skuMapOriginal || model?.tradeWithPromotion?.skuMapOriginal || [];
+      if (!Array.isArray(rows)) rows = Object.values(rows || {});
+      return rows.map(row => ({
+        skuId: row?.skuId ?? row?.sku_id ?? '',
+        skuName: row?.skuName ?? row?.sku_name ?? row?.name ?? '',
+        specText: row?.specAttrs ?? row?.specText ?? row?.spec_text ?? '',
+        imageUrl: row?.skuImageUrl ?? row?.imageUrl ?? row?.image_url ?? '',
+        price: row?.price ?? row?.salePrice ?? row?.priceCent ?? null,
+        stock: row?.stock ?? row?.quantity ?? null
+      })).filter(row => String(row.skuId || '').trim());
+    }
+    """
+    rows = page.evaluate(script) or []
+    result = {}
+    for row in rows:
+        sku_id = str(row.get("skuId") or row.get("sku_id") or "").strip()
+        if not sku_id:
+            continue
+        result[sku_id] = {
+            "sku_id": sku_id,
+            "sku_name": str(row.get("skuName") or row.get("sku_name") or "").strip(),
+            "spec_text": str(row.get("specText") or row.get("spec_text") or "").strip(),
+            "image_url": str(row.get("imageUrl") or row.get("image_url") or "").strip(),
+            "price": row.get("price"),
+            "stock": row.get("stock"),
+        }
+    return result
+
+
+def catalog_mapping_check(selection: Dict[str, str], catalog: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
+    sku_id = str(selection.get("sku_id") or "").strip()
+    if not sku_id:
+        return {"ok": False, "reason": "missing_sku_id"}
+    current = catalog.get(sku_id)
+    if not current:
+        return {"ok": False, "reason": "sku_id_not_on_live_page", "sku_id": sku_id}
+    expected = normalize_text(selection.get("spec_text"))
+    actual = normalize_text(current.get("spec_text"))
+    if expected and actual and expected != actual:
+        return {"ok": False, "reason": "spec_fingerprint_mismatch", "sku_id": sku_id, "expected": expected, "actual": actual}
+    return {"ok": True, "sku_id": sku_id, "current": current}
+
+
+def sku_catalog_fingerprint(offer_id: str, catalog: Dict[str, Dict[str, Any]]) -> str:
+    rows = []
+    for sku_id, row in catalog.items():
+        rows.append({
+            "sku_id": str(sku_id),
+            "spec_text": str(row.get("spec_text") or ""),
+            "price": row.get("price"),
+            "stock": row.get("stock"),
+        })
+    payload = json.dumps({"offer_id": str(offer_id or ""), "skus": sorted(rows, key=lambda row: row["sku_id"])}, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def fill_sku_quantity(
@@ -820,6 +894,12 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
             page.wait_for_timeout(3000)
             debug.log("url_loaded", {"url": url, "pageUrl": page.url})
 
+            try:
+                live_catalog = extract_page_sku_catalog(page)
+            except Exception as exc:
+                live_catalog = {}
+                debug.log("live_catalog_read_error", {"url": url, "message": str(exc)})
+
             group_result = {"url": url, "items": [], "addToCart": []}
 
             for item in url_items:
@@ -827,15 +907,68 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 item_product_name = str(item.get("productName") or product_name or "").strip()
                 model_name = str(item.get("modelName") or "").strip()
                 mapped_selection = mapped_sku_selection(sku_mappings, item_product_id, model_name)
-                alibaba_sku_name = mapped_selection["primary"] or str(item.get("alibabaSkuName") or "").strip()
-                alibaba_sku_second_name = mapped_selection["secondary"] or str(item.get("alibabaSkuSecondName") or "").strip()
+                alibaba_sku_id = str(item.get("alibabaSkuId") or mapped_selection.get("sku_id") or "").strip()
+                alibaba_sku_name = str(item.get("alibabaSkuName") or mapped_selection.get("primary") or "").strip()
+                alibaba_sku_second_name = str(item.get("alibabaSkuSecondName") or mapped_selection.get("secondary") or "").strip()
+                mapping_status = str(item.get("alibabaMappingStatus") or mapped_selection.get("status") or "missing").strip()
+                spec_text = str(item.get("alibabaSpecText") or mapped_selection.get("spec_text") or "").strip()
+                expected_fingerprint = str(item.get("alibabaOfferFingerprint") or mapped_selection.get("offer_fingerprint") or "").strip()
+                offer_id = str(item.get("alibabaOfferId") or "").strip()
                 quantity = int(item.get("restockQty") or item.get("adjustedQty") or 0)
+                if mapping_status != "approved":
+                    item_result = {
+                        "status": "blocked_mapping",
+                        "modelName": model_name,
+                        "alibabaSkuId": alibaba_sku_id,
+                        "alibabaSkuName": alibaba_sku_name,
+                        "quantity": quantity,
+                        "message": f"SKU mapping 尚未核准（{mapping_status}）",
+                    }
+                    group_result["items"].append(item_result)
+                    debug.log("item_blocked_mapping_status", item_result)
+                    continue
+                check = catalog_mapping_check({"sku_id": alibaba_sku_id, "spec_text": spec_text}, live_catalog)
+                if not check.get("ok"):
+                    item_result = {
+                        "status": "blocked_live_catalog",
+                        "modelName": model_name,
+                        "alibabaSkuId": alibaba_sku_id,
+                        "alibabaSkuName": alibaba_sku_name,
+                        "quantity": quantity,
+                        "message": f"目前 1688 頁面未通過 SKU ID/規格驗證：{check.get('reason')}",
+                        "catalogCheck": check,
+                    }
+                    group_result["items"].append(item_result)
+                    debug.log("item_blocked_live_catalog", item_result)
+                    continue
+                if expected_fingerprint:
+                    current_fingerprint = sku_catalog_fingerprint(offer_id, live_catalog)
+                    if current_fingerprint != expected_fingerprint:
+                        item_result = {
+                            "status": "blocked_stale_mapping",
+                            "modelName": model_name,
+                            "alibabaSkuId": alibaba_sku_id,
+                            "quantity": quantity,
+                            "message": "1688 offer SKU fingerprint 已變更，請重新掃描並人工核准",
+                            "expectedFingerprint": expected_fingerprint,
+                            "currentFingerprint": current_fingerprint,
+                        }
+                        group_result["items"].append(item_result)
+                        debug.log("item_blocked_stale_mapping", item_result)
+                        continue
+                live_row = check.get("current") or {}
+                # 若名稱未保存，從當前頁面的完整規格補上可讀標籤；ID 仍是唯一選取依據。
+                if not alibaba_sku_name:
+                    alibaba_sku_name = str(live_row.get("sku_name") or "").strip()
+                if not spec_text:
+                    spec_text = str(live_row.get("spec_text") or "").strip()
                 if is_discontinued_sku(alibaba_sku_name):
                     item_result = {
                         "status": "skipped",
                         "modelName": model_name,
                         "alibabaSkuName": alibaba_sku_name,
                         "alibabaSkuSecondName": alibaba_sku_second_name,
+                        "alibabaSkuId": alibaba_sku_id,
                         "quantity": quantity,
                         "message": "1688 已停售，未選取或加入採購車",
                     }
@@ -860,8 +993,10 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 debug.log("item_start", {
                     "productId": item_product_id,
                     "modelName": model_name,
+                    "alibabaSkuId": alibaba_sku_id,
                     "alibabaSkuName": target_name,
                     "alibabaSkuSecondName": alibaba_sku_second_name,
+                    "alibabaSpecText": spec_text,
                     "quantity": quantity,
                 })
                 try:
@@ -874,6 +1009,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                     )
                     debug.log("fill_quantity_result", {
                         "modelName": model_name,
+                        "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": target_name,
                         "alibabaSkuSecondName": alibaba_sku_second_name,
                         "quantity": quantity,
@@ -883,6 +1019,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                         legacy_result = fill_sku_quantity_legacy(page, model_name, target_name, quantity)
                         debug.log("legacy_fill_quantity_result", {
                             "modelName": model_name,
+                            "alibabaSkuId": alibaba_sku_id,
                             "alibabaSkuName": target_name,
                             "alibabaSkuSecondName": alibaba_sku_second_name,
                             "quantity": quantity,
@@ -947,6 +1084,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 except Exception as e:
                     debug.log("item_error", {
                         "modelName": model_name,
+                        "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": target_name,
                         "alibabaSkuSecondName": alibaba_sku_second_name,
                         "quantity": quantity,
@@ -955,6 +1093,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                     group_result["items"].append({
                         "status": "error",
                         "modelName": model_name,
+                        "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": target_name,
                         "alibabaSkuSecondName": alibaba_sku_second_name,
                         "quantity": quantity,

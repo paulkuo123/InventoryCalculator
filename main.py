@@ -92,6 +92,7 @@ from ads_analysis import (
     validate_reasoning_effort,
 )
 from config_loader import load_openai_api_key, load_openai_config_value
+from sku_mapping_service import MappingConflict, SkuMappingService
 
 # 導入版本管理
 
@@ -222,6 +223,8 @@ FILE_NAME = get_resource_path("index.html")
 current_crawler_process = None
 inbound_jobs = {}
 inbound_jobs_lock = threading.Lock()
+sku_mapping_service = None
+sku_mapping_service_lock = threading.Lock()
 
 # 確保 index.html 存在 (僅在非打包環境檢查，或確保打包時已包含)
 if not os.path.exists(FILE_NAME) and not getattr(sys, 'frozen', False):
@@ -236,6 +239,43 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
         parsed_path = urllib.parse.urlparse(self.path)
         request_path = parsed_path.path
+
+        if request_path == '/api/sku-mapping/summary':
+            try:
+                self._send_json_response(200, self._sku_mapping_store().summary())
+            except Exception as e:
+                logger.exception(f"載入 SKU mapping 摘要失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/sku-mapping/queue':
+            try:
+                params = urllib.parse.parse_qs(parsed_path.query)
+                self._send_json_response(200, self._sku_mapping_store().queue(
+                    status=params.get("status", ["review"])[0],
+                    query=params.get("query", [""])[0],
+                    restock_only=params.get("restockOnly", ["false"])[0].lower() == "true",
+                    offer_id=params.get("offerId", [""])[0],
+                    tier=params.get("tier", [""])[0],
+                    page=int(params.get("page", ["1"])[0]),
+                    page_size=int(params.get("pageSize", ["50"])[0]),
+                ))
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"載入 SKU mapping queue 失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        mapping_job_match = re.match(r'^/api/sku-mapping/jobs/([^/]+)$', request_path)
+        if mapping_job_match:
+            try:
+                self._send_json_response(200, self._sku_mapping_store().job(mapping_job_match.group(1)))
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except Exception as e:
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
 
         if request_path == '/api/inbound/status':
             self._send_json_response(200, self._inbound_status())
@@ -581,6 +621,41 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         request_path = urllib.parse.urlparse(self.path).path
 
+        if request_path == '/api/sku-mapping/scans':
+            try:
+                data = self._read_json_body()
+                job = self._sku_mapping_store().start_scan(
+                    scope=data.get("scope", "restock"),
+                    force=bool(data.get("force")),
+                    use_ai=data.get("useAi", True) is not False,
+                )
+                self._send_json_response(202, {"status": "success", **job})
+            except RuntimeError as e:
+                self._send_json_response(409, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"啟動 SKU mapping 掃描失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/sku-mapping/decisions':
+            try:
+                data = self._read_json_body()
+                items = data.get("items") if isinstance(data.get("items"), list) else [data]
+                result = self._sku_mapping_store().decisions(
+                    items,
+                    reviewer=str(data.get("reviewer") or "local_user"),
+                    batch=data.get("batch") is True,
+                )
+                self._send_json_response(200, result)
+            except MappingConflict as e:
+                self._send_json_response(409, {"status": "conflict", "message": str(e)})
+            except (ValueError, FileNotFoundError) as e:
+                self._send_json_response(400 if isinstance(e, ValueError) else 404, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"套用 SKU mapping 決定失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
         if request_path == '/api/inbound/orders/import':
             try:
                 data = self._read_json_body()
@@ -905,6 +980,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def _procurement_store(self):
         return ProcurementStore(os.path.dirname(os.path.abspath(__file__)))
 
+    def _sku_mapping_store(self):
+        global sku_mapping_service
+        if sku_mapping_service is None:
+            with sku_mapping_service_lock:
+                if sku_mapping_service is None:
+                    sku_mapping_service = SkuMappingService(os.path.dirname(os.path.abspath(__file__)))
+        return sku_mapping_service
+
     def _inbound_store(self):
         return InboundStore(os.path.dirname(os.path.abspath(__file__)))
 
@@ -1179,6 +1262,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     binding["alibabaSkuName"] = sku_name
                 if sku_second_name:
                     binding["alibabaSkuSecondName"] = sku_second_name
+                if model.get("1688_sku_id"):
+                    binding["alibabaSkuId"] = str(model.get("1688_sku_id"))
+                if model.get("1688_offer_id"):
+                    binding["alibabaOfferId"] = str(model.get("1688_offer_id"))
+                if model.get("1688_spec_text"):
+                    binding["alibabaSpecText"] = str(model.get("1688_spec_text"))
+                binding["alibabaMappingStatus"] = str(model.get("1688_mapping_status") or ("approved" if model.get("1688_sku_id") else "missing"))
+                binding["alibabaOfferFingerprint"] = str(model.get("1688_offer_fingerprint") or "")
                 bindings[key] = binding
         return bindings
 
@@ -1658,14 +1749,40 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             line_url = self._line_alibaba_url(line)
             if not line_url and self._has_sku_mapping(line_product_id):
                 line_url = first_url_by_product.get(line_product_id, "")
-            fallback_selection = self._fallback_sku_selection(line_product_id, line_model_name)
+            golden_mapping = self._golden_mapping_for_model(line_product_id, line_model_id, line_model_name)
+            line_sku_id = (
+                normalize_identifier(golden_mapping.get("sku_id"))
+                or normalize_identifier(line.get("alibaba_sku_id") or line.get("alibabaSkuId"))
+            )
             line_sku_name = (
-                fallback_selection["primary"]
+                str(golden_mapping.get("sku_name") or "").strip()
                 or str(line.get("alibaba_sku_name") or line.get("alibabaSkuName") or "").strip()
             )
             line_sku_second_name = (
-                fallback_selection["secondary"]
+                str(golden_mapping.get("second_name") or "").strip()
                 or str(line.get("alibaba_sku_second_name") or line.get("alibabaSkuSecondName") or "").strip()
+            )
+            mapping_status = str(
+                golden_mapping.get("status")
+                or line.get("alibaba_mapping_status")
+                or line.get("alibabaMappingStatus")
+                or "missing"
+            ).strip()
+            offer_fingerprint = str(
+                golden_mapping.get("offer_fingerprint")
+                or line.get("alibaba_offer_fingerprint")
+                or line.get("alibabaOfferFingerprint")
+                or ""
+            ).strip()
+            spec_text = str(
+                golden_mapping.get("spec_text")
+                or line.get("alibaba_spec_text")
+                or line.get("alibabaSpecText")
+                or ""
+            ).strip()
+            line_offer_id = (
+                normalize_identifier(golden_mapping.get("offer_id"))
+                or normalize_identifier(line.get("alibaba_offer_id") or line.get("alibabaOfferId"))
             )
             restock_qty = self._line_restock_qty(line)
 
@@ -1675,8 +1792,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 continue
             if not re.match(r'^https?://', line_url, re.IGNORECASE):
                 continue
+            if not golden_mapping:
+                raise ValueError(f"{line_model_name or line_model_id} 沒有 golden table SKU mapping，請先到 SKU Mapping 工作台處理")
+            if mapping_status != "approved":
+                raise ValueError(f"{line_model_name or line_model_id} 的 1688 SKU mapping 尚未核准（{mapping_status}），請先到 SKU Mapping 工作台處理")
+            if not line_sku_id:
+                raise ValueError(f"{line_model_name or line_model_id} 缺少已核准的 1688 skuId，請先到 SKU Mapping 工作台處理")
             if not line_sku_name:
-                continue
+                raise ValueError(f"{line_model_name or line_model_id} 缺少 1688 SKU 名稱，請先到 SKU Mapping 工作台處理")
 
             if is_alibaba_sku_discontinued(line_sku_name):
                 continue
@@ -1690,8 +1813,13 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "productName": line_product_name,
                 "modelId": line_model_id,
                 "modelName": line_model_name,
+                "alibabaOfferId": line_offer_id,
+                "alibabaSkuId": line_sku_id,
                 "alibabaSkuName": line_sku_name,
                 "alibabaSkuSecondName": line_sku_second_name,
+                "alibabaSpecText": spec_text,
+                "alibabaMappingStatus": mapping_status,
+                "alibabaOfferFingerprint": offer_fingerprint,
                 "restockQty": restock_qty,
                 "alibabaUrl": line_url,
             })
@@ -1703,6 +1831,35 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "addToCart": add_to_cart,
             "items": items,
         }
+
+    def _golden_mapping_for_model(self, product_id, model_id, model_name):
+        """Return only the exact approved golden mapping; never fuzzy-match cart rows."""
+        try:
+            with open(self._golden_table_path(), "r", encoding="utf-8") as f:
+                golden = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return {}
+        product = golden.get(str(product_id or ""), {})
+        if not isinstance(product, dict):
+            return {}
+        for model in product.get("型號", []) or []:
+            if not isinstance(model, dict):
+                continue
+            current_id = normalize_identifier(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+            if current_id != str(model_id or "") and str(model.get("型號名稱") or "").strip() != str(model_name or "").strip():
+                continue
+            sku_id = normalize_identifier(model.get("1688_sku_id"))
+            status = str(model.get("1688_mapping_status") or ("approved" if sku_id else "missing")).strip()
+            return {
+                "sku_id": sku_id,
+                "offer_id": normalize_identifier(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL")),
+                "sku_name": str(model.get("1688_sku_name") or "").strip(),
+                "second_name": str(model.get("1688_sku_second_name") or "").strip(),
+                "spec_text": str(model.get("1688_spec_text") or "").strip(),
+                "status": status,
+                "offer_fingerprint": str(model.get("1688_offer_fingerprint") or "").strip(),
+            }
+        return {}
 
     def _line_product_id(self, line, fallback_product_id):
         return normalize_identifier(line.get("shopee_product_id") or line.get("productId") or fallback_product_id)
@@ -1783,6 +1940,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         alibaba_min_order_qty = int(payload.get("alibabaMinOrderQty") or 1)
         alibaba_package_multiple = int(payload.get("alibabaPackageMultiple") or 1)
         alibaba_last_price_cny = payload.get("alibabaLastPriceCny")
+        mapping_approved = bool(payload.get("mappingApproved"))
         apply_scope = str(payload.get("applyScope", "single")).strip()
 
         if apply_scope not in ("single", "fill_missing", "overwrite_all", "selected_models"):
@@ -1859,6 +2017,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             model["1688_min_order_qty"] = alibaba_min_order_qty
             model["1688_package_multiple"] = alibaba_package_multiple
             model["1688_last_price_cny"] = alibaba_last_price_cny
+            model["1688_mapping_status"] = "approved" if mapping_approved and alibaba_sku_id else "missing"
+            model["1688_mapping_source"] = "manual" if mapping_approved and alibaba_sku_id else "legacy_import"
 
         backup_path = f"{golden_path}.bak"
         shutil.copy2(golden_path, backup_path)
@@ -1881,6 +2041,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "alibabaMinOrderQty": alibaba_min_order_qty,
                 "alibabaPackageMultiple": alibaba_package_multiple,
                 "alibabaLastPriceCny": alibaba_last_price_cny,
+                "alibabaMappingStatus": model.get("1688_mapping_status", "missing"),
+                "alibabaSpecText": model.get("1688_spec_text", ""),
+                "alibabaOfferFingerprint": model.get("1688_offer_fingerprint", ""),
             })
 
         return {
@@ -1968,6 +2131,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "alibabaOfferId": existing_binding.get("alibabaOfferId") or target_model.get("1688_offer_id", ""),
             "alibabaSkuId": existing_binding.get("alibabaSkuId") or target_model.get("1688_sku_id", ""),
             "alibabaSkuName": alibaba_sku_name,
+            "alibabaSkuSecondName": target_model.get("1688_sku_second_name", ""),
+            "alibabaSpecText": target_model.get("1688_spec_text", ""),
+            "alibabaMappingStatus": target_model.get("1688_mapping_status") or ("approved" if target_model.get("1688_sku_id") else "missing"),
+            "alibabaOfferFingerprint": target_model.get("1688_offer_fingerprint", ""),
             "alibabaMinOrderQty": existing_binding.get("alibabaMinOrderQty") or target_model.get("1688_min_order_qty", 1),
             "alibabaPackageMultiple": existing_binding.get("alibabaPackageMultiple") or target_model.get("1688_package_multiple", 1),
             "alibabaLastPriceCny": existing_binding.get("alibabaLastPriceCny")
@@ -2469,8 +2636,11 @@ def start_server():
         # 等待一小段時間確保端口已釋放
         time.sleep(0.5)
 
-        class TCPServerReuse(socketserver.TCPServer):
+        class TCPServerReuse(socketserver.ThreadingTCPServer):
             allow_reuse_address = True
+            # A stalled browser request must not block mapping decisions,
+            # summary refreshes, or other local API calls.
+            daemon_threads = True
 
         with TCPServerReuse(("", PORT), CustomHandler) as httpd:
             # 獲取實際分配的端口

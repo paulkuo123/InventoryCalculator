@@ -253,6 +253,10 @@ InventoryCalculater/
 ├── ads.js               # 廣告工作台 JavaScript
 ├── styles.css           # 前端樣式
 ├── ads.css              # 廣告工作台樣式
+├── sku_mapping_service.py # SKU 快照、候選、AI 與審核服務
+├── sku-mapping.html     # 1688 SKU mapping 工作台
+├── sku-mapping.js       # mapping 審核互動
+├── sku-mapping.css      # mapping 工作台樣式
 ├── requirements.txt     # Python 依賴套件
 ├── setup_openai_key.py  # 設定專案本地 OpenAI Key
 ├── config_loader.py     # 本地設定 / OpenAI Key 載入器
@@ -264,6 +268,19 @@ InventoryCalculater/
 ```
 
 ## 技術棧
+
+## 1688 SKU Mapping 工作台
+
+`/sku-mapping.html` 是 1688 SKU 對照的獨立審核頁。建議流程是：先按「掃描需補貨型號」，系統會以 1688 offer 分組取得結構化 SKU 快照，先做繁簡／顏色／尺寸／手機型號等規則比對，只有候選有歧義時才呼叫 OpenAI；之後在頁面逐筆或批次核准。未核准、失效、停售或 live SKU fingerprint 不一致的資料會被購物車流程阻擋。
+
+- 審核分級：綠色只代表「唯一候選、所有規格維度精確匹配、live 快照有效」，才可進入安全批次核准；黃色仍需人工點選候選；紅色只能保留、標記無匹配或停售，禁止猜測。
+- 批次核准 API 必須帶 `batch=true`；使用者勾選的項目才會送出，未手動點候選的項目會在確認提示後使用第 1 個候選，沒有候選的項目則整批拒絕。
+- 工作台會顯示既有 SKU mapping；只有確實有既有 SKU ID 的項目才提供「以選取候選取代」，避免把舊名稱紀錄誤當成正式 mapping。
+
+- golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
+- 預設 AI 設定為 `OPENAI_SKU_MAPPING_MODEL=gpt-5.6-luna`、`OPENAI_SKU_MAPPING_REASONING_EFFORT=medium`。沒有 API Key 時仍可執行規則候選，但結果會停在人工審核。
+- 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。
+- 1688 登入、滑塊或驗證碼需要使用者在持久化 Chrome profile 完成；系統不會付款或送出正式訂單。
 
 - **後端**: Python 3.8+
 - **網頁爬蟲**: Playwright (Chromium)
