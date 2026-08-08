@@ -267,6 +267,19 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
+        if request_path == '/api/sku-mapping/catalog':
+            try:
+                params = urllib.parse.parse_qs(parsed_path.query)
+                product_id = params.get("productId", [""])[0]
+                model_id = params.get("modelId", [""])[0]
+                self._send_json_response(200, self._sku_mapping_store().catalog_for_model(product_id, model_id))
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"載入 SKU catalog 失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
         mapping_job_match = re.match(r'^/api/sku-mapping/jobs/([^/]+)$', request_path)
         if mapping_job_match:
             try:
@@ -625,9 +638,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 data = self._read_json_body()
                 job = self._sku_mapping_store().start_scan(
-                    scope=data.get("scope", "restock"),
+                    scope=data.get("scope", "all"),
                     force=bool(data.get("force")),
                     use_ai=data.get("useAi", True) is not False,
+                    product_id=data.get("productId", ""),
+                    model_id=data.get("modelId", ""),
+                    offer_id=data.get("offerId", ""),
                 )
                 self._send_json_response(202, {"status": "success", **job})
             except RuntimeError as e:

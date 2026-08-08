@@ -45,6 +45,38 @@ class SkuMappingServiceTest(unittest.TestCase):
         queue = self.service.queue(status="review", restock_only=True)
         self.assertEqual(queue["total"], 2)
 
+    def test_default_queue_includes_all_url_models_and_groups_by_product_sales(self):
+        with tempfile.TemporaryDirectory() as directory:
+            golden_path = os.path.join(directory, "golden_table.json")
+            golden = {
+                "product-high": {
+                    "商品名稱": "高銷量商品",
+                    "總月銷量": "1200",
+                    "型號": [
+                        {"規格ID": "high-a", "型號名稱": "A", "月銷量": "900", "建議補貨數量": 0, "阿里巴巴商品URL": "https://detail.1688.com/offer/1.html"},
+                        {"規格ID": "high-b", "型號名稱": "B", "月銷量": "300", "建議補貨數量": 0, "阿里巴巴商品URL": "https://detail.1688.com/offer/1.html"},
+                    ],
+                },
+                "product-low": {
+                    "商品名稱": "低銷量商品",
+                    "總月銷量": "500",
+                    "型號": [
+                        {"規格ID": "low-a", "型號名稱": "A", "月銷量": "500", "建議補貨數量": 0, "阿里巴巴商品URL": "https://detail.1688.com/offer/2.html"},
+                    ],
+                },
+            }
+            with open(golden_path, "w", encoding="utf-8") as handle:
+                json.dump(golden, handle, ensure_ascii=False)
+            service = SkuMappingService(directory)
+            queue = service.queue(status="review", page_size=20)
+            self.assertEqual(queue["total"], 3)
+            self.assertEqual(
+                [(item["product_id"], item["model_id"]) for item in queue["items"]],
+                [("product-high", "high-a"), ("product-high", "high-b"), ("product-low", "low-a")],
+            )
+            self.assertEqual(queue["items"][0]["productMonthlySales"], 1200)
+            self.assertEqual(queue["items"][0]["monthlySales"], 900)
+
     def test_phone_pro_and_pro_max_are_not_interchangeable(self):
         model = {"product_name": "手機殼", "model_name": "iPhone 11 Pro,黑色"}
         skus = [
@@ -53,6 +85,88 @@ class SkuMappingServiceTest(unittest.TestCase):
         ]
         candidates = self.service.generate_candidates(model, skus)
         self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sku-pro"])
+
+    def test_colour_code_prefix_still_matches_colour_synonyms(self):
+        model = {"product_name": "短襪", "model_name": "奶白"}
+        skus = [{"sku_id": "sku-milk", "sku_name": "2349米白色", "spec_text": "2349米白色,均碼", "parts": ["2349米白色", "均碼"]}]
+        candidates = self.service.generate_candidates(model, skus)
+        self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sku-milk"])
+
+    def test_manual_catalog_selection_can_approve_a_rule_mismatch(self):
+        model = self.service._scope_models("all")[0]
+        snapshot = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [{"sku_id": "sku-manual", "sku_name": "特殊款", "second_name": "均碼", "spec_text": "特殊款,均碼", "parts": ["特殊款", "均碼"], "image_url": "", "price": 1.2, "stock": 99}],
+            {},
+        )
+        self.service._save_suggestion(model, snapshot, [], None, {})
+        # Simulate a legacy row that knows the offer but has not attached its
+        # snapshot yet; manual catalog approval should still record the live
+        # fingerprint and snapshot ID.
+        with self.service.connect() as conn:
+            conn.execute("UPDATE sku_mapping_suggestions SET snapshot_id=NULL WHERE product_id=? AND model_id=?", (model["product_id"], model["model_id"]))
+        catalog = self.service.catalog_for_model(model["product_id"], model["model_id"])
+        self.assertEqual(catalog["catalogStatus"], "ok")
+        self.assertEqual(catalog["skus"][0]["sku_id"], "sku-manual")
+        item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
+        result = self.service.decisions([{
+            "productId": model["product_id"], "modelId": model["model_id"],
+            "action": "approve", "skuId": "sku-manual", "version": item["version"],
+        }])
+        self.assertEqual(result["updated"][0]["status"], "approved")
+        with open(self.golden_path, encoding="utf-8") as handle:
+            updated = json.load(handle)[model["product_id"]]["型號"][0]
+        self.assertEqual(updated["1688_offer_fingerprint"], snapshot["fingerprint"])
+
+    def test_manual_catalog_selection_can_override_an_existing_candidate(self):
+        model = self.service._scope_models("all")[0]
+        snapshot = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [
+                {"sku_id": "sock-rule", "sku_name": "白色", "second_name": "", "spec_text": "白色", "parts": ["白色"], "image_url": "", "price": 1.2, "stock": 99},
+                {"sku_id": "sock-manual-alt", "sku_name": "黑色", "second_name": "", "spec_text": "黑色", "parts": ["黑色"], "image_url": "", "price": 1.3, "stock": 99},
+            ],
+            {},
+        )
+        candidates = self.service.generate_candidates(model, snapshot["skus"])
+        self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sock-rule"])
+        self.service._save_suggestion(model, snapshot, candidates, None, {})
+        item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
+        result = self.service.decisions([{
+            "productId": model["product_id"], "modelId": model["model_id"],
+            "action": "approve", "skuId": "sock-manual-alt", "version": item["version"],
+        }], batch=True)
+        self.assertEqual(result["updated"][0]["skuId"], "sock-manual-alt")
+
+    def test_manual_catalog_approval_overwrites_existing_golden_mapping(self):
+        model = self.service._scope_models("all")[0]
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        target = golden[model["product_id"]]["型號"][0]
+        target.update({
+            "1688_offer_id": model["offer_id"],
+            "1688_sku_id": "old-approved",
+            "1688_sku_name": "舊白色",
+            "1688_spec_text": "舊白色",
+            "1688_mapping_status": "approved",
+        })
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        snapshot = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [{"sku_id": "new-manual", "sku_name": "黑色", "second_name": "", "spec_text": "黑色", "parts": ["黑色"], "image_url": "", "price": 1.2, "stock": 99}],
+            {},
+        )
+        self.service._save_suggestion(model, snapshot, [], None, {})
+        item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
+        self.service.decisions([{
+            "productId": model["product_id"], "modelId": model["model_id"],
+            "action": "approve", "skuId": "new-manual", "version": item["version"],
+        }])
+        with open(self.golden_path, encoding="utf-8") as handle:
+            updated = json.load(handle)[model["product_id"]]["型號"][0]
+        self.assertEqual(updated["1688_sku_id"], "new-manual")
+        self.assertEqual(updated["1688_mapping_source"], "manual")
 
     def test_fingerprint_is_order_independent(self):
         rows = [
@@ -106,6 +220,76 @@ class SkuMappingServiceTest(unittest.TestCase):
             "action": "approve", "skuId": "sock-green", "version": item["version"],
         }], batch=True)
         self.assertEqual(result["updated"][0]["status"], "approved")
+
+    def test_legacy_unique_colour_with_code_prefix_and_one_size_is_green(self):
+        # Older scans stored a code-prefixed colour as a loose score (50) and
+        # counted 均碼 as an extra dimension.  Reclassification must recognise
+        # that this is still one exact, unambiguous mapping.
+        tier, reason = SkuMappingService.classify_review_tier(
+            "pending",
+            [{
+                "sku_id": "sock-legacy-green",
+                "spec_text": "2349淺卡其,均碼",
+                "deterministic_score": 50,
+                "evidence": {
+                    "complete": True,
+                    "source_parts": ["淺卡其"],
+                    "candidate_parts": ["2349淺卡其", "均碼"],
+                    "exact": 0,
+                    "loose": 1,
+                    "required": 1,
+                },
+            }],
+            "ok",
+        )
+        self.assertEqual(tier, "green")
+        self.assertIn("唯一候選", reason)
+
+    def test_stale_single_candidate_remains_red_until_rescan(self):
+        tier, reason = SkuMappingService.classify_review_tier(
+            "stale",
+            [{"sku_id": "stale-1", "spec_text": "白色", "evidence": {}}],
+            "ok",
+        )
+        self.assertEqual(tier, "red")
+        self.assertIn("快照已變更", reason)
+
+    def test_newer_snapshot_revalidates_stale_mapping_when_same_unique_sku_survives(self):
+        model = self.service._scope_models("all")[0]
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        target = golden[model["product_id"]]["型號"][0]
+        target.update({
+            "1688_offer_id": model["offer_id"],
+            "1688_sku_id": "surviving-sku",
+            "1688_sku_name": "白色",
+            "1688_mapping_status": "approved",
+        })
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        old = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [{"sku_id": "surviving-sku", "sku_name": "白色", "second_name": "", "spec_text": "白色", "parts": ["白色"]}],
+            {},
+        )
+        self.service._save_suggestion(model, old, self.service.generate_candidates(model, old["skus"]), None, {})
+        with self.service.connect() as conn:
+            conn.execute("UPDATE sku_mapping_suggestions SET status='stale', review_tier='red', review_reason='1688 SKU 快照已變更' WHERE product_id=? AND model_id=?", (model["product_id"], model["model_id"]))
+        newer = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [
+                {"sku_id": "surviving-sku", "sku_name": "白色", "second_name": "", "spec_text": "白色", "parts": ["白色"]},
+                {"sku_id": "other-sku", "sku_name": "黑色", "second_name": "", "spec_text": "黑色", "parts": ["黑色"]},
+            ],
+            {},
+        )
+        with self.service.connect() as conn:
+            conn.execute("UPDATE alibaba_offer_snapshots SET fetched_at=(SELECT fetched_at + 1 FROM alibaba_offer_snapshots WHERE id=?) WHERE id=?", (old["id"], newer["id"]))
+        refreshed = SkuMappingService(self.tmp.name)
+        item = next(row for row in refreshed.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
+        self.assertEqual(item["status"], "pending")
+        self.assertEqual(item["review_tier"], "green")
+        self.assertEqual(item["snapshot_id"], newer["id"])
 
     def test_batch_accepts_checked_yellow_and_selected_candidate(self):
         model = self.service._scope_models("all")[0]
