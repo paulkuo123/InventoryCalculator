@@ -50,14 +50,14 @@ COLOR_SYNONYMS = {
     "奶白": {"奶白", "米白", "米色", "米黄", "杏色", "本白"},
     "纯白": {"纯白", "白色", "白"},
     "黑色": {"黑色", "黑"},
-    "灰色": {"灰色", "灰", "浅灰", "深灰"},
-    "卡其": {"卡其", "浅卡其", "深卡其"},
+    "灰色": {"灰色", "灰"},
+    "卡其": {"卡其"},
     "咖啡": {"咖啡", "咖啡色", "棕色", "棕", "深咖"},
-    "粉色": {"粉色", "粉", "浅粉", "皮粉"},
-    "蓝色": {"蓝色", "蓝", "宝蓝", "天蓝", "浅蓝"},
-    "绿色": {"绿色", "绿", "军绿", "墨绿", "抹茶绿"},
-    "黄色": {"黄色", "黄", "姜黄", "鹅黄"},
-    "红色": {"红色", "红", "酒红", "橘红", "西瓜红"},
+    "粉色": {"粉色", "粉"},
+    "蓝色": {"蓝色", "蓝"},
+    "绿色": {"绿色", "绿"},
+    "黄色": {"黄色", "黄"},
+    "红色": {"红色", "红"},
 }
 
 MAPPING_SCHEMA = {
@@ -91,6 +91,20 @@ def normalize_text(value: Any) -> str:
     text = html.unescape(unicodedata.normalize("NFKC", str(value or ""))).translate(CHAR_TRANSLATION)
     text = re.sub(r"\s+", "", text).replace("，", ",").replace("、", ",").replace("＞", ",").replace(">", ",")
     return text.lower().strip()
+
+
+def numeric_value(value: Any) -> float:
+    """Parse a human-formatted numeric field such as ``3,504`` safely."""
+    text = str(value or "").replace(",", "").strip()
+    if not text:
+        return 0.0
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return 0.0
+    try:
+        return float(match.group(0))
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def canonical_url(value: Any) -> str:
@@ -143,13 +157,33 @@ def _phone_mismatch(source: str, candidate: str) -> bool:
     return bool(source_set and candidate_set and source_set != candidate_set and source_set & candidate_set)
 
 
+def _strip_sku_code(value: Any) -> str:
+    """Remove an Alibaba product-code prefix before comparing a dimension."""
+    text = normalize_text(value)
+    return re.sub(r"^[a-z0-9._-]+(?=[\u3400-\u9fff])", "", text)
+
+
 def _synonym_equal(left: str, right: str) -> bool:
-    left = normalize_text(left)
-    right = normalize_text(right)
+    left = _strip_sku_code(left)
+    right = _strip_sku_code(right)
     if left == right:
         return True
     for values in COLOR_SYNONYMS.values():
-        if left in values and right in values:
+        normalized_values = {normalize_text(value) for value in values}
+        if left in normalized_values and right in normalized_values:
+            return True
+        # Alibaba often prefixes a colour with a product code, for example
+        # ``2349米白色``.  Treat the known colour term inside that label as the
+        # comparable dimension while keeping the full SKU text intact.
+        # Ignore one-character generic colours (白／黑／紅…) here.  Those are
+        # intentionally handled by the exact/substring rules; using them for
+        # alias detection would make 奶白 ambiguous with every 白色 SKU.
+        meaningful_values = {term for term in normalized_values if len(term) > 1}
+        if len(meaningful_values) < 2:
+            continue
+        left_has_color = any(term in left for term in meaningful_values)
+        right_has_color = any(term in right for term in meaningful_values)
+        if left_has_color and right_has_color:
             return True
     return False
 
@@ -170,6 +204,12 @@ def _spec_parts(value: Any) -> List[str]:
             part = part.split("：", 1)[1]
         parts.append(normalize_text(part))
     return parts
+
+
+def _is_neutral_dimension(value: Any) -> bool:
+    """Dimensions such as one-size that add no ambiguity to a colour match."""
+    text = normalize_text(value)
+    return text in {"均碼", "均码", "通碼", "通码", "不分碼", "不分码", "通用", "均一"} or text.startswith(("均碼", "均码", "通碼", "通码", "不分碼", "不分码"))
 
 
 def offer_fingerprint(offer_id: str, skus: Sequence[Dict[str, Any]]) -> str:
@@ -199,6 +239,7 @@ class SkuMappingService:
         self._init_db()
         self.migrate_legacy_mappings()
         self._repair_suggestion_statuses()
+        self._revalidate_stale_suggestions()
         self._refresh_review_tiers()
 
     def connect(self) -> sqlite3.Connection:
@@ -389,6 +430,64 @@ class SkuMappingService:
         with self.connect() as conn:
             conn.execute("UPDATE sku_mapping_suggestions SET status='no_match' WHERE status='ok' AND suggested_sku_id='' AND decision='abstain'")
 
+    def _revalidate_stale_suggestions(self) -> None:
+        """Reuse a newer live snapshot when a stale mapping still matches exactly.
+
+        A changed offer fingerprint does not automatically mean the selected SKU
+        disappeared.  If a newer stored live snapshot already exists, re-run the
+        deterministic matcher for stale rows.  A single exact candidate with the
+        same existing SKU ID becomes a normal pending/green review row; rows with
+        no current proof remain red and still require a fresh scan.
+        """
+        model_lookup = {
+            (str(model["product_id"]), str(model["model_id"])): model
+            for model in self._scope_models("all")
+        }
+        with self.connect() as conn:
+            stale_rows = [dict(row) for row in conn.execute("SELECT * FROM sku_mapping_suggestions WHERE status='stale'").fetchall()]
+        for row in stale_rows:
+            model = model_lookup.get((str(row.get("product_id")), str(row.get("model_id"))))
+            offer_id = normalize_id(row.get("offer_id"))
+            if not model or not offer_id:
+                continue
+            with self.connect() as conn:
+                latest = conn.execute(
+                    "SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? AND status='ok' ORDER BY fetched_at DESC LIMIT 1",
+                    (offer_id,),
+                ).fetchone()
+                previous = conn.execute(
+                    "SELECT fetched_at FROM alibaba_offer_snapshots WHERE id=?",
+                    (row.get("snapshot_id"),),
+                ).fetchone() if row.get("snapshot_id") else None
+            if not latest or int(time.time()) - int(latest["fetched_at"] or 0) > SCAN_CACHE_SECONDS or (previous and int(latest["fetched_at"] or 0) <= int(previous["fetched_at"] or 0)):
+                continue
+            skus = self._json_load(latest["skus_json"], [])
+            candidates = self.generate_candidates(model, skus)
+            existing_id = normalize_id(model.get("existing_sku_id")) or normalize_id(row.get("suggested_sku_id"))
+            if len(candidates) != 1 or not existing_id or normalize_id(candidates[0].get("sku_id")) != existing_id:
+                continue
+            snapshot = {
+                "id": latest["id"], "offer_id": latest["offer_id"],
+                "product_url": latest["product_url"], "product_name": latest["product_name"],
+                "status": latest["status"], "fingerprint": latest["fingerprint"],
+                "skus": skus, "raw": self._json_load(latest["raw_json"], {}),
+            }
+            try:
+                self._save_suggestion(model, snapshot, candidates, None, {"auto_revalidated": True})
+            except Exception:
+                # One malformed legacy row must not prevent the workbench from
+                # starting; it remains stale for normal manual review.
+                continue
+            with self.connect() as conn:
+                current = conn.execute(
+                    "SELECT id, version FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                    (row["product_id"], row["model_id"]),
+                ).fetchone()
+                conn.execute(
+                    "INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)",
+                    (current["id"], "auto_revalidate", json.dumps(row, ensure_ascii=False), json.dumps({"snapshot_id": latest["id"], "status": "pending", "review_tier": "green"}, ensure_ascii=False), "scanner", int(time.time())),
+                )
+
     @staticmethod
     def classify_review_tier(
         status: str,
@@ -409,12 +508,17 @@ class SkuMappingService:
         ai = ai if isinstance(ai, dict) else {}
         if status == "approved":
             return "approved", "已核准"
+        # A changed live fingerprint is a safety stop even when the old
+        # suggestion still has one candidate.  Keep this reason explicit so a
+        # legacy name in the suggestion cannot misleadingly hide the real
+        # action required: rescan the offer and verify the current SKU.
+        if status == "stale":
+            return "red", "1688 SKU 快照已變更；需重新掃描並重新核准"
         if status in {"missing", "no_match", "error", "stale", "waiting_for_login", "discontinued", "empty"}:
             reasons = {
                 "missing": "尚未取得可用 SKU 候選",
                 "no_match": "沒有候選 SKU 通過規則",
                 "error": "擷取錯誤，禁止猜測",
-                "stale": "1688 SKU 快照已變更",
                 "waiting_for_login": "等待登入或人工驗證",
                 "discontinued": "商品或 SKU 疑似下架",
                 "empty": "頁面沒有結構化 SKU",
@@ -434,13 +538,25 @@ class SkuMappingService:
             required = int(evidence.get("required") or max(1, len(evidence.get("source_parts") or [])))
             score = float(candidate.get("deterministic_score") or 0)
             candidate_parts = evidence.get("candidate_parts") or _spec_parts(candidate.get("spec_text"))
-            same_dimension_count = len(candidate_parts) == required
+            source_parts = evidence.get("source_parts") or []
+            # Re-evaluate old candidate evidence with the current dimension
+            # rules.  Older scans treated a numeric code prefix as a loose
+            # match and counted neutral dimensions such as 均碼 as ambiguity,
+            # which made many genuinely unique candidates yellow.
+            recomputed_exact = sum(
+                1 for source_part in source_parts
+                if any(_synonym_equal(source_part, candidate_part) for candidate_part in candidate_parts)
+            )
+            if recomputed_exact:
+                exact = max(exact, recomputed_exact)
+            meaningful_candidate_parts = [part for part in candidate_parts if not _is_neutral_dimension(part)]
+            same_dimension_count = len(meaningful_candidate_parts) == required
             # Older snapshots did not persist exact/required counters.  A complete
             # score of 70+ can only come from exact matching under the v1 scorer;
             # reconstruct that metadata without treating loose score-50 matches as
             # safe.
-            if complete and exact == 0 and score >= 70:
-                exact = required
+            if complete and exact >= required and score < 70:
+                score = 70
             if complete and exact >= required and same_dimension_count and score >= 70:
                 return "green", "唯一候選且所有規格維度精確匹配"
             return "yellow", "只有一個候選，但規格維度仍需人工確認"
@@ -506,7 +622,7 @@ class SkuMappingService:
             handle.write("\n")
         os.replace(tmp_path, self.golden_path)
 
-    def _scope_models(self, scope: str = "restock", pending_only: bool = False) -> List[Dict[str, Any]]:
+    def _scope_models(self, scope: str = "all", pending_only: bool = False) -> List[Dict[str, Any]]:
         golden = self._golden()
         rows = []
         for product_id, product in golden.items():
@@ -549,11 +665,24 @@ class SkuMappingService:
         return rows
 
     def summary(self) -> Dict[str, Any]:
+        model_lookup = self._model_lookup(self._golden())
         with self.connect() as conn:
-            rows = conn.execute("SELECT status, COUNT(*) AS count FROM sku_mapping_suggestions GROUP BY status").fetchall()
-            counts = {str(row["status"]): int(row["count"]) for row in rows}
-            tier_rows = conn.execute("SELECT review_tier, COUNT(*) AS count FROM sku_mapping_suggestions GROUP BY review_tier").fetchall()
-            tier_counts = {str(row["review_tier"] or "red"): int(row["count"]) for row in tier_rows}
+            # Legacy runs can leave suggestions for models that no longer have
+            # an Alibaba URL.  Summary numbers should describe the URL mapping
+            # workload shown in the workbench, not those obsolete rows.
+            suggestion_rows = conn.execute(
+                "SELECT product_id, model_id, status, review_tier FROM sku_mapping_suggestions"
+            ).fetchall()
+            counts: Dict[str, int] = defaultdict(int)
+            tier_counts: Dict[str, int] = defaultdict(int)
+            for row in suggestion_rows:
+                metadata = model_lookup.get((str(row["product_id"]), str(row["model_id"])), {})
+                if not metadata.get("hasUrl"):
+                    continue
+                counts[str(row["status"])] += 1
+                tier_counts[str(row["review_tier"] or "red")] += 1
+            counts = dict(counts)
+            tier_counts = dict(tier_counts)
             url_models = len(self._scope_models("all"))
             restock_models = len(self._scope_models("restock"))
             total_models = sum(
@@ -621,34 +750,40 @@ class SkuMappingService:
             params.extend([like, like, like])
         where = " AND ".join(clauses) or "1=1"
         golden = self._golden()
+        # Queue ordering is based on the golden table's product sales metadata,
+        # so fetch the filtered rows first and paginate only after sorting.  This
+        # also lets us exclude legacy suggestion rows whose model no longer has
+        # an Alibaba URL.
+        model_lookup = self._model_lookup(golden)
         with self.connect() as conn:
-            order_sql = "CASE s.review_tier WHEN 'green' THEN 0 WHEN 'yellow' THEN 1 WHEN 'red' THEN 2 ELSE 3 END, CASE WHEN s.status IN ('pending','legacy_pending_id','missing','stale','waiting_for_login') THEN 0 ELSE 1 END, CASE WHEN s.suggested_sku_id='' THEN 0 ELSE 1 END, s.updated_at DESC"
-            fetch_params = params if restock_only else params + [page_size, (page - 1) * page_size]
-            limit_sql = "" if restock_only else " LIMIT ? OFFSET ?"
             rows = conn.execute(
                 f"SELECT s.*, o.product_url, o.product_name AS snapshot_product_name, o.status AS snapshot_status, o.fingerprint "
                 f"FROM sku_mapping_suggestions s LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id "
-                f"WHERE {where} ORDER BY {order_sql}{limit_sql}",
-                fetch_params,
+                f"WHERE {where} ORDER BY s.updated_at DESC, s.id DESC",
+                params,
             ).fetchall()
-            total = conn.execute(f"SELECT COUNT(*) FROM sku_mapping_suggestions s WHERE {where}", params).fetchone()[0]
             result = []
             # Build the golden-table lookup once per request.  The queue can contain
             # thousands of legacy rows; repeatedly walking/parsing all 5,898 models
             # made the restock-only view appear hung on the first load.
-            model_lookup = self._model_lookup(golden)
             for row in rows:
                 item = dict(row)
+                metadata = model_lookup.get((str(item["product_id"]), str(item["model_id"])), {})
+                if not metadata.get("hasUrl"):
+                    continue
+                if restock_only and float(metadata.get("restockQty") or 0) <= 0:
+                    continue
                 item["evidence"] = self._json_load(item.pop("evidence_json", "{}"), {})
                 candidates = conn.execute(
                     "SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank",
                     (item["id"],),
                 ).fetchall()
                 item["candidates"] = [self._candidate_public(dict(candidate)) for candidate in candidates]
-                metadata = model_lookup.get((str(item["product_id"]), str(item["model_id"])), {})
                 item["restockQty"] = int(metadata.get("restockQty") or 0)
-                if restock_only and item["restockQty"] <= 0:
-                    continue
+                item["monthlySales"] = metadata.get("monthlySales", 0)
+                item["productMonthlySales"] = metadata.get("productMonthlySales", 0)
+                item["productOrder"] = metadata.get("productOrder", 0)
+                item["modelOrder"] = metadata.get("modelOrder", 0)
                 item["productImageUrl"] = str(metadata.get("productImageUrl") or "")
                 item["modelImageUrl"] = str(metadata.get("modelImageUrl") or "")
                 item["existing_sku_id"] = str(metadata.get("existingSkuId") or "")
@@ -656,32 +791,48 @@ class SkuMappingService:
                 item["existing_second_name"] = str(metadata.get("existingSecondName") or "")
                 item["mapping_status"] = str(metadata.get("mappingStatus") or "missing")
                 result.append(item)
-        if restock_only:
-            total = len(result)
-            tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
-            result.sort(key=lambda item: (tier_order.get(str(item.get("review_tier") or "red"), 2), -int(item.get("restockQty") or 0), -int(item.get("updated_at") or 0)))
-            result = result[(page - 1) * page_size: page * page_size]
+        tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
+        # Keep each product together.  Products are ordered by total monthly
+        # sales (falling back to the sum of their model sales); variants inside
+        # a product are then ordered by their own monthly sales.
+        result.sort(key=lambda item: (
+            -float(item.get("productMonthlySales") or 0),
+            int(item.get("productOrder") or 0),
+            -float(item.get("monthlySales") or 0),
+            int(item.get("modelOrder") or 0),
+            tier_order.get(str(item.get("review_tier") or "red"), 2),
+            -int(item.get("updated_at") or 0),
+        ))
+        total = len(result)
+        result = result[(page - 1) * page_size: page * page_size]
         return {"status": "success", "items": result, "total": int(total), "page": page, "pageSize": page_size}
 
     @staticmethod
     def _model_lookup(golden: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, Any]]:
         lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        for product_id, product in golden.items():
+        for product_order, (product_id, product) in enumerate(golden.items()):
             if not isinstance(product, dict):
                 continue
             product_image = str(product.get("商品圖片網址") or "")
-            for model in product.get("型號", []) or []:
+            models = [model for model in product.get("型號", []) or [] if isinstance(model, dict)]
+            product_monthly_sales = numeric_value(product.get("總月銷量"))
+            if product_monthly_sales <= 0:
+                product_monthly_sales = sum(numeric_value(model.get("月銷量")) for model in models)
+            for model_order, model in enumerate(models):
                 if not isinstance(model, dict):
                     continue
                 model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
                 if not model_id:
                     continue
-                try:
-                    restock_qty = int(float(model.get("建議補貨數量") or 0))
-                except (TypeError, ValueError):
-                    restock_qty = 0
+                restock_qty = int(numeric_value(model.get("建議補貨數量")))
+                url = canonical_url(model.get("阿里巴巴商品URL"))
                 lookup[(str(product_id), model_id)] = {
-                    "restockQty": restock_qty if canonical_url(model.get("阿里巴巴商品URL")) else 0,
+                    "hasUrl": bool(url),
+                    "restockQty": restock_qty if url else 0,
+                    "monthlySales": numeric_value(model.get("月銷量")),
+                    "productMonthlySales": product_monthly_sales,
+                    "productOrder": product_order,
+                    "modelOrder": model_order,
                     "productImageUrl": product_image,
                     "modelImageUrl": str(model.get("型號圖片網址") or ""),
                     "existingSkuId": normalize_id(model.get("1688_sku_id")),
@@ -713,6 +864,63 @@ class SkuMappingService:
         return 0
 
     @staticmethod
+    def _catalog_candidate(sku: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert a live snapshot SKU into a reviewable manual candidate."""
+        spec_text = str(sku.get("spec_text") or "")
+        parts = list(sku.get("parts") or _spec_parts(spec_text))
+        return {
+            "sku_id": normalize_id(sku.get("sku_id")),
+            "sku_name": str(sku.get("sku_name") or (parts[0] if parts else spec_text)),
+            "second_name": str(sku.get("second_name") or (parts[1] if len(parts) > 1 else "")),
+            "spec_text": spec_text,
+            "image_url": str(sku.get("image_url") or ""),
+            "price": sku.get("price"),
+            "stock": sku.get("stock"),
+            "deterministic_score": float(sku.get("deterministic_score") or 0),
+            "evidence": {"manual_catalog": True},
+        }
+
+    def _snapshot_catalog(self, snapshot_id: Any = None, offer_id: str = "") -> Dict[str, Any]:
+        """Return the complete SKU catalog from the latest stored live snapshot."""
+        with self.connect() as conn:
+            row = None
+            if snapshot_id:
+                row = conn.execute("SELECT * FROM alibaba_offer_snapshots WHERE id=?", (int(snapshot_id),)).fetchone()
+            if row is None and offer_id:
+                row = conn.execute(
+                    "SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? ORDER BY fetched_at DESC LIMIT 1",
+                    (normalize_id(offer_id),),
+                ).fetchone()
+        if not row:
+            return {"catalogStatus": "not_scanned", "snapshotId": None, "offerId": normalize_id(offer_id), "fingerprint": "", "productUrl": "", "skus": []}
+        raw_skus = self._json_load(row["skus_json"], [])
+        skus = [self._catalog_candidate(sku) for sku in raw_skus if isinstance(sku, dict) and normalize_id(sku.get("sku_id"))]
+        return {
+            "catalogStatus": str(row["status"] or "unknown"),
+            "snapshotId": row["id"],
+            "offerId": str(row["offer_id"] or offer_id),
+            "fingerprint": str(row["fingerprint"] or ""),
+            "productUrl": str(row["product_url"] or ""),
+            "skus": skus,
+        }
+
+    def catalog_for_model(self, product_id: str, model_id: str) -> Dict[str, Any]:
+        product_id = normalize_id(product_id)
+        model_id = normalize_id(model_id)
+        if not product_id or not model_id:
+            raise ValueError("缺少 productId 或 modelId")
+        with self.connect() as conn:
+            row = conn.execute(
+            "SELECT snapshot_id, offer_id, status, version FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                (product_id, model_id),
+            ).fetchone()
+        if not row:
+            raise FileNotFoundError(f"找不到 mapping suggestion：{product_id}/{model_id}")
+        catalog = self._snapshot_catalog(None if row["status"] == "stale" else row["snapshot_id"], row["offer_id"])
+        catalog.update({"status": "success", "productId": product_id, "modelId": model_id, "version": int(row["version"])})
+        return catalog
+
+    @staticmethod
     def _json_load(value: Any, fallback: Any) -> Any:
         try:
             return json.loads(value or "")
@@ -724,22 +932,33 @@ class SkuMappingService:
         row["evidence"] = SkuMappingService._json_load(row.pop("evidence_json", "{}"), {})
         return row
 
-    def start_scan(self, scope: str = "restock", force: bool = False, use_ai: bool = True) -> Dict[str, Any]:
-        scope = "all" if str(scope or "").strip() == "all" else "restock"
+    def start_scan(
+        self,
+        scope: str = "all",
+        force: bool = False,
+        use_ai: bool = True,
+        product_id: str = "",
+        model_id: str = "",
+        offer_id: str = "",
+    ) -> Dict[str, Any]:
+        scope = "restock" if str(scope or "").strip() == "restock" else "all"
+        product_id = normalize_id(product_id)
+        model_id = normalize_id(model_id)
+        offer_id = normalize_id(offer_id)
         with self._job_lock:
             for job in self._jobs.values():
                 if job.get("status") in {"queued", "running"}:
                     raise RuntimeError("目前已有 SKU mapping 掃描工作執行中")
             job_id = f"sku-map-{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             now = int(time.time())
-            job = {"jobId": job_id, "status": "queued", "scope": scope, "completed": 0, "total": 0, "message": "排入掃描", "createdAt": now, "updatedAt": now}
+            job = {"jobId": job_id, "status": "queued", "scope": scope, "productId": product_id, "modelId": model_id, "offerId": offer_id, "completed": 0, "total": 0, "message": "排入掃描", "createdAt": now, "updatedAt": now}
             self._jobs[job_id] = job
             with self.connect() as conn:
                 conn.execute(
                     "INSERT INTO sku_mapping_runs(job_id,status,scope,created_at,updated_at) VALUES (?,?,?,?,?)",
                     (job_id, "queued", scope, now, now),
                 )
-            thread = threading.Thread(target=self._scan_worker, args=(job_id, scope, force, use_ai), daemon=True)
+            thread = threading.Thread(target=self._scan_worker, args=(job_id, scope, force, use_ai, product_id, model_id, offer_id), daemon=True)
             thread.start()
         return job
 
@@ -771,9 +990,29 @@ class SkuMappingService:
             with self.connect() as conn:
                 conn.execute(f"UPDATE sku_mapping_runs SET {', '.join(assignments)}, updated_at=? WHERE job_id=?", values)
 
-    def _scan_worker(self, job_id: str, scope: str, force: bool, use_ai: bool) -> None:
+    def _scan_worker(
+        self,
+        job_id: str,
+        scope: str,
+        force: bool,
+        use_ai: bool,
+        product_id: str = "",
+        model_id: str = "",
+        offer_id: str = "",
+    ) -> None:
         try:
-            models = self._scope_models(scope, pending_only=(scope == "restock"))
+            # Approved mappings are already part of the golden table.  A full
+            # catalog scan must not demote them back to pending; live SKU
+            # changes are handled separately by snapshot fingerprint checks.
+            models = self._scope_models(scope, pending_only=True)
+            if offer_id:
+                models = [model for model in models if model["offer_id"] == offer_id]
+            elif product_id:
+                models = [model for model in models if model["product_id"] == product_id]
+            if model_id:
+                models = [model for model in models if model["model_id"] == model_id]
+            if not models:
+                raise ValueError("找不到可掃描的 URL 型號，可能已核准、已下架或資料已更新")
             self._update_job(job_id, status="running", total=len(models), completed=0, message="準備載入 1688 商品頁")
             grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
             for model in models:
@@ -1103,6 +1342,17 @@ class SkuMappingService:
             candidates = [dict(candidate) for candidate in candidate_rows]
             for candidate in candidates:
                 candidate["evidence"] = self._json_load(candidate.pop("evidence_json", "{}"), {})
+        # A rule mismatch does not mean the SKU is absent.  When the reviewer
+        # explicitly supplies a SKU ID, allow it only if that ID exists in the
+        # stored live catalog for this offer; arbitrary IDs remain rejected.
+        requested_id = normalize_id(item.get("skuId") or item.get("sku_id"))
+        if requested_id and requested_id not in {normalize_id(candidate.get("sku_id")) for candidate in candidates}:
+            catalog = self._snapshot_catalog(None if row.get("status") == "stale" else row.get("snapshot_id"), row.get("offer_id", ""))
+            manual = next((sku for sku in catalog.get("skus", []) if normalize_id(sku.get("sku_id")) == requested_id), None)
+            if manual:
+                manual = dict(manual)
+                manual["_snapshot_id"] = catalog.get("snapshotId")
+                candidates.append(manual)
         return product_id, model_id, row, candidates
 
     def _validate_safe_batch(self, items: Sequence[Dict[str, Any]]) -> None:
@@ -1129,6 +1379,8 @@ class SkuMappingService:
         selected_id = normalize_id(item.get("skuId") or item.get("sku_id"))
         selected = next((candidate for candidate in candidates if normalize_id(candidate.get("sku_id")) == selected_id), None)
         if action in {"approve", "replace"}:
+            if str(row.get("status") or "") in {"stale", "waiting_for_login", "error", "discontinued"}:
+                raise ValueError("目前快照不可用，請先重新掃描並確認登入／商品狀態")
             if not selected:
                 raise ValueError("核准的 SKU ID 不在候選清單")
             self._write_approved_mapping(row, selected, action, reviewer)
@@ -1173,7 +1425,8 @@ class SkuMappingService:
         ai_evidence = evidence.get("ai") if isinstance(evidence, dict) else {}
         target["1688_mapping_source"] = "ai_reviewed" if action == "approve" and isinstance(ai_evidence, dict) and ai_evidence.get("source") == "openai" else "manual"
         target["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
-        target["1688_offer_fingerprint"] = self._snapshot_fingerprint(suggestion.get("snapshot_id"))
+        snapshot_id = suggestion.get("snapshot_id") or candidate.get("_snapshot_id")
+        target["1688_offer_fingerprint"] = self._snapshot_fingerprint(snapshot_id)
         if candidate.get("price") is not None:
             try:
                 target["1688_last_price_cny"] = float(candidate.get("price"))
@@ -1190,7 +1443,7 @@ class SkuMappingService:
         try:
             self._sync_alibaba_binding(suggestion, target, candidate, now)
             with self.connect() as conn:
-                conn.execute("UPDATE sku_mapping_suggestions SET status='approved', review_tier='approved', review_reason='已核准', suggested_sku_id=?, suggested_sku_name=?, suggested_second_name=?, version=version+1, updated_at=? WHERE id=?", (candidate["sku_id"], candidate.get("sku_name", ""), target.get("1688_sku_second_name", ""), now, suggestion["id"]))
+                conn.execute("UPDATE sku_mapping_suggestions SET status='approved', review_tier='approved', review_reason='已核准', snapshot_id=COALESCE(?, snapshot_id), suggested_sku_id=?, suggested_sku_name=?, suggested_second_name=?, version=version+1, updated_at=? WHERE id=?", (snapshot_id, candidate["sku_id"], candidate.get("sku_name", ""), target.get("1688_sku_second_name", ""), now, suggestion["id"]))
                 conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (suggestion["id"], action, json.dumps(before_mapping, ensure_ascii=False), json.dumps({key: target.get(key, "") for key in before_mapping}, ensure_ascii=False), reviewer, now))
         except Exception:
             restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")

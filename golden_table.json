@@ -28,8 +28,13 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682877407287.html",
                 "1688_offer_id": "682877407287",
                 "1688_sku_name": "2349米白色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4881407420807",
+                "1688_spec_text": "2349米白色>均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:57:23Z",
+                "1688_offer_fingerprint": "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d"
             },
             {
                 "型號名稱": "黑色",
@@ -46,10 +51,10 @@
                 "1688_mapping_status": "approved",
                 "1688_mapping_source": "manual",
                 "1688_sku_id": "4881407420805",
-                "1688_spec_text": "2349黑色,均码",
+                "1688_spec_text": "2349黑色>均码",
                 "1688_sku_second_name": "均码",
-                "1688_verified_at": "2026-08-08T05:40:21Z",
-                "1688_offer_fingerprint": "fd7ae34f2c2c88d9a44d790b409ce0a8e4be3edf6f24f824bdaee3688ea26d1c"
+                "1688_verified_at": "2026-08-08T07:20:58Z",
+                "1688_offer_fingerprint": "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d"
             },
             {
                 "型號名稱": "淺卡其",
@@ -62,9 +67,14 @@
                 "阿里巴巴商品名稱": "秋冬新款袜子女中筒袜日系纯色简约棉质条纹女士长袜厂家批发",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682877407287.html",
                 "1688_offer_id": "682877407287",
-                "1688_sku_name": "2349浅卡其",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "2349淺卡其",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5111698535889",
+                "1688_spec_text": "2349浅卡其>均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T07:21:08Z",
+                "1688_offer_fingerprint": "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d"
             },
             {
                 "型號名稱": "深卡其",
@@ -78,8 +88,13 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682877407287.html",
                 "1688_offer_id": "682877407287",
                 "1688_sku_name": "2349深卡其",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4881407420809",
+                "1688_spec_text": "2349深卡其>均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T07:21:10Z",
+                "1688_offer_fingerprint": "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d"
             },
             {
                 "型號名稱": "咖啡",
@@ -96,10 +111,10 @@
                 "1688_mapping_status": "approved",
                 "1688_mapping_source": "manual",
                 "1688_sku_id": "4881407420810",
-                "1688_spec_text": "2349咖啡,均码",
+                "1688_spec_text": "2349咖啡>均码",
                 "1688_sku_second_name": "均码",
-                "1688_verified_at": "2026-08-08T05:42:10Z",
-                "1688_offer_fingerprint": "fd7ae34f2c2c88d9a44d790b409ce0a8e4be3edf6f24f824bdaee3688ea26d1c"
+                "1688_verified_at": "2026-08-08T07:32:20Z",
+                "1688_offer_fingerprint": "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d"
             }
         ],
         "總月銷量": "5041",
@@ -121,9 +136,14 @@
                 "阿里巴巴商品名稱": "黑白中筒纯色堆堆袜i女袜日系糖果色袜子女棉袜孕妇宽口袜月子袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682133351130.html",
                 "1688_offer_id": "682133351130",
-                "1688_sku_name": "黑色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "黑色&gt",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5057048663211",
+                "1688_spec_text": "黑色,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T07:34:15Z",
+                "1688_offer_fingerprint": "062a2cbef9f8da8af384946c305ca3852433a3f4bd639a30120e878baefbc8e8"
             },
             {
                 "型號名稱": "白色,均碼 22 - 25 公分",
@@ -155,14 +175,18 @@
                 "建議補貨數量": 31,
                 "阿里巴巴商品名稱": "黑白中筒纯色堆堆袜i女袜日系糖果色袜子女棉袜孕妇宽口袜月子袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682133351130.html",
-                "1688_sku_name": "卡其",
+                "1688_sku_name": "卡其&gt",
                 "1688_offer_id": "682133351130",
-                "1688_sku_id": "",
+                "1688_sku_id": "5977577080996",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "卡其,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T07:40:13Z",
+                "1688_offer_fingerprint": "062a2cbef9f8da8af384946c305ca3852433a3f4bd639a30120e878baefbc8e8"
             },
             {
                 "型號名稱": "深卡其,均碼 22 - 25 公分",
@@ -174,14 +198,18 @@
                 "建議補貨數量": 32,
                 "阿里巴巴商品名稱": "黑白中筒纯色堆堆袜i女袜袜子女棉袜孕妇宽口袜月子袜休闲百搭",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682133351130.html",
-                "1688_sku_name": "浅咖",
+                "1688_sku_name": "淺咖&gt",
                 "1688_offer_id": "682133351130",
-                "1688_sku_id": "",
+                "1688_sku_id": "5977577080995",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "淺咖,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T07:40:19Z",
+                "1688_offer_fingerprint": "062a2cbef9f8da8af384946c305ca3852433a3f4bd639a30120e878baefbc8e8"
             },
             {
                 "型號名稱": "奶白,均碼 22 - 25 公分",
@@ -213,14 +241,18 @@
                 "建議補貨數量": 77,
                 "阿里巴巴商品名稱": "黑白中筒纯色堆堆袜i女袜袜子女棉袜孕妇宽口袜月子袜休闲百搭",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682133351130.html",
-                "1688_sku_name": "深咖",
+                "1688_sku_name": "深咖&gt",
                 "1688_offer_id": "682133351130",
-                "1688_sku_id": "",
+                "1688_sku_id": "5977577080997",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "深咖,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T07:40:42Z",
+                "1688_offer_fingerprint": "062a2cbef9f8da8af384946c305ca3852433a3f4bd639a30120e878baefbc8e8"
             }
         ],
         "總月銷量": "1758",
@@ -670,8 +702,13 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/789483650611.html",
                 "1688_offer_id": "789483650611",
                 "1688_sku_name": "奶白",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5389631361493",
+                "1688_spec_text": "奶白,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "5b7147b75a4b69875d3f0f7175cfcf38c44da08fe33dae06355bbb4dc8ef929c"
             },
             {
                 "型號名稱": "藍色",
@@ -684,9 +721,14 @@
                 "阿里巴巴商品名稱": "袜子女夏天Hello短筒学院风女船袜糖果色隐形烫印字母女袜棉短袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/789483650611.html",
                 "1688_offer_id": "789483650611",
-                "1688_sku_name": "蓝色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "藍色",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5389631361497",
+                "1688_spec_text": "藍色,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:32Z",
+                "1688_offer_fingerprint": "5b7147b75a4b69875d3f0f7175cfcf38c44da08fe33dae06355bbb4dc8ef929c"
             },
             {
                 "型號名稱": "黃色",
@@ -861,9 +903,15 @@
                 "阿里巴巴商品名稱": "夏天女生袜子无骨堆堆月子袜日系马卡龙色松口春夏薄款简约中筒袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/733604212189.html",
                 "1688_offer_id": "733604212189",
-                "1688_sku_name": "浅绿",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "淺綠",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5074500516666",
+                "1688_spec_text": "淺綠",
+                "1688_sku_second_name": "",
+                "1688_verified_at": "2026-08-08T06:59:57Z",
+                "1688_offer_fingerprint": "cb2f70ba5402c1c568b2239de3703ee027a108ab7e1ef48707624a81db211d93",
+                "1688_last_price_cny": 3.2
             },
             {
                 "型號名稱": "淺粉",
@@ -913,8 +961,14 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/733604212189.html",
                 "1688_offer_id": "733604212189",
                 "1688_sku_name": "奶白",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5074500516661",
+                "1688_spec_text": "奶白",
+                "1688_sku_second_name": "",
+                "1688_verified_at": "2026-08-08T06:07:32Z",
+                "1688_offer_fingerprint": "cb2f70ba5402c1c568b2239de3703ee027a108ab7e1ef48707624a81db211d93",
+                "1688_last_price_cny": 3.2
             },
             {
                 "型號名稱": "奶黃",
@@ -1041,13 +1095,17 @@
                 "阿里巴巴商品名稱": "春夏袜子女中短筒袜字母刺绣精梳棉ins潮低帮短袜学院风袜子批发",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/711152018640.html",
                 "1688_offer_id": "711152018640",
-                "1688_sku_id": "",
+                "1688_sku_id": "4986126621933",
                 "1688_sku_name": "黑色",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "黑色,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:30Z",
+                "1688_offer_fingerprint": "2bc4c68f9a1a9bbdaf9937598e0c79b56e0338a5cbb65221db34d726373bdcd9"
             },
             {
                 "型號名稱": "白色",
@@ -1934,10 +1992,15 @@
                 "阿里巴巴商品名稱": "可爱卡通刺绣白色袜子春夏ins潮韩国jk棉袜条纹女中筒日系堆堆袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/643208627289.html",
                 "1688_offer_id": "643208627289",
-                "1688_sku_name": "长耳朵",
+                "1688_sku_name": "長耳朵",
                 "庫存同步時間": "2026-08-04 01:51:08",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4793485826742",
+                "1688_spec_text": "長耳朵,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "babb8d24e38b6a758a4d0fbf25c726d5120c1ddba1cbb31606e3a02bc981c082"
             },
             {
                 "型號名稱": "胖熊",
@@ -1952,8 +2015,13 @@
                 "1688_offer_id": "643208627289",
                 "1688_sku_name": "胖熊",
                 "庫存同步時間": "2026-08-04 01:51:08",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4793485826735",
+                "1688_spec_text": "胖熊,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "babb8d24e38b6a758a4d0fbf25c726d5120c1ddba1cbb31606e3a02bc981c082"
             },
             {
                 "型號名稱": "鬱金香",
@@ -3113,12 +3181,16 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/616320098064.html",
                 "1688_offer_id": "616320098064",
                 "1688_sku_name": "卡其",
-                "1688_sku_id": "",
+                "1688_sku_id": "4516101491342",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "卡其,34-39码,可以掛",
+                "1688_sku_second_name": "34-39码",
+                "1688_verified_at": "2026-08-08T06:15:03Z",
+                "1688_offer_fingerprint": "14f58431dc513433f0876c84d37f41e43bb4b163b393bb6b46ddb28be1c9048f"
             },
             {
                 "型號名稱": "藍色",
@@ -3290,13 +3362,17 @@
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/616312603522.html",
                 "1688_offer_id": "616312603522",
-                "1688_sku_id": "",
-                "1688_sku_name": "一字笑绿色",
+                "1688_sku_id": "4520717883580",
+                "1688_sku_name": "一字笑綠色",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "一字笑綠色,可以掛",
+                "1688_sku_second_name": "可以掛",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "ba896660c418e4977be49f418d0285d796a073914e59270a3bda6db8b35f41b3"
             },
             {
                 "型號名稱": "粉色",
@@ -3836,8 +3912,13 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/706987013585.html",
                 "1688_offer_id": "706987013585",
                 "1688_sku_name": "奶白",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "6205839759071",
+                "1688_spec_text": "奶白,均码【收藏加购优先发货】",
+                "1688_sku_second_name": "均码【收藏加购优先发货】",
+                "1688_verified_at": "2026-08-08T06:07:32Z",
+                "1688_offer_fingerprint": "be5c800ac9f039a6f7f8831fe8cf9b7b150ce01fc76bf99a420caa1e1f37a88d"
             },
             {
                 "型號名稱": "香芋紫",
@@ -4733,10 +4814,15 @@
                 "阿里巴巴商品名稱": "袜子女春夏款糖果色卷边中筒袜 韩国ins潮日系可爱堆堆袜纯棉短袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/675106205147.html",
                 "1688_offer_id": "675106205147",
-                "1688_sku_name": "浅灰",
+                "1688_sku_name": "淺灰",
                 "庫存同步時間": "2026-08-04 01:49:12",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5031073403797",
+                "1688_spec_text": "淺灰,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:32Z",
+                "1688_offer_fingerprint": "acff94e8e3137e6eaead5a1615766e24d0ed2cb94bcd0e04106b88e87da317e9"
             },
             {
                 "型號名稱": "黑色",
@@ -4846,10 +4932,15 @@
                 "阿里巴巴商品名稱": "袜子女春夏款糖果色卷边中筒袜 韩国ins潮日系可爱堆堆袜纯棉短袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/675106205147.html",
                 "1688_offer_id": "675106205147",
-                "1688_sku_name": "浅粉",
+                "1688_sku_name": "淺粉",
                 "庫存同步時間": "2026-08-04 01:49:12",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5909029926029",
+                "1688_spec_text": "淺粉,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:15:04Z",
+                "1688_offer_fingerprint": "acff94e8e3137e6eaead5a1615766e24d0ed2cb94bcd0e04106b88e87da317e9"
             },
             {
                 "型號名稱": "淺寶藍",
@@ -4862,9 +4953,14 @@
                 "阿里巴巴商品名稱": "袜子女春夏款糖果色卷边中筒袜 韩国ins潮日系可爱堆堆袜纯棉短袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/675106205147.html",
                 "1688_offer_id": "675106205147",
-                "1688_sku_name": "浅宝蓝",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "淺寶藍",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5038609559673",
+                "1688_spec_text": "淺寶藍,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:32Z",
+                "1688_offer_fingerprint": "acff94e8e3137e6eaead5a1615766e24d0ed2cb94bcd0e04106b88e87da317e9"
             }
         ],
         "總月銷量": "168",
@@ -6276,10 +6372,14 @@
                 "阿里巴巴商品名稱": "适用于苹果17金属手机壳新款iPhone16镜头防摔15ProMax肤感保护套",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/661385649783.html",
                 "1688_offer_id": "661385649783",
-                "1688_sku_name": "远峰蓝",
-                "1688_sku_second_name": "iPhone13/14通用",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "远峰藍",
+                "1688_sku_second_name": "iphone13/14通用",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5996998447235",
+                "1688_spec_text": "远峰藍,iphone13/14通用",
+                "1688_verified_at": "2026-08-08T06:07:32Z",
+                "1688_offer_fingerprint": "f34e5826bbebf800c83ae610b4e17137dff389adc6c8ff2859d77cf5ef08adc0"
             },
             {
                 "型號名稱": "藍色軍規,13 pro",
@@ -6477,8 +6577,14 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/695219979754.html",
                 "1688_offer_id": "695219979754",
                 "1688_sku_name": "黑色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5102026642399",
+                "1688_spec_text": "黑色,不含掛件",
+                "1688_sku_second_name": "不含掛件",
+                "1688_verified_at": "2026-08-08T06:15:04Z",
+                "1688_offer_fingerprint": "b11ea5f40d57ac27ad862472b74482a51224421ea1aca9bc7cdfbc2d3c198be0",
+                "1688_last_price_cny": 35.0
             },
             {
                 "型號名稱": "白色",
@@ -6521,9 +6627,15 @@
                 "阿里巴巴商品名稱": "新款书包女韩版简约小学生原宿风日系校园大容量初高中学院双肩包",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/695219979754.html",
                 "1688_offer_id": "695219979754",
-                "1688_sku_name": "深蓝色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "深藍色",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5102026642401",
+                "1688_spec_text": "深藍色,不含掛件",
+                "1688_sku_second_name": "不含掛件",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "b11ea5f40d57ac27ad862472b74482a51224421ea1aca9bc7cdfbc2d3c198be0",
+                "1688_last_price_cny": 35.0
             },
             {
                 "型號名稱": "紫色",
@@ -6620,9 +6732,15 @@
                 "阿里巴巴商品名稱": "suxinaimin秋冬新款马卡龙日系袜子小清新韩国奶油色诸暨中筒棉袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/697090983915.html",
                 "1688_offer_id": "697090983915",
-                "1688_sku_name": "奶绿",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "奶綠",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4938069384919",
+                "1688_spec_text": "奶綠,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:15:04Z",
+                "1688_offer_fingerprint": "896f5a80a4bd3e5ffd9a50782ab496f1947780a4fe29dfea65e7033f05a64dba",
+                "1688_last_price_cny": 4.0
             },
             {
                 "型號名稱": "奶粉",
@@ -7343,9 +7461,14 @@
                 "阿里巴巴商品名稱": "新款日系糖果色后跟刺绣 ins卡通动物青蛙兔子熊猫棉精梳棉船袜",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/761241012066.html",
                 "1688_offer_id": "761241012066",
-                "1688_sku_name": "绿色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_sku_name": "綠色",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5246044176762",
+                "1688_spec_text": "綠色,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:15:04Z",
+                "1688_offer_fingerprint": "2430d3a1d4c1badf7d8c897d5163f22d74c50ff5e0320862e246166fcaa3f6e8"
             }
         ],
         "總月銷量": "113",
@@ -9450,8 +9573,14 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/724231896832.html",
                 "1688_offer_id": "724231896832",
                 "1688_sku_name": "白色一双",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5205952231199",
+                "1688_spec_text": "白色一双,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "3f72da8f860a64a9a9d8fb009fcafb1969d5f253537e1cc1676f7d09cfc66648",
+                "1688_last_price_cny": 3.1
             },
             {
                 "型號名稱": "灰色",
@@ -13406,10 +13535,14 @@
                 "阿里巴巴商品名稱": "ins外星怪兽适用iphone14苹果15手机壳13promax个性卡通16Pro华为",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/749300142184.html",
                 "1688_offer_id": "749300142184",
-                "1688_sku_name": "米白 怪兽大派对",
+                "1688_sku_name": "米白怪兽大派对",
                 "1688_sku_second_name": "17promax",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "6106310451270",
+                "1688_spec_text": "米白怪兽大派对,17promax",
+                "1688_verified_at": "2026-08-08T06:15:03Z",
+                "1688_offer_fingerprint": "13da43be8fda9c517621ccaa7173c8c4e88f5af15971b6fbeeb37ee2a89c222f"
             },
             {
                 "型號名稱": "怪獸大派對,17 Air",
@@ -14906,8 +15039,13 @@
                 "1688_offer_id": "761705923692",
                 "1688_sku_name": "奶白",
                 "庫存同步時間": "2026-08-04 01:52:35",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5421463503466",
+                "1688_spec_text": "奶白,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:32Z",
+                "1688_offer_fingerprint": "76217b560dd89cd6a263f5443668e6e1c0d9282e4cd45069246bbe9da36c2497"
             },
             {
                 "型號名稱": "米灰",
@@ -15115,8 +15253,13 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/593901736077.html",
                 "1688_offer_id": "593901736077",
                 "1688_sku_name": "后跟狗狗黑色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4113053525793",
+                "1688_spec_text": "后跟狗狗黑色,帶纸卡",
+                "1688_sku_second_name": "帶纸卡",
+                "1688_verified_at": "2026-08-08T06:15:03Z",
+                "1688_offer_fingerprint": "7516ea946c9e5f53527d91bc8abdfbd5100aed8949bbe078f9629c318aa62c15"
             }
         ],
         "總月銷量": "68",
@@ -15370,10 +15513,15 @@
                 "阿里巴巴商品名稱": "镜面ins可爱猫咪适用14Pro Max苹果15手机壳iPhone13韩风12挂绳11",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/745561940382.html",
                 "1688_offer_id": "745561940382",
-                "1688_sku_name": "镜面 猫咪围剿",
+                "1688_sku_name": "鏡面貓咪围剿",
                 "1688_sku_second_name": "12/12pro",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5315999803975",
+                "1688_spec_text": "鏡面貓咪围剿,12/12pro",
+                "1688_verified_at": "2026-08-08T06:15:04Z",
+                "1688_offer_fingerprint": "dfb217ac9ed714e676e0735cb009202164988d92b8db379b38aab2d2f11af16c",
+                "1688_last_price_cny": 5.9
             },
             {
                 "型號名稱": "鏡面貓咪(單殼),12 pro Max",
@@ -15682,8 +15830,15 @@
                 "阿里巴巴商品名稱": "日系莫兰迪简约纯色内裤女士中腰透气纯棉裆包臀薄款学生三角裤",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/674778394852.html",
                 "1688_offer_id": "674778394852",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5023695886901",
+                "1688_sku_name": "白色",
+                "1688_spec_text": "白色,m",
+                "1688_sku_second_name": "m",
+                "1688_verified_at": "2026-08-08T06:15:04Z",
+                "1688_offer_fingerprint": "29c5ea07c94a854cf422dfe5f56ea4a7191901a10dd245e2cebc9c638480090e",
+                "1688_last_price_cny": 2.35
             },
             {
                 "型號名稱": "白色,L",
@@ -15766,8 +15921,15 @@
                 "阿里巴巴商品名稱": "日系莫兰迪简约纯色内裤女士中腰透气纯棉裆包臀薄款学生三角裤",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/674778394852.html",
                 "1688_offer_id": "674778394852",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5023695886913",
+                "1688_sku_name": "淺藍色",
+                "1688_spec_text": "淺藍色,m",
+                "1688_sku_second_name": "m",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "29c5ea07c94a854cf422dfe5f56ea4a7191901a10dd245e2cebc9c638480090e",
+                "1688_last_price_cny": 2.35
             },
             {
                 "型號名稱": "淺藍色,L",
@@ -26898,8 +27060,13 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/616215558812.html",
                 "1688_offer_id": "616215558812",
                 "1688_sku_name": "黑色",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4345706233077",
+                "1688_spec_text": "黑色",
+                "1688_sku_second_name": "",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "1205a8640e8d3994cd86fd0aa586679c9f0dd211d55a214566297b3a4f533f2c"
             },
             {
                 "型號名稱": "淺粉色",
@@ -84603,15 +84770,19 @@
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/728631638689.html",
                 "1688_offer_id": "728631638689",
-                "1688_sku_id": "",
-                "1688_sku_name": "浅粉",
+                "1688_sku_id": "5225173455371",
+                "1688_sku_name": "淺粉",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
                 "月銷量": "22",
                 "建議補貨數量": 48,
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "淺粉,均码",
+                "1688_sku_second_name": "均码",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "852ed80ad1eccfd1a6464e1467214b1fb2877493d3fcd42e71a3c7fb3a4876c0"
             },
             {
                 "型號名稱": "淺橘",
@@ -84673,15 +84844,19 @@
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/755394582926.html",
                 "1688_offer_id": "755394582926",
-                "1688_sku_id": "",
+                "1688_sku_id": "5613311412370",
                 "1688_sku_name": "黑色",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
                 "月銷量": "32",
                 "建議補貨數量": 37,
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "黑色,均码.",
+                "1688_sku_second_name": "均码.",
+                "1688_verified_at": "2026-08-08T06:15:03Z",
+                "1688_offer_fingerprint": "78e430f5d47608612271791ba6b0c9d76b27f96a33b21a3a718b4aa4fca4a2ae"
             },
             {
                 "型號名稱": "純白",
@@ -84692,15 +84867,19 @@
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/755394582926.html",
                 "1688_offer_id": "755394582926",
-                "1688_sku_id": "",
-                "1688_sku_name": "纯白",
+                "1688_sku_id": "5613311412372",
+                "1688_sku_name": "純白",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
                 "月銷量": "59",
                 "建議補貨數量": 49,
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "純白,均码.",
+                "1688_sku_second_name": "均码.",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "78e430f5d47608612271791ba6b0c9d76b27f96a33b21a3a718b4aa4fca4a2ae"
             },
             {
                 "型號名稱": "奶白",
@@ -84853,15 +85032,19 @@
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/765651221557.html",
                 "1688_offer_id": "765651221557",
-                "1688_sku_id": "",
+                "1688_sku_id": "5458557094621",
                 "1688_sku_name": "黑色",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
                 "月銷量": "23",
                 "建議補貨數量": 48,
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_spec_text": "黑色,均码.",
+                "1688_sku_second_name": "均码.",
+                "1688_verified_at": "2026-08-08T06:07:31Z",
+                "1688_offer_fingerprint": "4a83d3ca13995872c12bc9ae0b48b1d9a63e9503bb482599af907b43b3c21cec"
             },
             {
                 "型號名稱": "白色",
