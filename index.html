@@ -7,7 +7,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
 </head>
-<body>
+<body class="inventory-home">
     <header>
         <div class="header-content">
             <div class="logo-container">
@@ -21,6 +21,10 @@
                     <i class="fas fa-box-open"></i>
                     到貨入庫
                 </a>
+                <a class="btn-secondary header-link-button" href="/sku-mapping.html">
+                    <i class="fas fa-link"></i>
+                    1688 SKU Mapping
+                </a>
                 <a class="btn-secondary header-link-button" href="/ads.html">
                     <i class="fas fa-bullhorn"></i>
                     前往廣告分析
@@ -30,11 +34,6 @@
                     <span>庫存監控中</span>
                 </div>
             </div>
-        </div>
-        <div class="header-wave">
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 100">
-                <path fill="#ffffff" fill-opacity="1" d="M0,64L48,69.3C96,75,192,85,288,80C384,75,480,53,576,48C672,43,768,53,864,58.7C960,64,1056,64,1152,56C1248,48,1344,32,1392,24L1440,16L1440,100L1392,100C1344,100,1248,100,1152,100C1056,100,960,100,864,100C768,100,672,100,576,100C480,100,384,100,288,100C192,100,96,100,48,100L0,100Z"></path>
-            </svg>
         </div>
     </header>
 
@@ -89,12 +88,12 @@
                 <!-- 狀態指示器 -->
                 <div class="dashboard-status-card" id="overallStatusCard">
                     <div class="status-icon-wrapper">
-                        <i class="fas fa-check-circle" id="statusIcon"></i>
+                        <i class="fas fa-circle-info" id="statusIcon"></i>
                     </div>
                     <div class="status-info">
                         <div class="status-title">目前狀態</div>
-                        <div class="status-value" id="overallStatusText">健康</div>
-                        <div class="status-desc" id="overallStatusDesc">平均庫存足夠支撐 3 個月以上</div>
+                        <div class="status-value" id="overallStatusText">尚未分析</div>
+                        <div class="status-desc" id="overallStatusDesc">執行搜尋後顯示整體庫存狀態</div>
                     </div>
                 </div>
 
@@ -105,8 +104,8 @@
                             <i class="fas fa-exclamation-triangle"></i>
                         </div>
                         <div class="metric-info">
-                            <div class="metric-value text-danger" id="restockModelsCount">0</div>
-                            <div class="metric-label" id="restockModelsLabel">需補貨 / 共 0 型號</div>
+                            <div class="metric-value text-danger" id="restockModelsCount">—</div>
+                            <div class="metric-label" id="restockModelsLabel">搜尋後顯示補貨數</div>
                         </div>
                     </div>
                     
@@ -115,7 +114,7 @@
                             <i class="fas fa-chart-line"></i>
                         </div>
                         <div class="metric-info">
-                            <div class="metric-value" id="dashboardTotalSales">0</div>
+                            <div class="metric-value" id="dashboardTotalSales">—</div>
                             <div class="metric-label">總月銷量</div>
                         </div>
                     </div>
@@ -125,7 +124,7 @@
                             <i class="fas fa-box-open"></i>
                         </div>
                         <div class="metric-info">
-                            <div class="metric-value" id="dashboardTotalStock">0</div>
+                            <div class="metric-value" id="dashboardTotalStock">—</div>
                             <div class="metric-label">總庫存量</div>
                         </div>
                     </div>
@@ -135,7 +134,7 @@
                             <i class="fas fa-calendar-alt"></i>
                         </div>
                         <div class="metric-info">
-                            <div class="metric-value" id="dashboardAvgLevel">-</div>
+                            <div class="metric-value" id="dashboardAvgLevel">—</div>
                             <div class="metric-label">平均庫存水位</div>
                         </div>
                     </div>

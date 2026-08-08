@@ -1,0 +1,8 @@
+{
+  "offer_id": "100",
+  "status": "ok",
+  "skus": [
+    {"sku_id": "sku-white", "spec_text": "白色", "price": 1.2, "stock": 99},
+    {"sku_id": "sku-black", "spec_text": "黑色", "price": 1.2, "stock": 88}
+  ]
+}

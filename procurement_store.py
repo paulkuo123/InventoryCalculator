@@ -69,6 +69,9 @@ class ProcurementStore:
                     alibaba_last_price_cny REAL,
                     alibaba_last_checked_at TEXT NOT NULL DEFAULT '',
                     alibaba_binding_status TEXT NOT NULL DEFAULT 'missing',
+                    alibaba_mapping_status TEXT NOT NULL DEFAULT 'approved',
+                    alibaba_offer_fingerprint TEXT NOT NULL DEFAULT '',
+                    alibaba_spec_text TEXT NOT NULL DEFAULT '',
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL,
                     PRIMARY KEY (shopee_product_id, shopee_model_id)
@@ -156,6 +159,21 @@ class ProcurementStore:
                     "ALTER TABLE alibaba_bindings "
                     "ADD COLUMN alibaba_sku_second_name TEXT NOT NULL DEFAULT ''"
                 )
+            if "alibaba_mapping_status" not in binding_columns:
+                conn.execute(
+                    "ALTER TABLE alibaba_bindings "
+                    "ADD COLUMN alibaba_mapping_status TEXT NOT NULL DEFAULT 'approved'"
+                )
+            if "alibaba_offer_fingerprint" not in binding_columns:
+                conn.execute(
+                    "ALTER TABLE alibaba_bindings "
+                    "ADD COLUMN alibaba_offer_fingerprint TEXT NOT NULL DEFAULT ''"
+                )
+            if "alibaba_spec_text" not in binding_columns:
+                conn.execute(
+                    "ALTER TABLE alibaba_bindings "
+                    "ADD COLUMN alibaba_spec_text TEXT NOT NULL DEFAULT ''"
+                )
 
     def upsert_binding(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         product_id = normalize_identifier(payload.get("productId") or payload.get("shopee_product_id"))
@@ -172,6 +190,11 @@ class ProcurementStore:
         package_multiple = self._positive_int(payload.get("alibabaPackageMultiple") or payload.get("alibaba_package_multiple"), 1)
         last_price = self._optional_float(payload.get("alibabaLastPriceCny") or payload.get("alibaba_last_price_cny"))
         status = self.binding_status(offer_id, sku_id)
+        mapping_status = str(
+            payload.get("alibabaMappingStatus")
+            or payload.get("alibaba_mapping_status")
+            or ("approved" if sku_id else "missing")
+        ).strip() or "missing"
         ts = now_ts()
 
         binding = {
@@ -192,6 +215,17 @@ class ProcurementStore:
             "alibaba_last_price_cny": last_price,
             "alibaba_last_checked_at": str(payload.get("alibabaLastCheckedAt") or payload.get("alibaba_last_checked_at") or "").strip(),
             "alibaba_binding_status": status,
+            "alibaba_mapping_status": mapping_status,
+            "alibaba_offer_fingerprint": str(
+                payload.get("alibabaOfferFingerprint")
+                or payload.get("alibaba_offer_fingerprint")
+                or ""
+            ).strip(),
+            "alibaba_spec_text": str(
+                payload.get("alibabaSpecText")
+                or payload.get("alibaba_spec_text")
+                or ""
+            ).strip(),
             "created_at": ts,
             "updated_at": ts,
         }
@@ -204,12 +238,14 @@ class ProcurementStore:
                     alibaba_product_name, alibaba_product_url, alibaba_offer_id, alibaba_sku_id,
                     alibaba_sku_name, alibaba_sku_second_name, alibaba_min_order_qty, alibaba_package_multiple,
                     alibaba_last_price_cny, alibaba_last_checked_at, alibaba_binding_status,
+                    alibaba_mapping_status, alibaba_offer_fingerprint, alibaba_spec_text,
                     created_at, updated_at
                 ) VALUES (
                     :shopee_product_id, :shopee_model_id, :shopee_product_name, :shopee_model_name,
                     :alibaba_product_name, :alibaba_product_url, :alibaba_offer_id, :alibaba_sku_id,
                     :alibaba_sku_name, :alibaba_sku_second_name, :alibaba_min_order_qty, :alibaba_package_multiple,
                     :alibaba_last_price_cny, :alibaba_last_checked_at, :alibaba_binding_status,
+                    :alibaba_mapping_status, :alibaba_offer_fingerprint, :alibaba_spec_text,
                     :created_at, :updated_at
                 )
                 ON CONFLICT(shopee_product_id, shopee_model_id) DO UPDATE SET
@@ -226,6 +262,9 @@ class ProcurementStore:
                     alibaba_last_price_cny = excluded.alibaba_last_price_cny,
                     alibaba_last_checked_at = excluded.alibaba_last_checked_at,
                     alibaba_binding_status = excluded.alibaba_binding_status,
+                    alibaba_mapping_status = excluded.alibaba_mapping_status,
+                    alibaba_offer_fingerprint = excluded.alibaba_offer_fingerprint,
+                    alibaba_spec_text = excluded.alibaba_spec_text,
                     updated_at = excluded.updated_at
                 """,
                 binding,
@@ -527,6 +566,9 @@ class ProcurementStore:
             "alibaba_min_order_qty": 1,
             "alibaba_package_multiple": 1,
             "alibaba_last_price_cny": None,
+            "alibaba_mapping_status": "missing",
+            "alibaba_offer_fingerprint": "",
+            "alibaba_spec_text": "",
             "line_amount_cny": 0,
             "status": "skipped" if suggested_qty <= 0 else "blocked",
             "blocker_reason": "不需要補貨" if suggested_qty <= 0 else "缺少 1688 綁定",
@@ -554,6 +596,9 @@ class ProcurementStore:
             "alibaba_min_order_qty": self._positive_int(binding.get("alibabaMinOrderQty"), 1),
             "alibaba_package_multiple": self._positive_int(binding.get("alibabaPackageMultiple"), 1),
             "alibaba_last_price_cny": binding.get("alibabaLastPriceCny"),
+            "alibaba_mapping_status": binding.get("alibabaMappingStatus", "approved"),
+            "alibaba_offer_fingerprint": binding.get("alibabaOfferFingerprint", ""),
+            "alibaba_spec_text": binding.get("alibabaSpecText", ""),
         })
 
         if not base["alibaba_offer_id"]:
@@ -561,6 +606,9 @@ class ProcurementStore:
             return base
         if not base["alibaba_sku_id"]:
             base["blocker_reason"] = "缺少 1688 skuId"
+            return base
+        if base["alibaba_mapping_status"] != "approved":
+            base["blocker_reason"] = f"SKU mapping 狀態為 {base['alibaba_mapping_status']}"
             return base
         if base["alibaba_last_price_cny"] is None:
             base["blocker_reason"] = "價格待確認"
@@ -640,6 +688,9 @@ class ProcurementStore:
             "alibabaLastPriceCny": binding.get("alibaba_last_price_cny"),
             "alibabaLastCheckedAt": binding.get("alibaba_last_checked_at", ""),
             "alibabaBindingStatus": binding.get("alibaba_binding_status", "missing"),
+            "alibabaMappingStatus": binding.get("alibaba_mapping_status", "approved"),
+            "alibabaOfferFingerprint": binding.get("alibaba_offer_fingerprint", ""),
+            "alibabaSpecText": binding.get("alibaba_spec_text", ""),
         }
 
     @staticmethod

@@ -46,6 +46,9 @@ def build():
         f'ads.html{separator}.',
         f'ads.js{separator}.',
         f'ads.css{separator}.',
+        f'sku-mapping.html{separator}.',
+        f'sku-mapping.js{separator}.',
+        f'sku-mapping.css{separator}.',
         f'version.py{separator}.'  # 加入 version.py 以便執行檔能檢查版本
     ]
 

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>1688 SKU Mapping 工作台</title>
+  <link rel="stylesheet" href="sku-mapping.css">
+  <style>.select-row{grid-column:1/-1;color:#475569;font-size:.88rem}.source-placeholder{width:100px;height:100px;border-radius:10px;background:#eef3f8;display:grid;place-items:center;color:#789}</style>
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <div class="eyebrow">莉莉安蝦皮庫存管理系統</div>
+      <h1>1688 SKU Mapping 工作台</h1>
+      <p>先掃描同一個 1688 商品頁，再依安全分級審核 SKU；未核准項目不會進入購物車。</p>
+    </div>
+    <nav><a href="/">庫存首頁</a><a href="/inbound.html">到貨入庫</a></nav>
+  </header>
+
+  <main class="page-shell">
+    <section class="toolbar panel">
+      <div class="toolbar-row">
+        <button id="scanRestock" class="primary">掃描需補貨型號</button>
+        <button id="scanAll">掃描全部有 URL 型號</button>
+        <button id="selectGreen">選取本頁綠色項目</button>
+        <button id="batchApprove" class="primary">批次核准選取</button>
+        <label class="check"><input id="forceScan" type="checkbox"> 強制重抓 1688</label>
+        <label class="check"><input id="useAi" type="checkbox" checked> AI 初判</label>
+        <span id="jobStatus" class="status"></span>
+      </div>
+      <div class="filters">
+        <input id="query" type="search" placeholder="搜尋商品、型號或商品 ID">
+        <select id="status"><option value="review">待處理</option><option value="deferred">稍後處理</option><option value="all">全部</option><option value="pending">待人工核准</option><option value="approved">已核准</option><option value="stale">已失效</option><option value="no_match">無匹配</option><option value="discontinued">停售</option></select>
+        <select id="tier"><option value="">全部安全分級</option><option value="green">綠色：唯一精確</option><option value="yellow">黃色：人工比較</option><option value="red">紅色：阻擋</option></select>
+        <label class="check"><input id="restockOnly" type="checkbox" checked> 只看需補貨</label>
+        <button id="reload">重新載入</button>
+      </div>
+    </section>
+
+    <section id="summary" class="metrics panel"></section>
+    <section id="message" class="message" aria-live="polite"></section>
+    <section id="queue" class="queue"></section>
+    <div id="empty" class="empty panel" hidden>目前沒有符合篩選條件的型號。</div>
+  </main>
+  <script src="sku-mapping.js?v=20260808-tier4"></script>
+</body>
+</html>
