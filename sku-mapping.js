@@ -33,12 +33,12 @@
     const manualHint = item.status === 'stale'
       ? '這筆目前只有舊快照候選；請先重新掃描 1688，確認最新 SKU ID 與完整規格後再核准。'
       : item.existing_sku_id
-      ? '人工從完整 SKU 清單選擇的規格優先級最高；核准後會直接更新目前 mapping。'
-      : (candidates.length ? '候選僅供參考；為避免誤配，也可以從完整 SKU 清單重新選擇。' : '先重新掃描此 1688 商品；若規則仍無法配對，可從完整 SKU 清單手動指定。');
+      ? '人工從完整 SKU 清單選擇的規格優先級最高；點擊下方清單載入後，按綠色按鈕核准即可更新目前 mapping。'
+      : (candidates.length ? '候選僅供參考；點擊下方完整 SKU 清單即可載入並重新選擇。' : '先重新掃描此 1688 商品；也可以點擊下方清單載入完整 SKU 手動指定。');
     const manualTools = `<div class="manual-tools">
       <div class="manual-hint">${manualHint}</div>
-      <div class="actions">${needsRescan ? '<button class="primary rescan" data-action="rescan">重新掃描此商品</button>' : ''}<button data-action="load_catalog">從完整 SKU 清單選擇</button></div>
-      <div class="catalog-picker" hidden><select class="catalog-select"><option value="">尚未載入，請先按上方按鈕</option></select></div>
+      <div class="actions">${needsRescan ? '<button class="primary rescan" data-action="rescan">重新掃描此商品</button>' : ''}</div>
+      <div class="catalog-picker"><select class="catalog-select"><option value="">尚未載入；點擊後讀取完整 SKU</option></select></div>
     </div>`;
     const existing = item.existing_sku_id
       ? `<div class="existing-mapping"><strong>現有 mapping</strong><br>SKU ID：${esc(item.existing_sku_id)}<br>${esc(item.existing_sku_name || item.existing_second_name || '未命名規格')}<br><span>${esc(item.mapping_status || 'approved')}</span></div>`
@@ -108,10 +108,9 @@
     if (!item) return;
     const picker = cardElement.querySelector('.catalog-picker');
     const select = cardElement.querySelector('.catalog-select');
-    const button = cardElement.querySelector('[data-action="load_catalog"]');
     if (!picker || !select) return;
-    if (button) button.disabled = true;
-    select.disabled = true;
+    if (select.dataset.loaded === 'true' || select.dataset.loading === 'true') return;
+    select.dataset.loading = 'true';
     select.innerHTML = '<option value="">讀取完整 SKU 清單中…</option>';
     try {
       const params = new URLSearchParams({ productId: item.product_id, modelId: item.model_id });
@@ -131,16 +130,16 @@
       }
       select.innerHTML = `<option value="">請選擇要核准的 SKU（共 ${skus.length} 個）</option>` + skus.map(sku => `<option value="${esc(sku.sku_id)}">${esc(sku.spec_text || sku.sku_name || sku.sku_id)}｜SKU ID：${esc(sku.sku_id)}</option>`).join('');
       select.disabled = false;
-      picker.hidden = false;
+      select.dataset.loaded = 'true';
       message('已載入完整 SKU 清單。請確認完整規格後再核准，系統只接受此快照中存在的 SKU ID。', 'success');
     } catch (error) {
-      picker.hidden = false;
       const detail = error.name === 'AbortError' ? '完整 SKU 清單載入逾時，請重新掃描此商品。' : error.message;
-      select.innerHTML = `<option value="">${esc(detail)}</option>`;
-      select.disabled = true;
+      select.innerHTML = `<option value="">${esc(detail)}；移入或點擊此清單重試</option>`;
+      select.disabled = false;
+      select.dataset.loaded = 'false';
       message(detail, 'error');
     } finally {
-      if (button) button.disabled = false;
+      select.dataset.loading = 'false';
     }
   }
 
@@ -212,6 +211,11 @@
   }
 
   $('queue').addEventListener('click', event => {
+    const catalogSelect = event.target.closest('.catalog-select');
+    if (catalogSelect && catalogSelect.dataset.loaded !== 'true' && catalogSelect.dataset.loading !== 'true') {
+      loadCatalog(catalogSelect.closest('.card'));
+      return;
+    }
     const candidate = event.target.closest('.candidate');
     if (candidate) { const parent = candidate.closest('.card'); parent.querySelectorAll('.candidate').forEach(node => node.classList.remove('selected')); candidate.classList.add('selected'); return; }
     const button = event.target.closest('button[data-action]');
