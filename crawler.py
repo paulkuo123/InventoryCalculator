@@ -11,6 +11,8 @@ import os
 import random
 import shutil
 
+from housekeeping import prune_generated_files
+
 # Playwright 兼容層：取代 Selenium imports
 from pw_adapter import (By, WebDriverWait, EC, Keys,
                         NoSuchElementException,
@@ -695,6 +697,7 @@ class ShopeeCrawler:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             path = os.path.join(debug_dir, f"{name}_{timestamp}.png")
             self.page.screenshot(path=path, full_page=True)
+            prune_generated_files(debug_dir, ("*.png", "*.html"), keep=40)
             print(f"已保存除錯截圖: {path}")
         except Exception as e:
             print(f"保存除錯截圖失敗: {e}")
@@ -707,6 +710,7 @@ class ShopeeCrawler:
             path = os.path.join(debug_dir, f"{name}_{timestamp}.html")
             with open(path, "w", encoding="utf-8") as f:
                 f.write(self.page.content())
+            prune_generated_files(debug_dir, ("*.png", "*.html"), keep=40)
             print(f"已保存除錯 HTML: {path}")
         except Exception as e:
             print(f"保存除錯 HTML 失敗: {e}")

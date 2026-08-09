@@ -67,6 +67,7 @@
         <select id="status"><option value="review">待處理</option><option value="deferred">稍後處理</option><option value="all">全部</option><option value="pending">待人工核准</option><option value="approved">已核准</option><option value="stale">已失效</option><option value="suspected_discontinued">疑似下架</option><option value="no_match">無匹配</option><option value="discontinued">停售</option></select>
         <select id="tier"><option value="">全部安全分級</option><option value="green">綠色：唯一精確</option><option value="yellow">黃色：人工比較</option><option value="red">紅色：阻擋</option></select>
         <select id="urlPresence" aria-label="URL 狀態"><option value="with">有 URL</option><option value="without">沒有 URL</option><option value="all">全部 URL 狀態</option></select>
+        <label class="check check-strong"><input id="restockOnly" type="checkbox"> 只看目前需要補貨</label>
         <button id="reload">重新載入</button>
       </div>
       </section>
@@ -156,6 +157,6 @@
     </section>
   </div>
 
-  <script src="sku-mapping.js?v=20260809-url-presence-filter1"></script>
+  <script src="sku-mapping.js?v=20260809-live-restock1"></script>
 </body>
 </html>

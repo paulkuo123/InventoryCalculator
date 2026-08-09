@@ -516,6 +516,7 @@ class SkuMappingService:
     def __init__(self, base_dir: Optional[str] = None, db_path: Optional[str] = None):
         self.base_dir = Path(base_dir or Path(__file__).resolve().parent)
         self.golden_path = self.base_dir / GOLDEN_TABLE_FILE
+        self.shopee_path = self.base_dir / "shopee_products.json"
         self.db_path = Path(db_path or self.base_dir / MAPPING_DB_FILE)
         self._job_lock = threading.Lock()
         self._url_change_lock = threading.Lock()
@@ -791,6 +792,59 @@ class SkuMappingService:
         with self.golden_path.open(encoding="utf-8") as handle:
             value = json.load(handle)
         return value if isinstance(value, dict) else {}
+
+    def _live_inventory(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Load current Shopee inventory without falling back to Golden Table.
+
+        Golden Table owns the reviewed 1688 mapping.  Stock, monthly sales and
+        calculated replenishment quantities belong to the latest crawler
+        output, so a missing/invalid live file must stay visibly unavailable
+        instead of silently reusing an older Golden Table value.
+        """
+        source = {
+            "file": str(self.shopee_path),
+            "available": False,
+            "updatedAt": None,
+            "message": "請先執行一次蝦皮搜尋／更新，產生 shopee_products.json",
+        }
+        if not self.shopee_path.exists():
+            return {}, source
+        try:
+            with self.shopee_path.open(encoding="utf-8") as handle:
+                value = json.load(handle)
+            if not isinstance(value, dict):
+                raise ValueError("頂層格式不是商品物件")
+        except (OSError, json.JSONDecodeError, ValueError) as exc:
+            source["message"] = f"shopee_products.json 無法讀取：{exc}"
+            return {}, source
+        source.update({
+            "available": True,
+            "updatedAt": int(self.shopee_path.stat().st_mtime),
+            "message": "補貨數量來自最新 shopee_products.json",
+        })
+        return value, source
+
+    @staticmethod
+    def _live_model_lookup(shopee: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, Any]]:
+        lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
+        for product_id, product in shopee.items():
+            if not isinstance(product, dict):
+                continue
+            models = [model for model in product.get("型號", []) or [] if isinstance(model, dict)]
+            product_monthly_sales = numeric_value(product.get("總月銷量"))
+            if product_monthly_sales <= 0:
+                product_monthly_sales = sum(numeric_value(model.get("月銷量")) for model in models)
+            for model in models:
+                model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+                if not model_id:
+                    continue
+                lookup[(str(product_id), model_id)] = {
+                    "restockQty": int(numeric_value(model.get("建議補貨數量"))),
+                    "monthlySales": numeric_value(model.get("月銷量")),
+                    "productMonthlySales": product_monthly_sales,
+                    "currentStock": numeric_value(model.get("商品庫存")),
+                }
+        return lookup
 
     def migrate_legacy_mappings(self) -> Dict[str, int]:
         """Register existing name-only mappings without overwriting them."""
@@ -1221,8 +1275,16 @@ class SkuMappingService:
             handle.write("\n")
         os.replace(tmp_path, self.golden_path)
 
-    def _scope_models(self, scope: str = "all", pending_only: bool = False) -> List[Dict[str, Any]]:
+    def _scope_models(
+        self,
+        scope: str = "all",
+        pending_only: bool = False,
+        live_lookup: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
         golden = self._golden()
+        if live_lookup is None:
+            shopee, _ = self._live_inventory()
+            live_lookup = self._live_model_lookup(shopee)
         rows = []
         for product_id, product in golden.items():
             if not isinstance(product, dict):
@@ -1234,10 +1296,9 @@ class SkuMappingService:
                 url = canonical_url(model.get("阿里巴巴商品URL"))
                 if not url:
                     continue
-                try:
-                    restock_qty = int(float(model.get("建議補貨數量") or 0)) if str(model.get("建議補貨數量") or "").strip() else 0
-                except (TypeError, ValueError):
-                    restock_qty = 0
+                model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+                live = live_lookup.get((str(product_id), model_id), {})
+                restock_qty = int(live.get("restockQty") or 0)
                 if scope == "restock" and restock_qty <= 0:
                     continue
                 if pending_only:
@@ -1245,7 +1306,6 @@ class SkuMappingService:
                     current_status = str(model.get("1688_mapping_status") or ("pending" if current_sku_name else "missing")).strip()
                     if current_sku_name and current_status == "approved":
                         continue
-                model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
                 rows.append({
                     "product_id": str(product_id),
                     "model_id": model_id,
@@ -1264,7 +1324,9 @@ class SkuMappingService:
         return rows
 
     def summary(self) -> Dict[str, Any]:
-        model_lookup = self._model_lookup(self._golden())
+        shopee, inventory_source = self._live_inventory()
+        live_lookup = self._live_model_lookup(shopee)
+        model_lookup = self._model_lookup(self._golden(), live_lookup)
         with self.connect() as conn:
             # Legacy runs can leave suggestions for models that no longer have
             # an Alibaba URL.  Summary numbers should describe the URL mapping
@@ -1282,8 +1344,8 @@ class SkuMappingService:
                 tier_counts[str(row["review_tier"] or "red")] += 1
             counts = dict(counts)
             tier_counts = dict(tier_counts)
-            url_models = len(self._scope_models("all"))
-            restock_models = len(self._scope_models("restock"))
+            url_models = len(self._scope_models("all", live_lookup=live_lookup))
+            restock_models = len(self._scope_models("restock", live_lookup=live_lookup))
             total_models = sum(
                 len(product.get("型號", []) or [])
                 for product in self._golden().values()
@@ -1291,7 +1353,7 @@ class SkuMappingService:
             )
             latest = conn.execute("SELECT * FROM sku_mapping_runs ORDER BY id DESC LIMIT 1").fetchone()
         blocked_restock_qty = 0
-        for model in self._scope_models("restock"):
+        for model in self._scope_models("restock", live_lookup=live_lookup):
             status = str(model.get("mapping_status") or "missing")
             if status != "approved":
                 blocked_restock_qty += int(model.get("restock_qty") or 0)
@@ -1310,6 +1372,7 @@ class SkuMappingService:
             "stale": counts.get("stale", 0) + counts.get("suspected_discontinued", 0),
             "errors": counts.get("error", 0),
             "blockedRestockQty": blocked_restock_qty,
+            "inventorySource": inventory_source,
             "latestRun": dict(latest) if latest else None,
         }
 
@@ -1944,11 +2007,13 @@ class SkuMappingService:
             params.append(tier)
         where = " AND ".join(clauses) or "1=1"
         golden = self._golden()
-        # Queue ordering is based on the golden table's product sales metadata,
+        shopee, inventory_source = self._live_inventory()
+        live_lookup = self._live_model_lookup(shopee)
+        # Queue ordering is based on the latest Shopee crawler sales metadata,
         # so fetch the filtered rows first and paginate only after sorting.  This
         # also lets us exclude legacy suggestion rows whose model no longer has
         # an Alibaba URL.
-        model_lookup = self._model_lookup(golden)
+        model_lookup = self._model_lookup(golden, live_lookup)
         with self.connect() as conn:
             rows = conn.execute(
                 f"SELECT s.*, o.product_url, o.product_name AS snapshot_product_name, o.status AS snapshot_status, o.fingerprint "
@@ -1988,6 +2053,8 @@ class SkuMappingService:
                 item["restockQty"] = int(metadata.get("restockQty") or 0)
                 item["monthlySales"] = metadata.get("monthlySales", 0)
                 item["productMonthlySales"] = metadata.get("productMonthlySales", 0)
+                item["currentStock"] = metadata.get("currentStock", 0)
+                item["liveInventoryAvailable"] = bool(metadata.get("liveInventoryAvailable"))
                 item["productOrder"] = metadata.get("productOrder", 0)
                 item["modelOrder"] = metadata.get("modelOrder", 0)
                 item["productImageUrl"] = str(metadata.get("productImageUrl") or "")
@@ -2041,7 +2108,6 @@ class SkuMappingService:
         # find them and lead the user into the reviewed URL setup flow.
         show_without_url = (
             url_presence in {"all", "without"}
-            and not restock_only
             and not offer_id
             and not tier
             and status in {"review", "all", "missing"}
@@ -2049,6 +2115,8 @@ class SkuMappingService:
         if show_without_url:
             for (product_id, model_id), metadata in model_lookup.items():
                 if metadata.get("hasUrl"):
+                    continue
+                if restock_only and float(metadata.get("restockQty") or 0) <= 0:
                     continue
                 if query:
                     search_text = normalize_text(" ".join((
@@ -2078,9 +2146,11 @@ class SkuMappingService:
                     "candidates": [],
                     "evidence": {},
                     "has_url": False,
-                    "restockQty": 0,
+                    "restockQty": int(metadata.get("restockQty") or 0),
                     "monthlySales": metadata.get("monthlySales", 0),
                     "productMonthlySales": metadata.get("productMonthlySales", 0),
+                    "currentStock": metadata.get("currentStock", 0),
+                    "liveInventoryAvailable": bool(metadata.get("liveInventoryAvailable")),
                     "productOrder": metadata.get("productOrder", 0),
                     "modelOrder": metadata.get("modelOrder", 0),
                     "productImageUrl": str(metadata.get("productImageUrl") or ""),
@@ -2101,34 +2171,45 @@ class SkuMappingService:
         ))
         total = len(result)
         result = result[(page - 1) * page_size: page * page_size]
-        return {"status": "success", "items": result, "total": int(total), "page": page, "pageSize": page_size}
+        return {
+            "status": "success",
+            "items": result,
+            "total": int(total),
+            "page": page,
+            "pageSize": page_size,
+            "inventorySource": inventory_source,
+        }
 
     @staticmethod
-    def _model_lookup(golden: Dict[str, Any]) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    def _model_lookup(
+        golden: Dict[str, Any],
+        live_lookup: Optional[Dict[Tuple[str, str], Dict[str, Any]]] = None,
+    ) -> Dict[Tuple[str, str], Dict[str, Any]]:
+        live_lookup = live_lookup or {}
         lookup: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for product_order, (product_id, product) in enumerate(golden.items()):
             if not isinstance(product, dict):
                 continue
             product_image = str(product.get("商品圖片網址") or "")
             models = [model for model in product.get("型號", []) or [] if isinstance(model, dict)]
-            product_monthly_sales = numeric_value(product.get("總月銷量"))
-            if product_monthly_sales <= 0:
-                product_monthly_sales = sum(numeric_value(model.get("月銷量")) for model in models)
             for model_order, model in enumerate(models):
                 if not isinstance(model, dict):
                     continue
                 model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
                 if not model_id:
                     continue
-                restock_qty = int(numeric_value(model.get("建議補貨數量")))
+                live = live_lookup.get((str(product_id), model_id), {})
+                restock_qty = int(live.get("restockQty") or 0)
                 url = canonical_url(model.get("阿里巴巴商品URL"))
                 lookup[(str(product_id), model_id)] = {
                     "hasUrl": bool(url),
                     "productName": str(product.get("商品名稱") or ""),
                     "modelName": str(model.get("型號名稱") or ""),
                     "restockQty": restock_qty if url else 0,
-                    "monthlySales": numeric_value(model.get("月銷量")),
-                    "productMonthlySales": product_monthly_sales,
+                    "monthlySales": numeric_value(live.get("monthlySales")),
+                    "productMonthlySales": numeric_value(live.get("productMonthlySales")),
+                    "currentStock": numeric_value(live.get("currentStock")),
+                    "liveInventoryAvailable": bool(live),
                     "productOrder": product_order,
                     "modelOrder": model_order,
                     "productImageUrl": product_image,
@@ -2150,17 +2231,9 @@ class SkuMappingService:
         return "", ""
 
     def _restock_qty(self, product_id: str, model_id: str, golden: Optional[Dict[str, Any]] = None) -> int:
-        product = (golden if golden is not None else self._golden()).get(str(product_id), {})
-        for model in product.get("型號", []) if isinstance(product, dict) else []:
-            current = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
-            if current == str(model_id):
-                if not canonical_url(model.get("阿里巴巴商品URL")):
-                    return 0
-                try:
-                    return int(float(model.get("建議補貨數量") or 0))
-                except (TypeError, ValueError):
-                    return 0
-        return 0
+        shopee, _ = self._live_inventory()
+        live = self._live_model_lookup(shopee).get((str(product_id), str(model_id)), {})
+        return int(live.get("restockQty") or 0)
 
     @staticmethod
     def _catalog_candidate(sku: Dict[str, Any]) -> Dict[str, Any]:
@@ -2478,6 +2551,10 @@ class SkuMappingService:
     ) -> Dict[str, Any]:
         requested_scope = str(scope or "").strip()
         scope = requested_scope if requested_scope in {"restock", "visible_page"} else "all"
+        if scope == "restock":
+            _, inventory_source = self._live_inventory()
+            if not inventory_source.get("available"):
+                raise ValueError(str(inventory_source.get("message") or "即時蝦皮庫存尚未更新"))
         product_id = normalize_id(product_id)
         model_id = normalize_id(model_id)
         offer_id = normalize_id(offer_id)

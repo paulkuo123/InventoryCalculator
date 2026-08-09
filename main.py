@@ -96,6 +96,7 @@ from config_loader import load_openai_api_key, load_openai_config_value
 from cookie_import import MAX_COOKIE_IMPORT_BYTES, save_shopee_cookies
 from sku_mapping_service import MappingConflict, SkuMappingService, mapping_candidate_key, prune_golden_table_backups
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
+from housekeeping import remove_files, remove_stale_matching_files
 
 # 導入版本管理
 
@@ -228,6 +229,20 @@ inbound_jobs = {}
 inbound_jobs_lock = threading.Lock()
 sku_mapping_service = None
 sku_mapping_service_lock = threading.Lock()
+
+removed_stale_temp_files = remove_stale_matching_files(
+    tempfile.gettempdir(),
+    (
+        "inventory_inbound_*_input.json",
+        "inventory_inbound_*_output.json",
+        "inventory_inbound_*_status.json",
+        "inventory_alibaba_restock_*.json",
+        "alibaba_restock_result_*.json",
+    ),
+    older_than_seconds=24 * 60 * 60,
+)
+if removed_stale_temp_files:
+    logger.info("已清除 %s 個超過一天的專案暫存檔", len(removed_stale_temp_files))
 
 # 確保 index.html 存在 (僅在非打包環境檢查，或確保打包時已包含)
 if not os.path.exists(FILE_NAME) and not getattr(sys, 'frozen', False):
@@ -1400,9 +1415,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if not os.path.exists(script_path):
             raise FileNotFoundError("找不到 inbound_worker.py")
         job_id = uuid.uuid4().hex
-        input_path = os.path.join(tempfile.gettempdir(), f"inbound_{job_id}_input.json")
-        output_path = os.path.join(tempfile.gettempdir(), f"inbound_{job_id}_output.json")
-        status_path = os.path.join(tempfile.gettempdir(), f"inbound_{job_id}_status.json")
+        input_path = os.path.join(tempfile.gettempdir(), f"inventory_inbound_{job_id}_input.json")
+        output_path = os.path.join(tempfile.gettempdir(), f"inventory_inbound_{job_id}_output.json")
+        status_path = os.path.join(tempfile.gettempdir(), f"inventory_inbound_{job_id}_status.json")
         with open(input_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, ensure_ascii=False, indent=2)
 
@@ -1454,6 +1469,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         except Exception:
             with inbound_jobs_lock:
                 inbound_jobs.pop(job_id, None)
+            failed_cleanup = remove_files((input_path, output_path, status_path))
+            if failed_cleanup:
+                logger.warning("入庫工作啟動失敗後無法刪除暫存檔: %s", failed_cleanup)
             raise
         current_crawler_process = process
         with inbound_jobs_lock:
@@ -1555,12 +1573,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         finally:
             if current_crawler_process is process:
                 current_crawler_process = None
-            for path in cleanup_paths:
-                if path and os.path.exists(path):
-                    try:
-                        os.unlink(path)
-                    except OSError:
-                        pass
+            failed_cleanup = remove_files(cleanup_paths)
+            if failed_cleanup:
+                logger.warning("入庫工作完成後無法刪除暫存檔: %s", failed_cleanup)
 
     def _list_alibaba_bindings(self):
         """以 golden_table.json 補強採購 binding，讓批次掃描結果立即反映到前端。"""
@@ -2011,7 +2026,13 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if not os.path.exists(script_path):
             raise FileNotFoundError("找不到 alibaba_restocker.py")
 
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as f:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            prefix="inventory_alibaba_restock_",
+            suffix=".json",
+            delete=False,
+        ) as f:
             json.dump(restock_payload, f, ensure_ascii=False, indent=2)
             input_path = f.name
 
@@ -2032,16 +2053,22 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if restock_payload.get("addToCart", True):
             cmd.append("--add-to-cart")
 
-        process = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            bufsize=1,
-            preexec_fn=None if os.name == "nt" else os.setsid
-        )
+        try:
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                bufsize=1,
+                preexec_fn=None if os.name == "nt" else os.setsid
+            )
+        except Exception:
+            failed_cleanup = remove_files((input_path, output_path))
+            if failed_cleanup:
+                logger.warning("1688 採購車啟動失敗後無法刪除暫存檔: %s", failed_cleanup)
+            raise
         current_crawler_process = process
 
         def read_output(pipe, prefix):
@@ -2065,6 +2092,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             finally:
                 if current_crawler_process is process:
                     current_crawler_process = None
+                failed_cleanup = remove_files((input_path, output_path))
+                if failed_cleanup:
+                    logger.warning("1688 採購車完成後無法刪除暫存檔: %s", failed_cleanup)
 
         threading.Thread(target=read_output, args=(process.stdout, "1688採購車輸出"), daemon=True).start()
         threading.Thread(target=read_output, args=(process.stderr, "1688採購車錯誤"), daemon=True).start()
@@ -2077,7 +2107,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "productId": restock_payload.get("productId", ""),
             "itemCount": len(items),
             "totalQty": sum(item["restockQty"] for item in items),
-            "outputPath": output_path
         }
 
     def _build_alibaba_restock_payload(self, payload):
@@ -2714,7 +2743,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             # 如果正常關閉失敗，使用強制關閉
             os._exit(0)
 
-    def stop_running_crawler(self):
+    @staticmethod
+    def stop_running_crawler():
         """中斷正在運行的爬蟲進程及其所有子進程"""
         global current_crawler_process
 
@@ -3119,9 +3149,7 @@ finally:
     logger.info("正在清理資源...")
     # 嘗試終止所有爬蟲進程
     try:
-        # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
-        handler = CustomHandler(None, None, None)
-        handler.stop_running_crawler()
+        CustomHandler.stop_running_crawler()
     except Exception as e:
         logger.exception(f"清理資源時出錯: {e}")
     # 如果還有其他需要清理的資源，在這裡添加
@@ -3136,9 +3164,7 @@ def cleanup_resources():
     try:
         if 'current_crawler_process' in globals(
         ) and current_crawler_process is not None:
-            # 創建一個 CustomHandler 實例來訪問 stop_running_crawler 方法
-            handler = CustomHandler(None, None, None)
-            handler.stop_running_crawler()
+            CustomHandler.stop_running_crawler()
     except Exception as e:
         logger.exception(f"退出時清理資源出錯: {e}")
     # 如果還有其他需要清理的資源，在這裡添加

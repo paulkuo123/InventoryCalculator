@@ -36,6 +36,11 @@ ads_analysis_report*.md
 ads_analysis_report*.pdf
 ads_export_result*.json
 debug_snapshots/
+outputs/
+*.numbers
+*.xlsx.bak_*
+procurement.db.backup_*
+procurement.db.bak_*
 .env.local
 alibaba_browser_profile/
 alibaba_chrome_profile/

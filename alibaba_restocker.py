@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Optional
 
 from playwright.sync_api import sync_playwright
 
+from housekeeping import prune_generated_files
+
 
 ADD_TO_CART_TEXTS = [
     "加采购车",
@@ -85,6 +87,9 @@ class DebugLogger:
         debug_dir = os.path.join(base_dir, "debug_snapshots")
         os.makedirs(debug_dir, exist_ok=True)
         self.path = os.path.join(debug_dir, f"alibaba_restock_{int(time.time())}.jsonl")
+        with open(self.path, "a", encoding="utf-8"):
+            pass
+        prune_generated_files(debug_dir, ("alibaba_restock_*.jsonl",), keep=20)
 
     def log(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
         record = {

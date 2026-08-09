@@ -1,6 +1,6 @@
 (() => {
   const $ = id => document.getElementById(id);
-  const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '' };
+  const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '', inventorySource: null };
   const urlState = { groups: [], activeGroup: null, preview: null, busy: false, healthBusy: false, healthJobId: '', loadRequest: 0 };
   const baseTitle = document.title;
   let operationDismissTimer = null;
@@ -117,6 +117,7 @@
     const counts = data.counts || {};
     const tiles = [
       ['全部有 1688 URL 型號', data.urlModels],
+      ['目前需要補貨', data.restockModels],
       ['待人工核准', data.pending], ['已核准', data.approved],
       ['綠色：唯一精確', data.green], ['黃色：人工比較', data.yellow],
       ['紅色：阻擋', data.red], ['需重新掃描', data.stale], ['失效／無匹配', (counts.error || 0) + (counts.no_match || 0) + (counts.discontinued || 0)]
@@ -240,7 +241,7 @@
     return `<article class="card tier-card-${esc(item.review_tier)}" data-id="${esc(item.id)}" data-tier="${esc(item.review_tier)}">
       <label class="select-row"><input type="checkbox" class="select-item"> 批次處理</label>
       <div class="source">${sourceImage ? `<img src="${esc(sourceImage)}" loading="lazy" alt="">` : '<div class="source-placeholder">無圖片</div>'}
-        <div><h2>${esc(item.model_name || '未命名型號')}</h2><p>${esc(item.product_name || '')}</p><p>商品 ID：${esc(item.product_id)}　規格 ID：${esc(item.model_id)}</p><p>型號月銷量：<strong>${fmt(item.monthlySales)}</strong>　商品月銷量：<strong>${fmt(item.productMonthlySales)}</strong></p><span class="badge ${esc(item.status)}">${esc(item.status === 'suspected_discontinued' ? '疑似下架' : item.status)}</span><span class="tier-badge tier-${esc(item.review_tier)}">${esc(item.review_tier === 'green' ? '綠色：唯一精確' : item.review_tier === 'yellow' ? '黃色：人工比較' : item.review_tier === 'red' && ['stale', 'suspected_discontinued'].includes(item.status) ? '紅色：需重新掃描' : item.review_tier === 'red' ? '紅色：阻擋' : '已核准')}</span>${item.offer_id ? `<a class="open-1688" href="${esc(item.product_url || `https://detail.1688.com/offer/${item.offer_id}.html`)}" target="_blank" rel="noopener">開啟 1688 ↗</a>` : ''}<button class="change-url-inline" type="button" data-url-change="true">更換連結</button>${existing}</div></div>
+        <div><h2>${esc(item.model_name || '未命名型號')}</h2><p>${esc(item.product_name || '')}</p><p>商品 ID：${esc(item.product_id)}　規格 ID：${esc(item.model_id)}</p><p>即時庫存：<strong>${item.liveInventoryAvailable ? fmt(item.currentStock) : '尚未更新'}</strong>　建議補貨：<strong>${item.liveInventoryAvailable ? fmt(item.restockQty) : '尚未更新'}</strong></p><p>型號月銷量：<strong>${item.liveInventoryAvailable ? fmt(item.monthlySales) : '尚未更新'}</strong>　商品月銷量：<strong>${item.liveInventoryAvailable ? fmt(item.productMonthlySales) : '尚未更新'}</strong></p><span class="badge ${esc(item.status)}">${esc(item.status === 'suspected_discontinued' ? '疑似下架' : item.status)}</span><span class="tier-badge tier-${esc(item.review_tier)}">${esc(item.review_tier === 'green' ? '綠色：唯一精確' : item.review_tier === 'yellow' ? '黃色：人工比較' : item.review_tier === 'red' && ['stale', 'suspected_discontinued'].includes(item.status) ? '紅色：需重新掃描' : item.review_tier === 'red' ? '紅色：阻擋' : '已核准')}</span>${item.offer_id ? `<a class="open-1688" href="${esc(item.product_url || `https://detail.1688.com/offer/${item.offer_id}.html`)}" target="_blank" rel="noopener">開啟 1688 ↗</a>` : ''}<button class="change-url-inline" type="button" data-url-change="true">更換連結</button>${existing}</div></div>
       <div><div class="candidates">${candidates.length ? candidates.map((candidate, index) => candidateCard(item, candidate, index + 1)).join('') : '<div class="reason">尚未取得可通過規則的 SKU 候選；不代表 1688 沒有這個 SKU。</div>'}</div>${aiSummary(item, candidates)}${manualTools}
       <div class="reason"><strong>${displayText(item.review_reason || '等待人工確認')}</strong>${(ai.evidence || []).length ? `<br>${displayText(ai.evidence.join('；'))}` : ''}${evidence.error ? `<br>${displayText(evidence.error)}` : ''}</div>
       <div class="actions"><button class="approve" data-action="approve">核准選取 SKU</button><button data-action="defer">稍後處理</button><button data-action="no_match">標記無匹配</button><button data-action="discontinued">標記停售</button></div></div></article>`;
@@ -255,12 +256,13 @@
   }
 
   async function loadQueue() {
-    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, urlPresence: $('urlPresence').value, query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), _: String(Date.now()) });
+    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, urlPresence: $('urlPresence').value, restockOnly: String($('restockOnly').checked), query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), _: String(Date.now()) });
     const response = await fetch(`/api/sku-mapping/queue?${params}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || data.status !== 'success') throw new Error(data.message || '待審核清單載入失敗');
     state.items = data.items || [];
     state.total = Number(data.total || 0);
+    state.inventorySource = data.inventorySource || null;
     state.items.forEach(item => state.itemCache.set(String(item.id), item));
     $('queue').innerHTML = state.items.map(card).join('');
     document.querySelectorAll('.queue .card').forEach(cardElement => {
@@ -332,7 +334,11 @@
           );
         }
       }
-      message(state.activeJobId ? `已載入 ${state.items.length} 筆 mapping；背景工作 ${latest.completed || 0}/${latest.total || 0} 執行中。` : `已載入 ${state.items.length} 筆 mapping。`, 'success');
+      if ($('restockOnly').checked && state.inventorySource && !state.inventorySource.available) {
+        message(`${state.inventorySource.message}；目前沒有使用 Golden Table 的舊補貨數字。`, 'error');
+      } else {
+        message(state.activeJobId ? `已載入 ${state.items.length} 筆 mapping；背景工作 ${latest.completed || 0}/${latest.total || 0} 執行中。` : `已載入 ${state.items.length} 筆 mapping。`, 'success');
+      }
       return true;
     }
     catch (error) { message(error.message, 'error'); return false; }
@@ -1234,7 +1240,7 @@
     loadQueue().catch(error => message(error.message, 'error'));
     window.scrollTo({top: 0, behavior: 'smooth'});
   });
-  ['status', 'tier', 'urlPresence'].forEach(id => $(id).addEventListener('change', () => { clearSelections(); state.page = 1; reload(); }));
+  ['status', 'tier', 'urlPresence', 'restockOnly'].forEach(id => $(id).addEventListener('change', () => { clearSelections(); state.page = 1; reload(); }));
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !$('urlChangeModal').hidden) {
       closeUrlChange();

@@ -34,6 +34,24 @@ class SkuMappingServiceTest(unittest.TestCase):
         }
         with open(self.golden_path, "w", encoding="utf-8") as handle:
             json.dump(golden, handle, ensure_ascii=False)
+        shopee = {
+            product_id: {
+                "商品名稱": product["商品名稱"],
+                "型號": [
+                    {
+                        "規格ID": model["規格ID"],
+                        "型號名稱": model["型號名稱"],
+                        "商品庫存": 1,
+                        "月銷量": 5,
+                        "建議補貨數量": model["建議補貨數量"],
+                    }
+                    for model in product["型號"]
+                ],
+            }
+            for product_id, product in golden.items()
+        }
+        with open(os.path.join(self.tmp.name, "shopee_products.json"), "w", encoding="utf-8") as handle:
+            json.dump(shopee, handle, ensure_ascii=False)
         self.service = SkuMappingService(self.tmp.name)
 
     def tearDown(self):
@@ -88,6 +106,9 @@ class SkuMappingServiceTest(unittest.TestCase):
             }
             with open(golden_path, "w", encoding="utf-8") as handle:
                 json.dump(golden, handle, ensure_ascii=False)
+            shopee = json.loads(json.dumps(golden, ensure_ascii=False))
+            with open(os.path.join(directory, "shopee_products.json"), "w", encoding="utf-8") as handle:
+                json.dump(shopee, handle, ensure_ascii=False)
             service = SkuMappingService(directory)
             queue = service.queue(status="review", page_size=20)
             self.assertEqual(queue["total"], 3)
@@ -97,6 +118,43 @@ class SkuMappingServiceTest(unittest.TestCase):
             )
             self.assertEqual(queue["items"][0]["productMonthlySales"], 1200)
             self.assertEqual(queue["items"][0]["monthlySales"], 900)
+
+    def test_restock_filter_uses_live_shopee_values_not_golden_table(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-socks"]["型號"][0]["建議補貨數量"] = 999
+        golden["p-case"]["型號"][0]["建議補貨數量"] = 999
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+
+        shopee_path = os.path.join(self.tmp.name, "shopee_products.json")
+        with open(shopee_path, encoding="utf-8") as handle:
+            shopee = json.load(handle)
+        shopee["p-socks"]["型號"][0].update({"商品庫存": 7, "月銷量": 12, "建議補貨數量": 0})
+        shopee["p-case"]["型號"][0].update({"商品庫存": 2, "月銷量": 30, "建議補貨數量": 8})
+        with open(shopee_path, "w", encoding="utf-8") as handle:
+            json.dump(shopee, handle, ensure_ascii=False)
+
+        service = SkuMappingService(self.tmp.name)
+        queue = service.queue(status="review", restock_only=True)
+        self.assertEqual(queue["total"], 1)
+        self.assertEqual(queue["items"][0]["product_id"], "p-case")
+        self.assertEqual(queue["items"][0]["restockQty"], 8)
+        self.assertEqual(queue["items"][0]["currentStock"], 2)
+        self.assertEqual(queue["items"][0]["monthlySales"], 30)
+        self.assertTrue(queue["inventorySource"]["available"])
+
+    def test_missing_live_shopee_file_does_not_fall_back_to_golden_restock(self):
+        os.remove(os.path.join(self.tmp.name, "shopee_products.json"))
+        service = SkuMappingService(self.tmp.name)
+        queue = service.queue(status="review", restock_only=True)
+        summary = service.summary()
+        self.assertEqual(queue["total"], 0)
+        self.assertFalse(queue["inventorySource"]["available"])
+        self.assertEqual(summary["restockModels"], 0)
+        self.assertEqual(summary["blockedRestockQty"], 0)
+        with self.assertRaisesRegex(ValueError, "shopee_products.json"):
+            service.start_scan(scope="restock")
 
     def test_queue_search_normalizes_both_query_and_stored_chinese_text(self):
         traditional = self.service.queue(status="review", query="手機殼")
