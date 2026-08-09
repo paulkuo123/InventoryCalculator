@@ -33,6 +33,7 @@ from config_loader import load_deepseek_api_key, load_gemini_api_key, load_opena
 GOLDEN_TABLE_FILE = "golden_table.json"
 MAPPING_DB_FILE = "procurement.db"
 SCAN_CACHE_SECONDS = 7 * 24 * 60 * 60
+URL_HEALTH_TTL_SECONDS = 7 * 24 * 60 * 60
 OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 OPENAI_REASONING = {"medium", "high", "xhigh", "max"}
 XAI_MODELS = {"grok-4.5", "grok-4.5-latest", "grok-4.20-0309-non-reasoning", "grok-4.20-0309-reasoning"}
@@ -42,6 +43,38 @@ DEEPSEEK_MODELS = {"deepseek-v4-flash", "deepseek-v4-pro"}
 AI_SUCCESS_SOURCES = {"openai", "grok", "deepseek", "gemini"}
 REVIEW_TIERS = {"green", "yellow", "red", "approved"}
 MAX_REVIEW_CANDIDATES = 4
+GOLDEN_BACKUP_KEEP = 3
+_GOLDEN_BACKUP_RE = re.compile(r"^golden_table\.json\.backup_before_(.+)_(\d+)$")
+
+
+def prune_golden_table_backups(backup_path: Path, keep: int = GOLDEN_BACKUP_KEEP) -> None:
+    """Keep only the newest few backups for each write operation.
+
+    Backups are safety copies for a single write, not an unbounded history
+    store.  Cleanup is best-effort so a read-only directory never prevents the
+    protected write from completing.
+    """
+    if keep < 1:
+        keep = 1
+    parent = backup_path.parent
+    grouped: Dict[str, List[Tuple[int, int, Path]]] = defaultdict(list)
+    for candidate in parent.glob("golden_table.json.backup_before_*"):
+        match = _GOLDEN_BACKUP_RE.match(candidate.name)
+        if not match:
+            continue
+        try:
+            timestamp = int(match.group(2))
+            stat = candidate.stat()
+        except (OSError, ValueError):
+            continue
+        grouped[match.group(1)].append((timestamp, stat.st_mtime_ns, candidate))
+    for entries in grouped.values():
+        entries.sort(key=lambda item: (item[0], item[1], item[2].name), reverse=True)
+        for _, _, stale_path in entries[keep:]:
+            try:
+                stale_path.unlink()
+            except OSError:
+                continue
 
 CHAR_TRANSLATION = str.maketrans({
     "纯": "純", "浅": "淺", "蓝": "藍", "绿": "綠", "黄": "黃",
@@ -485,6 +518,7 @@ class SkuMappingService:
         self.golden_path = self.base_dir / GOLDEN_TABLE_FILE
         self.db_path = Path(db_path or self.base_dir / MAPPING_DB_FILE)
         self._job_lock = threading.Lock()
+        self._url_change_lock = threading.Lock()
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._gemini_blocked_until = 0.0
         self._gemini_block_reason = ""
@@ -519,6 +553,20 @@ class SkuMappingService:
                     created_at INTEGER NOT NULL,
                     updated_at INTEGER NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS alibaba_url_health_checks (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL,
+                    offer_id TEXT NOT NULL,
+                    requested_url TEXT NOT NULL DEFAULT '',
+                    final_url TEXT NOT NULL DEFAULT '',
+                    status TEXT NOT NULL,
+                    reason_code TEXT NOT NULL DEFAULT '',
+                    title TEXT NOT NULL DEFAULT '',
+                    evidence_json TEXT NOT NULL DEFAULT '{}',
+                    checked_at INTEGER NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_url_health_offer_checked
+                    ON alibaba_url_health_checks(offer_id, checked_at DESC, id DESC);
                 CREATE TABLE IF NOT EXISTS alibaba_offer_snapshots (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     offer_id TEXT NOT NULL,
@@ -716,6 +764,7 @@ class SkuMappingService:
         if golden_changed and self.golden_path.exists():
             backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_approval_repair_{now}")
             shutil.copy2(self.golden_path, backup_path)
+            prune_golden_table_backups(backup_path)
             tmp_path = self.golden_path.with_suffix(".json.repair.tmp")
             with tmp_path.open("w", encoding="utf-8") as handle:
                 json.dump(golden, handle, ensure_ascii=False, indent=4)
@@ -1165,6 +1214,7 @@ class SkuMappingService:
         now = int(time.time())
         backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_legacy_import_{now}")
         shutil.copy2(self.golden_path, backup_path)
+        prune_golden_table_backups(backup_path)
         tmp_path = self.golden_path.with_suffix(".json.legacy.tmp")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(golden, handle, ensure_ascii=False, indent=4)
@@ -1263,6 +1313,598 @@ class SkuMappingService:
             "latestRun": dict(latest) if latest else None,
         }
 
+    @staticmethod
+    def _url_group_status(statuses: Sequence[str], has_url: bool) -> str:
+        values = {str(value or "missing") for value in statuses}
+        if not has_url:
+            return "missing"
+        if "suspected_discontinued" in values or "discontinued" in values:
+            return "suspected_discontinued"
+        if "stale" in values or "error" in values or "waiting_for_login" in values:
+            return "stale"
+        if values == {"approved"}:
+            return "ok"
+        return "pending"
+
+    def _latest_url_health(self) -> Dict[str, Dict[str, Any]]:
+        """Return the newest append-only health result for each offer."""
+        latest: Dict[str, Dict[str, Any]] = {}
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT h.* FROM alibaba_url_health_checks h
+                   INNER JOIN (
+                       SELECT offer_id, MAX(id) AS id
+                       FROM alibaba_url_health_checks GROUP BY offer_id
+                   ) newest ON newest.id=h.id"""
+            ).fetchall()
+        for row in rows:
+            latest[str(row["offer_id"] or "")] = dict(row)
+        return latest
+
+    @staticmethod
+    def _link_status_matches(link_status: str, current: str, expired: bool) -> bool:
+        requested = str(link_status or "all").strip()
+        if requested in {"", "all"}:
+            return True
+        if requested == "exclude_invalid":
+            return current != "invalid"
+        if requested == "expired":
+            return expired
+        if requested == "valid":
+            return current == "valid" and not expired
+        return current == requested
+
+    def url_groups(
+        self,
+        query: str = "",
+        status: str = "all",
+        mapping_status: str = "",
+        link_status: str = "all",
+    ) -> Dict[str, Any]:
+        """Group Golden Table models by product, offer, mapping and URL health.
+
+        ``status`` remains as a backwards-compatible alias for the old mapping
+        status filter.  URL health is deliberately read from its own table so
+        an invalid link never mutates an approved SKU mapping.
+        """
+        golden = self._golden()
+        query_text = normalize_text(query)
+        mapping_status = str(mapping_status or status or "all").strip()
+        link_status = str(link_status or "all").strip()
+        latest_health = self._latest_url_health()
+
+        groups: List[Dict[str, Any]] = []
+        now = int(time.time())
+        for product_order, (product_id, product) in enumerate(golden.items()):
+            if not isinstance(product, dict):
+                continue
+            product_name = str(product.get("商品名稱") or "")
+            product_sales = numeric_value(product.get("總月銷量"))
+            grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            for model in product.get("型號", []) or []:
+                if not isinstance(model, dict):
+                    continue
+                url = canonical_url(model.get("阿里巴巴商品URL"))
+                offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(url)
+                group_key = offer_id or url or "__missing__"
+                grouped[group_key].append(model)
+            for group_order, models in enumerate(grouped.values()):
+                first = models[0]
+                url = canonical_url(first.get("阿里巴巴商品URL"))
+                offer_id = normalize_id(first.get("1688_offer_id")) or parse_offer_id(url)
+                statuses = [
+                    str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing"))
+                    for model in models
+                ]
+                group_status = self._url_group_status(statuses, bool(url))
+                health = latest_health.get(offer_id) if offer_id else None
+                checked_at = int((health or {}).get("checked_at") or 0)
+                link_status_value = str((health or {}).get("status") or ("missing" if not url else "unchecked"))
+                expired = bool(checked_at and now - checked_at > URL_HEALTH_TTL_SECONDS)
+                haystack = normalize_text(" ".join((str(product_id), product_name, url, offer_id)))
+                if query_text and query_text not in haystack:
+                    continue
+                if mapping_status not in {"", "all"} and group_status != mapping_status:
+                    continue
+                if not self._link_status_matches(link_status, link_status_value, expired):
+                    continue
+                models_public = []
+                for model in models:
+                    model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+                    models_public.append({
+                        "modelId": model_id,
+                        "modelName": str(model.get("型號名稱") or ""),
+                        "mappingStatus": str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing")),
+                    })
+                groups.append({
+                    "groupId": f"{product_id}|||{offer_id or '__missing__'}",
+                    "productId": str(product_id),
+                    "productName": product_name,
+                    "productImageUrl": str(product.get("商品圖片網址") or ""),
+                    "productMonthlySales": product_sales or sum(numeric_value(model.get("月銷量")) for model in models),
+                    "modelId": models_public[0]["modelId"] if models_public else "",
+                    "productUrl": url,
+                    "offerId": offer_id,
+                    "modelCount": len(models),
+                    "status": group_status,
+                    "linkStatus": link_status_value,
+                    "linkReason": str((health or {}).get("reason_code") or ""),
+                    "finalUrl": str((health or {}).get("final_url") or ""),
+                    "linkCheckedAt": checked_at,
+                    "linkCheckExpired": expired,
+                    # Keep the legacy field for current callers while making
+                    # the new health timestamp explicit.
+                    "lastCheckedAt": checked_at,
+                    "models": models_public,
+                    "productOrder": product_order,
+                    "groupOrder": group_order,
+                })
+        mapping_order = {"suspected_discontinued": 0, "stale": 1, "pending": 2, "missing": 3, "ok": 4}
+        link_order = {"invalid": 0, "needs_attention": 1, "error": 2, "unchecked": 3, "valid": 4, "missing": 5}
+        groups.sort(key=lambda row: (
+            link_order.get(str(row.get("linkStatus")), 6),
+            mapping_order.get(str(row.get("status")), 5),
+            -float(row.get("productMonthlySales") or 0),
+            int(row.get("productOrder") or 0),
+            int(row.get("groupOrder") or 0),
+        ))
+        counts: Dict[str, int] = defaultdict(int)
+        link_counts: Dict[str, int] = defaultdict(int)
+        unique_links: Dict[str, str] = {}
+        for row in groups:
+            counts[row["status"]] += 1
+            link_key = str(row.get("offerId") or row.get("groupId") or "")
+            unique_links[link_key] = "expired" if row.get("linkCheckExpired") else str(row.get("linkStatus") or "")
+        for value in unique_links.values():
+            link_counts[value] += 1
+        return {
+            "status": "success",
+            "groups": groups,
+            "total": len(groups),
+            "productTotal": len({str(row.get("productId") or "") for row in groups}),
+            "uniqueLinkTotal": len([key for key in unique_links if key]),
+            "counts": dict(counts),
+            "linkCounts": dict(link_counts),
+        }
+
+    @staticmethod
+    def _url_change_source_version(product_id: str, rows: Sequence[Dict[str, Any]]) -> str:
+        compact = []
+        for row in rows:
+            compact.append({
+                "model_id": normalize_id(row.get("規格ID")) or str(row.get("型號名稱") or "").strip(),
+                "url": canonical_url(row.get("阿里巴巴商品URL")),
+                "offer_id": normalize_id(row.get("1688_offer_id")) or parse_offer_id(row.get("阿里巴巴商品URL")),
+                "sku_id": normalize_id(row.get("1688_sku_id")),
+                "sku_name": display_text(row.get("1688_sku_name")),
+                "second_name": display_text(row.get("1688_sku_second_name")),
+                "mapping_status": str(row.get("1688_mapping_status") or "missing"),
+            })
+        payload = json.dumps({"product_id": str(product_id), "rows": compact}, ensure_ascii=False, sort_keys=True)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _url_change_targets(self, product_id: str, model_id: str) -> Tuple[Dict[str, Any], List[Dict[str, Any]], str, str]:
+        golden = self._golden()
+        product = golden.get(str(product_id), {})
+        if not isinstance(product, dict):
+            raise FileNotFoundError(f"找不到商品 {product_id}")
+        models = [model for model in product.get("型號", []) or [] if isinstance(model, dict)]
+        anchor = next((
+            model for model in models
+            if (normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()) == str(model_id)
+        ), None)
+        if anchor is None:
+            raise FileNotFoundError(f"找不到型號 {product_id}/{model_id}")
+        old_url = canonical_url(anchor.get("阿里巴巴商品URL"))
+        old_offer_id = normalize_id(anchor.get("1688_offer_id")) or parse_offer_id(old_url)
+        targets = []
+        for model in models:
+            current_url = canonical_url(model.get("阿里巴巴商品URL"))
+            current_offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(current_url)
+            same_group = current_offer_id == old_offer_id if old_offer_id else current_url == old_url
+            if same_group:
+                targets.append(model)
+        return product, targets, old_url, old_offer_id
+
+    @staticmethod
+    def _validate_1688_url(value: Any) -> Tuple[str, str]:
+        url = canonical_url(value)
+        parsed = urlparse(url)
+        host = str(parsed.hostname or "").lower()
+        if parsed.scheme not in {"http", "https"} or not host or not (host == "1688.com" or host.endswith(".1688.com")):
+            raise ValueError("請貼上 1688 商品詳情頁 URL")
+        offer_id = parse_offer_id(url)
+        if not offer_id:
+            raise ValueError("新 URL 中找不到 1688 offer ID，請貼商品詳情頁連結")
+        return url, offer_id
+
+    def preview_url_change(self, product_id: Any, model_id: Any, new_url: Any = "", mode: str = "replace") -> Dict[str, Any]:
+        product_id = normalize_id(product_id)
+        model_id = normalize_id(model_id)
+        mode = str(mode or "replace").strip()
+        if mode not in {"replace", "clear"}:
+            raise ValueError("URL 更新模式不正確")
+        if not product_id or not model_id:
+            raise ValueError("缺少商品 ID 或型號 ID")
+        product, targets, old_url, old_offer_id = self._url_change_targets(product_id, model_id)
+        source_version = self._url_change_source_version(product_id, targets)
+        snapshot: Dict[str, Any] = {"status": "clear", "offer_id": "", "product_url": "", "product_name": "", "fingerprint": "", "skus": []}
+        if mode == "replace":
+            canonical_new_url, new_offer_id = self._validate_1688_url(new_url)
+            snapshot = self._fetch_live_snapshot(
+                canonical_new_url,
+                new_offer_id,
+                f"url-change-preview-{uuid.uuid4().hex}",
+                mark_stale=False,
+            )
+            if snapshot.get("status") != "ok":
+                raise RuntimeError(str(snapshot.get("error_message") or snapshot.get("status") or "讀取新 1688 商品失敗"))
+        skus = list(snapshot.get("skus") or [])
+        catalog = [self._catalog_candidate({**sku, "offer_id": snapshot.get("offer_id", "")}) for sku in skus]
+        target_rows = []
+        approved_count = 0
+        for model in targets:
+            current_name = display_text(model.get("1688_sku_name"))
+            current_second = display_text(model.get("1688_sku_second_name"))
+            exact = [
+                candidate for candidate in catalog
+                if normalize_text(candidate.get("sku_name")) == normalize_text(current_name)
+                and normalize_text(candidate.get("second_name")) == normalize_text(current_second)
+                and bool(current_name)
+            ]
+            model_context = {
+                "product_id": product_id,
+                "product_name": str(product.get("商品名稱") or ""),
+                "model_name": str(model.get("型號名稱") or ""),
+                "offer_id": str(snapshot.get("offer_id") or ""),
+            }
+            candidates = self.generate_candidates(model_context, skus) if skus else []
+            selected = exact[0] if len(exact) == 1 else None
+            match_status = "exact" if selected else ("ambiguous" if candidates else "missing")
+            if selected:
+                approved_count += 1
+            model_key = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+            target_rows.append({
+                "modelId": model_key,
+                "modelName": str(model.get("型號名稱") or ""),
+                "modelImageUrl": str(model.get("型號圖片網址") or ""),
+                "selected": True,
+                "existingSkuId": normalize_id(model.get("1688_sku_id")),
+                "existingSkuName": current_name,
+                "existingSecondName": current_second,
+                "mappingStatus": str(model.get("1688_mapping_status") or ("pending" if current_name else "missing")),
+                "matchStatus": "clear" if mode == "clear" else match_status,
+                "selectedCandidateKey": str(selected.get("candidate_key") or "") if selected else "",
+                "candidates": candidates,
+            })
+        return {
+            "status": "success",
+            "mode": mode,
+            "sourceVersion": source_version,
+            "productId": product_id,
+            "productName": str(product.get("商品名稱") or ""),
+            "productImageUrl": str(product.get("商品圖片網址") or ""),
+            "modelId": model_id,
+            "oldUrl": old_url,
+            "oldOfferId": old_offer_id,
+            "snapshot": {
+                "offerId": str(snapshot.get("offer_id") or ""),
+                "productUrl": str(snapshot.get("product_url") or ""),
+                "productName": str(snapshot.get("product_name") or ""),
+                "fingerprint": str(snapshot.get("fingerprint") or ""),
+                "skuCount": len(catalog),
+            },
+            "catalog": catalog,
+            "targets": target_rows,
+            "selectedCount": len(target_rows),
+            "approvedCount": approved_count if mode == "replace" else 0,
+            "pendingCount": len(target_rows) - approved_count if mode == "replace" else len(target_rows),
+        }
+
+    @staticmethod
+    def _url_change_mapping_before(model: Dict[str, Any]) -> Dict[str, Any]:
+        keys = (
+            "阿里巴巴商品名稱", "阿里巴巴商品URL", "1688_offer_id", "1688_sku_id",
+            "1688_sku_name", "1688_sku_second_name", "1688_spec_text",
+            "1688_dimension_count", "1688_mapping_status", "1688_mapping_source",
+            "1688_mapping_fingerprint", "1688_offer_fingerprint", "1688_last_price_cny",
+            "1688_verified_at",
+        )
+        return {key: model.get(key, "") for key in keys}
+
+    @staticmethod
+    def _upsert_url_change_binding(conn: sqlite3.Connection, product_id: str, product: Dict[str, Any], model: Dict[str, Any], now: int) -> None:
+        model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+        offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL"))
+        sku_name = display_text(model.get("1688_sku_name"))
+        sku_id = normalize_id(model.get("1688_sku_id"))
+        binding_status = "ready" if offer_id and sku_name else ("partial" if offer_id or sku_id or sku_name else "missing")
+        conn.execute(
+            """INSERT INTO alibaba_bindings (
+                shopee_product_id, shopee_model_id, shopee_product_name, shopee_model_name,
+                alibaba_product_name, alibaba_product_url, alibaba_offer_id, alibaba_sku_id,
+                alibaba_sku_name, alibaba_sku_second_name, alibaba_min_order_qty,
+                alibaba_package_multiple, alibaba_last_price_cny, alibaba_last_checked_at,
+                alibaba_binding_status, alibaba_mapping_status, alibaba_offer_fingerprint,
+                alibaba_spec_text, created_at, updated_at
+            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(shopee_product_id, shopee_model_id) DO UPDATE SET
+                shopee_product_name=excluded.shopee_product_name,
+                shopee_model_name=excluded.shopee_model_name,
+                alibaba_product_name=excluded.alibaba_product_name,
+                alibaba_product_url=excluded.alibaba_product_url,
+                alibaba_offer_id=excluded.alibaba_offer_id,
+                alibaba_sku_id=excluded.alibaba_sku_id,
+                alibaba_sku_name=excluded.alibaba_sku_name,
+                alibaba_sku_second_name=excluded.alibaba_sku_second_name,
+                alibaba_min_order_qty=excluded.alibaba_min_order_qty,
+                alibaba_package_multiple=excluded.alibaba_package_multiple,
+                alibaba_last_price_cny=excluded.alibaba_last_price_cny,
+                alibaba_last_checked_at=excluded.alibaba_last_checked_at,
+                alibaba_binding_status=excluded.alibaba_binding_status,
+                alibaba_mapping_status=excluded.alibaba_mapping_status,
+                alibaba_offer_fingerprint=excluded.alibaba_offer_fingerprint,
+                alibaba_spec_text=excluded.alibaba_spec_text,
+                updated_at=excluded.updated_at""",
+            (
+                product_id, model_id, str(product.get("商品名稱") or ""), str(model.get("型號名稱") or ""),
+                str(model.get("阿里巴巴商品名稱") or ""), str(model.get("阿里巴巴商品URL") or ""),
+                offer_id, sku_id, sku_name, display_text(model.get("1688_sku_second_name")),
+                max(1, int(numeric_value(model.get("1688_min_order_qty")) or 1)),
+                max(1, int(numeric_value(model.get("1688_package_multiple")) or 1)),
+                model.get("1688_last_price_cny"), str(model.get("1688_verified_at") or ""),
+                binding_status, str(model.get("1688_mapping_status") or "missing"),
+                str(model.get("1688_offer_fingerprint") or ""), str(model.get("1688_spec_text") or ""),
+                now, now,
+            ),
+        )
+
+    def commit_url_change(
+        self,
+        product_id: Any,
+        model_id: Any,
+        source_version: Any,
+        models: Sequence[Dict[str, Any]],
+        new_url: Any = "",
+        snapshot_fingerprint: Any = "",
+        mode: str = "replace",
+        reviewer: str = "local_user",
+    ) -> Dict[str, Any]:
+        product_id = normalize_id(product_id)
+        model_id = normalize_id(model_id)
+        mode = str(mode or "replace").strip()
+        if mode not in {"replace", "clear"}:
+            raise ValueError("URL 更新模式不正確")
+        if not product_id or not model_id:
+            raise ValueError("缺少商品 ID 或型號 ID")
+        requested = {
+            normalize_id(row.get("modelId")): str(row.get("candidateKey") or "").strip()
+            for row in (models or []) if isinstance(row, dict) and row.get("selected") is not False
+        }
+        if not requested:
+            raise ValueError("請至少選擇一個要更新的型號")
+
+        with self._url_change_lock:
+            golden = self._golden()
+            product, targets, _, _ = self._url_change_targets(product_id, model_id)
+            # _url_change_targets reloads the file to resolve the authoritative
+            # scope. Keep that exact product object in the document written
+            # below so model edits are not applied to a detached copy.
+            golden[product_id] = product
+            current_version = self._url_change_source_version(product_id, targets)
+            if str(source_version or "") != current_version:
+                raise MappingConflict("Golden Table 已在預覽後更新，請重新檢查新連結")
+            target_by_id = {
+                normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip(): model
+                for model in targets
+            }
+            unknown = sorted(set(requested) - set(target_by_id))
+            if unknown:
+                raise ValueError(f"選取範圍已變更，請重新預覽：{', '.join(unknown[:3])}")
+
+            snapshot: Dict[str, Any] = {"id": None, "offer_id": "", "product_url": "", "product_name": "", "fingerprint": "", "skus": []}
+            catalog_by_key: Dict[str, Dict[str, Any]] = {}
+            if mode == "replace":
+                canonical_new_url, new_offer_id = self._validate_1688_url(new_url)
+                fingerprint = str(snapshot_fingerprint or "").strip()
+                with self.connect() as conn:
+                    row = conn.execute(
+                        "SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? AND fingerprint=? AND status='ok' LIMIT 1",
+                        (new_offer_id, fingerprint),
+                    ).fetchone()
+                if not row:
+                    raise MappingConflict("新商品快照已失效，請重新按「檢查新連結」")
+                snapshot = {
+                    "id": row["id"], "offer_id": row["offer_id"], "product_url": canonical_new_url,
+                    "product_name": row["product_name"], "fingerprint": row["fingerprint"],
+                    "skus": self._json_load(row["skus_json"], []),
+                }
+                catalog_by_key = {
+                    candidate["candidate_key"]: candidate
+                    for candidate in [self._catalog_candidate({**sku, "offer_id": new_offer_id}) for sku in snapshot["skus"]]
+                }
+                invalid_keys = [key for key in requested.values() if key and key not in catalog_by_key]
+                if invalid_keys:
+                    raise MappingConflict("選取的 SKU 已不在新商品快照中，請重新預覽")
+
+            before_by_id = {key: self._url_change_mapping_before(target_by_id[key]) for key in requested}
+            now = int(time.time())
+            verified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+            approved_count = 0
+            pending_count = 0
+            for current_id, candidate_key in requested.items():
+                target = target_by_id[current_id]
+                if mode == "clear":
+                    for key in (
+                        "阿里巴巴商品名稱", "阿里巴巴商品URL", "1688_offer_id", "1688_sku_id",
+                        "1688_sku_name", "1688_sku_second_name", "1688_spec_text", "1688_dimension_count",
+                        "1688_mapping_fingerprint", "1688_offer_fingerprint", "1688_last_price_cny", "1688_verified_at",
+                    ):
+                        target.pop(key, None)
+                    target["1688_mapping_status"] = "missing"
+                    target["1688_mapping_source"] = "url_cleared"
+                    pending_count += 1
+                    continue
+
+                target["阿里巴巴商品名稱"] = str(snapshot.get("product_name") or "")
+                target["阿里巴巴商品URL"] = str(snapshot.get("product_url") or new_url)
+                target["1688_offer_id"] = str(snapshot.get("offer_id") or "")
+                target["1688_offer_fingerprint"] = str(snapshot.get("fingerprint") or "")
+                candidate = catalog_by_key.get(candidate_key) if candidate_key else None
+                if candidate:
+                    parts = list(candidate.get("parts") or _spec_parts(candidate.get("spec_text")))
+                    target["1688_sku_id"] = normalize_id(candidate.get("sku_id"))
+                    target["1688_sku_name"] = display_text(candidate.get("sku_name"))
+                    target["1688_sku_second_name"] = display_text(candidate.get("second_name"))
+                    target["1688_spec_text"] = display_text(candidate.get("spec_text"))
+                    target["1688_dimension_count"] = max(int(candidate.get("dimension_count") or 0), len(parts), 1)
+                    target["1688_mapping_fingerprint"] = mapping_candidate_key(
+                        snapshot.get("offer_id"), target.get("1688_sku_name"), target.get("1688_sku_second_name")
+                    )
+                    target["1688_mapping_status"] = "approved"
+                    target["1688_mapping_source"] = "manual_url_change"
+                    target["1688_verified_at"] = verified_at
+                    if candidate.get("price") is not None:
+                        target["1688_last_price_cny"] = candidate.get("price")
+                    approved_count += 1
+                else:
+                    for key in ("1688_sku_id", "1688_spec_text", "1688_dimension_count", "1688_mapping_fingerprint", "1688_last_price_cny", "1688_verified_at"):
+                        target.pop(key, None)
+                    target["1688_mapping_status"] = "pending"
+                    target["1688_mapping_source"] = "url_change_pending"
+                    pending_count += 1
+
+            backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_url_change_{now}")
+            original_bytes = self.golden_path.read_bytes()
+            shutil.copy2(self.golden_path, backup_path)
+            prune_golden_table_backups(backup_path)
+            tmp_path = self.golden_path.with_suffix(".json.url-change.tmp")
+            with tmp_path.open("w", encoding="utf-8") as handle:
+                json.dump(golden, handle, ensure_ascii=False, indent=4)
+                handle.write("\n")
+            os.replace(tmp_path, self.golden_path)
+
+            try:
+                from procurement_store import ProcurementStore
+                ProcurementStore(base_dir=str(self.base_dir), db_path=str(self.db_path))
+                affected_pairs = []
+                with self.connect() as conn:
+                    for current_id in requested:
+                        target = target_by_id[current_id]
+                        candidate_key = requested[current_id]
+                        candidate = catalog_by_key.get(candidate_key) if candidate_key else None
+                        model_context = {
+                            "product_id": product_id,
+                            "product_name": str(product.get("商品名稱") or ""),
+                            "model_id": current_id,
+                            "model_name": str(target.get("型號名稱") or ""),
+                            "offer_id": str(snapshot.get("offer_id") or ""),
+                        }
+                        candidates = self.generate_candidates(model_context, snapshot.get("skus") or []) if mode == "replace" else []
+                        selected = candidate or (candidates[0] if len(candidates) == 1 else {})
+                        status_value = str(target.get("1688_mapping_status") or "missing")
+                        if status_value == "approved":
+                            review_tier, review_reason = "approved", "更換 URL 時已人工確認"
+                        elif mode == "clear":
+                            review_tier, review_reason = "red", "1688 URL 已清除"
+                        else:
+                            review_tier = "green" if len(candidates) == 1 else ("yellow" if candidates else "red")
+                            review_reason = "1688 URL 已更新，待人工核准"
+                        old_row = conn.execute(
+                            "SELECT * FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                            (product_id, current_id),
+                        ).fetchone()
+                        version = int(old_row["version"] or 0) + 1 if old_row else 1
+                        conn.execute(
+                            """INSERT INTO sku_mapping_suggestions (
+                                product_id,model_id,model_name,product_name,offer_id,snapshot_id,
+                                suggested_candidate_key,suggested_sku_id,suggested_sku_name,suggested_second_name,
+                                status,decision,confidence,evidence_json,review_tier,review_reason,version,created_at,updated_at
+                            ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                            ON CONFLICT(product_id,model_id) DO UPDATE SET
+                                model_name=excluded.model_name, product_name=excluded.product_name,
+                                offer_id=excluded.offer_id, snapshot_id=excluded.snapshot_id,
+                                suggested_candidate_key=excluded.suggested_candidate_key,
+                                suggested_sku_id=excluded.suggested_sku_id,
+                                suggested_sku_name=excluded.suggested_sku_name,
+                                suggested_second_name=excluded.suggested_second_name,
+                                status=excluded.status, decision=excluded.decision,
+                                confidence=excluded.confidence, evidence_json=excluded.evidence_json,
+                                review_tier=excluded.review_tier, review_reason=excluded.review_reason,
+                                version=excluded.version, updated_at=excluded.updated_at""",
+                            (
+                                product_id, current_id, model_context["model_name"], model_context["product_name"],
+                                str(snapshot.get("offer_id") or ""), snapshot.get("id"),
+                                str(selected.get("candidate_key") or ""), normalize_id(selected.get("sku_id")),
+                                display_text(selected.get("sku_name")), display_text(selected.get("second_name")),
+                                status_value, "match" if candidate else "abstain", 1 if candidate else 0,
+                                json.dumps({"url_change": True, "old_url": before_by_id[current_id].get("阿里巴巴商品URL", "")}, ensure_ascii=False),
+                                review_tier, review_reason, version, now, now,
+                            ),
+                        )
+                        suggestion = conn.execute(
+                            "SELECT id FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                            (product_id, current_id),
+                        ).fetchone()
+                        conn.execute("DELETE FROM sku_mapping_candidates WHERE suggestion_id=?", (suggestion["id"],))
+                        for rank, candidate_row in enumerate(candidates, 1):
+                            conn.execute(
+                                """INSERT INTO sku_mapping_candidates(
+                                    suggestion_id,rank,candidate_key,sku_id,sku_name,second_name,spec_text,
+                                    dimension_count,parts_json,image_url,price,stock,deterministic_score,evidence_json
+                                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                                (
+                                    suggestion["id"], rank, candidate_row.get("candidate_key", ""), candidate_row.get("sku_id", ""),
+                                    candidate_row.get("sku_name", ""), candidate_row.get("second_name", ""), candidate_row.get("spec_text", ""),
+                                    int(candidate_row.get("dimension_count") or 1), json.dumps(candidate_row.get("parts") or [], ensure_ascii=False),
+                                    candidate_row.get("image_url", ""), candidate_row.get("price"), candidate_row.get("stock"),
+                                    candidate_row.get("deterministic_score", 0), json.dumps(candidate_row.get("evidence") or {}, ensure_ascii=False),
+                                ),
+                            )
+                        conn.execute(
+                            "INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)",
+                            (
+                                suggestion["id"], "url_cleared" if mode == "clear" else "url_change",
+                                json.dumps(before_by_id[current_id], ensure_ascii=False),
+                                json.dumps(self._url_change_mapping_before(target), ensure_ascii=False), reviewer, now,
+                            ),
+                        )
+                        self._upsert_url_change_binding(conn, product_id, product, target, now)
+                        affected_pairs.append((product_id, current_id))
+
+                    draft_ids = set()
+                    for affected_product, affected_model in affected_pairs:
+                        rows = conn.execute(
+                            """SELECT DISTINCT d.id FROM purchase_drafts d
+                               JOIN purchase_draft_lines l ON l.draft_id=d.id
+                               WHERE d.status!='submitted' AND l.shopee_product_id=? AND l.shopee_model_id=?""",
+                            (affected_product, affected_model),
+                        ).fetchall()
+                        draft_ids.update(int(row["id"]) for row in rows)
+                    for draft_id in draft_ids:
+                        conn.execute(
+                            "UPDATE purchase_draft_lines SET status='blocked', blocker_reason='1688 URL 已更新，請重新建立草稿' WHERE draft_id=?",
+                            (draft_id,),
+                        )
+                        conn.execute(
+                            "UPDATE purchase_drafts SET status='blocked', has_blockers=1, error_message='1688 URL 已更新，請重新建立草稿', updated_at=? WHERE id=?",
+                            (now, draft_id),
+                        )
+            except Exception:
+                restore_tmp = self.golden_path.with_suffix(".json.url-change-restore.tmp")
+                restore_tmp.write_bytes(original_bytes)
+                os.replace(restore_tmp, self.golden_path)
+                raise
+
+        return {
+            "status": "success",
+            "updatedCount": len(requested),
+            "approvedCount": approved_count,
+            "pendingCount": pending_count,
+            "backupPath": str(backup_path),
+            "message": f"已更新 {len(requested)} 個型號；{approved_count} 個已核准，{pending_count} 個待處理",
+        }
+
     def queue(
         self,
         status: str = "review",
@@ -1270,11 +1912,15 @@ class SkuMappingService:
         restock_only: bool = False,
         offer_id: str = "",
         tier: str = "",
+        url_presence: str = "with",
         page: int = 1,
         page_size: int = 50,
     ) -> Dict[str, Any]:
         status = str(status or "review").strip()
         query = normalize_text(query)
+        url_presence = str(url_presence or "with").strip().lower()
+        if url_presence not in {"all", "with", "without"}:
+            raise ValueError("URL 篩選值不正確")
         page = max(1, int(page or 1))
         page_size = max(1, min(200, int(page_size or 50)))
         params: List[Any] = []
@@ -1296,10 +1942,6 @@ class SkuMappingService:
         if tier and tier in REVIEW_TIERS:
             clauses.append("s.review_tier = ?")
             params.append(tier)
-        if query:
-            clauses.append("(lower(s.product_id) LIKE ? OR lower(s.model_name) LIKE ? OR lower(s.product_name) LIKE ?)")
-            like = f"%{query}%"
-            params.extend([like, like, like])
         where = " AND ".join(clauses) or "1=1"
         golden = self._golden()
         # Queue ordering is based on the golden table's product sales metadata,
@@ -1320,8 +1962,20 @@ class SkuMappingService:
             # made the restock-only view appear hung on the first load.
             for row in rows:
                 item = dict(row)
+                if query:
+                    # Normalize both sides.  The shared normalizer intentionally
+                    # canonicalizes mixed Traditional/Simplified forms (for
+                    # example 手機殼 and 手机壳 both become 手机殼); applying it
+                    # only to the query made SQLite compare unlike strings.
+                    search_text = normalize_text(" ".join((
+                        str(item.get("product_id") or ""),
+                        str(item.get("model_name") or ""),
+                        str(item.get("product_name") or ""),
+                    )))
+                    if query not in search_text:
+                        continue
                 metadata = model_lookup.get((str(item["product_id"]), str(item["model_id"])), {})
-                if not metadata.get("hasUrl"):
+                if not metadata.get("hasUrl") or url_presence == "without":
                     continue
                 if restock_only and float(metadata.get("restockQty") or 0) <= 0:
                     continue
@@ -1343,6 +1997,7 @@ class SkuMappingService:
                 item["existing_second_name"] = str(metadata.get("existingSecondName") or "")
                 item["existing_spec_text"] = str(metadata.get("existingSpecText") or "")
                 item["mapping_status"] = str(metadata.get("mappingStatus") or "missing")
+                item["has_url"] = True
                 # A legacy approved row may predate candidate persistence, so
                 # it has no rows in sku_mapping_candidates.  Show its current
                 # approved name pair as a read-only display fallback; approval
@@ -1381,6 +2036,57 @@ class SkuMappingService:
                 }
                 item["candidates"] = self._review_candidates(item["candidates"], ai_display)
                 result.append(item)
+        # Models without a URL have no scan suggestion row by design.  Build a
+        # read-only queue row from Golden Table so the URL filter can still
+        # find them and lead the user into the reviewed URL setup flow.
+        show_without_url = (
+            url_presence in {"all", "without"}
+            and not restock_only
+            and not offer_id
+            and not tier
+            and status in {"review", "all", "missing"}
+        )
+        if show_without_url:
+            for (product_id, model_id), metadata in model_lookup.items():
+                if metadata.get("hasUrl"):
+                    continue
+                if query:
+                    search_text = normalize_text(" ".join((
+                        str(product_id),
+                        str(model_id),
+                        str(metadata.get("modelName") or ""),
+                        str(metadata.get("productName") or ""),
+                    )))
+                    if query not in search_text:
+                        continue
+                result.append({
+                    "id": f"missing-url:{product_id}:{model_id}",
+                    "product_id": product_id,
+                    "model_id": model_id,
+                    "product_name": str(metadata.get("productName") or ""),
+                    "model_name": str(metadata.get("modelName") or ""),
+                    "product_url": "",
+                    "offer_id": "",
+                    "status": "missing_url",
+                    "review_tier": "red",
+                    "review_reason": "尚未設定 1688 URL",
+                    "mapping_status": str(metadata.get("mappingStatus") or "missing"),
+                    "existing_sku_id": str(metadata.get("existingSkuId") or ""),
+                    "existing_sku_name": str(metadata.get("existingSkuName") or ""),
+                    "existing_second_name": str(metadata.get("existingSecondName") or ""),
+                    "existing_spec_text": str(metadata.get("existingSpecText") or ""),
+                    "candidates": [],
+                    "evidence": {},
+                    "has_url": False,
+                    "restockQty": 0,
+                    "monthlySales": metadata.get("monthlySales", 0),
+                    "productMonthlySales": metadata.get("productMonthlySales", 0),
+                    "productOrder": metadata.get("productOrder", 0),
+                    "modelOrder": metadata.get("modelOrder", 0),
+                    "productImageUrl": str(metadata.get("productImageUrl") or ""),
+                    "modelImageUrl": str(metadata.get("modelImageUrl") or ""),
+                    "updated_at": 0,
+                })
         tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
         # Keep each product together.  Products are ordered by total monthly
         # sales (falling back to the sum of their model sales); variants inside
@@ -1418,6 +2124,8 @@ class SkuMappingService:
                 url = canonical_url(model.get("阿里巴巴商品URL"))
                 lookup[(str(product_id), model_id)] = {
                     "hasUrl": bool(url),
+                    "productName": str(product.get("商品名稱") or ""),
+                    "modelName": str(model.get("型號名稱") or ""),
                     "restockQty": restock_qty if url else 0,
                     "monthlySales": numeric_value(model.get("月銷量")),
                     "productMonthlySales": product_monthly_sales,
@@ -1638,7 +2346,10 @@ class SkuMappingService:
             ).fetchone()
         if not row:
             raise FileNotFoundError(f"找不到 mapping suggestion：{product_id}/{model_id}")
-        catalog = self._snapshot_catalog(None if row["status"] == "stale" else row["snapshot_id"], row["offer_id"])
+        # The picker is explicitly the complete *current* offer catalog.  The
+        # suggestion snapshot is historical review evidence and can remain on
+        # an older 22-SKU snapshot after the seller adds new variants.
+        catalog = self._snapshot_catalog(offer_id=row["offer_id"])
         catalog.update({"status": "success", "productId": product_id, "modelId": model_id, "version": int(row["version"])})
         return catalog
 
@@ -1798,6 +2509,186 @@ class SkuMappingService:
             thread = threading.Thread(target=self._scan_worker, args=(job_id, scope, force, use_ai, product_id, model_id, offer_id, bool(rebuild), scan_targets), daemon=True)
             thread.start()
         return job
+
+    def _resolve_url_health_targets(self, targets: Sequence[Dict[str, Any]]) -> List[Dict[str, str]]:
+        """Resolve and validate browser-supplied URL-group targets against Golden Table."""
+        if not isinstance(targets, (list, tuple)) or not targets:
+            raise ValueError("目前頁面沒有可檢查的 1688 連結")
+        golden = self._golden()
+        resolved: List[Dict[str, str]] = []
+        seen: set = set()
+        for target in targets:
+            if not isinstance(target, dict):
+                raise ValueError("連結檢查目標格式不正確")
+            product_id = normalize_id(target.get("productId") or target.get("product_id"))
+            model_id = normalize_id(target.get("modelId") or target.get("model_id"))
+            product = golden.get(product_id)
+            if not product_id or not model_id or not isinstance(product, dict):
+                raise ValueError("連結檢查目標不在目前 Golden Table 範圍內")
+            model = next((item for item in product.get("型號", []) or []
+                          if isinstance(item, dict)
+                          and (normalize_id(item.get("規格ID")) or str(item.get("型號名稱") or "").strip()) == model_id), None)
+            if model is None:
+                raise ValueError(f"連結檢查目標不在目前 Golden Table 範圍內：{product_id}/{model_id}")
+            url = canonical_url(model.get("阿里巴巴商品URL"))
+            offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(url)
+            if not url or not offer_id:
+                raise ValueError(f"型號沒有可檢查的 1688 URL：{product_id}/{model_id}")
+            if offer_id in seen:
+                continue
+            seen.add(offer_id)
+            resolved.append({
+                "product_id": product_id,
+                "model_id": model_id,
+                "offer_id": offer_id,
+                "url": url,
+            })
+        if not resolved:
+            raise ValueError("目前頁面沒有可檢查的 1688 連結")
+        return resolved
+
+    @staticmethod
+    def _url_health_result(target: Dict[str, str], page_data: Dict[str, Any]) -> Dict[str, Any]:
+        raw_status = str(page_data.get("status") or "error")
+        final_url = str(page_data.get("url") or "")
+        title = str(page_data.get("title") or "")
+        rows = page_data.get("rows") or []
+        evidence = {
+            "requestedOfferId": target["offer_id"],
+            "finalUrl": final_url,
+            "title": title,
+            "rowCount": len(rows) if isinstance(rows, list) else 0,
+        }
+        if raw_status == "waiting_for_login" or page_data.get("health_status") == "needs_attention":
+            return {
+                "status": "needs_attention",
+                "reason_code": str(page_data.get("health_reason") or "login_or_verification"),
+                "final_url": final_url,
+                "title": title,
+                "evidence": evidence,
+            }
+        if raw_status != "ok":
+            return {
+                "status": "error",
+                "reason_code": "browser_error",
+                "final_url": final_url,
+                "title": title,
+                "evidence": evidence,
+            }
+        health_status = str(page_data.get("health_status") or "")
+        if health_status == "invalid":
+            return {
+                "status": "invalid",
+                "reason_code": str(page_data.get("health_reason") or "not_found_or_discontinued"),
+                "final_url": final_url,
+                "title": title,
+                "evidence": evidence,
+            }
+        final_offer_id = parse_offer_id(final_url)
+        if health_status != "valid" or (final_offer_id and final_offer_id != target["offer_id"]):
+            return {
+                "status": "error",
+                "reason_code": str(page_data.get("health_reason") or "unexpected_final_page"),
+                "final_url": final_url,
+                "title": title,
+                "evidence": evidence,
+            }
+        return {
+            "status": "valid",
+            "reason_code": "offer_page",
+            "final_url": final_url,
+            "title": title,
+            "evidence": evidence,
+        }
+
+    def _save_url_health_check(self, job_id: str, target: Dict[str, str], result: Dict[str, Any]) -> None:
+        now = int(time.time())
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO alibaba_url_health_checks(
+                    job_id, offer_id, requested_url, final_url, status,
+                    reason_code, title, evidence_json, checked_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                (
+                    job_id, target["offer_id"], target["url"],
+                    str(result.get("final_url") or ""), str(result.get("status") or "error"),
+                    str(result.get("reason_code") or ""), str(result.get("title") or ""),
+                    json.dumps(result.get("evidence") or {}, ensure_ascii=False), now,
+                ),
+            )
+
+    def start_url_health_check(self, targets: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+        resolved = self._resolve_url_health_targets(targets)
+        with self._job_lock:
+            for job in self._jobs.values():
+                if job.get("status") in {"queued", "running"}:
+                    raise RuntimeError("目前已有 SKU mapping 工作執行中")
+            job_id = f"url-health-{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+            now = int(time.time())
+            job = {
+                "jobId": job_id,
+                "status": "queued",
+                "scope": "url_health_visible",
+                "targetCount": len(resolved),
+                "completed": 0,
+                "total": len(resolved),
+                "message": f"排入 {len(resolved)} 個不同 1688 連結的健康檢查",
+                "createdAt": now,
+                "updatedAt": now,
+            }
+            self._jobs[job_id] = job
+            with self.connect() as conn:
+                conn.execute(
+                    "INSERT INTO sku_mapping_runs(job_id,status,scope,total,created_at,updated_at) VALUES(?,?,?,?,?,?)",
+                    (job_id, "queued", "url_health_visible", len(resolved), now, now),
+                )
+            thread = threading.Thread(target=self._url_health_worker, args=(job_id, resolved), daemon=True)
+            thread.start()
+        return job
+
+    def _url_health_worker(self, job_id: str, targets: Sequence[Dict[str, str]]) -> None:
+        ego_browser = None
+        keep_browser = False
+        completed = 0
+        try:
+            self._update_job(job_id, status="running", total=len(targets), completed=0, message="準備開啟 1688 連結")
+            for target in targets:
+                if ego_browser is None:
+                    from ego_browser_1688 import EgoBrowser1688
+
+                    ego_browser = EgoBrowser1688()
+                page_data = ego_browser.fetch(target["url"])
+                result = self._url_health_result(target, page_data)
+                self._save_url_health_check(job_id, target, result)
+                completed += 1
+                self._update_job(
+                    job_id,
+                    completed=completed,
+                    total=len(targets),
+                    message=f"已檢查 {completed}/{len(targets)} 個連結：{target['offer_id']} → {result['status']}",
+                )
+                if result["status"] == "needs_attention":
+                    keep_browser = True
+                    self._update_job(
+                        job_id,
+                        status="waiting_for_login",
+                        completed=completed,
+                        total=len(targets),
+                        message="1688 需要登入或人工驗證；已保留瀏覽器頁面，完成後可重新檢查剩餘連結",
+                    )
+                    return
+            self._update_job(
+                job_id,
+                status="completed",
+                completed=completed,
+                total=len(targets),
+                message=f"連結健康檢查完成：已檢查 {completed} 個不同 1688 連結",
+            )
+        except Exception as exc:
+            self._update_job(job_id, status="error", completed=completed, total=len(targets), error=str(exc), message="連結健康檢查失敗")
+        finally:
+            if ego_browser is not None:
+                ego_browser.finish(keep=keep_browser)
 
     def start_snapshot_reanalysis(self, use_ai: bool = True, rebuild: bool = False, ai_only: bool = False, targets: Optional[Sequence[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """Re-run matching against stored snapshots without opening 1688.
@@ -2063,18 +2954,22 @@ class SkuMappingService:
             return None
         return {"id": row["id"], "offer_id": row["offer_id"], "product_url": row["product_url"], "product_name": row["product_name"], "status": row["status"], "fingerprint": row["fingerprint"], "skus": self._json_load(row["skus_json"], []), "raw": self._json_load(row["raw_json"], {})}
 
-    def _fetch_live_snapshot(self, url: str, offer_id: str, job_id: str, ego_browser=None) -> Dict[str, Any]:
+    def _fetch_live_snapshot(self, url: str, offer_id: str, job_id: str, ego_browser=None, mark_stale: bool = True) -> Dict[str, Any]:
         owns_browser = ego_browser is None
+        keep_browser = False
         if ego_browser is None:
             from ego_browser_1688 import EgoBrowser1688
 
             ego_browser = EgoBrowser1688()
         try:
             page_data = ego_browser.fetch(url)
+            keep_browser = page_data.get("status") == "waiting_for_login"
             if page_data.get("status") != "ok":
                 if page_data.get("status") == "waiting_for_login":
-                    self._update_job(job_id, status="running", message=page_data.get("error_message", "1688 需要登入或人工驗證"))
+                        self._update_job(job_id, status="running", message=page_data.get("error_message", "1688 需要登入或人工驗證"))
                 return page_data
+            if page_data.get("health_status") == "invalid":
+                return {"status": "discontinued", "error_message": "1688 商品不存在或已下架"}
             self._update_job(job_id, status="running", message=f"已透過 ego-lite 開啟 1688 offer {offer_id}，讀取 SKU")
             raw_rows = page_data.get("rows") or []
             skus = [self._normalize_live_sku(row) for row in raw_rows if isinstance(row, dict)]
@@ -2089,13 +2984,15 @@ class SkuMappingService:
                 "url": str(page_data.get("url") or ""),
                 "body": str(page_data.get("body") or ""),
             }
-            snapshot = self._save_snapshot(offer_id, url, raw_page["title"], skus, raw_page)
+            snapshot = self._save_snapshot(offer_id, url, raw_page["title"], skus, raw_page, mark_stale=mark_stale)
             return snapshot
         except Exception as exc:
             return {"status": "error", "error_message": str(exc)}
         finally:
             if owns_browser:
-                ego_browser.finish(keep=True)
+                # A one-off URL preview is finished as soon as its SKU data has
+                # been read. Keep it only for a user login/verification step.
+                ego_browser.finish(keep=keep_browser)
 
     @staticmethod
     def _normalize_live_sku(row: Dict[str, Any]) -> Dict[str, Any]:
@@ -2110,7 +3007,7 @@ class SkuMappingService:
         image_url = str(row.get("skuImageUrl") or row.get("imageUrl") or row.get("image_url") or "").strip()
         return {"sku_id": sku_id, "sku_name": sku_name, "second_name": second_name, "spec_text": spec_text, "parts": parts, "dimension_count": len(parts), "image_url": image_url, "price": row.get("price") or row.get("salePrice") or row.get("priceCent"), "stock": row.get("stock") or row.get("quantity"), "raw": row}
 
-    def _save_snapshot(self, offer_id: str, url: str, product_name: str, skus: List[Dict[str, Any]], raw: Dict[str, Any]) -> Dict[str, Any]:
+    def _save_snapshot(self, offer_id: str, url: str, product_name: str, skus: List[Dict[str, Any]], raw: Dict[str, Any], mark_stale: bool = True) -> Dict[str, Any]:
         skus = [{**sku, "offer_id": normalize_id(offer_id)} for sku in skus]
         fingerprint = offer_fingerprint(offer_id, skus)
         now = int(time.time())
@@ -2126,7 +3023,7 @@ class SkuMappingService:
                 (offer_id, canonical_url(url), product_name, "ok", fingerprint, json.dumps(skus, ensure_ascii=False), json.dumps({"values": dimensions, "counts": dimension_counts}, ensure_ascii=False), json.dumps(images, ensure_ascii=False), json.dumps(prices, ensure_ascii=False), json.dumps(stocks, ensure_ascii=False), json.dumps(raw, ensure_ascii=False), now),
             )
             row = conn.execute("SELECT * FROM alibaba_offer_snapshots WHERE offer_id=? AND fingerprint=?", (offer_id, fingerprint)).fetchone()
-        if previous and str(previous["fingerprint"] or "") != fingerprint:
+        if mark_stale and previous and str(previous["fingerprint"] or "") != fingerprint:
             self._mark_offer_stale(offer_id, fingerprint)
         return {"id": row["id"], "offer_id": offer_id, "product_url": canonical_url(url), "product_name": product_name, "status": "ok", "fingerprint": fingerprint, "skus": skus, "raw": raw}
 
@@ -2171,6 +3068,7 @@ class SkuMappingService:
         if changed:
             backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_stale_{now}")
             shutil.copy2(self.golden_path, backup_path)
+            prune_golden_table_backups(backup_path)
             tmp_path = self.golden_path.with_suffix(".json.stale.tmp")
             with tmp_path.open("w", encoding="utf-8") as handle:
                 json.dump(golden, handle, ensure_ascii=False, indent=4)
@@ -2803,21 +3701,21 @@ class SkuMappingService:
         requested_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
         requested_id = normalize_id(item.get("skuId") or item.get("sku_id"))
         if requested_key and requested_key not in {str(candidate.get("candidate_key") or "") for candidate in candidates}:
-            catalog = self._snapshot_catalog(None if row.get("status") == "stale" else row.get("snapshot_id"), row.get("offer_id", ""))
+            catalog = self._snapshot_catalog(offer_id=row.get("offer_id", ""))
             manual = next((sku for sku in catalog.get("skus", []) if str(sku.get("candidate_key") or "") == requested_key), None)
             if manual:
                 manual = dict(manual)
                 manual["_snapshot_id"] = catalog.get("snapshotId")
                 candidates.append(manual)
         if requested_name and not any(display_text(candidate.get("sku_name")) == requested_name and display_text(candidate.get("second_name")) == requested_second for candidate in candidates):
-            catalog = self._snapshot_catalog(None if row.get("status") == "stale" else row.get("snapshot_id"), row.get("offer_id", ""))
+            catalog = self._snapshot_catalog(offer_id=row.get("offer_id", ""))
             manual = next((sku for sku in catalog.get("skus", []) if display_text(sku.get("sku_name")) == requested_name and display_text(sku.get("second_name")) == requested_second), None)
             if manual:
                 manual = dict(manual)
                 manual["_snapshot_id"] = catalog.get("snapshotId")
                 candidates.append(manual)
         if requested_id and requested_id not in {normalize_id(candidate.get("sku_id")) for candidate in candidates}:
-            catalog = self._snapshot_catalog(None if row.get("status") == "stale" else row.get("snapshot_id"), row.get("offer_id", ""))
+            catalog = self._snapshot_catalog(offer_id=row.get("offer_id", ""))
             manual = next((sku for sku in catalog.get("skus", []) if normalize_id(sku.get("sku_id")) == requested_id), None)
             if manual:
                 manual = dict(manual)
@@ -2918,7 +3816,10 @@ class SkuMappingService:
         ai_evidence = evidence.get("ai") if isinstance(evidence, dict) else {}
         target["1688_mapping_source"] = "ai_reviewed" if action == "approve" and isinstance(ai_evidence, dict) and ai_evidence.get("source") in AI_SUCCESS_SOURCES else "manual"
         target["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
-        snapshot_id = suggestion.get("snapshot_id") or candidate.get("_snapshot_id")
+        # A manual catalog choice may come from a newer offer snapshot than the
+        # suggestion that opened the review card.  Persist the snapshot that
+        # actually contained the approved SKU, not the older suggestion one.
+        snapshot_id = candidate.get("_snapshot_id") or suggestion.get("snapshot_id")
         target["1688_offer_fingerprint"] = self._snapshot_fingerprint(snapshot_id)
         if candidate.get("price") is not None:
             try:
@@ -2928,6 +3829,7 @@ class SkuMappingService:
         backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_sku_review_{now}")
         original_bytes = self.golden_path.read_bytes()
         shutil.copy2(self.golden_path, backup_path)
+        prune_golden_table_backups(backup_path)
         tmp_path = self.golden_path.with_suffix(".json.tmp")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(golden, handle, ensure_ascii=False, indent=4)
@@ -2989,6 +3891,7 @@ class SkuMappingService:
         backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_sku_review_{now}")
         original_bytes = self.golden_path.read_bytes()
         shutil.copy2(self.golden_path, backup_path)
+        prune_golden_table_backups(backup_path)
         tmp_path = self.golden_path.with_suffix(".json.tmp")
         with tmp_path.open("w", encoding="utf-8") as handle:
             json.dump(golden, handle, ensure_ascii=False, indent=4)

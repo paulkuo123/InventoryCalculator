@@ -81,6 +81,28 @@
             </div>
         </div>
 
+        <div class="card cookie-import-card">
+            <div class="cookie-import-header">
+                <div>
+                    <h3><i class="fas fa-key"></i> 匯入蝦皮 Cookies</h3>
+                    <p>貼上從瀏覽器匯出的 Cookie JSON，或 <code>name=value; ...</code> 文字，系統會直接存成專案根目錄的 <code>cookies.json</code>。</p>
+                </div>
+                <span class="cookie-import-hint">只顯示數量與網域，不回顯 Cookie 值</span>
+            </div>
+            <textarea id="cookieImportText" class="cookie-import-textarea" rows="5" spellcheck="false" placeholder="請貼上 Cookie JSON，或 name=value; another=value" autocomplete="off"></textarea>
+            <div class="cookie-import-actions">
+                <button id="cookieImportButton" class="btn-secondary" type="button">
+                    <i class="fas fa-file-import"></i>
+                    儲存 Cookies
+                </button>
+                <button id="cookieImportClearButton" class="btn-outline" type="button">
+                    <i class="fas fa-eraser"></i>
+                    清空
+                </button>
+                <span id="cookieImportStatus" class="cookie-import-status" role="status" aria-live="polite"></span>
+            </div>
+        </div>
+
         <!-- 整體庫存水位圓餅圖區塊 -->
         <!-- 庫存健康儀表板 (Dashboard Summary) -->
         <div class="card dashboard-summary" id="dashboardSummary">
@@ -216,6 +238,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260809-name-mapping"></script>
+    <script src="script.js?v=20260809-cookie-import1"></script>
 </body>
 </html>

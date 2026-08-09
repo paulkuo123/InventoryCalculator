@@ -24,6 +24,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const skuReviewSummary = document.getElementById('skuReviewSummary');
     const skuReviewMessage = document.getElementById('skuReviewMessage');
     const skuReviewList = document.getElementById('skuReviewList');
+    const cookieImportText = document.getElementById('cookieImportText');
+    const cookieImportButton = document.getElementById('cookieImportButton');
+    const cookieImportClearButton = document.getElementById('cookieImportClearButton');
+    const cookieImportStatus = document.getElementById('cookieImportStatus');
     
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
@@ -106,6 +110,43 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!skuReviewMessage) return;
         skuReviewMessage.textContent = text || '';
         skuReviewMessage.className = `sku-review-message ${type}`.trim();
+    }
+
+    function setCookieImportStatus(text, type = '') {
+        if (!cookieImportStatus) return;
+        cookieImportStatus.textContent = text || '';
+        cookieImportStatus.className = `cookie-import-status ${type}`.trim();
+    }
+
+    async function importShopeeCookies() {
+        if (!cookieImportText || !cookieImportButton) return;
+        const cookiesText = cookieImportText.value.trim();
+        if (!cookiesText) {
+            setCookieImportStatus('請先貼上 Cookie JSON。', 'error');
+            cookieImportText.focus();
+            return;
+        }
+
+        cookieImportButton.disabled = true;
+        setCookieImportStatus('正在驗證並儲存 Cookies...');
+        try {
+            const response = await fetch('/api/cookies/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookiesText })
+            });
+            const data = await response.json();
+            if (!response.ok || data.status !== 'success') {
+                throw new Error(data.message || 'Cookie 匯入失敗');
+            }
+            const domains = (data.domains || []).join('、');
+            setCookieImportStatus(`已儲存 ${data.count} 筆 Cookies（${domains}）。`, 'success');
+            cookieImportText.value = '';
+        } catch (error) {
+            setCookieImportStatus(error.message || 'Cookie 匯入失敗，請檢查貼上的內容。', 'error');
+        } finally {
+            cookieImportButton.disabled = false;
+        }
     }
 
     function skuReviewReportLabel(report) {
@@ -760,7 +801,8 @@ document.addEventListener('DOMContentLoaded', function() {
             productId,
             productName,
             modelName,
-            specId
+            specId,
+            originalOfferId: binding.alibabaOfferId || parseAlibabaOfferId(modelData.阿里巴巴商品URL || effectiveUrl || '')
         };
 
         modal.querySelector('#alibabaEditProductName').textContent = productName || '未知商品';
@@ -1006,6 +1048,17 @@ document.addEventListener('DOMContentLoaded', function() {
         const alibabaOfferId = offerInput.value.trim() || parseAlibabaOfferId(alibabaProductUrl);
         const applyScope = scopeInput.value;
         const selectedModels = applyScope === 'selected_models' ? getSelectedAlibabaModels(modal) : [];
+
+        if (alibabaProductUrl && alibabaOfferId !== String(context.originalOfferId || '')) {
+            const params = new URLSearchParams({
+                mode: 'urls',
+                productId: context.productId,
+                modelId: context.specId || context.modelName || '',
+                newUrl: alibabaProductUrl
+            });
+            window.location.href = `/sku-mapping.html?${params}`;
+            return;
+        }
 
         if (alibabaProductUrl && !/^https?:\/\//i.test(alibabaProductUrl)) {
             message.textContent = 'URL 必須以 http:// 或 https:// 開頭';
@@ -2643,6 +2696,16 @@ document.addEventListener('DOMContentLoaded', function() {
                     console.error('套用 High confidence 失敗:', error);
                     setSkuReviewMessage(error.message || '套用 High confidence 失敗', 'error');
                 });
+        });
+    }
+    if (cookieImportButton) {
+        cookieImportButton.addEventListener('click', importShopeeCookies);
+    }
+    if (cookieImportClearButton) {
+        cookieImportClearButton.addEventListener('click', () => {
+            if (cookieImportText) cookieImportText.value = '';
+            setCookieImportStatus('');
+            if (cookieImportText) cookieImportText.focus();
         });
     }
     loadAlibabaBindings();

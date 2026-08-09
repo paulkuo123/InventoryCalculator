@@ -92,7 +92,8 @@ from ads_analysis import (
     validate_reasoning_effort,
 )
 from config_loader import load_openai_api_key, load_openai_config_value
-from sku_mapping_service import MappingConflict, SkuMappingService, mapping_candidate_key
+from cookie_import import MAX_COOKIE_IMPORT_BYTES, save_shopee_cookies
+from sku_mapping_service import MappingConflict, SkuMappingService, mapping_candidate_key, prune_golden_table_backups
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 
 # 導入版本管理
@@ -275,6 +276,22 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
+        if request_path == '/api/sku-mapping/url-groups':
+            try:
+                params = urllib.parse.parse_qs(parsed_path.query)
+                self._send_json_response(200, self._sku_mapping_store().url_groups(
+                    query=params.get("query", [""])[0],
+                    status=params.get("status", ["all"])[0],
+                    mapping_status=params.get("mappingStatus", [""])[0],
+                    link_status=params.get("linkStatus", ["all"])[0],
+                ))
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"載入 1688 URL 群組失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
         if request_path == '/api/sku-mapping/queue':
             try:
                 params = urllib.parse.parse_qs(parsed_path.query)
@@ -284,6 +301,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     restock_only=params.get("restockOnly", ["false"])[0].lower() == "true",
                     offer_id=params.get("offerId", [""])[0],
                     tier=params.get("tier", [""])[0],
+                    url_presence=params.get("urlPresence", ["with"])[0],
                     page=int(params.get("page", ["1"])[0]),
                     page_size=int(params.get("pageSize", ["50"])[0]),
                 ))
@@ -661,6 +679,27 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         request_path = urllib.parse.urlparse(self.path).path
 
+        if request_path == '/api/cookies/import':
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+                if content_length > MAX_COOKIE_IMPORT_BYTES + 100_000:
+                    raise ValueError("Cookie 文字太大，請確認貼上的內容是否正確")
+                data = self._read_json_body()
+                result = save_shopee_cookies(
+                    os.path.dirname(os.path.abspath(__file__)),
+                    data.get("cookiesText", ""),
+                )
+                self._send_json_response(200, result)
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except OSError:
+                logger.exception("寫入 Cookie 檔案失敗")
+                self._send_json_response(500, {"status": "error", "message": "Cookie 檔案寫入失敗"})
+            except Exception:
+                logger.exception("匯入 Cookie 失敗")
+                self._send_json_response(500, {"status": "error", "message": "Cookie 匯入失敗"})
+            return
+
         if request_path == '/api/golden-table/import/preview':
             try:
                 data = self._read_json_body()
@@ -817,6 +856,67 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json_response(409, {"status": "error", "message": str(e)})
             except Exception as e:
                 logger.exception(f"啟動 SKU mapping 掃描失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/sku-mapping/url-health-checks':
+            try:
+                data = self._read_json_body()
+                targets = data.get("targets") if isinstance(data.get("targets"), list) else []
+                job = self._sku_mapping_store().start_url_health_check(targets)
+                self._send_json_response(202, {"status": "success", **job})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except RuntimeError as e:
+                self._send_json_response(409, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"啟動 1688 URL 健康檢查失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/sku-mapping/url-changes/preview':
+            try:
+                data = self._read_json_body()
+                result = self._sku_mapping_store().preview_url_change(
+                    product_id=data.get("productId", ""),
+                    model_id=data.get("modelId", ""),
+                    new_url=data.get("newUrl", ""),
+                    mode=data.get("mode", "replace"),
+                )
+                self._send_json_response(200, result)
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except RuntimeError as e:
+                self._send_json_response(502, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"預覽 1688 URL 更新失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/sku-mapping/url-changes/commit':
+            try:
+                data = self._read_json_body()
+                result = self._sku_mapping_store().commit_url_change(
+                    product_id=data.get("productId", ""),
+                    model_id=data.get("modelId", ""),
+                    source_version=data.get("sourceVersion", ""),
+                    models=data.get("models") if isinstance(data.get("models"), list) else [],
+                    new_url=data.get("newUrl", ""),
+                    snapshot_fingerprint=data.get("snapshotFingerprint", ""),
+                    mode=data.get("mode", "replace"),
+                    reviewer=str(data.get("reviewer") or "local_user"),
+                )
+                self._send_json_response(200, result)
+            except MappingConflict as e:
+                self._send_json_response(409, {"status": "conflict", "message": str(e)})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"提交 1688 URL 更新失敗: {e}")
                 self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
@@ -1464,7 +1564,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     continue
                 sku_name = str(model.get("1688_sku_name") or "").strip()
                 sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
-                if not sku_name and not sku_second_name:
+                product_url = str(model.get("阿里巴巴商品URL") or "").strip()
+                offer_id = normalize_identifier(model.get("1688_offer_id")) or parse_offer_id(product_url)
+                sku_id = normalize_identifier(model.get("1688_sku_id"))
+                if not sku_name and not sku_second_name and not product_url and not offer_id and not sku_id:
                     continue
                 model_id = normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱") or "").strip()
                 if not model_id:
@@ -1476,16 +1579,16 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 binding.setdefault("productName", product_name)
                 binding.setdefault("modelName", str(model.get("型號名稱") or ""))
                 binding.setdefault("alibabaProductName", str(model.get("阿里巴巴商品名稱") or ""))
-                binding.setdefault("alibabaProductUrl", str(model.get("阿里巴巴商品URL") or ""))
+                binding.setdefault("alibabaProductUrl", product_url)
                 # golden_table.json 是人工編輯與批次掃描共用的唯一 SKU 來源。
                 if sku_name:
                     binding["alibabaSkuName"] = sku_name
                 if sku_second_name:
                     binding["alibabaSkuSecondName"] = sku_second_name
-                if model.get("1688_sku_id"):
-                    binding["alibabaSkuId"] = str(model.get("1688_sku_id"))
-                if model.get("1688_offer_id"):
-                    binding["alibabaOfferId"] = str(model.get("1688_offer_id"))
+                if sku_id:
+                    binding["alibabaSkuId"] = sku_id
+                if offer_id:
+                    binding["alibabaOfferId"] = offer_id
                 if model.get("1688_spec_text"):
                     binding["alibabaSpecText"] = str(model.get("1688_spec_text"))
                 binding["alibabaMappingStatus"] = str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing"))
@@ -1514,6 +1617,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             f"golden_table.json.backup_before_import_{int(time.time())}"
         )
         shutil.copy2(golden_path, backup_path)
+        prune_golden_table_backups(backup_path)
         temp_path = None
         try:
             with tempfile.NamedTemporaryFile(
@@ -1859,6 +1963,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             }
 
         shutil.copy2(golden_path, backup_path)
+        prune_golden_table_backups(backup_path)
         with open(golden_path, "w", encoding="utf-8") as f:
             json.dump(golden_table, f, ensure_ascii=False, indent=4)
             f.write("\n")
@@ -2227,6 +2332,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         target_model = self._find_golden_model(models, spec_id, model_name)
         if target_model is None:
             raise FileNotFoundError("找不到對應型號")
+
+        current_url = str(target_model.get("阿里巴巴商品URL") or "").strip()
+        current_offer_id = normalize_identifier(target_model.get("1688_offer_id")) or parse_offer_id(current_url)
+        if alibaba_product_url and alibaba_offer_id != current_offer_id:
+            raise ValueError("1688 offer 已改變；請到「1688 SKU Mapping → URL 管理」檢查新連結與 SKU 後再更新")
 
         if apply_scope == "single":
             models_to_update = [target_model]

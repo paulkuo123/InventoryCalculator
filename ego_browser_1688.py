@@ -12,6 +12,7 @@ import os
 import shutil
 import subprocess
 from typing import Any, Dict, Optional
+from urllib.parse import urlparse
 
 
 DEFAULT_TASK_SPACE = "InventoryCalculater 1688 live scan"
@@ -32,9 +33,25 @@ def _node_script(url: str, task_space: str) -> str:
     task_space_json = json.dumps(task_space, ensure_ascii=False)
     return f"""
 const targetUrl = {url_json};
-const taskSpaceName = {task_space_json};
+const requestedTaskSpaceName = {task_space_json};
+
+async function selectTaskSpaceName() {{
+  const spaces = await listTaskSpaces();
+  const requested = spaces.find(space => space.name === requestedTaskSpaceName);
+  if (!requested || requested.ownership !== 'user') return requestedTaskSpaceName;
+
+  const agentPrefix = `${{requestedTaskSpaceName}} [agent]`;
+  const existingAgent = spaces.find(space =>
+    space.ownership === 'agent' && String(space.name || '').startsWith(agentPrefix)
+  );
+  if (existingAgent) return existingAgent.name;
+
+  const agentName = `${{agentPrefix}} ${{Date.now()}}`;
+  return spaces.some(space => space.name === agentName) ? `${{agentName}}-${{Math.random().toString(16).slice(2)}}` : agentName;
+}}
 
 try {{
+  const taskSpaceName = await selectTaskSpaceName();
   const task = await useOrCreateTaskSpace(taskSpaceName);
   await openOrReuseTab(targetUrl, {{ wait: true, timeout: 60 }});
   await wait(3);
@@ -50,7 +67,7 @@ try {{
       body: (document.body?.innerText || '').slice(0, 2000),
     }};
   }})()`);
-  cliLog(JSON.stringify({{ ok: true, taskId: task.id, page: pageData }}));
+  cliLog(JSON.stringify({{ ok: true, taskId: task.id, taskSpaceName, page: pageData }}));
 }} catch (error) {{
   cliLog(JSON.stringify({{ ok: false, error: String(error) }}));
   process.exitCode = 1;
@@ -129,8 +146,12 @@ class EgoBrowser1688:
             if not detail:
                 detail_lines = str(completed.stderr or completed.stdout or "").strip().splitlines()
                 detail = detail_lines[-1] if detail_lines else f"ego-browser 結束碼 {completed.returncode}"
+            if detail.lower().startswith("ego's nodejs process exited"):
+                detail = "1688 頁面讀取失敗，ego-lite 瀏覽器工作階段未正常完成"
             return {"status": "error", "error_message": detail}
 
+        if result.get("taskSpaceName"):
+            self.task_space = str(result["taskSpaceName"])
         page = result.get("page") or {}
         if not isinstance(page, dict):
             return {"status": "error", "error_message": "ego-lite 沒有回傳有效的 1688 頁面資料"}
@@ -162,6 +183,9 @@ class EgoBrowser1688:
     def _classify_page(page: Dict[str, Any]) -> Dict[str, Any]:
         body = str(page.get("body") or "")
         page_url = str(page.get("url") or "")
+        title = str(page.get("title") or "")
+        normalized_body = body.lower()
+        normalized_title = title.lower()
         login_markers = (
             "验证码", "驗證碼", "滑块", "滑塊", "安全验证", "安全驗證",
             "请先登录", "請先登入", "登录后查看", "登入後查看",
@@ -172,22 +196,47 @@ class EgoBrowser1688:
             return {
                 "status": "waiting_for_login",
                 "error_message": "1688 需要登入或人工驗證；ego-lite 頁面已保留",
-                "title": page.get("title") or "",
+                "title": title,
                 "url": page_url,
                 "body": body,
                 "rows": [],
+                "health_status": "needs_attention",
+                "health_reason": "login_or_verification",
+            }
+        parsed_url = urlparse(page_url)
+        invalid_url = parsed_url.path.lower().endswith("/wrongpage.html")
+        invalid_markers = (
+            "商品不存在", "商品已下架", "页面不存在", "頁面不存在",
+            "404-阿里巴巴", "404 - 阿里巴巴", "商品不存在或已下架",
+        )
+        if invalid_url or any(marker.lower() in normalized_title or marker.lower() in normalized_body for marker in invalid_markers):
+            reason = "wrongpage_redirect" if invalid_url else "not_found_or_discontinued"
+            return {
+                "status": "ok",
+                "title": title,
+                "url": page_url,
+                "body": body,
+                "rows": [],
+                "health_status": "invalid",
+                "health_reason": reason,
             }
         rows = page.get("rows") or []
         if isinstance(rows, dict):
             rows = list(rows.values())
         if not isinstance(rows, list):
             rows = []
+        is_offer_page = (
+            (parsed_url.hostname or "").lower().endswith("1688.com")
+            and "/offer/" in parsed_url.path.lower()
+        )
         return {
             "status": "ok",
-            "title": page.get("title") or "",
+            "title": title,
             "url": page_url,
             "body": body,
             "rows": [row for row in rows if isinstance(row, dict)],
+            "health_status": "valid" if is_offer_page else "error",
+            "health_reason": "offer_page" if is_offer_page else "unexpected_final_page",
         }
 
 

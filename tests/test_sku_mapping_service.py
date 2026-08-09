@@ -1,10 +1,11 @@
 import json
 import os
 import tempfile
+import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from sku_mapping_service import MappingConflict, SkuMappingService, clean_mapping_name, offer_fingerprint
+from sku_mapping_service import URL_HEALTH_TTL_SECONDS, MappingConflict, SkuMappingService, clean_mapping_name, offer_fingerprint
 
 
 class SkuMappingServiceTest(unittest.TestCase):
@@ -96,6 +97,63 @@ class SkuMappingServiceTest(unittest.TestCase):
             )
             self.assertEqual(queue["items"][0]["productMonthlySales"], 1200)
             self.assertEqual(queue["items"][0]["monthlySales"], 900)
+
+    def test_queue_search_normalizes_both_query_and_stored_chinese_text(self):
+        traditional = self.service.queue(status="review", query="手機殼")
+        simplified = self.service.queue(status="review", query="手机壳")
+
+        self.assertEqual(traditional["total"], 1)
+        self.assertEqual(simplified["total"], 1)
+        self.assertEqual(traditional["items"][0]["product_id"], "p-case")
+        self.assertEqual(simplified["items"][0]["product_id"], "p-case")
+
+    def test_queue_filters_models_by_url_presence(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-missing"] = {
+            "商品名稱": "沒有連結商品",
+            "總月銷量": 8,
+            "型號": [{
+                "規格ID": "missing-blue",
+                "型號名稱": "藍色",
+                "月銷量": 8,
+            }],
+        }
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+
+        service = SkuMappingService(self.tmp.name)
+        with_url = service.queue(status="review", url_presence="with")
+        without_url = service.queue(status="review", url_presence="without")
+        all_urls = service.queue(status="review", url_presence="all")
+
+        self.assertEqual(with_url["total"], 2)
+        self.assertTrue(all(item["has_url"] for item in with_url["items"]))
+        self.assertEqual(without_url["total"], 1)
+        missing = without_url["items"][0]
+        self.assertFalse(missing["has_url"])
+        self.assertEqual(missing["product_id"], "p-missing")
+        self.assertEqual(missing["model_id"], "missing-blue")
+        self.assertEqual(missing["status"], "missing_url")
+        self.assertEqual(all_urls["total"], 3)
+
+    def test_queue_without_url_respects_search_and_mapping_filters(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-missing"] = {
+            "商品名稱": "沒有連結商品",
+            "型號": [{"規格ID": "missing-blue", "型號名稱": "藍色"}],
+        }
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+
+        service = SkuMappingService(self.tmp.name)
+        self.assertEqual(service.queue(url_presence="without", query="藍色")["total"], 1)
+        self.assertEqual(service.queue(url_presence="without", query="不存在")["total"], 0)
+        self.assertEqual(service.queue(status="approved", url_presence="without")["total"], 0)
+        self.assertEqual(service.queue(tier="red", url_presence="without")["total"], 0)
+        with self.assertRaisesRegex(ValueError, "URL 篩選值不正確"):
+            service.queue(url_presence="invalid")
 
     def test_phone_pro_and_pro_max_are_not_interchangeable(self):
         model = {"product_name": "手機殼", "model_name": "iPhone 11 Pro,黑色"}
@@ -236,6 +294,58 @@ class SkuMappingServiceTest(unittest.TestCase):
             "action": "approve", "skuId": "sock-manual-alt", "version": item["version"],
         }], batch=True)
         self.assertEqual(result["updated"][0]["skuId"], "sock-manual-alt")
+
+    def test_catalog_and_manual_approval_use_latest_offer_snapshot(self):
+        model = self.service._scope_models("all")[0]
+        old_snapshot = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [{"sku_id": "old-white", "sku_name": "白色", "second_name": "", "spec_text": "白色", "parts": ["白色"], "price": 1.2, "stock": 99}],
+            {},
+        )
+        self.service._save_suggestion(
+            model, old_snapshot,
+            self.service.generate_candidates(model, old_snapshot["skus"]), None, {},
+        )
+        new_snapshot = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [
+                {"sku_id": "old-white", "sku_name": "白色", "second_name": "", "spec_text": "白色", "parts": ["白色"], "price": 1.2, "stock": 99},
+                {"sku_id": "new-black-box", "sku_name": "黑色-中性彩盒裝", "second_name": "", "spec_text": "黑色-中性彩盒裝", "parts": ["黑色-中性彩盒裝"], "price": 1.45, "stock": 100},
+            ],
+            {}, mark_stale=False,
+        )
+        with self.service.connect() as conn:
+            suggestion = conn.execute(
+                "SELECT snapshot_id FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                (model["product_id"], model["model_id"]),
+            ).fetchone()
+        self.assertEqual(suggestion["snapshot_id"], old_snapshot["id"])
+
+        catalog = self.service.catalog_for_model(model["product_id"], model["model_id"])
+
+        self.assertEqual(catalog["snapshotId"], new_snapshot["id"])
+        self.assertEqual(
+            {sku["sku_id"] for sku in catalog["skus"]},
+            {"old-white", "new-black-box"},
+        )
+        item = next(
+            row for row in self.service.queue(status="all")["items"]
+            if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"]
+        )
+        result = self.service.decisions([{
+            "productId": model["product_id"], "modelId": model["model_id"],
+            "action": "approve", "skuId": "new-black-box", "version": item["version"],
+        }])
+        self.assertEqual(result["updated"][0]["skuId"], "new-black-box")
+        with open(self.golden_path, encoding="utf-8") as handle:
+            updated = json.load(handle)[model["product_id"]]["型號"][0]
+        self.assertEqual(updated["1688_offer_fingerprint"], new_snapshot["fingerprint"])
+        with self.service.connect() as conn:
+            suggestion = conn.execute(
+                "SELECT snapshot_id FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                (model["product_id"], model["model_id"]),
+            ).fetchone()
+        self.assertEqual(suggestion["snapshot_id"], new_snapshot["id"])
 
     def test_legacy_candidate_key_and_second_name_are_reconstructed_for_batch_approval(self):
         model = self.service._scope_models("all")[0]
@@ -1153,6 +1263,248 @@ class SkuMappingServiceTest(unittest.TestCase):
             updated = json.load(handle)[model["product_id"]]["型號"][0]
         self.assertEqual(updated["1688_sku_name"], "白色")
         self.assertEqual(updated.get("1688_sku_id", ""), "")
+
+    def test_url_groups_keep_same_offer_separate_between_products(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-shared"] = {
+            "商品名稱": "另一個商品",
+            "型號": [{
+                "規格ID": "shared-white", "型號名稱": "白色",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/100.html",
+            }],
+        }
+        golden["p-socks"]["型號"].append({
+            "規格ID": "sock-blue", "型號名稱": "藍色",
+            "阿里巴巴商品URL": "https://detail.1688.com/offer/300.html",
+        })
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+
+        groups = self.service.url_groups()["groups"]
+        shared = [row for row in groups if row["offerId"] == "100"]
+        self.assertEqual({row["productId"] for row in shared}, {"p-socks", "p-shared"})
+        self.assertEqual(len([row for row in groups if row["productId"] == "p-socks"]), 2)
+
+    def test_url_groups_report_products_separately_from_link_groups(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-socks"]["型號"].append({
+            "規格ID": "sock-blue", "型號名稱": "藍色",
+            "阿里巴巴商品URL": "https://detail.1688.com/offer/300.html",
+        })
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+
+        result = self.service.url_groups()
+
+        self.assertEqual(result["productTotal"], 2)
+        self.assertEqual(result["total"], 3)
+
+    def test_url_health_targets_are_validated_and_deduplicated_by_offer(self):
+        targets = self.service._resolve_url_health_targets([
+            {"productId": "p-socks", "modelId": "sock-white"},
+            {"productId": "p-socks", "modelId": "sock-white"},
+        ])
+        self.assertEqual(len(targets), 1)
+        self.assertEqual(targets[0]["offer_id"], "100")
+        with self.assertRaises(ValueError):
+            self.service._resolve_url_health_targets([
+                {"productId": "not-in-golden", "modelId": "missing"},
+            ])
+
+    def test_start_url_health_check_creates_deduplicated_background_job(self):
+        with patch.object(self.service, "_url_health_worker") as worker:
+            job = self.service.start_url_health_check([
+                {"productId": "p-socks", "modelId": "sock-white"},
+                {"productId": "p-socks", "modelId": "sock-white"},
+            ])
+        self.assertEqual(job["scope"], "url_health_visible")
+        self.assertEqual(job["targetCount"], 1)
+        worker.assert_called_once()
+        with self.service.connect() as conn:
+            row = conn.execute("SELECT scope,total FROM sku_mapping_runs WHERE job_id=?", (job["jobId"],)).fetchone()
+        self.assertEqual((row["scope"], row["total"]), ("url_health_visible", 1))
+
+    def test_url_health_history_drives_independent_filter_and_expiry(self):
+        now = int(time.time())
+        with self.service.connect() as conn:
+            conn.execute(
+                """INSERT INTO alibaba_url_health_checks(
+                    job_id, offer_id, requested_url, final_url, status,
+                    reason_code, title, evidence_json, checked_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                ("health-old", "100", "https://detail.1688.com/offer/100.html", "https://page.1688.com/shtml/static/wrongpage.html", "invalid", "wrongpage_redirect", "404-阿里巴巴", "{}", now - URL_HEALTH_TTL_SECONDS - 1),
+            )
+            conn.execute(
+                """INSERT INTO alibaba_url_health_checks(
+                    job_id, offer_id, requested_url, final_url, status,
+                    reason_code, title, evidence_json, checked_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                ("health-new", "100", "https://detail.1688.com/offer/100.html", "https://detail.1688.com/offer/100.html", "valid", "offer_page", "商品", "{}", now),
+            )
+        groups = self.service.url_groups()
+        socks = next(row for row in groups["groups"] if row["productId"] == "p-socks")
+        self.assertEqual(socks["linkStatus"], "valid")
+        self.assertEqual(socks["finalUrl"], "https://detail.1688.com/offer/100.html")
+        self.assertFalse(socks["linkCheckExpired"])
+        self.assertEqual(self.service.url_groups(link_status="invalid")["total"], 0)
+
+        with self.service.connect() as conn:
+            conn.execute("DELETE FROM alibaba_url_health_checks WHERE offer_id='100'")
+            conn.execute(
+                """INSERT INTO alibaba_url_health_checks(
+                    job_id, offer_id, requested_url, final_url, status,
+                    reason_code, title, evidence_json, checked_at
+                ) VALUES(?,?,?,?,?,?,?,?,?)""",
+                ("health-expired", "100", "https://detail.1688.com/offer/100.html", "https://detail.1688.com/offer/100.html", "valid", "offer_page", "商品", "{}", now - URL_HEALTH_TTL_SECONDS - 1),
+            )
+        expired = self.service.url_groups(link_status="expired")
+        self.assertEqual(expired["total"], 1)
+        self.assertTrue(expired["groups"][0]["linkCheckExpired"])
+
+    def test_url_health_worker_records_invalid_without_changing_golden(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            before = json.load(handle)
+        browser = MagicMock()
+        browser.fetch.return_value = {
+            "status": "ok",
+            "health_status": "invalid",
+            "health_reason": "wrongpage_redirect",
+            "title": "404-阿里巴巴",
+            "url": "https://page.1688.com/shtml/static/wrongpage.html",
+            "body": "",
+            "rows": [],
+        }
+        target = self.service._resolve_url_health_targets([
+            {"productId": "p-socks", "modelId": "sock-white"},
+        ])[0]
+        with patch("ego_browser_1688.EgoBrowser1688", return_value=browser):
+            self.service._url_health_worker("health-test", [target])
+
+        with self.service.connect() as conn:
+            row = conn.execute("SELECT status, reason_code FROM alibaba_url_health_checks WHERE job_id='health-test'").fetchone()
+        self.assertEqual((row["status"], row["reason_code"]), ("invalid", "wrongpage_redirect"))
+        with open(self.golden_path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle), before)
+        browser.finish.assert_called_once_with(keep=False)
+
+    def test_one_off_live_snapshot_closes_browser_after_success(self):
+        browser = MagicMock()
+        browser.fetch.return_value = {
+            "status": "ok", "title": "商品", "url": "https://detail.1688.com/offer/999.html",
+            "body": "商品頁", "rows": [{"skuId": "sku-1", "specAttrs": "白色"}],
+        }
+        with patch("ego_browser_1688.EgoBrowser1688", return_value=browser):
+            result = self.service._fetch_live_snapshot(
+                "https://detail.1688.com/offer/999.html", "999", "preview-job", mark_stale=False,
+            )
+
+        self.assertEqual(result["status"], "ok")
+        browser.finish.assert_called_once_with(keep=False)
+
+    def test_one_off_live_snapshot_keeps_browser_for_login(self):
+        browser = MagicMock()
+        browser.fetch.return_value = {
+            "status": "waiting_for_login", "error_message": "需要登入",
+        }
+        with patch("ego_browser_1688.EgoBrowser1688", return_value=browser):
+            result = self.service._fetch_live_snapshot(
+                "https://detail.1688.com/offer/999.html", "999", "preview-job", mark_stale=False,
+            )
+
+        self.assertEqual(result["status"], "waiting_for_login")
+        browser.finish.assert_called_once_with(keep=True)
+
+    def test_url_change_preview_and_commit_approve_exact_and_block_unmatched(self):
+        from procurement_store import ProcurementStore
+
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        product = golden["p-socks"]
+        product["型號"][0].update({
+            "1688_offer_id": "100", "1688_sku_id": "old-white",
+            "1688_sku_name": "白色", "1688_mapping_status": "approved",
+        })
+        product["型號"].append({
+            "規格ID": "sock-pink", "型號名稱": "粉色",
+            "阿里巴巴商品URL": "https://detail.1688.com/offer/100.html",
+            "1688_offer_id": "100", "1688_sku_id": "old-pink",
+            "1688_sku_name": "粉色", "1688_mapping_status": "approved",
+        })
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        service = SkuMappingService(self.tmp.name)
+        snapshot = service._save_snapshot(
+            "999", "https://detail.1688.com/offer/999.html", "新短襪",
+            [{
+                "sku_id": "new-white", "sku_name": "白色", "second_name": "",
+                "spec_text": "白色", "parts": ["白色"], "price": 2.5, "stock": 50,
+            }],
+            {}, mark_stale=False,
+        )
+        with patch.object(service, "_fetch_live_snapshot", return_value=snapshot):
+            preview = service.preview_url_change(
+                "p-socks", "sock-white", "https://detail.1688.com/offer/999.html"
+            )
+        self.assertEqual(len(preview["targets"]), 2)
+        white = next(row for row in preview["targets"] if row["modelId"] == "sock-white")
+        pink = next(row for row in preview["targets"] if row["modelId"] == "sock-pink")
+        self.assertEqual(white["matchStatus"], "exact")
+        self.assertEqual(pink["matchStatus"], "missing")
+
+        ProcurementStore(base_dir=self.tmp.name)
+        with service.connect() as conn:
+            now = 1
+            draft_id = conn.execute(
+                "INSERT INTO purchase_drafts(status,months,created_at,updated_at) VALUES('ready',4,?,?)",
+                (now, now),
+            ).lastrowid
+            conn.execute(
+                """INSERT INTO purchase_draft_lines(
+                    draft_id,shopee_product_id,shopee_model_id,created_at
+                ) VALUES(?,?,?,?)""",
+                (draft_id, "p-socks", "sock-white", now),
+            )
+
+        result = service.commit_url_change(
+            product_id="p-socks", model_id="sock-white", source_version=preview["sourceVersion"],
+            new_url="https://detail.1688.com/offer/999.html",
+            snapshot_fingerprint=preview["snapshot"]["fingerprint"],
+            models=[
+                {"modelId": "sock-white", "candidateKey": white["selectedCandidateKey"], "selected": True},
+                {"modelId": "sock-pink", "candidateKey": "", "selected": True},
+            ],
+        )
+        self.assertEqual(result["approvedCount"], 1)
+        self.assertEqual(result["pendingCount"], 1)
+        with open(self.golden_path, encoding="utf-8") as handle:
+            models = {row["規格ID"]: row for row in json.load(handle)["p-socks"]["型號"]}
+        self.assertEqual(models["sock-white"]["1688_sku_id"], "new-white")
+        self.assertEqual(models["sock-white"]["1688_mapping_status"], "approved")
+        self.assertEqual(models["sock-pink"]["1688_mapping_status"], "pending")
+        self.assertEqual(models["sock-pink"].get("1688_sku_id", ""), "")
+        self.assertEqual(models["sock-white"]["阿里巴巴商品URL"], "https://detail.1688.com/offer/999.html")
+        with service.connect() as conn:
+            draft = conn.execute("SELECT status,has_blockers FROM purchase_drafts WHERE id=?", (draft_id,)).fetchone()
+            binding = conn.execute(
+                "SELECT alibaba_offer_id,alibaba_mapping_status FROM alibaba_bindings WHERE shopee_product_id='p-socks' AND shopee_model_id='sock-white'"
+            ).fetchone()
+        self.assertEqual((draft["status"], draft["has_blockers"]), ("blocked", 1))
+        self.assertEqual((binding["alibaba_offer_id"], binding["alibaba_mapping_status"]), ("999", "approved"))
+
+    def test_url_change_commit_rejects_stale_preview_version(self):
+        preview = self.service.preview_url_change("p-socks", "sock-white", mode="clear")
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-socks"]["型號"][0]["1688_sku_name"] = "已被其他操作更新"
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        with self.assertRaises(MappingConflict):
+            self.service.commit_url_change(
+                product_id="p-socks", model_id="sock-white", source_version=preview["sourceVersion"],
+                mode="clear", models=[{"modelId": "sock-white", "selected": True}],
+            )
 
 
 if __name__ == "__main__":

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>1688 SKU Mapping 工作台</title>
-  <link rel="stylesheet" href="sku-mapping.css?v=20260809-discontinued-reapprove-background-progress2">
+  <link rel="stylesheet" href="sku-mapping.css?v=20260809-url-presence-filter1">
   <style>.select-row{grid-column:1/-1;color:#475569;font-size:.88rem}.source-placeholder{width:100px;height:100px;border-radius:10px;background:#eef3f8;display:grid;place-items:center;color:#789}</style>
 </head>
 <body>
@@ -18,36 +18,144 @@
   </header>
 
   <main class="page-shell">
-    <section class="toolbar panel">
-      <div class="toolbar-row">
-        <button id="scanAll" class="primary">重建全部名稱 mapping（掃描 1688）</button>
-        <button id="scanVisiblePage" class="primary" title="只掃描目前搜尋、篩選與分頁顯示的型號">掃描本頁 1688（只掃目前顯示）</button>
-        <button id="reanalyzeExisting" title="不需要勾選；只處理目前篩選後這一頁顯示的型號">用現有快照重建名稱 mapping（規則→AI，不連 1688）</button>
-        <button id="reanalyzeExistingAi" title="不需要勾選；只處理目前篩選後這一頁顯示的型號">用現有 SKU 清單重判（AI 強制選最接近）</button>
-        <button id="selectGreen">選取本頁綠色項目</button>
-        <button id="batchApprove" class="primary">批次核准選取</button>
-        <button id="batchDefer">批次稍後處理</button>
-        <button id="batchNoMatch">批次標記無匹配</button>
-        <button id="batchDiscontinued">批次標記停售</button>
-        <label class="check"><input id="forceScan" type="checkbox"> 強制重抓 1688</label>
-        <label class="check"><input id="useAi" type="checkbox" checked> AI 初判（僅規則無候選時）</label>
+    <div class="workbench-tabs" role="tablist" aria-label="1688 管理模式">
+      <button id="skuReviewTab" class="workbench-tab active" role="tab" aria-selected="true" aria-controls="skuReviewView">SKU 審核</button>
+      <button id="urlManagerTab" class="workbench-tab" role="tab" aria-selected="false" aria-controls="urlManagerView">URL 管理</button>
+    </div>
+
+    <section id="operationStatus" class="operation-status" aria-live="polite" hidden></section>
+
+    <div id="skuReviewView" role="tabpanel" aria-labelledby="skuReviewTab">
+      <section class="toolbar panel">
+      <div class="toolbar-heading">
+        <div>
+          <h2>SKU 審核操作</h2>
+          <p>先更新候選，再從目前清單逐筆或批次確認 mapping。</p>
+        </div>
         <span id="jobStatus" class="status"></span>
       </div>
+      <div class="toolbar-section">
+        <div class="toolbar-section-title">掃描與分析</div>
+        <div class="toolbar-actions">
+          <button id="scanAll" class="primary">重建全部名稱 mapping（掃描 1688）</button>
+          <button id="scanVisiblePage" class="primary" title="只掃描目前搜尋、篩選與分頁顯示的型號">掃描本頁 1688</button>
+          <button id="reanalyzeExisting" title="不需要勾選；只處理目前篩選後這一頁顯示的型號">用現有快照重建（規則→AI）</button>
+          <button id="reanalyzeExistingAi" title="不需要勾選；只處理目前篩選後這一頁顯示的型號">現有 SKU 重判（AI 強制選最接近）</button>
+        </div>
+      </div>
+      <div class="toolbar-section">
+        <div class="toolbar-section-title">批次審核</div>
+        <div class="toolbar-actions">
+          <label class="check check-strong"><input id="selectAllItems" type="checkbox" aria-label="全選本頁型號"> 全選本頁</label>
+          <button id="selectGreen">選取本頁綠色項目</button>
+          <button id="batchApprove" class="primary">批次核准選取</button>
+          <button id="batchDefer">批次稍後處理</button>
+          <button id="batchNoMatch">批次標記無匹配</button>
+          <button id="batchDiscontinued">批次標記停售</button>
+        </div>
+      </div>
+      <div class="toolbar-section toolbar-options">
+        <div class="toolbar-section-title">執行選項</div>
+        <div class="toolbar-actions">
+          <label class="check"><input id="forceScan" type="checkbox"> 強制重抓 1688</label>
+          <label class="check"><input id="useAi" type="checkbox" checked> AI 初判（僅規則無候選時）</label>
+        </div>
+      </div>
       <div class="filters">
+        <div class="filter-label">清單篩選</div>
         <input id="query" type="search" placeholder="搜尋商品、型號或商品 ID">
         <select id="status"><option value="review">待處理</option><option value="deferred">稍後處理</option><option value="all">全部</option><option value="pending">待人工核准</option><option value="approved">已核准</option><option value="stale">已失效</option><option value="suspected_discontinued">疑似下架</option><option value="no_match">無匹配</option><option value="discontinued">停售</option></select>
         <select id="tier"><option value="">全部安全分級</option><option value="green">綠色：唯一精確</option><option value="yellow">黃色：人工比較</option><option value="red">紅色：阻擋</option></select>
+        <select id="urlPresence" aria-label="URL 狀態"><option value="with">有 URL</option><option value="without">沒有 URL</option><option value="all">全部 URL 狀態</option></select>
         <button id="reload">重新載入</button>
       </div>
-    </section>
+      </section>
 
-    <section id="summary" class="metrics panel"></section>
-    <section id="message" class="message" aria-live="polite"></section>
-    <section id="operationStatus" class="operation-status" aria-live="polite" hidden></section>
-    <section id="queue" class="queue"></section>
-    <section id="pagination" class="pagination panel" aria-label="mapping 分頁"></section>
-    <div id="empty" class="empty panel" hidden>目前沒有符合篩選條件的型號。</div>
+      <section id="summary" class="metrics panel"></section>
+      <section id="message" class="message" aria-live="polite"></section>
+      <section id="queue" class="queue"></section>
+      <section id="pagination" class="pagination panel" aria-label="mapping 分頁"></section>
+      <div id="empty" class="empty panel" hidden>目前沒有符合篩選條件的型號。</div>
+    </div>
+
+    <div id="urlManagerView" role="tabpanel" aria-labelledby="urlManagerTab" hidden>
+      <section class="url-manager-toolbar panel">
+        <div>
+          <h2>Golden Table 1688 URL 管理</h2>
+          <p>每個蝦皮商品只顯示一次；商品內會分列目前使用的 1688 連結。更換前會先讀取新商品 SKU，不會直接覆蓋。</p>
+        </div>
+        <div class="url-manager-filters">
+          <input id="urlGroupQuery" type="search" placeholder="搜尋商品名稱、商品 ID 或 1688 URL">
+          <select id="urlGroupStatus">
+            <option value="all">全部 mapping 狀態</option>
+            <option value="suspected_discontinued">疑似失效</option>
+            <option value="stale">待重新掃描</option>
+            <option value="pending">待重新核准</option>
+            <option value="missing">缺少 URL</option>
+            <option value="ok">正常</option>
+          </select>
+          <select id="urlLinkStatus" aria-label="連結健康狀態">
+            <option value="all">全部連結狀態</option>
+            <option value="invalid">只看確認失效</option>
+            <option value="exclude_invalid">排除確認失效</option>
+            <option value="valid">正常連結</option>
+            <option value="unchecked">尚未檢查</option>
+            <option value="expired">結果已過期</option>
+            <option value="needs_attention">需要登入／驗證</option>
+            <option value="error">檢查失敗</option>
+          </select>
+          <button id="reloadUrlGroups">重新載入</button>
+          <button id="checkUrlHealth" class="primary">檢查目前清單連結</button>
+        </div>
+      </section>
+      <section id="urlHealthMetrics" class="metrics panel" hidden></section>
+      <section id="urlManagerMessage" class="message" aria-live="polite"></section>
+      <section id="urlGroupList" class="url-group-list"></section>
+      <div id="urlGroupEmpty" class="empty panel" hidden>目前沒有符合條件的 URL 群組。</div>
+    </div>
   </main>
-  <script src="sku-mapping.js?v=20260809-discontinued-reapprove-background-progress2"></script>
+
+  <div id="urlChangeModal" class="url-change-modal" hidden>
+    <div class="url-change-backdrop" data-url-close="true"></div>
+    <section class="url-change-dialog" role="dialog" aria-modal="true" aria-labelledby="urlChangeTitle">
+      <header class="url-change-header">
+        <div>
+          <div class="eyebrow">Golden Table</div>
+          <h2 id="urlChangeTitle">更新 1688 商品連結</h2>
+        </div>
+        <button type="button" class="url-change-close" data-url-close="true" aria-label="關閉">×</button>
+      </header>
+      <div class="url-change-body">
+        <section class="url-change-current">
+          <div><strong>蝦皮商品</strong><span id="urlChangeProduct"></span></div>
+          <div><strong>目前連結</strong><a id="urlChangeOldLink" target="_blank" rel="noopener"></a></div>
+          <div><strong>預計影響</strong><span id="urlChangeAffected"></span></div>
+        </section>
+        <section class="url-change-input-row">
+          <label for="urlChangeInput">新的 1688 URL</label>
+          <div><input id="urlChangeInput" type="url" placeholder="https://detail.1688.com/offer/...html"><button id="previewUrlChange" class="primary">檢查新連結</button></div>
+          <small>只有按下「確認更新」才會修改 Golden Table。</small>
+        </section>
+        <section id="urlChangeStatus" class="url-change-status" aria-live="polite"></section>
+        <section id="urlChangePreview" hidden>
+          <div class="url-change-new-product">
+            <div><strong id="urlChangeNewProductName">新 1688 商品</strong><span id="urlChangeNewMeta"></span></div>
+            <a id="urlChangeNewLink" target="_blank" rel="noopener">開啟新商品頁 ↗</a>
+          </div>
+          <div id="urlChangeRows" class="url-change-rows"></div>
+        </section>
+      </div>
+      <footer class="url-change-footer">
+        <div id="urlChangeSummary">請先檢查新連結</div>
+        <div>
+          <button type="button" data-url-close="true">取消</button>
+          <button type="button" id="clearUrlChange" class="danger-outline">清除舊連結</button>
+          <button type="button" id="commitUrlChange" class="primary" disabled>確認更新</button>
+        </div>
+      </footer>
+    </section>
+  </div>
+
+  <script src="sku-mapping.js?v=20260809-url-presence-filter1"></script>
 </body>
 </html>
