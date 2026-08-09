@@ -41,11 +41,13 @@ cd InventoryCalculator
 ```
 
 ### 瀏覽器設置
-本程式使用 **Playwright** 控制 Chromium 瀏覽器進行爬蟲。
+1688 SKU live scan 透過 **ego-lite / ego-browser** 開啟商品頁，沿用 ego-lite 的登入狀態與獨立 task space；不會再啟動 Google Chrome。
 
 **必要條件**：
-1. 執行 `playwright install chromium` 安裝 Chromium 瀏覽器
-2. 程式會自動啟動內建的 Chromium，無需額外安裝 Chrome
+1. 確認 ego-lite 已安裝並可由 `ego-browser nodejs` 控制
+2. 若 1688 出現登入或滑塊驗證，系統會保留 ego-lite 頁面，完成後再重新掃描
+
+舊有蝦皮爬蟲仍可使用 Playwright Chromium；這與 1688 SKU live scan 的瀏覽器路徑分開。
 
 ### 設置 Cookies
 1. 至 Chrome 線上應用程式商店安裝 Cookie Editor (https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-TW&utm_source=ext_sidebar)
@@ -118,7 +120,7 @@ python main.py
 ### 1688 到貨入庫
 
 1. 在 `/inbound.html` 貼上 1688 訂單編號或訂單詳情連結。
-2. 若專用瀏覽器尚未登入 1688，先在開啟的視窗完成登入或驗證。
+2. 若到貨入庫專用瀏覽器尚未登入 1688，先在開啟的視窗完成登入或驗證。
 3. 確認每筆實收、不良、蝦皮增加量與商品規格對照；同一實體品若有多個蝦皮刊登，需自行分配數量。
 4. 建立到貨單後先執行「讀取即時庫存」。系統此時只讀取，不會修改蝦皮。
 5. 按單規格或「此商品全部入庫」後，系統會先核對「目前庫存 + 增加量 = 更新後庫存」，再顯示一次最後確認。
@@ -286,9 +288,9 @@ InventoryCalculater/
 - 工作台會顯示既有 SKU mapping。人工從完整 SKU 清單選擇並核准時，該選擇就是最高優先，會直接寫入並覆蓋既有 mapping；不再另外提供容易混淆的「取代既有 mapping」按鈕。
 
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
-- 規則完全找不到候選時，SKU mapping 預設使用官方 Google Gemini API（`GEMINI_API_KEY`、模型 `gemini-3.5-flash-lite`）做初判；Gemini 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。可執行 `python3 setup_gemini_key.py` 以隱藏輸入方式設定 Key；xAI Grok 與 OpenAI 仍可透過 `SKU_MAPPING_AI_PROVIDER` 明確選用。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作，可在已有候選時強制呼叫目前設定的 AI；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
+- 規則完全找不到候選時，SKU mapping 預設使用官方 Google Gemini API（`GEMINI_API_KEY`、模型 `gemini-3.5-flash-lite`）做初判；也可把 `SKU_MAPPING_AI_PROVIDER` 設為 `deepseek`，使用官方 DeepSeek API（`DEEPSEEK_API_KEY`、模型 `deepseek-v4-flash`）。DeepSeek V4 Flash 預設會開啟 thinking mode，本專案的 SKU 分類請求明確關閉 thinking，避免推理內容佔滿輸出上限而沒有 JSON 結果。Gemini／DeepSeek 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。可執行 `python3 setup_gemini_key.py` 或 `python3 setup_deepseek_key.py` 以隱藏輸入方式設定 Key；xAI Grok 與 OpenAI 仍可透過 `SKU_MAPPING_AI_PROVIDER` 明確選用。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作，可在已有候選時強制呼叫目前設定的 AI；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。
-- 1688 登入、滑塊或驗證碼需要使用者在持久化 Chrome profile 完成；系統不會付款或送出正式訂單。
+- 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 
 - **後端**: Python 3.8+
 - **網頁爬蟲**: Playwright (Chromium)

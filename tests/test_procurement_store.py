@@ -69,7 +69,7 @@ class ProcurementStoreTest(unittest.TestCase):
         self.assertEqual(line["line_amount_cny"], 30)
         self.assertEqual(draft["has_blockers"], 0)
 
-    def test_missing_sku_blocks_submit(self):
+    def test_missing_sku_name_blocks_submit(self):
         self.store.upsert_binding({
             "productId": "p1",
             "modelId": "m1",
@@ -86,7 +86,23 @@ class ProcurementStoreTest(unittest.TestCase):
             }],
         })
         self.assertEqual(draft["has_blockers"], 1)
-        self.assertEqual(draft["lines"][0]["blocker_reason"], "缺少 1688 skuId")
+        self.assertEqual(draft["lines"][0]["blocker_reason"], "SKU mapping 狀態為 missing")
+
+    def test_name_mapping_is_ready_without_sku_id(self):
+        self.store.upsert_binding({
+            "productId": "p1",
+            "modelId": "m1",
+            "alibabaProductUrl": "https://detail.1688.com/offer/123.html",
+            "alibabaSkuName": "白色",
+            "alibabaSkuSecondName": "均碼",
+            "alibabaLastPriceCny": 2.5,
+        })
+        draft = self.store.create_draft({
+            "months": 4,
+            "items": [{"productId": "p1", "modelId": "m1", "monthlySales": 5, "currentStock": 0}],
+        })
+        self.assertEqual(draft["has_blockers"], 0)
+        self.assertEqual(draft["lines"][0]["alibaba_sku_id"], "")
 
     def test_submit_creates_inbound_qty(self):
         self.store.upsert_binding({
@@ -94,6 +110,7 @@ class ProcurementStoreTest(unittest.TestCase):
             "modelId": "m1",
             "alibabaProductUrl": "https://detail.1688.com/offer/123.html",
             "alibabaSkuId": "sku1",
+            "alibabaSkuName": "white",
             "alibabaLastPriceCny": 1,
         })
         draft = self.store.create_draft({

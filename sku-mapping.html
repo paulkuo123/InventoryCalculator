@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>1688 SKU Mapping 工作台</title>
-  <link rel="stylesheet" href="sku-mapping.css?v=20260809-full-spec2">
+  <link rel="stylesheet" href="sku-mapping.css?v=20260809-discontinued-reapprove-background-progress2">
   <style>.select-row{grid-column:1/-1;color:#475569;font-size:.88rem}.source-placeholder{width:100px;height:100px;border-radius:10px;background:#eef3f8;display:grid;place-items:center;color:#789}</style>
 </head>
 <body>
@@ -21,20 +21,21 @@
     <section class="toolbar panel">
       <div class="toolbar-row">
         <button id="scanAll" class="primary">重建全部名稱 mapping（掃描 1688）</button>
-        <button id="reanalyzeExisting">用現有快照重建名稱 mapping（規則→AI，不連 1688）</button>
-        <button id="reanalyzeExistingAi">用現有 SKU 清單重判（直接 AI，不連 1688）</button>
+        <button id="scanVisiblePage" class="primary" title="只掃描目前搜尋、篩選與分頁顯示的型號">掃描本頁 1688（只掃目前顯示）</button>
+        <button id="reanalyzeExisting" title="不需要勾選；只處理目前篩選後這一頁顯示的型號">用現有快照重建名稱 mapping（規則→AI，不連 1688）</button>
+        <button id="reanalyzeExistingAi" title="不需要勾選；只處理目前篩選後這一頁顯示的型號">用現有 SKU 清單重判（AI 強制選最接近）</button>
         <button id="selectGreen">選取本頁綠色項目</button>
         <button id="batchApprove" class="primary">批次核准選取</button>
         <button id="batchDefer">批次稍後處理</button>
         <button id="batchNoMatch">批次標記無匹配</button>
         <button id="batchDiscontinued">批次標記停售</button>
         <label class="check"><input id="forceScan" type="checkbox"> 強制重抓 1688</label>
-        <label class="check"><input id="useAi" type="checkbox" checked> Gemini 初判（僅規則無候選時）</label>
+        <label class="check"><input id="useAi" type="checkbox" checked> AI 初判（僅規則無候選時）</label>
         <span id="jobStatus" class="status"></span>
       </div>
       <div class="filters">
         <input id="query" type="search" placeholder="搜尋商品、型號或商品 ID">
-        <select id="status"><option value="review">待處理</option><option value="deferred">稍後處理</option><option value="all">全部</option><option value="pending">待人工核准</option><option value="approved">已核准</option><option value="stale">已失效</option><option value="no_match">無匹配</option><option value="discontinued">停售</option></select>
+        <select id="status"><option value="review">待處理</option><option value="deferred">稍後處理</option><option value="all">全部</option><option value="pending">待人工核准</option><option value="approved">已核准</option><option value="stale">已失效</option><option value="suspected_discontinued">疑似下架</option><option value="no_match">無匹配</option><option value="discontinued">停售</option></select>
         <select id="tier"><option value="">全部安全分級</option><option value="green">綠色：唯一精確</option><option value="yellow">黃色：人工比較</option><option value="red">紅色：阻擋</option></select>
         <button id="reload">重新載入</button>
       </div>
@@ -47,6 +48,6 @@
     <section id="pagination" class="pagination panel" aria-label="mapping 分頁"></section>
     <div id="empty" class="empty panel" hidden>目前沒有符合篩選條件的型號。</div>
   </main>
-  <script src="sku-mapping.js?v=20260809-name-primary27"></script>
+  <script src="sku-mapping.js?v=20260809-discontinued-reapprove-background-progress2"></script>
 </body>
 </html>

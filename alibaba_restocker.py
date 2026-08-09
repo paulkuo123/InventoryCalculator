@@ -169,7 +169,7 @@ def load_sku_mappings(base_dir: str) -> Dict[str, Dict[str, Dict[str, str]]]:
             sku_name = str(model.get("1688_sku_name") or "").strip()
             sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
             sku_id = str(model.get("1688_sku_id") or "").strip()
-            mapping_status = str(model.get("1688_mapping_status") or ("legacy_pending_name" if sku_name else "missing")).strip()
+            mapping_status = str(model.get("1688_mapping_status") or ("pending" if sku_name else "missing")).strip()
             if model_name:
                 product_mapping[model_name] = {
                     "primary": sku_name,

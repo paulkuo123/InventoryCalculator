@@ -186,14 +186,18 @@ class ProcurementStore:
         product_url = str(payload.get("alibabaProductUrl") or payload.get("alibaba_product_url") or "").strip()
         offer_id = normalize_identifier(payload.get("alibabaOfferId") or payload.get("alibaba_offer_id")) or parse_offer_id(product_url)
         sku_id = normalize_identifier(payload.get("alibabaSkuId") or payload.get("alibaba_sku_id"))
+        sku_name = str(payload.get("alibabaSkuName") or payload.get("alibaba_sku_name") or "").strip()
+        sku_second_name = str(
+            payload.get("alibabaSkuSecondName") or payload.get("alibaba_sku_second_name") or ""
+        ).strip()
         min_order_qty = self._positive_int(payload.get("alibabaMinOrderQty") or payload.get("alibaba_min_order_qty"), 1)
         package_multiple = self._positive_int(payload.get("alibabaPackageMultiple") or payload.get("alibaba_package_multiple"), 1)
         last_price = self._optional_float(payload.get("alibabaLastPriceCny") or payload.get("alibaba_last_price_cny"))
-        status = self.binding_status(offer_id, sku_id)
+        status = self.binding_status(offer_id, sku_id, sku_name)
         mapping_status = str(
             payload.get("alibabaMappingStatus")
             or payload.get("alibaba_mapping_status")
-            or ("approved" if sku_id else "missing")
+            or ("approved" if sku_name else "missing")
         ).strip() or "missing"
         ts = now_ts()
 
@@ -206,10 +210,8 @@ class ProcurementStore:
             "alibaba_product_url": product_url,
             "alibaba_offer_id": offer_id,
             "alibaba_sku_id": sku_id,
-            "alibaba_sku_name": str(payload.get("alibabaSkuName") or payload.get("alibaba_sku_name") or "").strip(),
-            "alibaba_sku_second_name": str(
-                payload.get("alibabaSkuSecondName") or payload.get("alibaba_sku_second_name") or ""
-            ).strip(),
+            "alibaba_sku_name": sku_name,
+            "alibaba_sku_second_name": sku_second_name,
             "alibaba_min_order_qty": min_order_qty,
             "alibaba_package_multiple": package_multiple,
             "alibaba_last_price_cny": last_price,
@@ -546,6 +548,7 @@ class ProcurementStore:
         item_offer_id = normalize_identifier(item.get("alibabaOfferId") or item.get("alibaba_offer_id")) or parse_offer_id(item_product_url)
         item_sku_id = normalize_identifier(item.get("alibabaSkuId") or item.get("alibaba_sku_id"))
         item_sku_name = str(item.get("alibabaSkuName") or item.get("alibaba_sku_name") or "").strip()
+        item_sku_second_name = str(item.get("alibabaSkuSecondName") or item.get("alibaba_sku_second_name") or "").strip()
 
         base = {
             "shopee_product_id": product_id,
@@ -562,6 +565,7 @@ class ProcurementStore:
             "alibaba_offer_id": "",
             "alibaba_sku_id": "",
             "alibaba_sku_name": "",
+            "alibaba_sku_second_name": "",
             "alibaba_product_url": "",
             "alibaba_min_order_qty": 1,
             "alibaba_package_multiple": 1,
@@ -582,7 +586,9 @@ class ProcurementStore:
                     "alibaba_offer_id": item_offer_id,
                     "alibaba_sku_id": item_sku_id,
                     "alibaba_sku_name": item_sku_name,
+                    "alibaba_sku_second_name": item_sku_second_name,
                     "alibaba_product_url": item_product_url,
+                    "alibaba_mapping_status": str(item.get("alibabaMappingStatus") or item.get("alibaba_mapping_status") or ("pending" if item_sku_name else "missing")),
                 })
                 if item_product_url and not item_offer_id:
                     base["alibaba_offer_id"] = parse_offer_id(item_product_url)
@@ -592,6 +598,7 @@ class ProcurementStore:
             "alibaba_offer_id": binding.get("alibabaOfferId", "") or item_offer_id,
             "alibaba_sku_id": binding.get("alibabaSkuId", "") or item_sku_id,
             "alibaba_sku_name": binding.get("alibabaSkuName", "") or item_sku_name,
+            "alibaba_sku_second_name": binding.get("alibabaSkuSecondName", "") or item_sku_second_name,
             "alibaba_product_url": binding.get("alibabaProductUrl", "") or item_product_url,
             "alibaba_min_order_qty": self._positive_int(binding.get("alibabaMinOrderQty"), 1),
             "alibaba_package_multiple": self._positive_int(binding.get("alibabaPackageMultiple"), 1),
@@ -603,9 +610,6 @@ class ProcurementStore:
 
         if not base["alibaba_offer_id"]:
             base["blocker_reason"] = "缺少 1688 offerId"
-            return base
-        if not base["alibaba_sku_id"]:
-            base["blocker_reason"] = "缺少 1688 skuId"
             return base
         if base["alibaba_mapping_status"] != "approved":
             base["blocker_reason"] = f"SKU mapping 狀態為 {base['alibaba_mapping_status']}"
@@ -639,10 +643,12 @@ class ProcurementStore:
         return rounded, "、".join(reasons)
 
     @staticmethod
-    def binding_status(offer_id: str, sku_id: str) -> str:
-        if offer_id and sku_id:
+    def binding_status(offer_id: str, sku_id: str, sku_name: str = "") -> str:
+        # The human-facing SKU name pair is the actual selection key.  The
+        # numeric SKU id is retained as a convenience/diagnostic value only.
+        if offer_id and sku_name:
             return "ready"
-        if offer_id or sku_id:
+        if offer_id or sku_id or sku_name:
             return "partial"
         return "missing"
 

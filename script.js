@@ -466,14 +466,15 @@ document.addEventListener('DOMContentLoaded', function() {
         const url = stored.alibabaProductUrl || modelData.阿里巴巴商品URL || getAlibabaLink(modelData, productName, modelName);
         const offerId = stored.alibabaOfferId || modelData['1688_offer_id'] || parseAlibabaOfferId(url);
         const skuId = stored.alibabaSkuId || modelData['1688_sku_id'] || '';
+        const skuName = stored.alibabaSkuName || modelData['1688_sku_name'] || '';
         const price = stored.alibabaLastPriceCny ?? modelData['1688_last_price_cny'] ?? null;
-        const status = offerId && skuId ? 'ready' : (offerId || skuId ? 'partial' : 'missing');
+        const status = offerId && skuName ? 'ready' : (offerId || skuId || skuName ? 'partial' : 'missing');
         return {
             alibabaProductName: stored.alibabaProductName || modelData.阿里巴巴商品名稱 || '',
             alibabaProductUrl: url || '',
             alibabaOfferId: offerId || '',
             alibabaSkuId: skuId || '',
-            alibabaSkuName: stored.alibabaSkuName || modelData['1688_sku_name'] || '',
+            alibabaSkuName: skuName,
             alibabaSkuSecondName: stored.alibabaSkuSecondName || modelData['1688_sku_second_name'] || '',
             alibabaMinOrderQty: parseInt(stored.alibabaMinOrderQty || modelData['1688_min_order_qty'] || '1', 10) || 1,
             alibabaPackageMultiple: parseInt(stored.alibabaPackageMultiple || modelData['1688_package_multiple'] || '1', 10) || 1,
@@ -2147,8 +2148,8 @@ document.addEventListener('DOMContentLoaded', function() {
                             bindingBadge.className = binding.alibabaBindingStatus === 'ready' ? 'badge badge-success' : 'badge badge-warning';
                             bindingBadge.textContent = binding.alibabaBindingStatus === 'ready' ? '1688 已綁定' : '1688 未完整';
                             bindingBadge.title = binding.alibabaBindingStatus === 'ready'
-                                ? `offerId: ${binding.alibabaOfferId}, skuId: ${binding.alibabaSkuId}`
-                                : '需補齊 offerId、skuId 與價格後才能建立 1688 訂單';
+                                ? `offerId: ${binding.alibabaOfferId}, SKU 名稱：${binding.alibabaSkuName}${binding.alibabaSkuSecondName ? ` → ${binding.alibabaSkuSecondName}` : ''}`
+                                : '需補齊 offerId 與 1688 SKU 名稱（第二名稱如有則一併填寫）後才能建立 1688 採購';
                             modelText.appendChild(bindingBadge);
 
                             if (binding.alibabaLastPriceCny !== null) {

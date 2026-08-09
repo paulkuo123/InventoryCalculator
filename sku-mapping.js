@@ -1,15 +1,24 @@
 (() => {
   const $ = id => document.getElementById(id);
-  const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0 };
-  const message = (text, type = '') => { $('message').textContent = text || ''; $('message').className = `message ${type}`.trim(); };
-  const operationStatus = (text, type = 'running') => {
+  const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '' };
+  const baseTitle = document.title;
+  const uiText = value => String(value ?? '').replace(/\bGemini\b/gi, 'AI');
+  const displayText = value => esc(uiText(value));
+  const message = (text, type = '') => { $('message').textContent = uiText(text); $('message').className = `message ${type}`.trim(); };
+  const operationStatus = (text, type = 'running', details = {}) => {
     const node = $('operationStatus');
     if (!node) return;
+    const completed = Math.max(0, Number(details.completed || 0));
+    const total = Math.max(0, Number(details.total || 0));
+    const percent = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+    const title = details.title || (type === 'running' ? '背景工作執行中' : type === 'success' ? '背景工作已完成' : '背景工作需要注意');
+    const badge = type === 'running' ? '執行中' : type === 'success' ? '已完成' : '失敗／暫停';
     node.hidden = false;
     node.className = `operation-status ${type}`.trim();
-    node.innerHTML = type === 'running'
-      ? `<span class="operation-spinner" aria-hidden="true"></span><strong>${esc(text)}</strong><span>請不要關閉或重新整理頁面。</span>`
-      : `<strong>${esc(text)}</strong>`;
+    node.innerHTML = `<div class="operation-heading">${type === 'running' ? '<span class="operation-spinner" aria-hidden="true"></span>' : ''}<strong>${displayText(title)}</strong><span class="operation-badge">${badge}</span></div>
+      <div class="operation-message">${displayText(text)}</div>
+      ${type === 'running' ? `<div class="operation-progress-row"><div class="operation-progress" role="progressbar" aria-label="背景工作進度" aria-valuemin="0" aria-valuemax="${total || 0}" aria-valuenow="${completed}"><i style="width:${total ? percent : 8}%"></i></div><b>${total ? `${completed} / ${total}（${percent}%）` : '準備中…'}</b></div><small>本頁會每幾秒自動更新；即使重新整理，也會自動接回這項工作。</small>` : '<small>清單已重新讀取；你可以繼續審核。</small>'}`;
+    document.title = type === 'running' ? `${total ? `${completed}/${total}` : '執行中'}｜${baseTitle}` : baseTitle;
   };
   const setBatchBusy = (busy, text = '') => {
     state.batchBusy = busy;
@@ -19,7 +28,13 @@
     });
     if (busy) operationStatus(text, 'running');
   };
-  const operationDone = (text, type = 'success') => { operationStatus(text, type); message(text, type); };
+  const operationDone = (text, type = 'success', details = {}) => { operationStatus(text, type, details); message(text, type); };
+  const setJobBusy = busy => {
+    ['scanAll', 'scanVisiblePage', 'reanalyzeExisting', 'reanalyzeExistingAi'].forEach(id => {
+      const button = $(id);
+      if (button) button.disabled = busy;
+    });
+  };
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const cleanLegacyName = value => {
     const raw = String(value ?? '').trim();
@@ -69,21 +84,23 @@
     const selected = candidates.find(candidate => String(candidate.candidate_key) === String(ai.selected_candidate_key)) || candidates.find(candidate => String(candidate.sku_id) === String(ai.selected_sku_id));
     const confidence = Number(ai.confidence);
     const confidenceText = Number.isFinite(confidence) && confidence > 0 ? `，信心 ${Math.round(confidence * 100)}%` : '';
-    if (source === 'openai' || source === 'grok' || source === 'gemini') {
+    if (source === 'openai' || source === 'grok' || source === 'deepseek' || source === 'gemini') {
       const decision = ai.decision === 'match' && selected
         ? `建議候選 #${candidates.indexOf(selected) + 1}（${selected.sku_name}${selected.second_name ? ` → ${selected.second_name}` : ''}）`
         : '暫不判定，保留候選供人工確認';
       const detail = [...evidence, ...warnings].join('；');
-      const providerLabel = source === 'gemini' ? 'Gemini AI 初判' : source === 'grok' ? 'Grok AI 初判' : 'OpenAI 初判';
-      return `<div class="ai-summary ai-openai"><strong>${providerLabel}</strong>：${esc(decision)}${esc(confidenceText)}${detail ? `<br>${esc(detail)}` : ''}</div>`;
+      const providerLabel = source === 'gemini' ? 'AI 初判' : source === 'deepseek' ? 'DeepSeek AI 初判' : source === 'grok' ? 'Grok AI 初判' : 'OpenAI 初判';
+      return `<div class="ai-summary ai-openai"><strong>${providerLabel}</strong>：${esc(decision)}${esc(confidenceText)}${detail ? `<br>${displayText(detail)}` : ''}</div>`;
     }
-    if (source === 'error') {
-      return `<div class="ai-summary ai-warning"><strong>AI 初判未完成</strong>：${esc(warnings.join('；') || 'API 呼叫失敗')}；仍保留規則候選。</div>`;
+    if (source === 'error' || /_(error)$/.test(source)) {
+      const providerLabel = source.startsWith('gemini') ? 'AI' : source.startsWith('deepseek') ? 'DeepSeek' : source.startsWith('grok') ? 'Grok' : source.startsWith('openai') ? 'OpenAI' : 'AI';
+      const forced = ai.force_match === true ? '強制最接近模式' : '初判';
+      return `<div class="ai-summary ai-warning"><strong>${providerLabel} ${forced}未完成</strong>：${displayText(warnings.join('；') || 'API 呼叫失敗')}；請改用完整 SKU 清單人工確認。</div>`;
     }
     if (source === 'rules' && warnings.length) {
-      const providerLabel = ai.provider === 'gemini' ? 'Gemini' : ai.provider === 'grok' ? 'Grok' : 'AI';
-      const fallback = ai.provider === 'gemini' || ai.provider === 'grok' || ai.fallback === 'rules' ? `${providerLabel} 初判失敗，已回退規則` : 'AI 初判未執行';
-      return `<div class="ai-summary ai-warning"><strong>${fallback}</strong>：${esc(warnings.join('；'))}；目前顯示規則候選。</div>`;
+      const providerLabel = ai.provider === 'gemini' ? 'AI' : ai.provider === 'deepseek' ? 'DeepSeek' : ai.provider === 'grok' ? 'Grok' : 'AI';
+      const fallback = ai.provider === 'gemini' || ai.provider === 'deepseek' || ai.provider === 'grok' || ai.fallback === 'rules' ? `${providerLabel} 初判失敗，已回退規則` : 'AI 初判未執行';
+      return `<div class="ai-summary ai-warning"><strong>${fallback}</strong>：${displayText(warnings.join('；'))}；目前顯示規則候選。</div>`;
     }
     if (candidates.length === 1 && item.review_tier === 'green') {
       return '<div class="ai-summary ai-rules"><strong>規則初判</strong>：唯一且完整精確候選；此情況不另呼叫 AI。</div>';
@@ -117,33 +134,41 @@
     const ai = evidence.ai || {};
     const sourceImage = item.modelImageUrl || item.productImageUrl || '';
     const canRescan = Boolean(item.offer_id) && !['approved', 'discontinued'].includes(String(item.status || ''));
-    const canRerunAi = Boolean(item.snapshot_id) && !['approved', 'discontinued'].includes(String(item.status || ''));
-    const manualHint = item.status === 'stale'
-      ? '這筆目前只有舊快照候選；請先重新掃描 1688，確認最新完整規格名稱後再核准。'
+    const canForceRerunAi = Boolean(item.snapshot_id) && String(item.status || '') !== 'discontinued';
+    const canRerunAi = canForceRerunAi && String(item.status || '') !== 'approved';
+    const forceAiButton = item.offer_id
+      ? `<button class="primary rerun-ai-forced" data-action="rerun-ai-forced"${canForceRerunAi ? '' : ' disabled title="目前沒有可用快照，請先重新掃描此商品"'}>用現有 SKU 清單重判（AI 強制選最接近）</button>`
+      : '';
+    const manualHint = ['stale', 'suspected_discontinued', 'discontinued'].includes(String(item.status || ''))
+      ? (item.status === 'suspected_discontinued'
+        ? '掃描結果疑似商品已下架，但尚未經人工確認；請重新掃描，或確認後按「標記停售」。'
+        : item.status === 'discontinued'
+        ? '這筆是人工標記停售；若商品仍可供應，請選擇目前有效的完整 SKU，再按「核准選取 SKU」恢復 mapping。'
+        : '這筆目前只有舊快照候選；請先重新掃描 1688，確認最新完整規格名稱後再核准。')
       : item.existing_sku_name
       ? '人工從完整 SKU 清單選擇的規格優先級最高；點擊下方清單載入後，按綠色按鈕核准即可更新目前 mapping。'
       : (candidates.length ? '候選僅供參考；點擊下方完整 SKU 清單即可載入並重新選擇。' : '先重新掃描此 1688 商品；也可以點擊下方清單載入完整 SKU 手動指定。');
     const manualTools = `<div class="manual-tools">
       <div class="manual-hint">${manualHint}</div>
-      <div class="actions">${canRescan ? '<button class="primary rescan" data-action="rescan">重新掃描此商品</button>' : ''}${canRerunAi ? '<button class="primary rerun-ai" data-action="rerun-ai">用現有 SKU 清單重新判斷（規則→AI）</button>' : ''}</div>
+      <div class="actions">${canRescan ? '<button class="primary rescan" data-action="rescan">重新掃描此商品</button>' : ''}${canRerunAi ? '<button class="primary rerun-ai" data-action="rerun-ai">用現有 SKU 清單重新判斷（規則→AI）</button>' : ''}${forceAiButton}</div>
       <div class="catalog-picker"><select class="catalog-select"><option value="">尚未載入；點擊後讀取完整 SKU</option></select></div>
     </div>`;
     const hasExistingName = Boolean(item.existing_sku_name || item.existing_second_name);
     const existingApproved = String(item.mapping_status || '') === 'approved';
     const existing = hasExistingName
-      ? `<div class="existing-mapping${existingApproved ? '' : ' legacy'}"><strong>${existingApproved ? '現有 mapping' : '舊名稱紀錄（尚未依 v2 核准）'}</strong><br>${esc(cleanLegacyName(item.existing_sku_name || '—'))}${item.existing_second_name ? ` → ${esc(cleanLegacyName(item.existing_second_name))}` : ''}<br><small>SKU ID（輔助）：${esc(item.existing_sku_id || '—')}</small><br><span>${esc(item.mapping_status || 'legacy_pending_name')}</span></div>`
+      ? `<div class="existing-mapping${existingApproved ? '' : ' legacy'}"><strong>${existingApproved ? '現有 mapping' : '舊名稱紀錄'}</strong><br>${esc(cleanLegacyName(item.existing_sku_name || '—'))}${item.existing_second_name ? ` → ${esc(cleanLegacyName(item.existing_second_name))}` : ''}<br><small>SKU ID（輔助）：${esc(item.existing_sku_id || '—')}</small><br><span>${esc(item.mapping_status || (existingApproved ? 'approved' : 'missing'))}</span></div>`
       : '<div class="existing-mapping empty-mapping">目前沒有正式 mapping</div>';
     return `<article class="card tier-card-${esc(item.review_tier)}" data-id="${esc(item.id)}" data-tier="${esc(item.review_tier)}">
       <label class="select-row"><input type="checkbox" class="select-item"> 批次處理</label>
       <div class="source">${sourceImage ? `<img src="${esc(sourceImage)}" loading="lazy" alt="">` : '<div class="source-placeholder">無圖片</div>'}
-        <div><h2>${esc(item.model_name || '未命名型號')}</h2><p>${esc(item.product_name || '')}</p><p>商品 ID：${esc(item.product_id)}　規格 ID：${esc(item.model_id)}</p><p>型號月銷量：<strong>${fmt(item.monthlySales)}</strong>　商品月銷量：<strong>${fmt(item.productMonthlySales)}</strong></p><span class="badge ${esc(item.status)}">${esc(item.status)}</span><span class="tier-badge tier-${esc(item.review_tier)}">${esc(item.review_tier === 'green' ? '綠色：唯一精確' : item.review_tier === 'yellow' ? '黃色：人工比較' : item.review_tier === 'red' && item.status === 'stale' ? '紅色：需重新掃描' : item.review_tier === 'red' ? '紅色：阻擋' : '已核准')}</span>${item.offer_id ? `<a class="open-1688" href="${esc(item.product_url || `https://detail.1688.com/offer/${item.offer_id}.html`)}" target="_blank" rel="noopener">開啟 1688 ↗</a>` : ''}${existing}</div></div>
+        <div><h2>${esc(item.model_name || '未命名型號')}</h2><p>${esc(item.product_name || '')}</p><p>商品 ID：${esc(item.product_id)}　規格 ID：${esc(item.model_id)}</p><p>型號月銷量：<strong>${fmt(item.monthlySales)}</strong>　商品月銷量：<strong>${fmt(item.productMonthlySales)}</strong></p><span class="badge ${esc(item.status)}">${esc(item.status === 'suspected_discontinued' ? '疑似下架' : item.status)}</span><span class="tier-badge tier-${esc(item.review_tier)}">${esc(item.review_tier === 'green' ? '綠色：唯一精確' : item.review_tier === 'yellow' ? '黃色：人工比較' : item.review_tier === 'red' && ['stale', 'suspected_discontinued'].includes(item.status) ? '紅色：需重新掃描' : item.review_tier === 'red' ? '紅色：阻擋' : '已核准')}</span>${item.offer_id ? `<a class="open-1688" href="${esc(item.product_url || `https://detail.1688.com/offer/${item.offer_id}.html`)}" target="_blank" rel="noopener">開啟 1688 ↗</a>` : ''}${existing}</div></div>
       <div><div class="candidates">${candidates.length ? candidates.map((candidate, index) => candidateCard(item, candidate, index + 1)).join('') : '<div class="reason">尚未取得可通過規則的 SKU 候選；不代表 1688 沒有這個 SKU。</div>'}</div>${aiSummary(item, candidates)}${manualTools}
-      <div class="reason"><strong>${esc(item.review_reason || '等待人工確認')}</strong>${(ai.evidence || []).length ? `<br>${esc(ai.evidence.join('；'))}` : ''}${evidence.error ? `<br>${esc(evidence.error)}` : ''}</div>
+      <div class="reason"><strong>${displayText(item.review_reason || '等待人工確認')}</strong>${(ai.evidence || []).length ? `<br>${displayText(ai.evidence.join('；'))}` : ''}${evidence.error ? `<br>${displayText(evidence.error)}` : ''}</div>
       <div class="actions"><button class="approve" data-action="approve">核准選取 SKU</button><button data-action="defer">稍後處理</button><button data-action="no_match">標記無匹配</button><button data-action="discontinued">標記停售</button></div></div></article>`;
   }
 
   async function loadSummary() {
-    const response = await fetch('/api/sku-mapping/summary');
+    const response = await fetch(`/api/sku-mapping/summary?_=${Date.now()}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || data.status !== 'success') throw new Error(data.message || '摘要載入失敗');
     renderSummary(data);
@@ -151,8 +176,8 @@
   }
 
   async function loadQueue() {
-    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, query: $('query').value, page: String(state.page), pageSize: String(state.pageSize) });
-    const response = await fetch(`/api/sku-mapping/queue?${params}`);
+    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), _: String(Date.now()) });
+    const response = await fetch(`/api/sku-mapping/queue?${params}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || data.status !== 'success') throw new Error(data.message || '待審核清單載入失敗');
     state.items = data.items || [];
@@ -175,6 +200,20 @@
     renderPagination();
   }
 
+  async function refreshLatestData(maxAttempts = 3) {
+    let error = null;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        await Promise.all([loadSummary(), loadQueue()]);
+        return { ok: true, error: null };
+      } catch (currentError) {
+        error = currentError;
+        if (attempt < maxAttempts) await new Promise(resolve => setTimeout(resolve, 800 * attempt));
+      }
+    }
+    return { ok: false, error };
+  }
+
   function renderPagination() {
     const container = $('pagination');
     if (!container) return;
@@ -190,7 +229,22 @@
       const latest = summary?.latestRun || {};
       const latestJobId = latest.job_id || latest.jobId || '';
       if (latestJobId && ['queued', 'running'].includes(String(latest.status || '')) && state.activeJobId !== latestJobId) {
+        operationStatus('偵測到尚未完成的工作，正在接回最新進度。', 'running', {
+          title: latest.scope === 'visible_page' ? '本頁 1688 掃描' : latest.scope === 'existing_snapshots' ? '現有 SKU 清單重判' : '1688 SKU 掃描',
+          completed: latest.completed,
+          total: latest.total,
+        });
         pollJob(latestJobId);
+      } else if (latestJobId && ['completed', 'error', 'waiting_for_login'].includes(String(latest.status || '')) && state.latestJobShown !== latestJobId) {
+        const updatedAt = Number(latest.updated_at || latest.updatedAt || 0);
+        if (!updatedAt || (Date.now() / 1000) - updatedAt < 600) {
+          state.latestJobShown = latestJobId;
+          operationDone(
+            latest.status === 'completed' ? `${latest.message || '最近一項背景工作已完成'}；目前清單已重新載入。` : `${latest.message || '最近一項背景工作未完成'}，請查看提示後重試。`,
+            latest.status === 'completed' ? 'success' : 'error',
+            { title: latest.status === 'completed' ? '最近背景工作已完成' : '最近背景工作需要注意' },
+          );
+        }
       }
       message(state.activeJobId ? `已載入 ${state.items.length} 筆 mapping；背景工作 ${latest.completed || 0}/${latest.total || 0} 執行中。` : `已載入 ${state.items.length} 筆 mapping。`, 'success');
       return true;
@@ -208,39 +262,108 @@
     return state.items.filter(row => ids.has(String(row.id))).length;
   }
 
-  async function scan(scope, target = null, rebuild = true) {
+  async function scan(scope, target = null, rebuild = true, targets = null) {
     if (state.loading) return;
     state.loading = true;
-    $('scanAll').disabled = true;
+    setJobBusy(true);
+    const visiblePage = scope === 'visible_page';
+    const initialTotal = target ? 1 : visiblePage && Array.isArray(targets) ? targets.length : 0;
+    operationStatus('正在建立背景工作，請稍候。', 'running', {
+      title: target ? '單筆 1688 重新掃描' : visiblePage ? '本頁 1688 掃描' : '1688 SKU 掃描',
+      completed: 0,
+      total: initialTotal,
+    });
     try {
       const body = { scope, force: target ? true : $('forceScan').checked, useAi: $('useAi').checked, rebuild };
       if (target) { body.productId = target.product_id; body.modelId = target.model_id; body.offerId = target.offer_id; }
+      if (Array.isArray(targets)) body.targets = targets;
       const response = await fetch('/api/sku-mapping/scans', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body) });
       const data = await response.json();
       if (!response.ok || data.status !== 'success') throw new Error(data.message || '掃描啟動失敗');
-      message(target ? `已啟動單筆重掃 ${data.jobId}，完成後會更新這個型號。` : `已啟動 ${data.jobId}，掃描會在背景執行。`, 'success');
+      state.activeJobId = data.jobId || '';
+      const visiblePage = data.scope === 'visible_page';
+      operationStatus(data.message || '工作已排入，等待開始。', 'running', {
+        title: target ? '單筆 1688 重新掃描' : visiblePage ? '本頁 1688 掃描' : '1688 SKU 掃描',
+        completed: data.completed,
+        total: data.total || data.targetCount || initialTotal,
+      });
+      message(target
+        ? `已啟動單筆重掃 ${data.jobId}，完成後會更新這個型號。`
+        : visiblePage
+        ? `已啟動 ${data.jobId}；只會掃描目前頁面顯示的 ${data.targetCount || targets?.length || 0} 筆型號。`
+        : `已啟動 ${data.jobId}，掃描會在背景執行。`, 'success');
       pollJob(data.jobId);
-    } catch (error) { message(error.message, 'error'); }
-    finally { state.loading = false; $('scanAll').disabled = false; }
+    } catch (error) {
+      try {
+        const summary = await loadSummary();
+        const latest = summary?.latestRun || {};
+        const latestJobId = latest.job_id || latest.jobId || '';
+        if (latestJobId && ['queued', 'running'].includes(String(latest.status || ''))) {
+          state.activeJobId = latestJobId;
+          operationStatus('已有背景工作執行中，已自動接回最新進度。', 'running', {
+            title: latest.scope === 'visible_page' ? '本頁 1688 掃描' : '1688 SKU 掃描',
+            completed: latest.completed,
+            total: latest.total,
+          });
+          pollJob(latestJobId);
+          return;
+        }
+      } catch (_) { /* 保留原始啟動錯誤 */ }
+      operationDone(`背景工作未能啟動：${error.message}`, 'error');
+    }
+    finally { state.loading = false; if (!state.activeJobId) setJobBusy(false); }
+  }
+
+  function scanVisiblePage() {
+    if (state.loading) return;
+    const targets = [];
+    const seen = new Set();
+    state.items.forEach(item => {
+      const productId = String(item.product_id || '').trim();
+      const modelId = String(item.model_id || '').trim();
+      if (!productId || !modelId) return;
+      const key = `${productId}\u0000${modelId}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      targets.push({productId, modelId});
+    });
+    if (!targets.length) {
+      message('目前頁面沒有可掃描的型號；請先載入或搜尋清單。', 'error');
+      return;
+    }
+    scan('visible_page', null, true, targets);
   }
 
   async function reanalyzeExisting(aiOnly = false) {
     if (state.loading) return;
+    const targets = state.items.map(item => ({productId: item.product_id, modelId: item.model_id})).filter(item => item.productId && item.modelId);
+    if (!targets.length) { message('目前畫面沒有可重判的型號；請先載入或搜尋清單。', 'error'); return; }
     state.loading = true;
+    operationStatus('正在建立背景工作，請稍候。', 'running', {
+      title: aiOnly ? 'AI 強制最接近重判' : '現有快照規則→AI 重判',
+      completed: 0,
+      total: targets.length,
+    });
     const button = $(aiOnly ? 'reanalyzeExistingAi' : 'reanalyzeExisting');
     if (button) button.disabled = true;
     try {
       const response = await fetch('/api/sku-mapping/reanalyze-existing', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({useAi: aiOnly ? true : $('useAi').checked, rebuild: true, aiOnly}),
+        body: JSON.stringify({useAi: aiOnly ? true : $('useAi').checked, rebuild: true, aiOnly, targets}),
       });
       const data = await response.json();
       if (!response.ok || data.status !== 'success') throw new Error(data.message || '現有快照重判啟動失敗');
       state.activeJobId = data.jobId || '';
+      setJobBusy(true);
+      operationStatus(data.message || '工作已排入，等待開始。', 'running', {
+        title: aiOnly ? 'AI 強制最接近重判' : '現有快照規則→AI 重判',
+        completed: data.completed,
+        total: data.total || data.targetCount || targets.length,
+      });
       message(aiOnly
-        ? `已啟動 ${data.jobId}；會把每個現有快照的完整 SKU 清單交給 AI 找最接近項目，不會開啟 1688。`
-        : `已啟動 ${data.jobId}；只會使用本機既有快照，先規則後 AI，不會開啟 1688。`, 'success');
+        ? `已啟動 ${data.jobId}；會把目前顯示的 ${targets.length} 筆型號之完整 SKU 清單交給 AI 強制選出最接近項目，不會開啟 1688。`
+        : `已啟動 ${data.jobId}；只會使用目前顯示的 ${targets.length} 筆型號快照，先規則後 AI，不會開啟 1688。`, 'success');
       pollJob(data.jobId);
     } catch (error) {
       try {
@@ -254,28 +377,81 @@
           return;
         }
       } catch (_) { /* 保留原始錯誤訊息 */ }
-      message(error.message, 'error');
+      operationDone(`背景工作未能啟動：${error.message}`, 'error');
     }
-    finally { state.loading = false; if (button) button.disabled = false; }
+    finally { state.loading = false; if (!state.activeJobId) { setJobBusy(false); if (button) button.disabled = false; } }
   }
 
   async function pollJob(jobId) {
     state.activeJobId = jobId;
-    const response = await fetch(`/api/sku-mapping/jobs/${encodeURIComponent(jobId)}`);
-    const data = await response.json();
-    $('jobStatus').textContent = `${data.status || ''} ${data.completed || 0}/${data.total || 0} ${data.message || ''}`;
-    if (data.status === 'waiting_for_login') { state.activeJobId = ''; message('1688 需要登入或人工驗證；完成後請重新掃描。', 'error'); return; }
-    if (['completed','error'].includes(data.status)) {
-      state.activeJobId = '';
-      await reload();
-      const doneMessage = data.aiOnly
-        ? (data.message || '現有快照 AI 重判完成；未連線 1688，仍需人工核准。')
-        : data.scope === 'existing_snapshots'
-        ? (data.message || '現有快照規則→AI 重判完成；未連線 1688。')
-        : '掃描完成；先用規則判定，只有規則無候選的項目才使用 Gemini。';
-      message(data.status === 'completed' ? doneMessage : `掃描失敗：${data.error || data.message || '請查看該筆狀態'}`, data.status === 'completed' ? 'success' : 'error');
+    let data;
+    try {
+      const response = await fetch(`/api/sku-mapping/jobs/${encodeURIComponent(jobId)}`);
+      data = await response.json();
+      if (!response.ok) throw new Error(data.message || '背景工作狀態讀取失敗');
+    } catch (error) {
+      $('jobStatus').textContent = `背景工作 ${jobId}：暫時無法讀取進度，正在重試…`;
+      operationStatus(`暫時無法讀取進度，系統會自動重試。工作編號：${jobId}`, 'running', { title: '背景工作仍在執行' });
+      setJobBusy(true);
+      setTimeout(() => pollJob(jobId), 3000);
       return;
     }
+    const completed = Number(data.completed || 0);
+    const total = Number(data.total || 0);
+    const progress = total ? `${completed}/${total}` : `${completed}/準備中`;
+    const aiOnly = data.aiOnly === true || /AI.*強制最接近/.test(String(data.message || ''));
+    const visiblePage = data.scope === 'visible_page';
+    $('jobStatus').textContent = uiText(`${data.status || ''} ${progress} ${data.message || ''}`);
+    if (data.status === 'waiting_for_login') {
+      state.activeJobId = '';
+      setJobBusy(false);
+      operationDone('1688 需要登入或人工驗證；背景工作已暫停，完成後請重新掃描。', 'error', { title: '背景工作已暫停' });
+      return;
+    }
+    if (['completed','error'].includes(data.status)) {
+      state.activeJobId = '';
+      setJobBusy(false);
+      const doneMessage = aiOnly
+        ? (data.message || '現有快照 AI 強制最接近重判完成；未連線 1688，仍需人工核准。')
+        : data.scope === 'existing_snapshots'
+        ? (data.message || '現有快照規則→AI 重判完成；未連線 1688。')
+        : visiblePage
+        ? (data.message || `本頁 1688 掃描完成；只處理目前顯示的 ${data.targetCount || 0} 筆型號，仍需人工核准。`)
+        : '掃描完成；先用規則判定，只有規則無候選的項目才使用 AI。';
+      // The backend keeps a stable machine-readable error code in `error`
+      // and the actionable provider detail in `message`.  Prefer the detail;
+      // otherwise users only see "ai_provider_error" and cannot tell whether
+      // the cause was balance, rate limit, or an invalid response.
+      const failureCode = String(data.error || '').trim();
+      const failureMessage = String(data.message || '').trim();
+      const genericMessages = new Set(['現有快照重判失敗', 'SKU mapping 掃描失敗']);
+      const failureDetail = failureMessage && failureMessage !== failureCode && !genericMessages.has(failureMessage)
+        ? failureMessage
+        : (failureCode || failureMessage || '請查看該筆狀態');
+      if (data.status === 'error') {
+        operationDone(`背景工作失敗：${failureDetail}`, 'error', { title: '背景工作執行失敗' });
+        return;
+      }
+      operationStatus('背景工作已完成，正在重新讀取最新清單。', 'running', {
+        title: '正在更新畫面',
+        completed,
+        total: total || completed,
+      });
+      const refreshResult = await refreshLatestData(3);
+      if (!refreshResult.ok) {
+        operationDone(`背景工作已完成，但畫面更新失敗：${refreshResult.error?.message || '請按「重新載入」'}。`, 'error', { title: '工作完成，但畫面尚未更新' });
+        return;
+      }
+      state.latestJobShown = jobId;
+      operationDone(`${doneMessage}；最新清單已更新。`, 'success', { title: '背景工作已完成' });
+      return;
+    }
+    setJobBusy(true);
+    operationStatus(data.message || '背景執行中', 'running', {
+      title: aiOnly ? 'AI 強制最接近重判' : data.scope === 'existing_snapshots' ? '現有快照規則→AI 重判' : visiblePage ? '本頁 1688 掃描' : '1688 SKU 掃描',
+      completed,
+      total,
+    });
     // Suggestions are written one model at a time.  Refresh the visible page
     // while the worker is running so rules/AI results appear incrementally
     // instead of waiting for all thousands of models to finish.
@@ -367,30 +543,41 @@
       if (!response.ok || !['success'].includes(data.status)) throw new Error(data.message || '儲存 mapping 失敗');
       state.selectedIds.delete(String(cardElement.dataset.id));
       state.selections.delete(String(cardElement.dataset.id));
-      await reload();
+      const refreshResult = await refreshLatestData(3);
+      if (!refreshResult.ok) {
+        operationDone(`資料已儲存，但畫面更新失敗：${refreshResult.error?.message || '請按「重新載入」'}。`, 'error', { title: '儲存完成，但畫面尚未更新' });
+        return;
+      }
+      message(action === 'approve' ? 'SKU mapping 已儲存，清單已更新。' : 'mapping 狀態已更新。', 'success');
     } catch (error) { message(error.message, 'error'); }
     finally { if (triggerButton && document.body.contains(triggerButton)) triggerButton.disabled = false; }
   }
 
-  async function rerunAi(cardElement, triggerButton) {
+  async function rerunAi(cardElement, triggerButton, forceMatch = false) {
     const item = state.items.find(row => String(row.id) === String(cardElement.dataset.id));
     if (!item || !item.snapshot_id) { message('目前沒有可用 SKU 快照，請先重新掃描此商品。', 'error'); return; }
     if (triggerButton) triggerButton.disabled = true;
-    operationStatus('正在重新判斷：先跑規則，無規則候選時才呼叫 AI…', 'running');
-    message('正在重新判斷：先跑規則，無候選時才呼叫 AI…');
+    operationStatus(forceMatch ? '正在重新判斷：AI 會從完整 SKU 清單強制選最接近項目…' : '正在重新判斷：先跑規則，無規則候選時才呼叫 AI…', 'running');
+    message(forceMatch ? '正在重新判斷：AI 會強制選出最接近候選…' : '正在重新判斷：先跑規則，無候選時才呼叫 AI…');
     try {
       const response = await fetch('/api/sku-mapping/ai-reviews', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({productId: item.product_id, modelId: item.model_id}),
+        body: JSON.stringify({productId: item.product_id, modelId: item.model_id, forceMatch}),
       });
       const data = await response.json();
       if (!response.ok || data.status !== 'success') throw new Error(data.message || 'AI 初判失敗');
-      await reload();
-      const doneMessage = data.usedAi === false
+      const refreshResult = await refreshLatestData(3);
+      if (!refreshResult.ok) {
+        operationDone(`重新判斷已完成，但畫面更新失敗：${refreshResult.error?.message || '請按「重新載入」'}。`, 'error', { title: '工作完成，但畫面尚未更新' });
+        return;
+      }
+      const doneMessage = forceMatch
+        ? 'AI 強制最接近重判完成；已從完整 SKU 清單選出最接近候選，仍需人工核准。'
+        : data.usedAi === false
         ? '規則重判完成；已有規則候選，因此未呼叫 AI。仍需人工核准。'
         : `AI 初判完成；已保留最多 ${data.candidateCount || 4} 張候選卡，結果已更新。仍需人工核准。`;
-      operationDone(doneMessage, 'success');
+      operationDone(`${doneMessage}；最新清單已更新。`, 'success');
     } catch (error) { operationDone(`重新判斷失敗：${error.message}`, 'error'); }
     finally { if (triggerButton && document.body.contains(triggerButton)) triggerButton.disabled = false; }
   }
@@ -515,7 +702,8 @@
       const item = state.items.find(row => String(row.id) === String(cardElement?.dataset.id));
       if (item) return scan('all', item);
     }
-    if (button.dataset.action === 'rerun-ai') return rerunAi(cardElement, button);
+    if (button.dataset.action === 'rerun-ai') return rerunAi(cardElement, button, false);
+    if (button.dataset.action === 'rerun-ai-forced') return rerunAi(cardElement, button, true);
     decide(cardElement, button.dataset.action, '', button);
   });
   $('queue').addEventListener('change', event => {
@@ -533,6 +721,7 @@
     else state.selectedIds.delete(String(cardElement.dataset.id));
   });
   $('scanAll').addEventListener('click', () => scan('all', null, true));
+  $('scanVisiblePage').addEventListener('click', scanVisiblePage);
   $('reanalyzeExisting').addEventListener('click', () => reanalyzeExisting(false));
   $('reanalyzeExistingAi').addEventListener('click', () => reanalyzeExisting(true));
   $('selectGreen').addEventListener('click', () => {

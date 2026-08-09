@@ -808,8 +808,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     product_id=data.get("productId", ""),
                     model_id=data.get("modelId", ""),
                     offer_id=data.get("offerId", ""),
+                    targets=data.get("targets") if isinstance(data.get("targets"), list) else None,
                 )
                 self._send_json_response(202, {"status": "success", **job})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
             except RuntimeError as e:
                 self._send_json_response(409, {"status": "error", "message": str(e)})
             except Exception as e:
@@ -824,6 +827,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     use_ai=data.get("useAi", True) is not False,
                     rebuild=data.get("rebuild", False) is True,
                     ai_only=data.get("aiOnly", False) is True,
+                    targets=data.get("targets") if isinstance(data.get("targets"), list) else None,
                 )
                 self._send_json_response(202, {"status": "success", **job})
             except RuntimeError as e:
@@ -836,7 +840,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if request_path == '/api/sku-mapping/ai-reviews':
             try:
                 data = self._read_json_body()
-                result = self._sku_mapping_store().rerun_ai(data.get("productId", ""), data.get("modelId", ""))
+                result = self._sku_mapping_store().rerun_ai(
+                    data.get("productId", ""),
+                    data.get("modelId", ""),
+                    force_match=data.get("forceMatch", False) is True,
+                )
                 self._send_json_response(200, result)
             except ValueError as e:
                 self._send_json_response(400, {"status": "error", "message": str(e)})
@@ -1480,7 +1488,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     binding["alibabaOfferId"] = str(model.get("1688_offer_id"))
                 if model.get("1688_spec_text"):
                     binding["alibabaSpecText"] = str(model.get("1688_spec_text"))
-                binding["alibabaMappingStatus"] = str(model.get("1688_mapping_status") or ("legacy_pending_name" if model.get("1688_sku_name") else "missing"))
+                binding["alibabaMappingStatus"] = str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing"))
                 binding["alibabaOfferFingerprint"] = str(model.get("1688_offer_fingerprint") or "")
                 bindings[key] = binding
         return bindings
@@ -2091,7 +2099,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             if current_id != str(model_id or "") and str(model.get("型號名稱") or "").strip() != str(model_name or "").strip():
                 continue
             sku_id = normalize_identifier(model.get("1688_sku_id"))
-            status = str(model.get("1688_mapping_status") or ("legacy_pending_name" if model.get("1688_sku_name") else "missing")).strip()
+            status = str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing")).strip()
             try:
                 dimension_count = int(float(model.get("1688_dimension_count") or (2 if model.get("1688_sku_second_name") else 1)))
             except (TypeError, ValueError):
@@ -2402,7 +2410,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "alibabaSkuName": alibaba_sku_name,
             "alibabaSkuSecondName": target_model.get("1688_sku_second_name", ""),
             "alibabaSpecText": target_model.get("1688_spec_text", ""),
-            "alibabaMappingStatus": target_model.get("1688_mapping_status") or ("legacy_pending_name" if target_model.get("1688_sku_name") else "missing"),
+            "alibabaMappingStatus": target_model.get("1688_mapping_status") or ("pending" if target_model.get("1688_sku_name") else "missing"),
             "alibabaOfferFingerprint": target_model.get("1688_offer_fingerprint", ""),
             "alibabaMinOrderQty": existing_binding.get("alibabaMinOrderQty") or target_model.get("1688_min_order_qty", 1),
             "alibabaPackageMultiple": existing_binding.get("alibabaPackageMultiple") or target_model.get("1688_package_multiple", 1),

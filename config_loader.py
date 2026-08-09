@@ -102,6 +102,25 @@ def load_gemini_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
     return "", ""
 
 
+def load_deepseek_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """Load the official DeepSeek API key without exposing it to the UI."""
+    env_value = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+    if env_value:
+        return env_value, "env"
+
+    local_values = _load_project_local_env(project_root)
+    local_value = local_values.get("DEEPSEEK_API_KEY", "").strip()
+    if local_value:
+        return local_value, ".env.local"
+
+    shell_values = _load_shell_rc_values()
+    shell_value = shell_values.get("DEEPSEEK_API_KEY", "").strip()
+    if shell_value:
+        return shell_value, "shell_rc"
+
+    return "", ""
+
+
 def load_openai_config_value(name: str, default: str = "", project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
     """依環境變數、專案 .env.local、shell 設定的順序讀取非敏感 OpenAI 設定。"""
     env_value = os.environ.get(name, "").strip()
