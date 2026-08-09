@@ -54548,8 +54548,17 @@
                 "阿里巴巴商品名稱": "内裤女士无痕日系中腰透气纯棉裆性感短裤少女薄款女生三角裤批发",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/674778394852.html",
                 "1688_offer_id": "674778394852",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5023695886904",
+                "1688_sku_name": "韩粉",
+                "1688_spec_text": "韩粉,m",
+                "1688_sku_second_name": "m",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "de9aedcb975732d530e48052",
+                "1688_verified_at": "2026-08-09T07:28:19Z",
+                "1688_offer_fingerprint": "29c5ea07c94a854cf422dfe5f56ea4a7191901a10dd245e2cebc9c638480090e",
+                "1688_last_price_cny": 2.35
             },
             {
                 "型號名稱": "奶茶膚,L",
@@ -54635,8 +54644,9 @@
                 "阿里巴巴商品名稱": "内裤女士无痕日系中腰透气纯棉裆性感短裤少女薄款女生三角裤批发",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/674778394852.html",
                 "1688_offer_id": "674778394852",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-09T07:28:14Z"
             },
             {
                 "型號名稱": "淺粉,L",
@@ -54663,8 +54673,17 @@
                 "阿里巴巴商品名稱": "内裤女士无痕日系中腰透气纯棉裆性感短裤少女薄款女生三角裤批发",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/674778394852.html",
                 "1688_offer_id": "674778394852",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5023695886906",
+                "1688_sku_name": "韩粉",
+                "1688_spec_text": "韩粉,xl",
+                "1688_sku_second_name": "xl",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "d84a19ef92b085d5c4ca825c",
+                "1688_verified_at": "2026-08-09T07:27:23Z",
+                "1688_offer_fingerprint": "29c5ea07c94a854cf422dfe5f56ea4a7191901a10dd245e2cebc9c638480090e",
+                "1688_last_price_cny": 2.65
             },
             {
                 "型號名稱": "奶綠,M",
@@ -54704,8 +54723,17 @@
                 "阿里巴巴商品名稱": "内裤女士无痕日系中腰透气纯棉裆性感短裤少女薄款女生三角裤批发",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/674778394852.html",
                 "1688_offer_id": "674778394852",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5023695886912",
+                "1688_sku_name": "果綠",
+                "1688_spec_text": "果綠,xl",
+                "1688_sku_second_name": "xl",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "5195170cad27a3e36db2cf68",
+                "1688_verified_at": "2026-08-09T07:27:29Z",
+                "1688_offer_fingerprint": "29c5ea07c94a854cf422dfe5f56ea4a7191901a10dd245e2cebc9c638480090e",
+                "1688_last_price_cny": 2.65
             },
             {
                 "型號名稱": "奶茶膚,M",
