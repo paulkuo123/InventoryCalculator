@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商品資料管理｜莉莉安庫存系統</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="products.css">
+</head>
+<body class="products-page">
+    <header>
+        <div class="header-content">
+            <div class="logo-container">
+                <div class="logo-circle"><i class="fas fa-pen-to-square"></i></div>
+                <h1>商品資料管理</h1>
+            </div>
+            <div class="header-actions">
+                <a class="btn-secondary header-link-button" href="/">
+                    <i class="fas fa-boxes-stacked"></i> 庫存首頁
+                </a>
+                <a class="btn-secondary header-link-button" href="/inbound.html">
+                    <i class="fas fa-box-open"></i> 到貨入庫
+                </a>
+                <a class="btn-secondary header-link-button" href="/ads.html">
+                    <i class="fas fa-bullhorn"></i> 廣告分析
+                </a>
+            </div>
+        </div>
+        <div class="header-wave">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1440 100">
+                <path fill="#ffffff" fill-opacity="1" d="M0,64L48,69.3C96,75,192,85,288,80C384,75,480,53,576,48C672,43,768,53,864,58.7C960,64,1056,64,1152,56C1248,48,1344,32,1392,24L1440,16L1440,100L1392,100C1344,100,1248,100,1152,100C1056,100,960,100,864,100C768,100,672,100,576,100C480,100,384,100,288,100C192,100,96,100,48,100L0,100Z"></path>
+            </svg>
+        </div>
+    </header>
+
+    <main class="container products-workspace">
+        <section class="card product-search-card">
+            <div class="product-search-copy">
+                <h2><i class="fas fa-database"></i> 直接編輯 1688 商品對照</h2>
+                <p>直接讀取 Golden Table，不會執行蝦皮爬蟲。可搜尋商品名稱、蝦皮商品／規格 ID、1688 Offer ID、SKU ID 或規格名稱。</p>
+            </div>
+            <form id="productSearchForm" class="product-search-form">
+                <label class="sr-only" for="productSearchInput">搜尋商品</label>
+                <input id="productSearchInput" type="search" autocomplete="off" placeholder="例如：S32、黑色、29559801000、706987013585">
+                <button id="productSearchButton" class="btn-primary" type="submit"><i class="fas fa-search"></i> 搜尋商品</button>
+            </form>
+            <div id="productSearchStatus" class="product-search-status" aria-live="polite"></div>
+        </section>
+
+        <section id="productResults" class="product-results" aria-live="polite"></section>
+    </main>
+
+    <template id="emptyResultsTemplate">
+        <section class="card empty-results">
+            <i class="fas fa-box-open"></i>
+            <h2>找不到符合的商品</h2>
+            <p>請改用商品名稱、規格名稱、商品 ID、Offer ID 或 SKU ID 搜尋。</p>
+        </section>
+    </template>
+
+    <div id="modalBackdrop" class="catalog-modal-backdrop" hidden>
+        <section id="skuMappingModal" class="catalog-modal mapping-modal" role="dialog" aria-modal="true" aria-labelledby="skuMappingTitle" hidden>
+            <header class="catalog-modal-header">
+                <h2 id="skuMappingTitle">編輯 1688 對應型號</h2>
+                <button class="modal-close" type="button" data-close-modal aria-label="關閉"><i class="fas fa-xmark"></i></button>
+            </header>
+            <div class="catalog-modal-body">
+                <p id="skuMappingProduct" class="modal-product-summary"></p>
+                <p class="modal-helper">第一規格通常是顏色；若商品有第二規格，請一併填寫。此視窗只更新型號對照，不會變更商品網址或 Offer ID。</p>
+                <div id="skuMappingRows" class="mapping-modal-list"></div>
+                <p id="skuMappingMessage" class="modal-message" aria-live="polite"></p>
+            </div>
+            <footer class="catalog-modal-footer">
+                <button class="btn-secondary modal-cancel" type="button" data-close-modal>取消</button>
+                <button id="saveSkuMappingButton" class="btn-primary" type="button"><i class="fas fa-floppy-disk"></i> 儲存對應</button>
+            </footer>
+        </section>
+
+        <section id="alibabaEditModal" class="catalog-modal alibaba-edit-modal" role="dialog" aria-modal="true" aria-labelledby="alibabaEditTitle" hidden>
+            <header class="catalog-modal-header">
+                <h2 id="alibabaEditTitle">編輯阿里巴巴資料</h2>
+                <button class="modal-close" type="button" data-close-modal aria-label="關閉"><i class="fas fa-xmark"></i></button>
+            </header>
+            <form id="alibabaEditForm">
+                <div class="catalog-modal-body">
+                    <div id="alibabaEditIdentity" class="modal-model-identity"></div>
+                    <div class="alibaba-edit-fields">
+                        <label class="modal-field modal-field-wide">阿里巴巴商品名稱<input name="alibabaProductName" autocomplete="off"></label>
+                        <label class="modal-field modal-field-wide">阿里巴巴商品 URL<input name="alibabaProductUrl" autocomplete="off" placeholder="https://detail.1688.com/offer/...html"></label>
+                        <label class="modal-field">1688 Offer ID<input name="alibabaOfferId" autocomplete="off" placeholder="可由商品 URL 自動解析"></label>
+                        <label class="modal-field">1688 SKU ID<input name="alibabaSkuId" autocomplete="off"></label>
+                        <label class="modal-field">第一規格<input name="alibabaSkuName" autocomplete="off" placeholder="例如：黑色"></label>
+                        <label class="modal-field">第二規格<input name="alibabaSkuSecondName" autocomplete="off" placeholder="例如：16 Pro，可留白"></label>
+                        <label class="modal-field">單價 CNY<input name="alibabaLastPriceCny" type="number" min="0" step="0.01"></label>
+                        <label class="modal-field">MOQ<input name="alibabaMinOrderQty" type="number" min="1" step="1"></label>
+                        <label class="modal-field">包裝倍數<input name="alibabaPackageMultiple" type="number" min="1" step="1"></label>
+                    </div>
+                    <div class="apply-url-offer-panel">
+                        <div>
+                            <strong>同商品的全部規格共用同一個 1688 商品頁？</strong>
+                            <p>前往 URL 管理讀取完整 SKU，預覽並人工確認後再套用。</p>
+                        </div>
+                        <button id="applyUrlOfferToAllButton" class="apply-url-offer-button" type="button"><i class="fas fa-arrow-up-right-from-square"></i> 到 URL 管理檢查並套用</button>
+                    </div>
+                    <p class="modal-helper">只會更新此型號，並同步到採購對照資料。</p>
+                    <p id="alibabaEditMessage" class="modal-message" aria-live="polite"></p>
+                </div>
+                <footer class="catalog-modal-footer">
+                    <a id="alibabaEditLink" class="modal-alibaba-link" target="_blank" rel="noopener noreferrer">開啟 1688 商品頁</a>
+                    <div class="modal-footer-actions">
+                        <button class="btn-secondary modal-cancel" type="button" data-close-modal>取消</button>
+                        <button id="saveAlibabaEditButton" class="btn-primary" type="submit"><i class="fas fa-floppy-disk"></i> 儲存</button>
+                    </div>
+                </footer>
+            </form>
+        </section>
+    </div>
+
+    <script src="products.js"></script>
+</body>
+</html>

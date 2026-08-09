@@ -15,6 +15,7 @@ from playwright.sync_api import sync_playwright
 
 ALIBABA_ORDER_URL = "https://trade.1688.com/order/new_step_order_detail.htm?orderId={order_id}"
 SHOPEE_PRODUCTS_URL = "https://seller.shopee.tw/portal/product/list/live/all"
+POST_SAVE_STOCK_VERIFY_DELAYS_MS = (1200, 2500, 4000)
 
 
 def write_json(path: str, payload: Dict[str, Any]) -> None:
@@ -902,6 +903,83 @@ def close_stock_modal_without_saving(modal) -> None:
         return
 
 
+def verify_post_save_stocks(
+    page,
+    product_id: str,
+    prepared: List[Tuple[Dict[str, Any], int, int]],
+    status_path: str,
+) -> List[Dict[str, Any]]:
+    """Wait for Shopee's async save to reach the list, then verify several times.
+
+    Closing the stock modal only confirms that Shopee accepted the save request. The
+    product list can continue to show its old quantities for a few seconds, so an
+    immediate single read creates false "manual review" results.
+    """
+    observations: Dict[str, int] = {}
+    last_error = ""
+
+    for attempt, delay_ms in enumerate(POST_SAVE_STOCK_VERIFY_DELAYS_MS, start=1):
+        page.wait_for_timeout(delay_ms)
+        try:
+            live_models = navigate_shopee_product_list(page, product_id, status_path)
+        except Exception as exc:
+            last_error = str(exc)
+            continue
+
+        current_results: List[Dict[str, Any]] = []
+        all_matched = True
+        for update, before, target in prepared:
+            update_id = str(update.get("id") or "")
+            try:
+                live = select_live_model(
+                    live_models,
+                    str(update.get("shopee_model_id") or ""),
+                    str(update.get("shopee_model_name") or ""),
+                )
+                after = int(live["currentStock"])
+                observations[update_id] = after
+                if after != target:
+                    all_matched = False
+                current_results.append({
+                    "updateId": update.get("id"),
+                    "status": "success" if after == target else "manual_review",
+                    "beforeApply": before,
+                    "targetStock": target,
+                    "afterStock": after,
+                    "message": "",
+                })
+            except Exception as exc:
+                last_error = str(exc)
+                all_matched = False
+
+        if all_matched and len(current_results) == len(prepared):
+            return current_results
+
+    attempts = len(POST_SAVE_STOCK_VERIFY_DELAYS_MS)
+    results: List[Dict[str, Any]] = []
+    for update, before, target in prepared:
+        update_id = str(update.get("id") or "")
+        after = observations.get(update_id)
+        if after is None:
+            message = f"儲存後已重新讀取庫存 {attempts} 次仍無法確認結果"
+            if last_error:
+                message = f"{message}：{last_error}"
+        else:
+            message = (
+                f"儲存後已等待並重新讀取庫存 {attempts} 次，最後讀值 {after} "
+                f"仍與目標 {target} 不一致，請人工確認是否有即時銷售或頁面未儲存"
+            )
+        results.append({
+            "updateId": update.get("id"),
+            "status": "manual_review",
+            "beforeApply": before,
+            "targetStock": target,
+            "afterStock": after,
+            "message": message,
+        })
+    return results
+
+
 def apply_product_updates(page, product_id: str, updates: List[Dict[str, Any]], status_path: str) -> List[Dict[str, Any]]:
     live_models = navigate_shopee_product_list(page, product_id, status_path)
     validated = []
@@ -975,48 +1053,7 @@ def apply_product_updates(page, product_id: str, updates: List[Dict[str, Any]], 
             for update, before, target in prepared
         ]
 
-    try:
-        live_models = navigate_shopee_product_list(page, product_id, status_path)
-    except Exception as exc:
-        return [
-            {
-                "updateId": update.get("id"),
-                "status": "manual_review",
-                "beforeApply": before,
-                "targetStock": target,
-                "message": f"儲存後無法重新讀取庫存：{exc}",
-            }
-            for update, before, target in prepared
-        ]
-
-    results = []
-    for update, before, target in prepared:
-        try:
-            live = select_live_model(
-                live_models,
-                str(update.get("shopee_model_id") or ""),
-                str(update.get("shopee_model_name") or ""),
-            )
-            after = int(live["currentStock"])
-            status = "success" if after == target else "manual_review"
-            message = "" if status == "success" else "儲存後庫存與目標不一致，請人工確認是否有即時銷售或頁面未儲存"
-            results.append({
-                "updateId": update.get("id"),
-                "status": status,
-                "beforeApply": before,
-                "targetStock": target,
-                "afterStock": after,
-                "message": message,
-            })
-        except Exception as exc:
-            results.append({
-                "updateId": update.get("id"),
-                "status": "manual_review",
-                "beforeApply": before,
-                "targetStock": target,
-                "message": str(exc),
-            })
-    return results
+    return verify_post_save_stocks(page, product_id, prepared, status_path)
 
 
 def apply_stocks(base_dir: str, payload: Dict[str, Any], status_path: str) -> Dict[str, Any]:

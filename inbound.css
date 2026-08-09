@@ -39,6 +39,7 @@ body {
     width: min(1200px, calc(100% - 40px));
     margin: 0 auto;
 }
+.topbar-actions { display: flex; align-items: center; gap: 10px; }
 .brand { display: flex; align-items: center; gap: 15px; }
 .brand-icon {
     display: grid;
@@ -262,6 +263,7 @@ td { font-size: 13px; }
 
 @media (max-width: 800px) {
     .topbar-inner, .product-group-header { align-items: flex-start; flex-direction: column; }
+    .topbar-actions { flex-wrap: wrap; }
     .inline-form { grid-template-columns: 1fr; }
     .panel { padding: 16px; }
     .product-actions { width: 100%; }

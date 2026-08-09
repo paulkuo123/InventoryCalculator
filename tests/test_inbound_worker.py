@@ -16,6 +16,7 @@ from inbound_worker import (
     select_live_model,
     select_stock_modal_row,
     split_sku_parts,
+    verify_post_save_stocks,
 )
 
 
@@ -278,6 +279,52 @@ class InboundWorkerParsingTest(unittest.TestCase):
         modal = locate_shopee_stock_modal(FakePage())
         self.assertIsInstance(modal, FakeModal)
         self.assertEqual(FakePage.evaluated_marker, "data-inbound-stock-modal")
+
+    def test_post_save_verification_waits_for_delayed_shopee_stock(self):
+        class FakePage:
+            waits = []
+
+            @classmethod
+            def wait_for_timeout(cls, milliseconds):
+                cls.waits.append(milliseconds)
+
+        prepared = [(
+            {"id": 7, "shopee_model_id": "model-black", "shopee_model_name": "黑色"},
+            100,
+            150,
+        )]
+        stale_models = [{"modelId": "model-black", "modelName": "黑色", "currentStock": 100}]
+        saved_models = [{"modelId": "model-black", "modelName": "黑色", "currentStock": 150}]
+
+        with patch("inbound_worker.navigate_shopee_product_list", side_effect=[stale_models, saved_models]):
+            result = verify_post_save_stocks(FakePage(), "product-1", prepared, "unused-status.json")
+
+        self.assertEqual(FakePage.waits, [1200, 2500])
+        self.assertEqual(result[0]["status"], "success")
+        self.assertEqual(result[0]["afterStock"], 150)
+
+    def test_post_save_verification_requires_manual_review_after_all_retries(self):
+        class FakePage:
+            waits = []
+
+            @classmethod
+            def wait_for_timeout(cls, milliseconds):
+                cls.waits.append(milliseconds)
+
+        prepared = [(
+            {"id": 8, "shopee_model_id": "model-black", "shopee_model_name": "黑色"},
+            100,
+            150,
+        )]
+        stale_models = [{"modelId": "model-black", "modelName": "黑色", "currentStock": 100}]
+
+        with patch("inbound_worker.navigate_shopee_product_list", return_value=stale_models):
+            result = verify_post_save_stocks(FakePage(), "product-1", prepared, "unused-status.json")
+
+        self.assertEqual(FakePage.waits, [1200, 2500, 4000])
+        self.assertEqual(result[0]["status"], "manual_review")
+        self.assertEqual(result[0]["afterStock"], 100)
+        self.assertIn("重新讀取庫存 3 次", result[0]["message"])
 
 
 if __name__ == "__main__":

@@ -83,6 +83,7 @@ from alibaba_client import AlibabaApiClient
 from alibaba_review_report import clean_options, classify, is_sock_product_name
 from procurement_store import ProcurementStore, parse_offer_id
 from inbound_store import InboundStore
+from product_catalog import build_product_catalog
 from ads_analysis import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENAI_REASONING_EFFORT,
@@ -436,6 +437,23 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     "status": "error",
                     "message": str(e)
                 })
+            return
+
+        if request_path == '/api/golden-table/catalog':
+            try:
+                params = urllib.parse.parse_qs(parsed_path.query)
+                query = params.get("query", [""])[0]
+                limit = int(params.get("limit", ["30"])[0])
+                golden_table = self._load_json_file(self._golden_table_path())
+                self._send_json_response(200, {
+                    "status": "success",
+                    **build_product_catalog(golden_table, query=query, limit=limit),
+                })
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"載入商品資料目錄失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
         if self.path.startswith('/api/procurement/drafts/'):
@@ -2295,7 +2313,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         model_name = str(payload.get("modelName", "")).strip()
         alibaba_product_name = str(payload.get("alibabaProductName", "")).strip()
         alibaba_product_url = str(payload.get("alibabaProductUrl", "")).strip()
-        alibaba_offer_id = normalize_identifier(payload.get("alibabaOfferId", "")) or parse_offer_id(alibaba_product_url)
+        # 商品 URL 是 Offer ID 的唯一來源；網址變更時不可保留舊 Offer ID。
+        alibaba_offer_id = parse_offer_id(alibaba_product_url) or normalize_identifier(
+            payload.get("alibabaOfferId", "")
+        )
         alibaba_sku_id = normalize_identifier(payload.get("alibabaSkuId", ""))
         alibaba_sku_name = str(payload.get("alibabaSkuName", "")).strip()
         alibaba_sku_second_name = str(payload.get("alibabaSkuSecondName", "")).strip()
@@ -2422,9 +2443,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "alibabaOfferFingerprint": model.get("1688_offer_fingerprint", ""),
             })
 
+        message = "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料"
+
         return {
             "status": "success",
-            "message": "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料",
+            "message": message,
             "productId": product_id,
             "productCreated": product_created,
             "applyScope": apply_scope,
@@ -2503,11 +2526,21 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "updatedModel": target_model
         }
 
-    def _sync_model_1688_sku_binding(self, product_id, product, target_model, alibaba_sku_name):
+    def _sync_model_1688_sku_binding(
+        self,
+        product_id,
+        product,
+        target_model,
+        alibaba_sku_name,
+        alibaba_sku_second_name=None,
+    ):
         """同步採購草稿資料庫，讓批次與單筆編輯共用相同行為。"""
         model_id = normalize_identifier(target_model.get("規格ID", "")) or str(target_model.get("型號名稱", "")).strip()
         store = self._procurement_store()
         existing_binding = store.get_binding(product_id, model_id) or {}
+        if alibaba_sku_second_name is None:
+            alibaba_sku_second_name = target_model.get("1688_sku_second_name", "")
+
         store.upsert_binding({
             "productId": product_id,
             "modelId": model_id,
