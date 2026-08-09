@@ -83,6 +83,7 @@ from alibaba_client import AlibabaApiClient
 from alibaba_review_report import clean_options, classify, is_sock_product_name
 from procurement_store import ProcurementStore, parse_offer_id
 from inbound_store import InboundStore
+from product_catalog import build_product_catalog
 from ads_analysis import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENAI_REASONING_EFFORT,
@@ -338,6 +339,23 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     "status": "error",
                     "message": str(e)
                 })
+            return
+
+        if request_path == '/api/golden-table/catalog':
+            try:
+                params = urllib.parse.parse_qs(parsed_path.query)
+                query = params.get("query", [""])[0]
+                limit = int(params.get("limit", ["30"])[0])
+                golden_table = self._load_json_file(self._golden_table_path())
+                self._send_json_response(200, {
+                    "status": "success",
+                    **build_product_catalog(golden_table, query=query, limit=limit),
+                })
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"載入商品資料目錄失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
         if self.path.startswith('/api/procurement/drafts/'):
@@ -1777,15 +1795,21 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         model_name = str(payload.get("modelName", "")).strip()
         alibaba_product_name = str(payload.get("alibabaProductName", "")).strip()
         alibaba_product_url = str(payload.get("alibabaProductUrl", "")).strip()
-        alibaba_offer_id = normalize_identifier(payload.get("alibabaOfferId", "")) or parse_offer_id(alibaba_product_url)
+        # 商品 URL 是 Offer ID 的唯一來源；網址變更時不可保留舊 Offer ID。
+        alibaba_offer_id = parse_offer_id(alibaba_product_url) or normalize_identifier(
+            payload.get("alibabaOfferId", "")
+        )
         alibaba_sku_id = normalize_identifier(payload.get("alibabaSkuId", ""))
         alibaba_sku_name = str(payload.get("alibabaSkuName", "")).strip()
+        alibaba_sku_second_name = str(payload.get("alibabaSkuSecondName", "")).strip()
         alibaba_min_order_qty = int(payload.get("alibabaMinOrderQty") or 1)
         alibaba_package_multiple = int(payload.get("alibabaPackageMultiple") or 1)
         alibaba_last_price_cny = payload.get("alibabaLastPriceCny")
         apply_scope = str(payload.get("applyScope", "single")).strip()
 
-        if apply_scope not in ("single", "fill_missing", "overwrite_all", "selected_models"):
+        if apply_scope not in (
+            "single", "fill_missing", "overwrite_all", "selected_models", "url_offer_all"
+        ):
             raise ValueError("套用範圍不正確")
         if not product_id:
             raise ValueError("缺少商品ID")
@@ -1793,6 +1817,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             raise ValueError("缺少規格ID或型號名稱")
         if alibaba_product_url and not re.match(r'^https?://', alibaba_product_url, re.IGNORECASE):
             raise ValueError("阿里巴巴商品URL 必須以 http:// 或 https:// 開頭")
+        if apply_scope == "url_offer_all" and not alibaba_product_url:
+            raise ValueError("請先填寫要套用的阿里巴巴商品 URL")
+        if apply_scope == "url_offer_all" and not alibaba_offer_id:
+            raise ValueError("無法從阿里巴巴商品 URL 解析 Offer ID")
 
         golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
         if not os.path.exists(golden_path):
@@ -1822,7 +1850,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             ]
             if target_model not in models_to_update:
                 models_to_update.append(target_model)
-        elif apply_scope == "overwrite_all":
+        elif apply_scope in ("overwrite_all", "url_offer_all"):
             models_to_update = models
         else:
             selected_models = payload.get("selectedModels")
@@ -1851,14 +1879,16 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 raise ValueError("找不到勾選的型號")
 
         for model in models_to_update:
-            model["阿里巴巴商品名稱"] = alibaba_product_name
             model["阿里巴巴商品URL"] = alibaba_product_url
             model["1688_offer_id"] = alibaba_offer_id
-            model["1688_sku_id"] = alibaba_sku_id
-            model["1688_sku_name"] = alibaba_sku_name
-            model["1688_min_order_qty"] = alibaba_min_order_qty
-            model["1688_package_multiple"] = alibaba_package_multiple
-            model["1688_last_price_cny"] = alibaba_last_price_cny
+            if apply_scope != "url_offer_all":
+                model["阿里巴巴商品名稱"] = alibaba_product_name
+                model["1688_sku_id"] = alibaba_sku_id
+                model["1688_sku_name"] = alibaba_sku_name
+                model["1688_sku_second_name"] = alibaba_sku_second_name
+                model["1688_min_order_qty"] = alibaba_min_order_qty
+                model["1688_package_multiple"] = alibaba_package_multiple
+                model["1688_last_price_cny"] = alibaba_last_price_cny
 
         backup_path = f"{golden_path}.bak"
         shutil.copy2(golden_path, backup_path)
@@ -1873,19 +1903,25 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "modelId": normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱", "")).strip(),
                 "productName": product.get("商品名稱", ""),
                 "modelName": model.get("型號名稱", ""),
-                "alibabaProductName": alibaba_product_name,
-                "alibabaProductUrl": alibaba_product_url,
-                "alibabaOfferId": alibaba_offer_id,
-                "alibabaSkuId": alibaba_sku_id,
-                "alibabaSkuName": alibaba_sku_name,
-                "alibabaMinOrderQty": alibaba_min_order_qty,
-                "alibabaPackageMultiple": alibaba_package_multiple,
-                "alibabaLastPriceCny": alibaba_last_price_cny,
+                "alibabaProductName": model.get("阿里巴巴商品名稱", ""),
+                "alibabaProductUrl": model.get("阿里巴巴商品URL", ""),
+                "alibabaOfferId": model.get("1688_offer_id", ""),
+                "alibabaSkuId": model.get("1688_sku_id", ""),
+                "alibabaSkuName": model.get("1688_sku_name", ""),
+                "alibabaSkuSecondName": model.get("1688_sku_second_name", ""),
+                "alibabaMinOrderQty": model.get("1688_min_order_qty", 1),
+                "alibabaPackageMultiple": model.get("1688_package_multiple", 1),
+                "alibabaLastPriceCny": model.get("1688_last_price_cny"),
             })
+
+        if apply_scope == "url_offer_all":
+            message = f"已將 1688 商品 URL 與 Offer ID 套用到 {len(models_to_update)} 個型號"
+        else:
+            message = "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料"
 
         return {
             "status": "success",
-            "message": "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料",
+            "message": message,
             "productId": product_id,
             "productCreated": product_created,
             "applyScope": apply_scope,
@@ -1953,11 +1989,21 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "updatedModel": target_model
         }
 
-    def _sync_model_1688_sku_binding(self, product_id, product, target_model, alibaba_sku_name):
+    def _sync_model_1688_sku_binding(
+        self,
+        product_id,
+        product,
+        target_model,
+        alibaba_sku_name,
+        alibaba_sku_second_name=None,
+    ):
         """同步採購草稿資料庫，讓批次與單筆編輯共用相同行為。"""
         model_id = normalize_identifier(target_model.get("規格ID", "")) or str(target_model.get("型號名稱", "")).strip()
         store = self._procurement_store()
         existing_binding = store.get_binding(product_id, model_id) or {}
+        if alibaba_sku_second_name is None:
+            alibaba_sku_second_name = target_model.get("1688_sku_second_name", "")
+
         store.upsert_binding({
             "productId": product_id,
             "modelId": model_id,
@@ -1968,6 +2014,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "alibabaOfferId": existing_binding.get("alibabaOfferId") or target_model.get("1688_offer_id", ""),
             "alibabaSkuId": existing_binding.get("alibabaSkuId") or target_model.get("1688_sku_id", ""),
             "alibabaSkuName": alibaba_sku_name,
+            "alibabaSkuSecondName": alibaba_sku_second_name,
             "alibabaMinOrderQty": existing_binding.get("alibabaMinOrderQty") or target_model.get("1688_min_order_qty", 1),
             "alibabaPackageMultiple": existing_binding.get("alibabaPackageMultiple") or target_model.get("1688_package_multiple", 1),
             "alibabaLastPriceCny": existing_binding.get("alibabaLastPriceCny")
