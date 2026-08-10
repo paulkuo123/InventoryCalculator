@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from sku_mapping_service import URL_HEALTH_TTL_SECONDS, MappingConflict, SkuMappingService, clean_mapping_name, offer_fingerprint
+from sku_mapping_service import URL_HEALTH_TTL_SECONDS, MappingConflict, SkuMappingService, clean_mapping_name, normalize_text, offer_fingerprint
 
 
 class SkuMappingServiceTest(unittest.TestCase):
@@ -306,6 +306,99 @@ class SkuMappingServiceTest(unittest.TestCase):
         ]
         candidates = self.service.generate_candidates(model, skus)
         self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sku-beige"])
+
+    def test_traditional_and_simplified_camel_colour_match_exactly(self):
+        model = {"product_name": "純棉短T", "model_name": "淺駝,L"}
+        skus = [
+            {"sku_id": "white-l", "sku_name": "白色", "second_name": "L", "spec_text": "白色>L", "parts": ["白色", "L"]},
+            {"sku_id": "camel-s", "sku_name": "浅驼", "second_name": "S", "spec_text": "浅驼>S", "parts": ["浅驼", "S"]},
+            {"sku_id": "camel-l", "sku_name": "浅驼", "second_name": "L", "spec_text": "浅驼>L", "parts": ["浅驼", "L"]},
+        ]
+        self.assertEqual(normalize_text("淺駝"), normalize_text("浅驼"))
+        candidates = self.service.generate_candidates(model, skus)
+        self.assertEqual([candidate["sku_id"] for candidate in candidates], ["camel-l"])
+        self.assertTrue(candidates[0]["evidence"]["complete"])
+
+    def test_guard_corrects_white_l_to_camel_l(self):
+        model = {"product_name": "純棉短T", "model_name": "淺駝,L"}
+        skus = [
+            {"sku_id": "white-l", "sku_name": "白色", "second_name": "L", "spec_text": "白色>L", "parts": ["白色", "L"]},
+            {"sku_id": "camel-s", "sku_name": "浅驼", "second_name": "S", "spec_text": "浅驼>S", "parts": ["浅驼", "S"]},
+            {"sku_id": "camel-l", "sku_name": "浅驼", "second_name": "L", "spec_text": "浅驼>L", "parts": ["浅驼", "L"]},
+        ]
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        white = next(item for item in full if item["sku_id"] == "white-l")
+        guarded = self.service._guard_ai_selection(model, skus, {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": white["candidate_key"],
+            "selected_sku_name": "白色", "selected_sku_second_name": "L",
+            "selected_sku_id": "white-l", "confidence": 0.95,
+            "warnings": [], "evidence": [],
+        }, full)
+        self.assertEqual(guarded["selected_sku_id"], "camel-l")
+        self.assertEqual(guarded["safety_override"], "color_priority_candidate")
+        self.assertTrue(guarded["warnings"])
+
+    def test_colour_with_single_piece_noise_finds_exact_nested_blue_option(self):
+        model = {"product_name": "iPhone 鏡頭貼", "model_name": "藍色(單顆),15/15Plus/16e"}
+        skus = []
+        for sku_id, colour in (
+            ("red", "紅色"), ("sea-blue", "海藍色"), ("blue", "藍色"),
+            ("green", "蒼嶺綠"), ("gold", "金色"),
+        ):
+            name = f"鹰眼金属({colour})"
+            second = "iphone15/15plus/单个"
+            skus.append({
+                "sku_id": sku_id, "sku_name": name, "second_name": second,
+                "spec_text": f"{name},{second}", "parts": [name, second],
+            })
+        for sku_id, second in (
+            ("blue-16", "iphone16/16plus/单个"),
+            ("blue-16-pro", "iphone16pro/16promax/单个"),
+        ):
+            name = "鹰眼金属(藍色)"
+            skus.append({
+                "sku_id": sku_id, "sku_name": name, "second_name": second,
+                "spec_text": f"{name},{second}", "parts": [name, second],
+            })
+
+        candidates = self.service.generate_candidates(model, skus)
+        self.assertEqual([candidate["sku_id"] for candidate in candidates], ["blue"])
+        self.assertTrue(candidates[0]["evidence"]["complete"])
+
+    def test_conflicting_ai_candidate_fields_abstain(self):
+        skus = [
+            {"sku_id": "white-l", "sku_name": "白色", "second_name": "L", "spec_text": "白色>L", "parts": ["白色", "L"]},
+            {"sku_id": "camel-l", "sku_name": "浅驼", "second_name": "L", "spec_text": "浅驼>L", "parts": ["浅驼", "L"]},
+        ]
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        white = next(item for item in full if item["sku_id"] == "white-l")
+        result = self.service._validate_ai_selection({
+            "decision": "match", "selected_candidate_key": white["candidate_key"],
+            "selected_sku_name": "浅驼", "selected_sku_second_name": "L",
+            "selected_sku_id": "white-l", "warnings": [],
+        }, full)
+        self.assertEqual(result["decision"], "abstain")
+        self.assertIsNone(result["selected_candidate_key"])
+        self.assertIn("互相矛盾", result["warnings"][-1])
+
+    def test_agreeing_ai_key_and_id_canonicalize_rewritten_name(self):
+        skus = [{
+            "sku_id": "blue-15", "sku_name": "鹰眼金属(藍色)",
+            "second_name": "iphone15/15plus/单个",
+            "spec_text": "鹰眼金属(藍色),iphone15/15plus/单个",
+            "parts": ["鹰眼金属(藍色)", "iphone15/15plus/单个"],
+        }]
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        result = self.service._validate_ai_selection({
+            "decision": "match", "selected_candidate_key": full[0]["candidate_key"],
+            "selected_sku_name": "藍色鏡頭圈", "selected_sku_second_name": "15系列單顆",
+            "selected_sku_id": "blue-15", "warnings": [],
+        }, full)
+        self.assertEqual(result["decision"], "match")
+        self.assertEqual(result["selected_sku_id"], "blue-15")
+        self.assertEqual(result["selected_sku_name"], "鹰眼金属(藍色)")
+        self.assertIn("已依 candidate_key 與 SKU ID 校正", result["warnings"][-1])
 
     def test_manual_catalog_selection_can_approve_a_rule_mismatch(self):
         model = self.service._scope_models("all")[0]
@@ -720,10 +813,14 @@ class SkuMappingServiceTest(unittest.TestCase):
         item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
         result = self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "defer", "version": item["version"]}], batch=True)
         self.assertEqual(result["updated"][0]["status"], "pending")
+        self.assertFalse(any(row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"] for row in self.service.queue(status="review")["items"]))
+        self.assertTrue(any(row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"] for row in self.service.queue(status="deferred")["items"]))
 
         item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
         result = self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "no_match", "version": item["version"]}], batch=True)
         self.assertEqual(result["updated"][0]["status"], "no_match")
+        self.assertFalse(any(row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"] for row in self.service.queue(status="review")["items"]))
+        self.assertTrue(any(row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"] for row in self.service.queue(status="no_match")["items"]))
 
         item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
         result = self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "discontinued", "version": item["version"]}], batch=True)
@@ -1011,6 +1108,20 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertTrue(result["force_match"])
         self.assertNotEqual(result.get("fallback"), "rules")
 
+    def test_force_ai_mode_preserves_candidate_validation_warning(self):
+        model = {"product_name": "鏡頭貼", "model_name": "藍色,15"}
+        candidates = [{"candidate_key": "blue-key", "sku_id": "blue-id", "sku_name": "藍色"}]
+        invalid = {
+            "source": "deepseek", "provider": "deepseek", "decision": "abstain",
+            "confidence": 0, "warnings": ["AI 回傳的 candidate_key、名稱或 SKU ID 互相矛盾"],
+        }
+        with patch("sku_mapping_service.load_openai_config_value", return_value=("deepseek", "")), \
+             patch.object(self.service, "_deepseek_decide", return_value=invalid):
+            result = self.service._maybe_ai_decide(model, {"product_name": "鏡頭貼"}, candidates, force_match=True)
+        self.assertEqual(result["source"], "deepseek_error")
+        self.assertIn("互相矛盾", result["warnings"][0])
+        self.assertNotEqual(result["warnings"][0], "AI 沒有選出候選")
+
     def test_gemini_quota_error_falls_back_to_rules(self):
         model = {"product_name": "短襪", "model_name": "白色"}
         candidates = [{"sku_id": "gemini-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
@@ -1075,6 +1186,65 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertEqual(tier, "green")
         self.assertIn("唯一候選", reason)
 
+    def test_high_confidence_ai_match_is_green_unique_exact(self):
+        tier, reason = SkuMappingService.classify_review_tier(
+            "pending",
+            [
+                {"candidate_key": "offer:black", "sku_id": "black", "sku_name": "黑色"},
+                {"candidate_key": "offer:white", "sku_id": "white", "sku_name": "白色"},
+            ],
+            "ok",
+            {
+                "source": "gemini",
+                "decision": "match",
+                "selected_candidate_key": "offer:black",
+                "selected_sku_id": "black",
+                "confidence": 0.95,
+            },
+        )
+        self.assertEqual(tier, "green")
+        self.assertIn("95%", reason)
+
+    def test_ai_confidence_below_95_percent_remains_yellow(self):
+        tier, reason = SkuMappingService.classify_review_tier(
+            "pending",
+            [
+                {"candidate_key": "offer:black", "sku_id": "black", "sku_name": "黑色"},
+                {"candidate_key": "offer:white", "sku_id": "white", "sku_name": "白色"},
+            ],
+            "ok",
+            {
+                "source": "gemini",
+                "decision": "match",
+                "selected_candidate_key": "offer:black",
+                "selected_sku_id": "black",
+                "confidence": 0.949,
+            },
+        )
+        self.assertEqual(tier, "yellow")
+        self.assertIn("人工比較", reason)
+
+    def test_ai_warning_or_safety_override_never_becomes_green(self):
+        candidates = [
+            {"candidate_key": "offer:camel", "sku_id": "camel", "sku_name": "淺駝"},
+            {"candidate_key": "offer:white", "sku_id": "white", "sku_name": "白色"},
+        ]
+        base_ai = {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": "offer:camel", "selected_sku_id": "camel",
+            "confidence": 0.95,
+        }
+        for extra in (
+            {"warnings": ["已由安全規則修正"]},
+            {"warnings": [], "safety_override": "color_priority_candidate"},
+        ):
+            with self.subTest(extra=extra):
+                tier, reason = SkuMappingService.classify_review_tier(
+                    "pending", candidates, "ok", {**base_ai, **extra},
+                )
+                self.assertEqual(tier, "yellow")
+                self.assertIn("人工比較", reason)
+
     def test_normal_scan_does_not_call_ai_when_rules_find_candidates(self):
         model = self.service._scope_models("all")[0]
         snapshot = {
@@ -1097,6 +1267,40 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual([item["sku_id"] for item in saved[0][2]], ["rule-hit"])
         self.assertIsNone(saved[0][3])
+
+    def test_live_scan_closes_background_browser_after_success(self):
+        model = self.service._scope_models("all")[0]
+        snapshot = {
+            "id": 1, "offer_id": model["offer_id"], "product_url": model["url"],
+            "product_name": model["product_name"], "status": "ok", "fingerprint": "fingerprint",
+            "skus": [{"sku_id": "live-hit", "sku_name": "白色", "spec_text": "白色", "parts": ["白色"]}],
+            "raw": {},
+        }
+        browser = MagicMock()
+        with patch("ego_browser_1688.EgoBrowser1688", return_value=browser), \
+             patch.object(self.service, "_scope_models", return_value=[model]), \
+             patch.object(self.service, "_get_cached_snapshot", return_value=None), \
+             patch.object(self.service, "_fetch_live_snapshot", return_value=snapshot), \
+             patch.object(self.service, "_save_suggestion"), \
+             patch.object(self.service, "_update_job"):
+            self.service._scan_worker("live-success-job", "all", True, False)
+
+        browser.finish.assert_called_once_with(keep=False)
+
+    def test_live_scan_keeps_background_browser_only_for_login(self):
+        model = self.service._scope_models("all")[0]
+        browser = MagicMock()
+        with patch("ego_browser_1688.EgoBrowser1688", return_value=browser), \
+             patch.object(self.service, "_scope_models", return_value=[model]), \
+             patch.object(self.service, "_get_cached_snapshot", return_value=None), \
+             patch.object(self.service, "_fetch_live_snapshot", return_value={
+                 "status": "waiting_for_login", "error_message": "需要登入",
+             }), \
+             patch.object(self.service, "_save_suggestion"), \
+             patch.object(self.service, "_update_job"):
+            self.service._scan_worker("live-login-job", "all", True, False)
+
+        browser.finish.assert_called_once_with(keep=True)
 
     def test_live_scan_can_be_scoped_to_visible_page_targets(self):
         models = self.service._scope_models("all")
@@ -1203,6 +1407,64 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertEqual(final_update["completed"], 1)
         self.assertEqual(final_update["total"], 1)
         self.assertIn("剩餘項目未執行", final_update["message"])
+
+    def test_ai_only_continues_after_single_invalid_selection(self):
+        model = self.service._scope_models("all")[0]
+        snapshot = self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [{"sku_id": "stored-rule", "sku_name": "白色", "spec_text": "白色", "parts": ["白色"]}],
+            {},
+        )
+        models = [dict(model), {**model, "product_id": "second-product", "model_id": "second-model"}]
+        catalog = self.service._ai_catalog_candidates(snapshot["skus"], offer_id=model["offer_id"])
+        invalid = {
+            "source": "deepseek_error", "provider": "deepseek", "decision": "abstain",
+            "confidence": 0, "force_match": True, "error_kind": "invalid_selection",
+            "warnings": ["AI 回傳的 candidate_key、名稱或 SKU ID 互相矛盾"],
+        }
+        valid = {
+            "source": "deepseek", "provider": "deepseek", "decision": "match",
+            "selected_candidate_key": catalog[0]["candidate_key"],
+            "selected_sku_id": "stored-rule", "confidence": 0.9,
+            "warnings": [], "evidence": [],
+        }
+        saved = []
+        updates = []
+        with patch.object(self.service, "_scope_models", return_value=models), \
+             patch.object(self.service, "_save_suggestion", side_effect=lambda *args, **kwargs: saved.append(args)), \
+             patch.object(self.service, "_update_job", side_effect=lambda *args, **kwargs: updates.append(kwargs)), \
+             patch.object(self.service, "_maybe_ai_decide", side_effect=[invalid, valid]) as ai_call:
+            self.service._snapshot_reanalysis_worker("ai-only-invalid-item-job", True, False, True)
+
+        self.assertEqual(ai_call.call_count, 2)
+        self.assertEqual(len(saved), 2)
+        self.assertTrue(saved[0][4]["ai_item_error"])
+        self.assertFalse(saved[0][4].get("ai_error_stop", False))
+        self.assertTrue(any(update.get("status") == "completed" for update in updates))
+        self.assertFalse(any(update.get("status") == "error" for update in updates))
+        self.assertIn("AI 欄位矛盾 1 筆", updates[-1]["message"])
+
+    def test_ai_only_skips_manual_terminal_items(self):
+        model = self.service._scope_models("all")[0]
+        self.service._save_snapshot(
+            model["offer_id"], model["url"], model["product_name"],
+            [{"sku_id": "stored-rule", "sku_name": "白色", "spec_text": "白色", "parts": ["白色"]}],
+            {},
+        )
+        with self.service.connect() as conn:
+            conn.execute(
+                "UPDATE sku_mapping_suggestions SET status='discontinued' WHERE product_id=? AND model_id=?",
+                (model["product_id"], model["model_id"]),
+            )
+        updates = []
+        with patch.object(self.service, "_scope_models", return_value=[model]), \
+             patch.object(self.service, "_update_job", side_effect=lambda *args, **kwargs: updates.append(kwargs)), \
+             patch.object(self.service, "_maybe_ai_decide", side_effect=AssertionError("manual terminal item must be skipped")):
+            self.service._snapshot_reanalysis_worker("ai-only-terminal-job", True, True, True)
+
+        self.assertEqual(updates[-1]["status"], "completed")
+        self.assertEqual(updates[-1]["completed"], 1)
+        self.assertIn("人工停售／無匹配", updates[-1]["message"])
 
     def test_force_match_ai_failure_keeps_original_provider_warning(self):
         result = self.service._ai_failure("gemini", ["Gemini API HTTP 429"], force_match=True)

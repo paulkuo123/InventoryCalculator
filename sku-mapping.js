@@ -345,11 +345,11 @@
   }
 
   function batchRemaining(rows, action) {
-    // In the default 待處理 view, approved and discontinued rows must leave
-    // the queue.  This guard makes a stale/failed refresh visible instead of
-    // silently leaving the old card on screen and making a completed batch
+    // In the default 待處理 view, completed, no-match, and deferred rows must
+    // leave the queue.  This guard makes a stale/failed refresh visible instead
+    // of silently leaving the old card on screen and making a completed batch
     // look as if it came back.
-    if ($('status').value !== 'review' || !['approve', 'discontinued'].includes(action)) return 0;
+    if ($('status').value !== 'review' || !['approve', 'defer', 'no_match', 'discontinued'].includes(action)) return 0;
     const ids = new Set(rows.map(row => String(row.id)));
     return state.items.filter(row => ids.has(String(row.id))).length;
   }
