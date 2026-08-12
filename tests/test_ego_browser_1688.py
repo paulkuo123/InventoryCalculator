@@ -1,4 +1,5 @@
 import json
+import subprocess
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -82,6 +83,22 @@ class EgoBrowser1688Test(unittest.TestCase):
         browser.fetch("https://detail.1688.com/offer/1.html")
 
         self.assertEqual(browser.task_space, "InventoryCalculater 1688 live scan [agent] 123")
+
+    @patch("ego_browser_1688.time.time_ns", return_value=123456789)
+    @patch("ego_browser_1688.shutil.which", return_value="/usr/local/bin/ego-browser")
+    @patch("ego_browser_1688.subprocess.run")
+    def test_fetch_moves_to_fresh_task_space_after_timeout(self, run, _which, _time_ns):
+        run.side_effect = subprocess.TimeoutExpired(cmd=["ego-browser", "nodejs"], timeout=90)
+        browser = EgoBrowser1688()
+
+        result = browser.fetch("https://detail.1688.com/offer/1.html")
+
+        self.assertEqual(result["status"], "error")
+        self.assertIn("超過 90 秒", result["error_message"])
+        self.assertEqual(
+            browser.task_space,
+            "InventoryCalculater 1688 live scan [agent-retry] 123456789",
+        )
 
     @patch("ego_browser_1688.shutil.which", return_value="/usr/local/bin/ego-browser")
     @patch("ego_browser_1688.subprocess.run")

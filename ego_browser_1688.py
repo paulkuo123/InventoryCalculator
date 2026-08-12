@@ -11,6 +11,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 from typing import Any, Dict, Optional
 from urllib.parse import urlparse
 
@@ -109,7 +110,12 @@ class EgoBrowser1688:
 
     def __init__(self, timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS) -> None:
         self.timeout_seconds = max(int(timeout_seconds), 10)
-        self.task_space = _task_space_name()
+        self.base_task_space = _task_space_name()
+        self.task_space = self.base_task_space
+
+    def _move_to_recovery_task_space(self) -> None:
+        """Avoid reusing a task space whose browser command has timed out."""
+        self.task_space = f"{self.base_task_space} [agent-retry] {time.time_ns()}"
 
     def fetch(self, url: str) -> Dict[str, Any]:
         command = _command()
@@ -128,6 +134,7 @@ class EgoBrowser1688:
                 check=False,
             )
         except subprocess.TimeoutExpired:
+            self._move_to_recovery_task_space()
             return {
                 "status": "error",
                 "error_message": f"ego-lite 開啟 1688 超過 {self.timeout_seconds} 秒",

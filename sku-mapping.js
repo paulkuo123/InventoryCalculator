@@ -114,15 +114,38 @@
   }
 
   function renderSummary(data) {
-    const counts = data.counts || {};
-    const tiles = [
-      ['全部有 1688 URL 型號', data.urlModels],
-      ['目前需要補貨', data.restockModels],
-      ['待人工核准', data.pending], ['已核准', data.approved],
-      ['綠色：唯一精確', data.green], ['黃色：人工比較', data.yellow],
-      ['紅色：阻擋', data.red], ['需重新掃描', data.stale], ['失效／無匹配', (counts.error || 0) + (counts.no_match || 0) + (counts.discontinued || 0)]
+    const mapping = data.mappingCounts || {};
+    const restock = data.restockCounts || {};
+    const candidateTiers = data.candidateTierCounts || {};
+    const metric = ([label, value, detail = '']) => `<div class="metric"><strong>${fmt(value || 0)}</strong><span>${esc(label)}</span>${detail ? `<small>${esc(detail)}</small>` : ''}</div>`;
+    const group = (title, note, tiles) => `<section class="metric-group"><div class="metric-group-heading"><strong>${esc(title)}</strong><span>${esc(note)}</span></div><div class="metric-grid">${tiles.map(metric).join('')}</div></section>`;
+    const mappingTiles = [
+      ['已核准', mapping.approved],
+      ['有候選待核准', mapping.candidateReview, `綠 ${fmt(candidateTiers.green || 0)}／黃 ${fmt(candidateTiers.yellow || 0)}／紅 ${fmt(candidateTiers.red || 0)}`],
+      ['尚無候選', mapping.missing],
+      ['疑似停售／需重掃', mapping.rescan],
+      ['無匹配', mapping.noMatch],
+      ['已停售', mapping.discontinued],
     ];
-    $('summary').innerHTML = tiles.map(([label, value]) => `<div class="metric"><strong>${fmt(value)}</strong><span>${esc(label)}</span></div>`).join('');
+    if (mapping.otherBlocked) mappingTiles.push(['其他阻擋', mapping.otherBlocked]);
+    const restockTiles = [
+      ['已核准可採購', restock.approved],
+      ['有候選待核准', restock.candidateReview],
+      ['尚無候選', restock.missing],
+      ['疑似停售／需重掃', restock.rescan],
+      ['無匹配', restock.noMatch],
+      ['已停售', restock.discontinued],
+    ];
+    if (restock.otherBlocked) restockTiles.push(['其他阻擋', restock.otherBlocked]);
+    $('summary').classList.add('summary-groups');
+    $('summary').innerHTML = [
+      group('整體範圍', '這兩個數字是不同範圍，不互相相加。', [
+        ['全部有 1688 URL 型號', data.urlModels],
+        ['目前需要補貨', data.restockModels],
+      ]),
+      group('全部 URL 型號的 Mapping 狀態', `下列互斥項目合計 ${fmt(mapping.total || data.urlModels || 0)}。`, mappingTiles),
+      group('目前需要補貨的 Mapping 狀態', `下列互斥項目合計 ${fmt(restock.total || data.restockModels || 0)}。`, restockTiles),
+    ].join('');
   }
 
   function candidateCard(item, candidate, rank) {
@@ -160,6 +183,9 @@
         ? `建議候選 #${candidates.indexOf(selected) + 1}（${selected.sku_name}${selected.second_name ? ` → ${selected.second_name}` : ''}）`
         : '暫不判定，保留候選供人工確認';
       const detail = [...evidence, ...warnings].join('；');
+      if (ai.selection_source === 'safety_guard') {
+        return `<div class="ai-summary ai-rules"><strong>安全規則修正</strong>：AI 原始候選已否決；${esc(decision)}${detail ? `<br>${displayText(detail)}` : ''}</div>`;
+      }
       const providerLabel = source === 'gemini' ? 'AI 初判' : source === 'deepseek' ? 'DeepSeek AI 初判' : source === 'grok' ? 'Grok AI 初判' : 'OpenAI 初判';
       return `<div class="ai-summary ai-openai"><strong>${providerLabel}</strong>：${esc(decision)}${esc(confidenceText)}${detail ? `<br>${displayText(detail)}` : ''}</div>`;
     }

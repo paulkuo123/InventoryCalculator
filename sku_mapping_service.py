@@ -42,6 +42,7 @@ GEMINI_MODELS = {"gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-f
 DEEPSEEK_MODELS = {"deepseek-v4-flash", "deepseek-v4-pro"}
 AI_SUCCESS_SOURCES = {"openai", "grok", "deepseek", "gemini"}
 AI_GREEN_CONFIDENCE_THRESHOLD = 0.95
+AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD = 0.90
 DEFERRED_REVIEW_REASON = "人工保留，稍後比較候選"
 REVIEW_TIERS = {"green", "yellow", "red", "approved"}
 MAX_REVIEW_CANDIDATES = 4
@@ -170,12 +171,14 @@ def _ai_task_text(force_match: bool = False) -> str:
             "型號／商品代碼仍是第二判別；若沒有同色且同型號的候選，強制模式仍選同色候選，但必須在 warnings 明確說明型號不符並降低 confidence；"
             "不可因型號相同就改選不同顏色。括號中的單顆、數量、包裝等是噪音；且只能選清單中的 candidate_key。"
             "輸出前逐欄核對：candidate_key、完整名稱、第二規格與 SKU ID 必須全部來自候選清單的同一列；若有完全同色候選，不得選其他顏色。"
+            "若 matching_hints.deterministic_complete=true，代表本機規則已完整匹配所有來源規格，必須優先選該列。"
         )
     return (
         "將 Shopee 型號對應到同一 1688 offer 的完整規格名稱組合；排序優先級是顏色／款式第一、商品型號／商品代碼第二、尺寸／包裝第三；"
         "黑色、石墨黑、墨黑等同義色視為同一色系；斜線型號是替代選項，不是同時匹配；"
         "型號／商品代碼是第二判別，若只能找到同色但不同型號的候選，需降低 confidence 並在 warnings 說明；不確定時 abstain。"
         "輸出前確認 candidate_key、完整名稱、第二規格與 SKU ID 全部屬於同一候選列；若有完全同色候選，不得選其他顏色。"
+        "若 matching_hints.deterministic_complete=true，必須優先選該完整匹配候選。"
     )
 
 
@@ -287,6 +290,27 @@ def _phone_tokens(value: Any) -> List[str]:
     return re.findall(r"\d{1,2}(?:promax|pro|max|plus|mini|air|e)?|xr|xs|max|pro|plus|se\d*", text)
 
 
+def _size_tokens(value: Any) -> List[str]:
+    """Extract explicit physical size identities such as 40mm or 6.7吋."""
+    text = normalize_text(value)
+    return re.findall(r"(?<![a-z0-9])\d+(?:\.\d+)?(?:mm|cm|吋|寸)(?![a-z0-9])", text)
+
+
+def _explicit_size_compatible(source: Any, candidate: Any) -> bool:
+    """Treat an explicit physical size as a hard SKU identity boundary."""
+    source_sizes = set(_size_tokens(source))
+    if not source_sizes:
+        return True
+    candidate_sizes = set(_size_tokens(candidate))
+    return bool(candidate_sizes and source_sizes & candidate_sizes)
+
+
+def _natural_text_key(value: Any) -> Tuple[Any, ...]:
+    """Sort human-facing SKU labels naturally while keeping names grouped."""
+    text = display_text(value).strip().casefold()
+    return tuple(int(part) if part.isdigit() else part for part in re.split(r"(\d+)", text))
+
+
 def _alphanumeric_code_tokens(value: Any) -> List[str]:
     """Extract model-like codes such as K62, S29 and 14Plus.
 
@@ -353,6 +377,15 @@ def _phone_mismatch(source: str, candidate: str) -> bool:
         if len(source_family_tokens) == 1 and common in source_family_tokens:
             return False
     return True
+
+
+def _model_identity_mismatch(model: Dict[str, Any], candidate: Any) -> bool:
+    """Use phone-family matching for phone SKUs, generic codes otherwise."""
+    model_name = str(model.get("model_name") or "")
+    product_name = str(model.get("product_name") or "")
+    if _is_phone_product(product_name, model_name) and _phone_tokens(model_name):
+        return _phone_mismatch(model_name, str(candidate or ""))
+    return _alphanumeric_code_mismatch(model_name, candidate)
 
 
 def _strip_sku_code(value: Any) -> str:
@@ -1143,6 +1176,7 @@ class SkuMappingService:
         ai: Optional[Dict[str, Any]] = None,
         existing_sku_id: str = "",
         existing_sku_name: str = "",
+        verified_ai_candidate_keys: Optional[Sequence[str]] = None,
     ) -> Tuple[str, str]:
         """Classify a suggestion conservatively for safe review/batch actions.
 
@@ -1191,15 +1225,33 @@ class SkuMappingService:
             ),
             None,
         )
+        verified_keys = {str(value or "").strip() for value in (verified_ai_candidate_keys or []) if str(value or "").strip()}
+        ai_selected_verified = bool(
+            ai_selected
+            and (
+                str(ai_selected.get("candidate_key") or "").strip() in verified_keys
+                or f"sku:{normalize_id(ai_selected.get('sku_id'))}" in verified_keys
+            )
+        )
+        ai_has_warning = bool([warning for warning in (ai.get("warnings") or []) if str(warning).strip()])
+        ai_has_safety_override = bool(str(ai.get("safety_override") or "").strip())
         if (
             str(ai.get("source") or "").strip().lower() in AI_SUCCESS_SOURCES
             and ai.get("decision") == "match"
-            and ai_confidence >= AI_GREEN_CONFIDENCE_THRESHOLD
             and ai_selected is not None
-            and not [warning for warning in (ai.get("warnings") or []) if str(warning).strip()]
-            and not str(ai.get("safety_override") or "").strip()
+            and not ai_has_warning
+            and not ai_has_safety_override
+            and (
+                ai_confidence >= AI_GREEN_CONFIDENCE_THRESHOLD
+                or (
+                    ai_confidence >= AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD
+                    and ai_selected_verified
+                )
+            )
         ):
-            return "green", "AI 信心指數達 95% 以上且選中有效候選；綠色：唯一精確"
+            if ai_confidence >= AI_GREEN_CONFIDENCE_THRESHOLD:
+                return "green", "AI 信心指數達 95% 以上且選中有效候選；綠色：唯一精確"
+            return "green", "AI 信心指數達 90% 以上，且顏色／型號／尺寸已通過本機完整驗證；綠色：唯一精確"
         if len(candidates) == 1:
             candidate = candidates[0]
             evidence = candidate.get("evidence") or {}
@@ -1247,7 +1299,7 @@ class SkuMappingService:
         """Backfill tier metadata for rows created before tiered review existed."""
         with self.connect() as conn:
             rows = conn.execute(
-                "SELECT s.*, o.status AS snapshot_status FROM sku_mapping_suggestions s "
+                "SELECT s.*, o.status AS snapshot_status, o.skus_json AS snapshot_skus_json FROM sku_mapping_suggestions s "
                 "LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id"
             ).fetchall()
             updates = []
@@ -1262,13 +1314,39 @@ class SkuMappingService:
                 for candidate in candidates:
                     candidate["evidence"] = self._json_load(candidate.pop("evidence_json", "{}"), {})
                 evidence = self._json_load(row["evidence_json"], {})
+                ai = evidence.get("ai") if isinstance(evidence, dict) else {}
+                verified_ai_candidate_keys: List[str] = []
+                try:
+                    ai_confidence = float((ai or {}).get("confidence") or 0)
+                except (TypeError, ValueError):
+                    ai_confidence = 0
+                if (
+                    row["status"] == "pending"
+                    and AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD <= ai_confidence < AI_GREEN_CONFIDENCE_THRESHOLD
+                    and not [warning for warning in ((ai or {}).get("warnings") or []) if str(warning).strip()]
+                    and not str((ai or {}).get("safety_override") or "").strip()
+                ):
+                    snapshot_skus = self._json_load(row["snapshot_skus_json"], [])
+                    verified = self.generate_candidates({
+                        "model_name": row["model_name"],
+                        "product_name": row["product_name"],
+                        "offer_id": row["offer_id"],
+                    }, snapshot_skus)
+                    for candidate in verified:
+                        if (candidate.get("evidence") or {}).get("complete") is not True:
+                            continue
+                        verified_ai_candidate_keys.extend([
+                            str(candidate.get("candidate_key") or ""),
+                            f"sku:{normalize_id(candidate.get('sku_id'))}",
+                        ])
                 tier, reason = self.classify_review_tier(
                     row["status"],
                     candidates,
                     row["snapshot_status"] or "",
-                    evidence.get("ai") if isinstance(evidence, dict) else {},
+                    ai,
                     existing_sku_id="",
                     existing_sku_name=row["suggested_sku_name"] or "",
+                    verified_ai_candidate_keys=verified_ai_candidate_keys,
                 )
                 updates.append((tier, reason, row["id"]))
             conn.executemany("UPDATE sku_mapping_suggestions SET review_tier=?, review_reason=? WHERE id=?", updates)
@@ -1381,14 +1459,23 @@ class SkuMappingService:
             ).fetchall()
             counts: Dict[str, int] = defaultdict(int)
             tier_counts: Dict[str, int] = defaultdict(int)
+            candidate_tier_counts: Dict[str, int] = defaultdict(int)
+            restock_status_counts: Dict[str, int] = defaultdict(int)
             for row in suggestion_rows:
                 metadata = model_lookup.get((str(row["product_id"]), str(row["model_id"])), {})
                 if not metadata.get("hasUrl"):
                     continue
-                counts[str(row["status"])] += 1
+                row_status = str(row["status"])
+                counts[row_status] += 1
                 tier_counts[str(row["review_tier"] or "red")] += 1
+                if row_status in {"pending", "legacy_pending_id", "legacy_pending_name"}:
+                    candidate_tier_counts[str(row["review_tier"] or "red")] += 1
+                if int(metadata.get("restockQty") or 0) > 0:
+                    restock_status_counts[row_status] += 1
             counts = dict(counts)
             tier_counts = dict(tier_counts)
+            candidate_tier_counts = dict(candidate_tier_counts)
+            restock_status_counts = dict(restock_status_counts)
             url_models = len(self._scope_models("all", live_lookup=live_lookup))
             restock_models = len(self._scope_models("restock", live_lookup=live_lookup))
             total_models = sum(
@@ -1397,6 +1484,35 @@ class SkuMappingService:
                 if isinstance(product, dict) and isinstance(product.get("型號", []), list)
             )
             latest = conn.execute("SELECT * FROM sku_mapping_runs ORDER BY id DESC LIMIT 1").fetchone()
+        def grouped_statuses(status_counts: Dict[str, int]) -> Dict[str, int]:
+            candidate_review = sum(status_counts.get(status, 0) for status in ("pending", "legacy_pending_id", "legacy_pending_name"))
+            rescan = status_counts.get("stale", 0) + status_counts.get("suspected_discontinued", 0)
+            known = (
+                status_counts.get("approved", 0)
+                + candidate_review
+                + status_counts.get("missing", 0)
+                + rescan
+                + status_counts.get("no_match", 0)
+                + status_counts.get("discontinued", 0)
+            )
+            return {
+                "approved": status_counts.get("approved", 0),
+                "candidateReview": candidate_review,
+                "missing": status_counts.get("missing", 0),
+                "rescan": rescan,
+                "noMatch": status_counts.get("no_match", 0),
+                "discontinued": status_counts.get("discontinued", 0),
+                "otherBlocked": max(0, sum(status_counts.values()) - known),
+                "total": sum(status_counts.values()),
+            }
+        mapping_counts = grouped_statuses(counts)
+        restock_counts = grouped_statuses(restock_status_counts)
+        if mapping_counts["total"] < url_models:
+            mapping_counts["otherBlocked"] += url_models - mapping_counts["total"]
+            mapping_counts["total"] = url_models
+        if restock_counts["total"] < restock_models:
+            restock_counts["otherBlocked"] += restock_models - restock_counts["total"]
+            restock_counts["total"] = restock_models
         blocked_restock_qty = 0
         for model in self._scope_models("restock", live_lookup=live_lookup):
             status = str(model.get("mapping_status") or "missing")
@@ -1409,6 +1525,9 @@ class SkuMappingService:
             "restockModels": restock_models,
             "counts": counts,
             "tierCounts": tier_counts,
+            "candidateTierCounts": candidate_tier_counts,
+            "mappingCounts": mapping_counts,
+            "restockCounts": restock_counts,
             "green": tier_counts.get("green", 0),
             "yellow": tier_counts.get("yellow", 0),
             "red": tier_counts.get("red", 0),
@@ -2066,7 +2185,7 @@ class SkuMappingService:
         model_lookup = self._model_lookup(golden, live_lookup)
         with self.connect() as conn:
             rows = conn.execute(
-                f"SELECT s.*, o.product_url, o.product_name AS snapshot_product_name, o.status AS snapshot_status, o.fingerprint "
+                f"SELECT s.*, o.product_url, o.product_name AS snapshot_product_name, o.status AS snapshot_status, o.fingerprint, o.skus_json AS snapshot_skus_json "
                 f"FROM sku_mapping_suggestions s LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id "
                 f"WHERE {where} ORDER BY s.updated_at DESC, s.id DESC",
                 params,
@@ -2095,6 +2214,7 @@ class SkuMappingService:
                 if restock_only and float(metadata.get("restockQty") or 0) <= 0:
                     continue
                 item["evidence"] = self._json_load(item.pop("evidence_json", "{}"), {})
+                snapshot_skus = self._json_load(item.pop("snapshot_skus_json", "[]"), [])
                 candidates = conn.execute(
                     "SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank",
                     (item["id"],),
@@ -2151,7 +2271,24 @@ class SkuMappingService:
                     "selected_candidate_key": ai_evidence.get("selected_candidate_key") or item.get("suggested_candidate_key", ""),
                     "selected_sku_id": ai_evidence.get("selected_sku_id") or item.get("suggested_sku_id", ""),
                 }
-                item["candidates"] = self._review_candidates(item["candidates"], ai_display)
+                display_model = {
+                    "model_name": item.get("model_name", ""),
+                    "product_name": item.get("product_name", ""),
+                    "offer_id": item.get("offer_id", ""),
+                }
+                if snapshot_skus and str(ai_display.get("source") or "").strip().lower() in AI_SUCCESS_SOURCES:
+                    full_catalog = self._ai_catalog_candidates(snapshot_skus, offer_id=item.get("offer_id", ""))
+                    guarded_display_ai = self._guard_ai_selection(display_model, snapshot_skus, ai_display, full_catalog)
+                    if isinstance(guarded_display_ai, dict):
+                        ai_display = guarded_display_ai
+                        item["evidence"]["ai"] = guarded_display_ai
+                item["candidates"] = self._display_ai_candidates(
+                    display_model,
+                    snapshot_skus,
+                    item["candidates"],
+                    ai_display,
+                    offer_id=item.get("offer_id", ""),
+                )
                 result.append(item)
         # Models without a URL have no scan suggestion row by design.  Build a
         # read-only queue row from Golden Table so the URL filter can still
@@ -2335,8 +2472,65 @@ class SkuMappingService:
         return candidates
 
     @staticmethod
-    def _review_candidates(candidates: Sequence[Dict[str, Any]], ai: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Keep the review UI compact while preserving the AI-selected SKU first."""
+    def _compatible_ai_candidates(model: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Remove candidates that violate explicit hard dimensions before AI."""
+        model_name = str(model.get("model_name") or "")
+        product_name = str(model.get("product_name") or "")
+        phone_product = _is_phone_product(product_name, model_name)
+        source_has_phone = bool(_phone_tokens(model_name))
+        compatible = []
+        for item in candidates or []:
+            candidate_text = item.get("spec_text") or " ".join(item.get("parts") or [])
+            if not _explicit_size_compatible(model_name, candidate_text):
+                continue
+            if phone_product and source_has_phone and _phone_mismatch(model_name, candidate_text):
+                continue
+            compatible.append(item)
+        return compatible
+
+    @staticmethod
+    def _prioritize_ai_candidates(candidates: Sequence[Dict[str, Any]], rule_candidates: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Keep the full AI catalog but place deterministic matches first."""
+        preferred_ids = {normalize_id(item.get("sku_id")) for item in rule_candidates if normalize_id(item.get("sku_id"))}
+        preferred_keys = {str(item.get("candidate_key") or "") for item in rule_candidates if str(item.get("candidate_key") or "")}
+        rule_by_id = {normalize_id(item.get("sku_id")): item for item in rule_candidates if normalize_id(item.get("sku_id"))}
+        ranked = []
+        for index, candidate in enumerate(candidates or []):
+            item = dict(candidate)
+            candidate_id = normalize_id(item.get("sku_id"))
+            candidate_key = str(item.get("candidate_key") or "")
+            matched_rule = rule_by_id.get(candidate_id)
+            preferred = bool(candidate_id in preferred_ids or candidate_key in preferred_keys)
+            hints = dict(item.get("matching_hints") or {})
+            if preferred:
+                rule_evidence = (matched_rule or {}).get("evidence") or {}
+                hints["deterministic_rule_match"] = True
+                hints["deterministic_complete"] = rule_evidence.get("complete") is True
+                hints["deterministic_score"] = float((matched_rule or {}).get("deterministic_score") or 0)
+            item["matching_hints"] = hints
+            ranked.append((
+                int(preferred),
+                int(hints.get("deterministic_complete") is True),
+                float(hints.get("deterministic_score") or 0),
+                -index,
+                item,
+            ))
+        ranked.sort(key=lambda entry: entry[:-1], reverse=True)
+        return [entry[-1] for entry in ranked]
+
+    @staticmethod
+    def _review_candidates(
+        candidates: Sequence[Dict[str, Any]],
+        ai: Optional[Dict[str, Any]] = None,
+        model: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Keep AI #1 first, then show three candidates from the same SKU family.
+
+        The provider selects one primary row.  The remaining cards are chosen
+        locally from the same complete catalog so a sparse Shopee title such
+        as ``14 Plus`` still shows other colours/styles for that same model,
+        instead of unrelated catalog rows that merely happened to be nearby.
+        """
         candidates = list(candidates or [])
         if len(candidates) <= MAX_REVIEW_CANDIDATES and not ai:
             return candidates
@@ -2346,8 +2540,75 @@ class SkuMappingService:
         selected = next((item for item in candidates if selected_key and str(item.get("candidate_key") or "") == selected_key), None)
         if selected is None and selected_id:
             selected = next((item for item in candidates if normalize_id(item.get("sku_id")) == selected_id), None)
-        ordered = ([selected] if selected else []) + [item for item in candidates if item is not selected]
+        source_model = str((model or {}).get("model_name") or "")
+        source_phone_tokens = set(_phone_tokens(source_model))
+        source_code_tokens = set(_alphanumeric_code_tokens(source_model))
+        selected_second = normalize_text((selected or {}).get("second_name"))
+        selected_phone_tokens = set(_phone_tokens((selected or {}).get("spec_text", "")))
+        selected_code_tokens = set(_alphanumeric_code_tokens((selected or {}).get("spec_text", "")))
+
+        def related_score(item: Dict[str, Any], index: int) -> Tuple[Any, ...]:
+            spec_text = str(item.get("spec_text") or "")
+            phone_tokens = set(_phone_tokens(spec_text))
+            code_tokens = set(_alphanumeric_code_tokens(spec_text))
+            second_name = normalize_text(item.get("second_name"))
+            return (
+                int(bool(selected_second and second_name == selected_second)),
+                int(bool(source_phone_tokens and source_phone_tokens & phone_tokens)),
+                int(bool(source_code_tokens and source_code_tokens & code_tokens)),
+                len(selected_phone_tokens & phone_tokens),
+                len(selected_code_tokens & code_tokens),
+                -index,
+            )
+
+        remaining = [(index, item) for index, item in enumerate(candidates) if item is not selected]
+        remaining.sort(key=lambda pair: related_score(pair[1], pair[0]), reverse=True)
+        ordered = ([selected] if selected else []) + [item for _, item in remaining]
         return ordered[:MAX_REVIEW_CANDIDATES]
+
+    def _display_ai_candidates(
+        self,
+        model: Dict[str, Any],
+        snapshot_skus: Sequence[Dict[str, Any]],
+        stored_candidates: Sequence[Dict[str, Any]],
+        ai: Optional[Dict[str, Any]],
+        offer_id: str = "",
+    ) -> List[Dict[str, Any]]:
+        """Rebuild four review cards from the complete current snapshot.
+
+        Older rows may have persisted AI #1 plus three arbitrary catalog rows.
+        Reordering that four-row cache cannot recover missing same-model
+        alternatives, so the display path must re-expand the full snapshot.
+        This is read-only and never calls an AI provider.
+        """
+        ai = ai if isinstance(ai, dict) else {}
+        stored_candidates = list(stored_candidates or [])
+        selected_key = str(ai.get("selected_candidate_key") or "")
+        selected_id = normalize_id(ai.get("selected_sku_id"))
+        stored_selected_exists = any(
+            (selected_key and str(item.get("candidate_key") or "") == selected_key)
+            or (selected_id and normalize_id(item.get("sku_id")) == selected_id)
+            for item in stored_candidates
+        )
+        if (
+            str(ai.get("source") or "").strip().lower() not in AI_SUCCESS_SOURCES
+            or ai.get("decision") != "match"
+            or not snapshot_skus
+            or (ai.get("safety_verified_complete") is True and stored_selected_exists)
+        ):
+            return self._review_candidates(stored_candidates, ai, model)
+        full_candidates = self._compatible_ai_candidates(
+            model,
+            self._ai_catalog_candidates(snapshot_skus, offer_id=offer_id),
+        )
+        selected_exists = any(
+            (selected_key and str(item.get("candidate_key") or "") == selected_key)
+            or (selected_id and normalize_id(item.get("sku_id")) == selected_id)
+            for item in full_candidates
+        )
+        if not selected_exists:
+            return self._review_candidates(stored_candidates, ai, model)
+        return self._review_candidates(full_candidates, ai, model)
 
     def _guard_ai_selection(self, model: Dict[str, Any], skus: Sequence[Dict[str, Any]], ai: Optional[Dict[str, Any]], full_candidates: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Prevent AI from overriding an objective complete rule match.
@@ -2361,6 +2622,57 @@ class SkuMappingService:
         """
         if not isinstance(ai, dict) or ai.get("source") not in AI_SUCCESS_SOURCES or ai.get("decision") != "match":
             return ai
+        selected_spec = " ".join(
+            str(value or "") for value in (
+                ai.get("selected_sku_name"),
+                ai.get("selected_sku_second_name"),
+            )
+        )
+        compatible_full = self._compatible_ai_candidates(model, full_candidates)
+        hard_identity_filtered = len(compatible_full) != len(list(full_candidates or []))
+        if hard_identity_filtered:
+            if not compatible_full:
+                explicit_size_mismatch = not _explicit_size_compatible(model.get("model_name", ""), selected_spec)
+                guarded = dict(ai)
+                guarded.update({
+                    "decision": "abstain",
+                    "selected_candidate_key": None,
+                    "selected_sku_name": None,
+                    "selected_sku_second_name": None,
+                    "selected_sku_id": None,
+                    "confidence": 0,
+                    "matched_dimensions": [],
+                    "evidence": [],
+                    "warnings": [
+                        f"尺寸安全檢查否決：Shopee 明確尺寸為 {'/'.join(_size_tokens(model.get('model_name', '')))}，AI 候選尺寸不相容"
+                        if explicit_size_mismatch
+                        else "型號安全檢查否決：完整 SKU 清單沒有與 Shopee 型號相容的候選"
+                    ],
+                    "selection_source": "size_safety_guard" if explicit_size_mismatch else "identity_safety_guard",
+                    "safety_override": "explicit_size_mismatch" if explicit_size_mismatch else "hard_identity_mismatch",
+                })
+                return guarded
+            full_candidates = compatible_full
+        if not _explicit_size_compatible(model.get("model_name", ""), selected_spec):
+            if not compatible_full:
+                guarded = dict(ai)
+                guarded.update({
+                    "decision": "abstain",
+                    "selected_candidate_key": None,
+                    "selected_sku_name": None,
+                    "selected_sku_second_name": None,
+                    "selected_sku_id": None,
+                    "confidence": 0,
+                    "matched_dimensions": [],
+                    "evidence": [],
+                    "warnings": [f"尺寸安全檢查否決：Shopee 明確尺寸為 {'/'.join(_size_tokens(model.get('model_name', '')))}，AI 候選尺寸不相容"],
+                    "selection_source": "size_safety_guard",
+                    "safety_override": "explicit_size_mismatch",
+                })
+                return guarded
+            # An exact-size row exists: remove every incompatible size and let
+            # the normal colour/rule guard replace the provider's bad choice.
+            full_candidates = compatible_full
         verified = self.generate_candidates(model, skus)
         verified_complete = [
             item for item in verified
@@ -2410,7 +2722,7 @@ class SkuMappingService:
             if selected_full is not None and best_rank > selected_rank:
                 best = color_best
                 override_reason = "AI 顏色優先安全修正：候選有更符合 Shopee 顏色／同義色的完整規格"
-                if _phone_mismatch(model.get("model_name", ""), color_best.get("spec_text", "")) or _alphanumeric_code_mismatch(model.get("model_name", ""), color_best.get("spec_text", "")):
+                if _model_identity_mismatch(model, color_best.get("spec_text", "")):
                     override_reason += "；但型號／代碼不一致，需人工確認"
                 safety_override = "color_priority_candidate"
             elif (selected_key and selected_key in verified_keys) or (selected_id and selected_id in verified_ids):
@@ -2418,7 +2730,7 @@ class SkuMappingService:
             elif best_rank >= 2:
                 best = color_best
                 override_reason = "AI 顏色優先安全修正：候選有更符合 Shopee 顏色／同義色的完整規格"
-                if _phone_mismatch(model.get("model_name", ""), color_best.get("spec_text", "")) or _alphanumeric_code_mismatch(model.get("model_name", ""), color_best.get("spec_text", "")):
+                if _model_identity_mismatch(model, color_best.get("spec_text", "")):
                     override_reason += "；但型號／代碼不一致，需人工確認"
                 safety_override = "color_priority_candidate"
             elif verified_complete:
@@ -2440,12 +2752,40 @@ class SkuMappingService:
             best,
         )
         guarded = dict(ai)
+        original_selection = {
+            "candidate_key": ai.get("selected_candidate_key"),
+            "sku_id": normalize_id(ai.get("selected_sku_id")),
+            "sku_name": ai.get("selected_sku_name"),
+            "second_name": ai.get("selected_sku_second_name"),
+            "confidence": ai.get("confidence"),
+        }
+        guarded["provider_original_selection"] = original_selection
+        guarded["provider_original_evidence"] = list(ai.get("evidence") or [])
+        guarded["provider_original_warnings"] = list(ai.get("warnings") or [])
         guarded["selected_candidate_key"] = full.get("candidate_key") or best.get("candidate_key")
         guarded["selected_sku_name"] = full.get("sku_name") or best.get("sku_name", "")
         guarded["selected_sku_second_name"] = full.get("second_name") or best.get("second_name", "")
         guarded["selected_sku_id"] = normalize_id(full.get("sku_id") or best.get("sku_id"))
-        guarded["warnings"] = list(guarded.get("warnings") or []) + [override_reason]
-        guarded["evidence"] = list(guarded.get("evidence") or []) + ["安全檢查先保留顏色／同義色較符合的硬性相容候選，再比較型號"]
+        verified_best = next(
+            (
+                item for item in verified_complete
+                if str(item.get("candidate_key") or "") == str(guarded["selected_candidate_key"] or "")
+                or normalize_id(item.get("sku_id")) == guarded["selected_sku_id"]
+            ),
+            None,
+        )
+        guarded["warnings"] = [override_reason]
+        guarded["evidence"] = [
+            f"安全檢查已否決 AI 原始候選，改用完整規格：{display_text(full.get('spec_text') or ' → '.join(full.get('parts') or []))}",
+        ]
+        if verified_best is not None:
+            rule_evidence = verified_best.get("evidence") or {}
+            guarded["evidence"].append(
+                f"規則完整匹配 {int(rule_evidence.get('exact') or 0)}/{int(rule_evidence.get('required') or 0)} 個來源規格"
+            )
+        guarded["matched_dimensions"] = list((verified_best or {}).get("evidence", {}).get("matched") or full.get("parts") or [])
+        guarded["selection_source"] = "safety_guard"
+        guarded["safety_verified_complete"] = verified_best is not None
         guarded["safety_override"] = safety_override
         return guarded
 
@@ -2464,6 +2804,12 @@ class SkuMappingService:
             return {"catalogStatus": "not_scanned", "snapshotId": None, "offerId": normalize_id(offer_id), "fingerprint": "", "productUrl": "", "skus": []}
         raw_skus = self._json_load(row["skus_json"], [])
         skus = [self._catalog_candidate({**sku, "offer_id": row["offer_id"]}) for sku in raw_skus if isinstance(sku, dict) and normalize_id(sku.get("sku_id"))]
+        skus.sort(key=lambda sku: (
+            _natural_text_key(sku.get("sku_name")),
+            _natural_text_key(sku.get("second_name")),
+            _natural_text_key(sku.get("spec_text")),
+            normalize_id(sku.get("sku_id")),
+        ))
         return {
             "catalogStatus": str(row["status"] or "unknown"),
             "snapshotId": row["id"],
@@ -2552,15 +2898,19 @@ class SkuMappingService:
                 "message": "規則已有候選，未呼叫 AI",
             }
 
-        ai_candidates = self._ai_catalog_candidates(skus, offer_id=model.get("offer_id"))
+        ai_candidates = self._compatible_ai_candidates(model, self._prioritize_ai_candidates(
+            self._ai_catalog_candidates(skus, offer_id=model.get("offer_id")),
+            rule_candidates,
+        ))
         if not ai_candidates:
-            raise ValueError("目前快照沒有可供 AI 判定的 SKU")
+            sizes = "/".join(_size_tokens(model.get("model_name", "")))
+            raise ValueError(f"完整 SKU 清單沒有 {sizes} 相容規格；為避免錯配，不會改選其他尺寸" if sizes else "目前快照沒有可供 AI 判定的 SKU")
         ai = self._maybe_ai_decide(model, snapshot_data, ai_candidates, force_match=force_match)
         ai = self._guard_ai_selection(model, skus, ai, ai_candidates)
         if not ai or ai.get("source") not in AI_SUCCESS_SOURCES or (force_match and (ai.get("decision") != "match" or not (ai.get("selected_candidate_key") or ai.get("selected_sku_id")))):
             warnings = (ai or {}).get("warnings") or ["AI 沒有回傳結果"]
             raise RuntimeError("；".join(str(item) for item in warnings))
-        review_candidates = self._review_candidates(ai_candidates, ai)
+        review_candidates = rule_candidates if ai.get("safety_verified_complete") and rule_candidates else self._review_candidates(ai_candidates, ai, model)
         self._save_suggestion(
             model,
             snapshot_data,
@@ -2967,12 +3317,15 @@ class SkuMappingService:
                     ai_candidates = candidates
                     ai = None
                     if use_ai and not candidates:
-                        ai_candidates = self._ai_catalog_candidates(snapshot.get("skus", []), offer_id=snapshot.get("offer_id"))
+                        ai_candidates = self._compatible_ai_candidates(
+                            model,
+                            self._ai_catalog_candidates(snapshot.get("skus", []), offer_id=snapshot.get("offer_id")),
+                        )
                         ai = self._maybe_ai_decide(model, snapshot, ai_candidates) if ai_candidates else None
                     # A no-key/API-error fallback must stay no_match; only a real
                     # AI response is allowed to promote the full catalog into
                     # reviewable candidates.
-                    candidates_to_save = self._review_candidates(ai_candidates, ai) if ai and ai.get("source") in AI_SUCCESS_SOURCES else candidates
+                    candidates_to_save = self._review_candidates(ai_candidates, ai, model) if ai and ai.get("source") in AI_SUCCESS_SOURCES else candidates
                     self._save_suggestion(model, snapshot, candidates_to_save, ai, {"ai_full_catalog": bool(ai_candidates and not candidates)})
                     completed += 1
                     self._update_job(job_id, completed=completed, message=f"已處理 {completed}/{len(models)} 個型號")
@@ -3051,7 +3404,10 @@ class SkuMappingService:
                     # Unlike the normal rules-first path, AI-only always sees
                     # the complete current catalog, so the provider can find a
                     # close option even when the rule matcher missed it.
-                    ai_candidates = self._ai_catalog_candidates(skus, offer_id=snapshot_data.get("offer_id"))
+                    ai_candidates = self._compatible_ai_candidates(model, self._prioritize_ai_candidates(
+                        self._ai_catalog_candidates(skus, offer_id=snapshot_data.get("offer_id")),
+                        candidates,
+                    ))
                     ai = self._maybe_ai_decide(model, snapshot_data, ai_candidates, force_match=True) if use_ai and ai_candidates else None
                     ai = self._guard_ai_selection(model, skus, ai, ai_candidates)
                     ai_succeeded = bool(
@@ -3063,15 +3419,24 @@ class SkuMappingService:
                     # If the API fails or no key is configured, do not turn the
                     # entire catalog into a false recommendation.  Keep the
                     # manual picker available and persist the warning instead.
-                    candidates_to_save = self._review_candidates(ai_candidates, ai) if ai_succeeded else candidates
+                    candidates_to_save = (
+                        candidates
+                        if ai_succeeded and ai.get("safety_verified_complete") and candidates
+                        else self._review_candidates(ai_candidates, ai, model)
+                        if ai_succeeded
+                        else candidates
+                    )
                 else:
                     # Keep the existing rules-first policy: AI is called only
                     # when deterministic matching found no candidate.
                     if use_ai and not candidates:
-                        ai_candidates = self._ai_catalog_candidates(skus, offer_id=snapshot_data.get("offer_id"))
+                        ai_candidates = self._compatible_ai_candidates(
+                            model,
+                            self._ai_catalog_candidates(skus, offer_id=snapshot_data.get("offer_id")),
+                        )
                         ai = self._maybe_ai_decide(model, snapshot_data, ai_candidates) if ai_candidates else None
                         ai = self._guard_ai_selection(model, skus, ai, ai_candidates)
-                    candidates_to_save = self._review_candidates(ai_candidates, ai) if ai and ai.get("source") in AI_SUCCESS_SOURCES else candidates
+                    candidates_to_save = self._review_candidates(ai_candidates, ai, model) if ai and ai.get("source") in AI_SUCCESS_SOURCES else candidates
                 suggestion_extra = {
                     "snapshot_reanalysis": True,
                     "ai_only": bool(ai_only),
@@ -3281,7 +3646,10 @@ class SkuMappingService:
 
     def generate_candidates(self, model: Dict[str, Any], skus: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
         source = f"{model.get('model_name', '')},{model.get('product_name', '')}"
-        raw_source_parts = _tokens(model.get("model_name"))
+        # Commas separate actual SKU dimensions. Slashes inside one dimension
+        # often describe compatible generations (40mm(4/5/SE/6代適用)) or
+        # phone alternatives, and must not become standalone numeric tokens.
+        raw_source_parts = _spec_parts(model.get("model_name"))
         source_phones = _phone_tokens(model.get("model_name"))
         phone_product = _is_phone_product(str(model.get("product_name") or ""), str(model.get("model_name") or ""))
         # Slash-separated phone variants are alternatives (17/17pro/17proMax),
@@ -3294,9 +3662,18 @@ class SkuMappingService:
         for sku in skus:
             candidate_text = display_text(sku.get("spec_text") or "")
             candidate_parts = list(sku.get("parts") or _spec_parts(candidate_text))
+            # Physical sizes such as 45mm and 49mm are mutually exclusive SKU
+            # identities.  Do not keep a colour-only partial match when the
+            # source explicitly names a size.
+            if not _explicit_size_compatible(model.get("model_name", ""), candidate_text):
+                continue
             if phone_product and source_phones and _phone_mismatch(model.get("model_name", ""), candidate_text):
                 continue
-            if _alphanumeric_code_mismatch(model.get("model_name", ""), candidate_text):
+            # Phone variants already use the stricter family-aware matcher
+            # above.  The generic code-prefix check sees iPhone16Pro and
+            # 16ProMax as conflicting tokens and would incorrectly discard a
+            # valid slash-separated 16Pro/16ProMax SKU.
+            if not phone_product and _alphanumeric_code_mismatch(model.get("model_name", ""), candidate_text):
                 continue
             exact = 0
             strict_exact = 0
@@ -3307,7 +3684,18 @@ class SkuMappingService:
                     exact += 1
                     matched.append("手機型號")
                     continue
+                source_sizes = set(_size_tokens(source_part))
                 for candidate_part in candidate_parts:
+                    candidate_sizes = set(_size_tokens(candidate_part))
+                    if source_sizes and candidate_sizes:
+                        if source_sizes & candidate_sizes:
+                            exact += 1
+                            strict_exact += 1
+                            matched.append(candidate_part)
+                            break
+                        # Explicit 40mm and 42mm are incompatible; never let a
+                        # loose digit substring turn one into the other.
+                        continue
                     if normalize_text(source_part) == normalize_text(candidate_part):
                         exact += 1
                         strict_exact += 1
@@ -3603,9 +3991,9 @@ class SkuMappingService:
         if not api_key:
             return self._ai_failure("openai", ["未設定 OPENAI_API_KEY"], force_match)
         configured_model, _ = load_openai_config_value("OPENAI_SKU_MAPPING_MODEL", "gpt-5.6-luna")
-        configured_effort, _ = load_openai_config_value("OPENAI_SKU_MAPPING_REASONING_EFFORT", "medium")
+        configured_effort, _ = load_openai_config_value("OPENAI_SKU_MAPPING_REASONING_EFFORT", "low")
         model_name = configured_model if configured_model in OPENAI_MODELS else "gpt-5.6-luna"
-        effort = configured_effort if configured_effort in OPENAI_REASONING else "medium"
+        effort = configured_effort if configured_effort in OPENAI_REASONING else "low"
         return self._request_structured_ai("openai", api_key, "https://api.openai.com/v1/responses", model_name, effort, model, candidates, force_match=force_match)
 
     def _grok_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
@@ -3853,6 +4241,21 @@ class SkuMappingService:
             status = "discontinued"
         now = int(time.time())
         evidence = {"ai": ai, "rules": [item.get("evidence", {}) for item in candidates], **extra}
+        verified_ai_candidate_keys: List[str] = []
+        if (
+            ai.get("decision") == "match"
+            and float(ai.get("confidence") or 0) >= AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD
+            and not [warning for warning in (ai.get("warnings") or []) if str(warning).strip()]
+            and not str(ai.get("safety_override") or "").strip()
+        ):
+            verified = self.generate_candidates(model, snapshot.get("skus", []))
+            for candidate in verified:
+                if (candidate.get("evidence") or {}).get("complete") is not True:
+                    continue
+                verified_ai_candidate_keys.extend([
+                    str(candidate.get("candidate_key") or ""),
+                    f"sku:{normalize_id(candidate.get('sku_id'))}",
+                ])
         review_tier, review_reason = self.classify_review_tier(
             status,
             candidates,
@@ -3860,6 +4263,7 @@ class SkuMappingService:
             ai,
             existing_sku_id=model.get("existing_sku_id", ""),
             existing_sku_name=model.get("existing_sku_name", ""),
+            verified_ai_candidate_keys=verified_ai_candidate_keys,
         )
         if preserve_discontinued:
             review_tier = "red"

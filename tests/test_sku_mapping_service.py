@@ -61,6 +61,17 @@ class SkuMappingServiceTest(unittest.TestCase):
         summary = self.service.summary()
         self.assertEqual(summary["approved"], 0)
         self.assertEqual(summary["pending"], 2)
+        self.assertEqual(summary["mappingCounts"], {
+            "approved": 0, "candidateReview": 0, "missing": 2,
+            "rescan": 0, "noMatch": 0, "discontinued": 0,
+            "otherBlocked": 0, "total": 2,
+        })
+        self.assertEqual(summary["restockCounts"], {
+            "approved": 0, "candidateReview": 0, "missing": 2,
+            "rescan": 0, "noMatch": 0, "discontinued": 0,
+            "otherBlocked": 0, "total": 2,
+        })
+        self.assertEqual(summary["candidateTierCounts"], {})
         queue = self.service.queue(status="review", restock_only=True)
         self.assertEqual(queue["total"], 2)
 
@@ -222,6 +233,100 @@ class SkuMappingServiceTest(unittest.TestCase):
         candidates = self.service.generate_candidates(model, skus)
         self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sku-pro"])
 
+    def test_watch_size_annotation_does_not_promote_s10_or_wrong_mm(self):
+        model = {
+            "product_name": "Apple Watch 一體式錶殼",
+            "model_name": "高清透明,40mm(4/5/SE/6代適用)",
+        }
+        skus = [
+            {"sku_id": "s10-42", "sku_name": "高清透明", "second_name": "s10/42mm", "spec_text": "高清透明,s10/42mm", "parts": ["高清透明", "s10/42mm"]},
+            {"sku_id": "clear-45", "sku_name": "高清透明", "second_name": "45mm裸殼", "spec_text": "高清透明,45mm裸殼", "parts": ["高清透明", "45mm裸殼"]},
+            {"sku_id": "clear-40", "sku_name": "高清透明", "second_name": "40mm裸殼", "spec_text": "高清透明,40mm裸殼", "parts": ["高清透明", "40mm裸殼"]},
+            {"sku_id": "black-40", "sku_name": "黑色", "second_name": "40mm裸殼", "spec_text": "黑色,40mm裸殼", "parts": ["黑色", "40mm裸殼"]},
+        ]
+
+        candidates = self.service.generate_candidates(model, skus)
+        self.assertEqual([candidate["sku_id"] for candidate in candidates], ["clear-40"])
+        self.assertTrue(candidates[0]["evidence"]["complete"])
+
+    def test_explicit_watch_size_rejects_color_match_with_wrong_mm(self):
+        model = {
+            "product_name": "Apple Watch 一體式錶殼",
+            "model_name": "單排鑽—藍色,45mm(7/8代適用)",
+        }
+        skus = [
+            {"sku_id": "blue-49", "sku_name": "藍色", "second_name": "49mm膠盒包裝", "spec_text": "藍色,49mm膠盒包裝", "parts": ["藍色", "49mm膠盒包裝"]},
+            {"sku_id": "rainbow-49", "sku_name": "7彩幻變", "second_name": "49mm膠盒包裝", "spec_text": "7彩幻變,49mm膠盒包裝", "parts": ["7彩幻變", "49mm膠盒包裝"]},
+        ]
+
+        self.assertEqual(self.service.generate_candidates(model, skus), [])
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        self.assertEqual(self.service._compatible_ai_candidates(model, full), [])
+
+    def test_size_safety_guard_abstains_instead_of_changing_45mm_to_49mm(self):
+        model = {
+            "product_name": "Apple Watch 一體式錶殼",
+            "model_name": "單排鑽—藍色,45mm(7/8代適用)",
+        }
+        skus = [
+            {"sku_id": "blue-49", "sku_name": "藍色", "second_name": "49mm膠盒包裝", "spec_text": "藍色,49mm膠盒包裝", "parts": ["藍色", "49mm膠盒包裝"]},
+        ]
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        candidate = full[0]
+        guarded = self.service._guard_ai_selection(model, skus, {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": candidate["candidate_key"], "selected_sku_id": "blue-49",
+            "selected_sku_name": "藍色", "selected_sku_second_name": "49mm膠盒包裝",
+            "confidence": 0.9, "warnings": [], "evidence": [],
+        }, full)
+
+        self.assertEqual(guarded["decision"], "abstain")
+        self.assertIsNone(guarded["selected_sku_id"])
+        self.assertEqual(guarded["safety_override"], "explicit_size_mismatch")
+        self.assertIn("45mm", guarded["warnings"][0])
+
+    def test_watch_guard_replaces_s10_first_card_with_exact_40mm(self):
+        model = {
+            "product_name": "Apple Watch 一體式錶殼",
+            "model_name": "高清透明,40mm(4/5/SE/6代適用)",
+        }
+        skus = [
+            {"sku_id": "s10-42", "sku_name": "高清透明", "second_name": "s10/42mm", "spec_text": "高清透明,s10/42mm", "parts": ["高清透明", "s10/42mm"]},
+            {"sku_id": "clear-40", "sku_name": "高清透明", "second_name": "40mm裸殼", "spec_text": "高清透明,40mm裸殼", "parts": ["高清透明", "40mm裸殼"]},
+        ]
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        s10 = next(item for item in full if item["sku_id"] == "s10-42")
+        guarded = self.service._guard_ai_selection(model, skus, {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": s10["candidate_key"], "selected_sku_id": "s10-42",
+            "selected_sku_name": "高清透明", "selected_sku_second_name": "s10/42mm",
+            "confidence": 0.9, "warnings": [], "evidence": [],
+        }, full)
+        self.assertEqual(guarded["selected_sku_id"], "clear-40")
+        self.assertEqual(guarded["selected_sku_second_name"], "40mm裸殼")
+        self.assertEqual(guarded["safety_override"], "color_priority_candidate")
+        self.assertEqual(guarded["selection_source"], "safety_guard")
+        self.assertTrue(guarded["safety_verified_complete"])
+        self.assertIn("s10/42mm", guarded["provider_original_selection"]["second_name"])
+        self.assertNotIn("s10/42mm", "；".join(guarded["evidence"] + guarded["warnings"]))
+        self.assertIn("40mm裸殼", guarded["evidence"][0])
+
+    def test_ai_catalog_keeps_all_rows_but_prioritizes_complete_rule_match(self):
+        model = {"offer_id": "offer", "product_name": "Apple Watch 錶殼", "model_name": "淡雅紫,45mm(7/8代適用)"}
+        skus = [
+            {"sku_id": "s10-42", "sku_name": "淡雅紫", "second_name": "s10/42mm", "spec_text": "淡雅紫,s10/42mm", "parts": ["淡雅紫", "s10/42mm"]},
+            {"sku_id": "other-45", "sku_name": "黑色", "second_name": "45mm裸殼", "spec_text": "黑色,45mm裸殼", "parts": ["黑色", "45mm裸殼"]},
+            {"sku_id": "purple-45", "sku_name": "淡雅紫", "second_name": "45mm裸殼", "spec_text": "淡雅紫,45mm裸殼", "parts": ["淡雅紫", "45mm裸殼"]},
+        ]
+        rules = self.service.generate_candidates(model, skus)
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        prioritized = self.service._prioritize_ai_candidates(full, rules)
+
+        self.assertEqual(len(prioritized), len(full))
+        self.assertEqual(prioritized[0]["sku_id"], "purple-45")
+        self.assertTrue(prioritized[0]["matching_hints"]["deterministic_complete"])
+        self.assertEqual({item["sku_id"] for item in prioritized}, {"s10-42", "other-45", "purple-45"})
+
     def test_black_alias_and_slash_phone_variants_find_graphite_candidates(self):
         model = {"product_name": "iPhone 鏡頭貼", "model_name": "黑色(單顆),17/17pro/17proMax"}
         skus = [
@@ -238,6 +343,31 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertNotIn("graphite-17-air", ids)
         self.assertNotIn("silver-17", ids)
         self.assertNotIn("old-16", ids)
+
+    def test_16pro_slash_variants_keep_exact_model_and_reject_iphone17(self):
+        model = {"product_name": "iPhone 鏡頭貼", "model_name": "藍色(單顆),16pro / 16proMax"}
+        skus = [
+            {"sku_id": "sea-16-pro", "sku_name": "鹰眼金属(海藍色)", "second_name": "iphone16pro/16promax/单个", "spec_text": "鹰眼金属(海蓝色)>iPhone16Pro/16ProMax/单个", "parts": ["鹰眼金属(海藍色)", "iphone16pro/16promax/单个"]},
+            {"sku_id": "blue-16-pro", "sku_name": "鹰眼金属(藍色)", "second_name": "iphone16pro/16promax/单个", "spec_text": "鹰眼金属(蓝色)>iPhone16Pro/16ProMax/单个", "parts": ["鹰眼金属(藍色)", "iphone16pro/16promax/单个"]},
+            {"sku_id": "sea-17", "sku_name": "鹰眼金属(海藍色)", "second_name": "新款iphone17单个", "spec_text": "鹰眼金属(海蓝色)>新款iPhone17单个", "parts": ["鹰眼金属(海藍色)", "新款iphone17单个"]},
+        ]
+
+        rules = self.service.generate_candidates(model, skus)
+        self.assertEqual([item["sku_id"] for item in rules], ["blue-16-pro"])
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        compatible = self.service._compatible_ai_candidates(model, full)
+        self.assertEqual({item["sku_id"] for item in compatible}, {"sea-16-pro", "blue-16-pro"})
+
+        wrong = next(item for item in full if item["sku_id"] == "sea-17")
+        guarded = self.service._guard_ai_selection(model, skus, {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": wrong["candidate_key"], "selected_sku_id": "sea-17",
+            "selected_sku_name": wrong["sku_name"], "selected_sku_second_name": wrong["second_name"],
+            "confidence": 0.9, "warnings": [], "evidence": [],
+        }, full)
+        self.assertEqual(guarded["selected_sku_id"], "blue-16-pro")
+        self.assertEqual(guarded["selected_sku_second_name"], "iphone16pro/16promax/单个")
+        self.assertNotIn("型號／代碼不一致", "；".join(guarded["warnings"]))
 
     def test_ai_selection_is_guarded_when_it_ignores_verified_graphite_candidate(self):
         model = {"product_name": "iPhone 鏡頭貼", "model_name": "黑色(單顆),17/17pro/17proMax"}
@@ -267,7 +397,7 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertEqual(guarded["selected_sku_id"], "color-mist-blue")
         self.assertEqual(guarded["safety_override"], "color_priority_candidate")
 
-    def test_color_priority_can_choose_silver_over_model_only_red(self):
+    def test_phone_generation_is_hard_boundary_before_color_priority(self):
         model = {"product_name": "iPhone 鏡頭貼", "model_name": "銀色(單顆),13/13mini"}
         skus = [
             {"sku_id": "red-13", "spec_text": "鷹眼金屬(紅色),iphone13/13mini/單個", "parts": ["鷹眼金屬(紅色)", "iphone13/13mini/單個"]},
@@ -279,9 +409,8 @@ class SkuMappingServiceTest(unittest.TestCase):
             "source": "deepseek", "decision": "match", "selected_candidate_key": full[0]["candidate_key"],
             "selected_sku_id": "red-13", "confidence": 0.95, "warnings": [], "evidence": [],
         }, full)
-        self.assertEqual(guarded["selected_sku_id"], "silver-17")
-        self.assertEqual(guarded["safety_override"], "color_priority_candidate")
-        self.assertIn("型號／代碼不一致", guarded["warnings"][-1])
+        self.assertEqual(guarded["selected_sku_id"], "red-13")
+        self.assertFalse(guarded.get("safety_override"))
 
     def test_alphanumeric_model_code_prefix_is_not_a_match(self):
         model = {"product_name": "手機氣囊", "model_name": "K62 紫色餅乾熊"}
@@ -754,10 +883,100 @@ class SkuMappingServiceTest(unittest.TestCase):
         item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
         self.assertTrue(item["evidence"]["ai_forced"])
 
+    def test_force_ai_safety_override_saves_only_verified_candidate_and_fresh_reason(self):
+        model = self.service._scope_models("all")[0]
+        skus = [
+            {"sku_id": "white", "sku_name": "白色", "spec_text": "白色", "parts": ["白色"]},
+            {"sku_id": "black", "sku_name": "黑色", "spec_text": "黑色", "parts": ["黑色"]},
+        ]
+        snapshot = self.service._save_snapshot(model["offer_id"], model["url"], model["product_name"], skus, {})
+        self.service._save_suggestion(model, snapshot, [], None, {})
+        full = self.service._ai_catalog_candidates(skus, offer_id=model["offer_id"])
+        wrong = next(item for item in full if item["sku_id"] == "black")
+        ai_result = {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": wrong["candidate_key"], "selected_sku_id": "black",
+            "selected_sku_name": "黑色", "selected_sku_second_name": "",
+            "confidence": 0.8, "evidence": ["原始 AI 認為黑色"], "warnings": ["原始警告"],
+        }
+        with patch.object(self.service, "_maybe_ai_decide", return_value=ai_result):
+            result = self.service.rerun_ai(model["product_id"], model["model_id"], force_match=True)
+
+        self.assertEqual(result["selectedSkuId"], "white")
+        self.assertEqual(result["candidateCount"], 1)
+        item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
+        self.assertEqual([candidate["sku_id"] for candidate in item["candidates"]], ["white"])
+        self.assertEqual(item["review_tier"], "green")
+        ai = item["evidence"]["ai"]
+        self.assertEqual(ai["selection_source"], "safety_guard")
+        self.assertNotIn("原始 AI 認為黑色", "；".join(ai["evidence"] + ai["warnings"]))
+        self.assertIn("原始 AI 認為黑色", ai["provider_original_evidence"])
+
     def test_ai_review_candidates_are_capped_and_selected_first(self):
         candidates = [{"candidate_key": f"candidate-{index}", "sku_id": str(index)} for index in range(6)]
         limited = self.service._review_candidates(candidates, {"selected_candidate_key": "candidate-4", "selected_sku_id": "4"})
         self.assertEqual([item["candidate_key"] for item in limited], ["candidate-4", "candidate-0", "candidate-1", "candidate-2"])
+
+    def test_ai_review_candidates_fill_other_cards_from_same_phone_model(self):
+        candidates = [
+            {"candidate_key": "toast-14", "sku_id": "1", "sku_name": "古董白吐司熊", "second_name": "14plus", "spec_text": "古董白吐司熊,14plus"},
+            {"candidate_key": "tea-mate", "sku_id": "2", "sku_name": "古董白托腮奶茶熊", "second_name": "华为mate50pro", "spec_text": "古董白托腮奶茶熊,华为mate50pro"},
+            {"candidate_key": "seven-17", "sku_id": "3", "sku_name": "古董白七个小矮人", "second_name": "17pro", "spec_text": "古董白七个小矮人,17pro"},
+            {"candidate_key": "tea-14", "sku_id": "4", "sku_name": "古董白托腮奶茶熊", "second_name": "14plus", "spec_text": "古董白托腮奶茶熊,14plus"},
+            {"candidate_key": "tiger-14", "sku_id": "5", "sku_name": "古董白跳跳虎", "second_name": "14plus", "spec_text": "古董白跳跳虎,14plus"},
+            {"candidate_key": "seven-14", "sku_id": "6", "sku_name": "古董白七个小矮人", "second_name": "14plus", "spec_text": "古董白七个小矮人,14plus"},
+        ]
+        limited = self.service._review_candidates(
+            candidates,
+            {"selected_candidate_key": "toast-14", "selected_sku_id": "1"},
+            {"model_name": "14 Plus", "product_name": "隔日到貨 iPhone 手機殼"},
+        )
+
+        self.assertEqual([item["candidate_key"] for item in limited], ["toast-14", "tea-14", "tiger-14", "seven-14"])
+
+    def test_ai_display_rebuilds_related_cards_when_stored_four_are_stale(self):
+        model = {"offer_id": "offer", "model_name": "12 pro Max", "product_name": "iPhone 手機殼"}
+        skus = [
+            {"sku_id": "toast-12", "sku_name": "古董白吐司熊", "second_name": "12promax(6.7)", "spec_text": "古董白吐司熊,12promax(6.7)"},
+            {"sku_id": "seven-12", "sku_name": "古董白七个小矮人", "second_name": "12promax(6.7)", "spec_text": "古董白七个小矮人,12promax(6.7)"},
+            {"sku_id": "tea-12", "sku_name": "古董白托腮奶茶熊", "second_name": "12promax(6.7)", "spec_text": "古董白托腮奶茶熊,12promax(6.7)"},
+            {"sku_id": "tiger-12", "sku_name": "古董白跳跳虎", "second_name": "12promax(6.7)", "spec_text": "古董白跳跳虎,12promax(6.7)"},
+            {"sku_id": "mate", "sku_name": "古董白托腮奶茶熊", "second_name": "华为mate50pro", "spec_text": "古董白托腮奶茶熊,华为mate50pro"},
+            {"sku_id": "plus-14", "sku_name": "古董白吐司熊", "second_name": "14plus", "spec_text": "古董白吐司熊,14plus"},
+            {"sku_id": "pro-17", "sku_name": "古董白七个小矮人", "second_name": "17pro", "spec_text": "古董白七个小矮人,17pro"},
+        ]
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        selected = next(item for item in full if item["sku_id"] == "toast-12")
+        stored = [selected] + [next(item for item in full if item["sku_id"] == sku_id) for sku_id in ("mate", "plus-14", "pro-17")]
+        ai = {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": selected["candidate_key"], "selected_sku_id": "toast-12",
+        }
+
+        displayed = self.service._display_ai_candidates(model, skus, stored, ai, offer_id="offer")
+
+        self.assertEqual([item["sku_id"] for item in displayed], ["toast-12", "seven-12", "tea-12", "tiger-12"])
+        self.assertTrue(all("12promax" in item["second_name"] for item in displayed))
+
+    def test_snapshot_catalog_groups_same_primary_sku_and_naturally_sorts_models(self):
+        model = self.service._scope_models("all")[0]
+        self.service._save_snapshot(model["offer_id"], model["url"], model["product_name"], [
+            {"sku_id": "toast-14", "sku_name": "古董白吐司熊", "second_name": "14plus", "spec_text": "古董白吐司熊,14plus"},
+            {"sku_id": "tea-14", "sku_name": "古董白托腮奶茶熊", "second_name": "14plus", "spec_text": "古董白托腮奶茶熊,14plus"},
+            {"sku_id": "toast-7", "sku_name": "古董白吐司熊", "second_name": "7/8/se2020", "spec_text": "古董白吐司熊,7/8/se2020"},
+            {"sku_id": "tea-13", "sku_name": "古董白托腮奶茶熊", "second_name": "13mini", "spec_text": "古董白托腮奶茶熊,13mini"},
+        ], {})
+
+        catalog = self.service._snapshot_catalog(offer_id=model["offer_id"])["skus"]
+        self.assertEqual(
+            [(item["sku_name"], item["second_name"]) for item in catalog],
+            [
+                ("古董白吐司熊", "7/8/se2020"),
+                ("古董白吐司熊", "14plus"),
+                ("古董白托腮奶茶熊", "13mini"),
+                ("古董白托腮奶茶熊", "14plus"),
+            ],
+        )
 
     def test_batch_accepts_checked_yellow_and_selected_candidate(self):
         model = self.service._scope_models("all")[0]
@@ -1220,6 +1439,31 @@ class SkuMappingServiceTest(unittest.TestCase):
                 "selected_sku_id": "black",
                 "confidence": 0.949,
             },
+        )
+        self.assertEqual(tier, "yellow")
+        self.assertIn("人工比較", reason)
+
+    def test_ai_90_percent_is_green_only_with_complete_local_verification(self):
+        candidates = [
+            {"candidate_key": "offer:blue-45", "sku_id": "blue-45", "sku_name": "藍色", "second_name": "45mm裸殼"},
+            {"candidate_key": "offer:black-45", "sku_id": "black-45", "sku_name": "黑色", "second_name": "45mm裸殼"},
+        ]
+        ai = {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": "offer:blue-45", "selected_sku_id": "blue-45",
+            "confidence": 0.9, "warnings": [],
+        }
+
+        tier, reason = SkuMappingService.classify_review_tier(
+            "pending", candidates, "ok", ai,
+            verified_ai_candidate_keys=["offer:blue-45", "sku:blue-45"],
+        )
+        self.assertEqual(tier, "green")
+        self.assertIn("本機完整驗證", reason)
+
+        tier, reason = SkuMappingService.classify_review_tier(
+            "pending", candidates, "ok", ai,
+            verified_ai_candidate_keys=[],
         )
         self.assertEqual(tier, "yellow")
         self.assertIn("人工比較", reason)

@@ -56,8 +56,8 @@ cd InventoryCalculator
 4. 點擊「Export」輸出 JSON 格式
 5. 將內容複製並貼到 `cookies.json` 檔案（專案根目錄）
 
-### 設置 OpenAI API Key（廣告分析用）
-廣告 AI 分析建議使用專案本地設定檔，不要把 Key 寫進程式碼或提交到 Git。
+### 設置 OpenAI API Key（廣告分析與 SKU mapping）
+OpenAI 設定建議使用專案本地設定檔，不要把 Key 寫進程式碼或提交到 Git。
 
 1. 執行初始化腳本：
 ```bash
@@ -66,11 +66,14 @@ python3 setup_openai_key.py
 
 2. 腳本會將 Key 寫入專案根目錄下的 `.env.local`
 
-   同時會設定品質優先的預設值：
+   同時會分別設定廣告分析與 SKU mapping：
 
    ```text
    OPENAI_MODEL=gpt-5.6-sol
    OPENAI_REASONING_EFFORT=xhigh
+   SKU_MAPPING_AI_PROVIDER=openai
+   OPENAI_SKU_MAPPING_MODEL=gpt-5.6-luna
+   OPENAI_SKU_MAPPING_REASONING_EFFORT=low
    ```
 
 3. 程式讀取順序如下：
@@ -288,7 +291,7 @@ InventoryCalculater/
 - 工作台會顯示既有 SKU mapping。人工從完整 SKU 清單選擇並核准時，該選擇就是最高優先，會直接寫入並覆蓋既有 mapping；不再另外提供容易混淆的「取代既有 mapping」按鈕。
 
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
-- 規則完全找不到候選時，SKU mapping 預設使用官方 Google Gemini API（`GEMINI_API_KEY`、模型 `gemini-3.5-flash-lite`）做初判；也可把 `SKU_MAPPING_AI_PROVIDER` 設為 `deepseek`，使用官方 DeepSeek API（`DEEPSEEK_API_KEY`、模型 `deepseek-v4-flash`）。DeepSeek V4 Flash 預設會開啟 thinking mode，本專案的 SKU 分類請求明確關閉 thinking，避免推理內容佔滿輸出上限而沒有 JSON 結果。Gemini／DeepSeek 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。可執行 `python3 setup_gemini_key.py` 或 `python3 setup_deepseek_key.py` 以隱藏輸入方式設定 Key；xAI Grok 與 OpenAI 仍可透過 `SKU_MAPPING_AI_PROVIDER` 明確選用。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作，可在已有候選時強制呼叫目前設定的 AI；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
+- 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。
 - 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 
