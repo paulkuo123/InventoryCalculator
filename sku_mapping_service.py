@@ -34,6 +34,8 @@ GOLDEN_TABLE_FILE = "golden_table.json"
 MAPPING_DB_FILE = "procurement.db"
 SCAN_CACHE_SECONDS = 7 * 24 * 60 * 60
 URL_HEALTH_TTL_SECONDS = 7 * 24 * 60 * 60
+JOB_ACTIVE_STATUSES = {"queued", "running"}
+JOB_FINISHED_STATUSES = {"completed", "error", "waiting_for_login", "cancelled"}
 OPENAI_MODELS = {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"}
 OPENAI_REASONING = {"medium", "high", "xhigh", "max"}
 XAI_MODELS = {"grok-4.5", "grok-4.5-latest", "grok-4.20-0309-non-reasoning", "grok-4.20-0309-reasoning"}
@@ -576,9 +578,11 @@ class SkuMappingService:
         self._job_lock = threading.Lock()
         self._url_change_lock = threading.Lock()
         self._jobs: Dict[str, Dict[str, Any]] = {}
+        self._job_threads: Dict[str, threading.Thread] = {}
         self._gemini_blocked_until = 0.0
         self._gemini_block_reason = ""
         self._init_db()
+        self._recover_orphaned_jobs()
         self._repair_unverified_approvals()
         self.migrate_legacy_mappings()
         self._repair_suggestion_statuses()
@@ -1447,6 +1451,7 @@ class SkuMappingService:
         return rows
 
     def summary(self) -> Dict[str, Any]:
+        self._recover_orphaned_jobs()
         shopee, inventory_source = self._live_inventory()
         live_lookup = self._live_model_lookup(shopee)
         model_lookup = self._model_lookup(self._golden(), live_lookup)
@@ -2987,9 +2992,7 @@ class SkuMappingService:
         if scope == "visible_page" and not target_pairs:
             raise ValueError("目前頁面沒有可掃描的型號")
         with self._job_lock:
-            for job in self._jobs.values():
-                if job.get("status") in {"queued", "running"}:
-                    raise RuntimeError("目前已有 SKU mapping 掃描工作執行中")
+            self._ensure_no_active_job_locked("目前已有 SKU mapping 掃描工作執行中")
             job_id = f"sku-map-{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             now = int(time.time())
             job = {"jobId": job_id, "status": "queued", "scope": scope, "targetCount": len(target_pairs), "rebuild": bool(rebuild), "productId": product_id, "modelId": model_id, "offerId": offer_id, "completed": 0, "total": 0, "message": "排入目前頁面顯示型號的 1688 掃描" if scope == "visible_page" else "排入掃描", "createdAt": now, "updatedAt": now}
@@ -3001,6 +3004,7 @@ class SkuMappingService:
                 )
             scan_targets = target_pairs if scope == "visible_page" else None
             thread = threading.Thread(target=self._scan_worker, args=(job_id, scope, force, use_ai, product_id, model_id, offer_id, bool(rebuild), scan_targets), daemon=True)
+            self._job_threads[job_id] = thread
             thread.start()
         return job
 
@@ -3114,9 +3118,7 @@ class SkuMappingService:
     def start_url_health_check(self, targets: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         resolved = self._resolve_url_health_targets(targets)
         with self._job_lock:
-            for job in self._jobs.values():
-                if job.get("status") in {"queued", "running"}:
-                    raise RuntimeError("目前已有 SKU mapping 工作執行中")
+            self._ensure_no_active_job_locked("目前已有 SKU mapping 工作執行中")
             job_id = f"url-health-{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             now = int(time.time())
             job = {
@@ -3137,6 +3139,7 @@ class SkuMappingService:
                     (job_id, "queued", "url_health_visible", len(resolved), now, now),
                 )
             thread = threading.Thread(target=self._url_health_worker, args=(job_id, resolved), daemon=True)
+            self._job_threads[job_id] = thread
             thread.start()
         return job
 
@@ -3193,9 +3196,7 @@ class SkuMappingService:
         stored OK snapshot.
         """
         with self._job_lock:
-            for job in self._jobs.values():
-                if job.get("status") in {"queued", "running"}:
-                    raise RuntimeError("目前已有 SKU mapping 工作執行中")
+            self._ensure_no_active_job_locked("目前已有 SKU mapping 工作執行中")
             job_id = f"sku-map-review-{int(time.time())}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
             now = int(time.time())
             target_pairs = []
@@ -3214,6 +3215,7 @@ class SkuMappingService:
                     (job_id, "queued", "existing_snapshots", now, now),
                 )
             thread = threading.Thread(target=self._snapshot_reanalysis_worker, args=(job_id, bool(use_ai), bool(rebuild), bool(ai_only), target_pairs), daemon=True)
+            self._job_threads[job_id] = thread
             thread.start()
         return job
 
@@ -3233,6 +3235,8 @@ class SkuMappingService:
         with self._job_lock:
             job = self._jobs.setdefault(job_id, {"jobId": job_id})
             job.update(updates, updatedAt=now)
+            if updates.get("status") in JOB_FINISHED_STATUSES:
+                self._job_threads.pop(job_id, None)
         columns = {"status": updates.get("status"), "completed": updates.get("completed"), "total": updates.get("total"), "message": updates.get("message"), "error": updates.get("error")}
         values = []
         assignments = []
@@ -3244,6 +3248,78 @@ class SkuMappingService:
             values.extend([now, job_id])
             with self.connect() as conn:
                 conn.execute(f"UPDATE sku_mapping_runs SET {', '.join(assignments)}, updated_at=? WHERE job_id=?", values)
+
+    @staticmethod
+    def _job_owner_pid(job_id: str) -> Optional[int]:
+        match = re.search(r"-(\d{9,})-(\d+)-[0-9a-fA-F]+$", str(job_id or ""))
+        return int(match.group(2)) if match else None
+
+    @staticmethod
+    def _process_exists(pid: int) -> bool:
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except PermissionError:
+            return True
+        except OSError:
+            return False
+        return True
+
+    @staticmethod
+    def _orphaned_job_updates(now: int) -> Dict[str, str]:
+        return {
+            "status": "error",
+            "error": "worker_not_running",
+            "message": "背景工作已停止；已解除殘留工作鎖，可以重新啟動",
+            "updated_at": str(now),
+        }
+
+    def _recover_orphaned_jobs(self) -> None:
+        with self._job_lock:
+            self._recover_orphaned_jobs_locked()
+
+    def _recover_orphaned_jobs_locked(self) -> None:
+        """Release jobs whose worker cannot exist in this service process."""
+        now = int(time.time())
+        stale_ids = set()
+        for job_id, job in self._jobs.items():
+            if job.get("status") not in JOB_ACTIVE_STATUSES:
+                continue
+            thread = self._job_threads.get(job_id)
+            if thread is None or not thread.is_alive():
+                updates = self._orphaned_job_updates(now)
+                job.update({key: value for key, value in updates.items() if key != "updated_at"}, updatedAt=now)
+                stale_ids.add(job_id)
+
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT job_id FROM sku_mapping_runs WHERE status IN ('queued','running')"
+            ).fetchall()
+            for row in rows:
+                job_id = str(row["job_id"])
+                if job_id in self._jobs:
+                    continue
+                owner_pid = self._job_owner_pid(job_id)
+                if owner_pid == os.getpid() or (owner_pid is not None and not self._process_exists(owner_pid)):
+                    stale_ids.add(job_id)
+            updates = self._orphaned_job_updates(now)
+            for job_id in stale_ids:
+                conn.execute(
+                    """UPDATE sku_mapping_runs
+                          SET status=?, error=?, message=?, updated_at=?
+                        WHERE job_id=? AND status IN ('queued','running')""",
+                    (updates["status"], updates["error"], updates["message"], now, job_id),
+                )
+
+    def _ensure_no_active_job_locked(self, message: str) -> None:
+        self._recover_orphaned_jobs_locked()
+        for job in self._jobs.values():
+            if job.get("status") in JOB_ACTIVE_STATUSES:
+                raise RuntimeError(message)
+
 
     def _scan_worker(
         self,

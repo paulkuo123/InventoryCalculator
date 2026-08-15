@@ -3414,8 +3414,9 @@
                 "建議補貨數量": 81,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/644276542345.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T17:04:34Z"
             },
             {
                 "型號名稱": "情人節",
@@ -18876,8 +18877,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/713047372087.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "713047372087",
+                "1688_sku_id": "5355657139970",
+                "1688_sku_name": "毛绒掛件-仿毛煤球【玫紅色】",
+                "1688_spec_text": "毛绒掛件-仿毛煤球【玫紅色】",
+                "1688_sku_second_name": "",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "c37fb0b5e6684fb07bd430e7",
+                "1688_verified_at": "2026-08-15T16:34:01Z",
+                "1688_offer_fingerprint": "579e495d9bf90367f214fae414d43f2c20d10ddd26ff0e472aff7df4fec1f9c7",
+                "1688_last_price_cny": 2.28
             },
             {
                 "型號名稱": "可愛獺兔毛球 - 黑色",
@@ -19088,9 +19099,16 @@
                 "阿里巴巴商品名稱": "新款可爱毛毛虫钥匙扣卡通毛绒公仔包包挂件创意汽车钥匙链小礼物 - 阿里巴巴",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/673285837124.html",
                 "1688_offer_id": "673285837124",
-                "1688_mapping_status": "pending",
-                "1688_mapping_source": "url_change_pending",
-                "1688_offer_fingerprint": "b56f5f4d8b0e81a34a7c70e01136ad400504c8a3c4fcc2694adb7c6848f6e397"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "b56f5f4d8b0e81a34a7c70e01136ad400504c8a3c4fcc2694adb7c6848f6e397",
+                "1688_sku_id": "4849376597860",
+                "1688_sku_name": "綠头",
+                "1688_spec_text": "绿头>单个OPP袋包装",
+                "1688_sku_second_name": "单个opp袋包装",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "7d8ab0dd4f7d974167a1d31b",
+                "1688_verified_at": "2026-08-15T16:35:15Z"
             },
             {
                 "型號名稱": "毛絨毛毛蟲 - 灰綠粉",
@@ -19191,9 +19209,16 @@
                 "阿里巴巴商品名稱": "新款可爱毛毛虫钥匙扣卡通毛绒公仔包包挂件创意汽车钥匙链小礼物 - 阿里巴巴",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/673285837124.html",
                 "1688_offer_id": "673285837124",
-                "1688_mapping_status": "pending",
-                "1688_mapping_source": "url_change_pending",
-                "1688_offer_fingerprint": "b56f5f4d8b0e81a34a7c70e01136ad400504c8a3c4fcc2694adb7c6848f6e397"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "b56f5f4d8b0e81a34a7c70e01136ad400504c8a3c4fcc2694adb7c6848f6e397",
+                "1688_sku_id": "4878144169850",
+                "1688_sku_name": "白头橙尾",
+                "1688_spec_text": "白头橙尾>单个OPP袋包装",
+                "1688_sku_second_name": "单个opp袋包装",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "408b224dedf810f3817a4f8f",
+                "1688_verified_at": "2026-08-15T16:33:40Z"
             },
             {
                 "型號名稱": "毛絨毛毛蟲 - 深藍粉藍",
@@ -26076,11 +26101,19 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235038",
+                "1688_sku_name": "黑色闪粉单个",
+                "1688_spec_text": "黑色 闪粉 单个>11系列/12mini/12/12Pro",
+                "1688_sku_second_name": "11系列/12mini/12/12pro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "0355067fbfae94589e5154f3",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "黑色閃粉(一顆),14pro/14proMax",
@@ -26089,11 +26122,19 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5707788014710",
+                "1688_sku_name": "黑色闪粉单个",
+                "1688_spec_text": "黑色 闪粉 单个>14Pro/14promax/16Pro/16Promax",
+                "1688_sku_second_name": "14pro/14promax/16pro/16promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "5ddad1e047c12ef4b2761aee",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "黑色閃粉(一顆),15pro/15proMax",
@@ -26102,11 +26143,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "黑色閃粉(一顆),16pro/16proMax",
@@ -26115,11 +26157,19 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5707788014710",
+                "1688_sku_name": "黑色闪粉单个",
+                "1688_spec_text": "黑色 闪粉 单个>14Pro/14promax/16Pro/16Promax",
+                "1688_sku_second_name": "14pro/14promax/16pro/16promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "5ddad1e047c12ef4b2761aee",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),16pro/16proMax",
@@ -26128,11 +26178,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),16pro/16proMax",
@@ -26141,10 +26192,19 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5707788014715",
+                "1688_sku_name": "远峰藍闪粉单个",
+                "1688_spec_text": "远峰蓝 闪粉 单个>14Pro/14promax/16Pro/16Promax",
+                "1688_sku_second_name": "14pro/14promax/16pro/16promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "a2e43d83ab8b0c7c6e6fe198",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),11/12/12mini/12pro",
@@ -26154,11 +26214,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "月銷量": "5",
                 "建議補貨數量": 20,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),14pro/14proMax",
@@ -26167,11 +26228,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),16pro/16proMax",
@@ -26180,11 +26242,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),14pro/14proMax",
@@ -26193,11 +26256,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),16pro/16proMax",
@@ -26206,11 +26270,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),14pro/14proMax",
@@ -26219,11 +26284,19 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5707788014718",
+                "1688_sku_name": "炫彩闪粉单个",
+                "1688_spec_text": "炫彩 闪粉 单个>14Pro/14promax/16Pro/16Promax",
+                "1688_sku_second_name": "14pro/14promax/16pro/16promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "d395e17c3fc6df55b80d707f",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),16pro/16proMax",
@@ -26232,11 +26305,19 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5707788014718",
+                "1688_sku_name": "炫彩闪粉单个",
+                "1688_spec_text": "炫彩 闪粉 单个>14Pro/14promax/16Pro/16Promax",
+                "1688_sku_second_name": "14pro/14promax/16pro/16promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "d395e17c3fc6df55b80d707f",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),16/16Plus",
@@ -26245,10 +26326,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),16pro/16proMax",
@@ -26257,11 +26340,12 @@
                 "商品庫存": "0",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "黑色閃粉(一顆),13/13mini/12proMax",
@@ -26271,11 +26355,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235015",
+                "1688_sku_name": "黑色闪粉单个",
+                "1688_spec_text": "黑色 闪粉 单个>13/13mini/12Promax",
+                "1688_sku_second_name": "13/13mini/12promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "2a36e410c35c5bda7f4cc854",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "黑色閃粉(一顆),13pro/13proMax",
@@ -26285,11 +26377,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "月銷量": "3",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "黑色閃粉(一顆),14/14Plus/15/15Plus",
@@ -26299,11 +26392,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "黑色閃粉(一顆),16/16Plus",
@@ -26312,11 +26406,19 @@
                 "商品庫存": "6",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul5-lh09ter4pdt5ce_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "6021782470059",
+                "1688_sku_name": "黑色闪粉单个",
+                "1688_spec_text": "黑色 闪粉 单个>17/17Pro/17PM/15Pro/15PM/16/16plus",
+                "1688_sku_second_name": "17/17pro/17pm/15pro/15pm/16/16plus",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "6f4bb75d8740d45a9255d136",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),11/12/12mini/12pro",
@@ -26326,11 +26428,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "月銷量": "2",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),13/13mini/12proMax",
@@ -26340,11 +26443,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235016",
+                "1688_sku_name": "銀色闪粉单个",
+                "1688_spec_text": "银色 闪粉 单个>13/13mini/12Promax",
+                "1688_sku_second_name": "13/13mini/12promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "68379e142c5d0ced9193bc03",
+                "1688_verified_at": "2026-08-15T17:11:27Z"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),13pro/13proMax",
@@ -26354,11 +26465,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),14/14Plus/15/15Plus",
@@ -26368,11 +26480,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "月銷量": "1",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),14pro/14proMax",
@@ -26381,11 +26494,12 @@
                 "商品庫存": "3",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),15pro/15proMax",
@@ -26395,11 +26509,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "月銷量": "4",
                 "建議補貨數量": 1,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "銀色閃粉(一顆),16/16Plus",
@@ -26408,11 +26523,12 @@
                 "商品庫存": "22",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2mfjd48_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),11/12/12mini/12pro",
@@ -26422,10 +26538,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "月銷量": "7",
                 "建議補貨數量": 10,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235043",
+                "1688_sku_name": "远峰藍闪粉单个",
+                "1688_spec_text": "远峰蓝 闪粉 单个>11系列/12mini/12/12Pro",
+                "1688_sku_second_name": "11系列/12mini/12/12pro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "a205ea8809c5261454ead7df",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),13/13mini/12proMax",
@@ -26435,10 +26560,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "月銷量": "2",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235020",
+                "1688_sku_name": "远峰藍闪粉单个",
+                "1688_spec_text": "远峰蓝 闪粉 单个>13/13mini/12Promax",
+                "1688_sku_second_name": "13/13mini/12promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "9bbd1f4a2cba420e202d5518",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),13pro/13proMax",
@@ -26447,10 +26581,12 @@
                 "商品庫存": "3",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),14/14Plus/15/15Plus",
@@ -26460,10 +26596,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),14pro/14proMax",
@@ -26472,10 +26610,19 @@
                 "商品庫存": "3",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5707788014715",
+                "1688_sku_name": "远峰藍闪粉单个",
+                "1688_spec_text": "远峰蓝 闪粉 单个>14Pro/14promax/16Pro/16Promax",
+                "1688_sku_second_name": "14pro/14promax/16pro/16promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "a2e43d83ab8b0c7c6e6fe198",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),15pro/15proMax",
@@ -26484,10 +26631,12 @@
                 "商品庫存": "15",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "遠峰藍閃粉(一顆),16/16Plus",
@@ -26497,10 +26646,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukw-lh09xcy2nu3t66_tn",
                 "月銷量": "2",
                 "建議補貨數量": 3,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "6021782470064",
+                "1688_sku_name": "远峰藍闪粉单个",
+                "1688_spec_text": "远峰蓝 闪粉 单个>17/17Pro/17PM/15Pro/15PM/16/16plus",
+                "1688_sku_second_name": "17/17pro/17pm/15pro/15pm/16/16plus",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b9dfb74d753ec8bc6790b35c",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),13/13mini/12proMax",
@@ -26509,11 +26667,12 @@
                 "商品庫存": "35",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),13pro/13proMax",
@@ -26522,11 +26681,12 @@
                 "商品庫存": "21",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),14/14Plus/15/15Plus",
@@ -26535,11 +26695,12 @@
                 "商品庫存": "43",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),15pro/15proMax",
@@ -26548,11 +26709,12 @@
                 "商品庫存": "15",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "綠色閃粉(一顆),16/16Plus",
@@ -26561,11 +26723,12 @@
                 "商品庫存": "15",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul1-lh09xklbe8mh84_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),11/12/12mini/12pro",
@@ -26574,11 +26737,12 @@
                 "商品庫存": "16",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),13/13mini/12proMax",
@@ -26587,11 +26751,12 @@
                 "商品庫存": "37",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),13pro/13proMax",
@@ -26600,11 +26765,12 @@
                 "商品庫存": "25",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),14/14Plus/15/15Plus",
@@ -26614,11 +26780,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "月銷量": "3",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),15pro/15proMax",
@@ -26627,11 +26794,12 @@
                 "商品庫存": "22",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "金色閃粉(一顆),16/16Plus",
@@ -26640,11 +26808,12 @@
                 "商品庫存": "27",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul8-lh09xklbfn6x17_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),11/12/12mini/12pro",
@@ -26654,11 +26823,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "月銷量": "5",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235046",
+                "1688_sku_name": "炫彩闪粉单个",
+                "1688_spec_text": "炫彩 闪粉 单个>11系列/12mini/12/12Pro",
+                "1688_sku_second_name": "11系列/12mini/12/12pro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "481a2f2d7a786af672dd0fe6",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),13/13mini/12proMax",
@@ -26668,10 +26845,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "月銷量": "2",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "678287033668",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235023",
+                "1688_sku_name": "炫彩闪粉单个",
+                "1688_spec_text": "炫彩 闪粉 单个>13/13mini/12Promax",
+                "1688_sku_second_name": "13/13mini/12promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "149a8e625a1dcb2d38ae6a3e",
+                "1688_verified_at": "2026-08-15T17:10:49Z"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),13pro/13proMax",
@@ -26680,11 +26866,19 @@
                 "商品庫存": "66",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "6021782470084",
+                "1688_sku_name": "炫彩闪粉单个",
+                "1688_spec_text": "炫彩 闪粉 单个>17Air/13Pro/13Promax",
+                "1688_sku_second_name": "17air/13pro/13promax",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "956ca45a93ec4570a2be3339",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),14/14Plus/15/15Plus",
@@ -26694,11 +26888,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "月銷量": "2",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),15pro/15proMax",
@@ -26708,11 +26903,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "月銷量": "1",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "炫彩閃粉(一顆),16/16Plus",
@@ -26722,11 +26918,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul0-lh09xrtuudk96f_tn",
                 "月銷量": "2",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "6021782470067",
+                "1688_sku_name": "炫彩闪粉单个",
+                "1688_spec_text": "炫彩 闪粉 单个>17/17Pro/17PM/15Pro/15PM/16/16plus",
+                "1688_sku_second_name": "17/17pro/17pm/15pro/15pm/16/16plus",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "2ef64e4f8123b5fe94783e7d",
+                "1688_verified_at": "2026-08-15T17:10:50Z"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),11/12/12mini/12pro",
@@ -26736,11 +26940,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b",
+                "1688_sku_id": "5076925235045",
+                "1688_sku_name": "粉色闪粉单个",
+                "1688_spec_text": "粉色 闪粉 单个>11系列/12mini/12/12Pro",
+                "1688_sku_second_name": "11系列/12mini/12/12pro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "83da2e6f0c372a9b5bc03957",
+                "1688_verified_at": "2026-08-15T17:11:57Z"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),13/13mini/12proMax",
@@ -26750,11 +26962,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "月銷量": "4",
                 "建議補貨數量": 14,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),13pro/13proMax",
@@ -26764,11 +26977,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),14/14Plus/15/15Plus",
@@ -26777,11 +26991,12 @@
                 "商品庫存": "2",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),14pro/14proMax",
@@ -26791,11 +27006,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             },
             {
                 "型號名稱": "粉色閃粉(一顆),15pro/15proMax",
@@ -26804,11 +27020,12 @@
                 "商品庫存": "12",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qula-lh09xrtuvs4p07_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "适用于苹果鹰眼闪粉镜头膜iPhone14/14pro摄像头保护膜13pro/Max",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/674635271595.html",
-                "1688_offer_id": "674635271595",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "适用苹果16e鹰眼保护贴17单颗闪钻贴膜镜头膜17Promax摄像头高清 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678287033668.html",
+                "1688_offer_id": "678287033668",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_fingerprint": "1286b647fb2a5f3ac896bea330f5704ccf9db18aefebcb8539dd482d98fca57b"
             }
         ]
     },
@@ -27406,8 +27623,18 @@
                 "建議補貨數量": 6,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/42776592594.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_offer_id": "42776592594",
+                "1688_sku_id": "4501149630235",
+                "1688_sku_name": "白色(帶铜扣)",
+                "1688_spec_text": "白色(帶铜扣)",
+                "1688_sku_second_name": "",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "aef04eb8c2ba3c6739ee2b8f",
+                "1688_verified_at": "2026-08-15T16:35:36Z",
+                "1688_offer_fingerprint": "f00c59e9eb3dcdbed6b3211134c1fc4deb01a1c012d27caf0e7be0fe0e32d2e6",
+                "1688_last_price_cny": 4.74
             },
             {
                 "型號名稱": "純紫色小手提",
@@ -27419,8 +27646,9 @@
                 "建議補貨數量": 19,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/42776592594.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:36:04Z"
             },
             {
                 "型號名稱": "Sleep 貓",
@@ -37295,10 +37523,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/d53169a6cfc3a2ef65ef1f97e63c3aec_tn",
                 "月銷量": "1",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "怪兽适用苹果airpods保护套蓝牙AirpodsPro耳机套3代硅胶pro2防摔 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678112445845.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678112445845",
+                "1688_offer_fingerprint": "64f00acea509352958cf59798716225c96555ee11f5be5279643caa8a770cd63"
             },
             {
                 "型號名稱": "1.小怪獸,pro1代/pro2代",
@@ -37308,10 +37538,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/d53169a6cfc3a2ef65ef1f97e63c3aec_tn",
                 "月銷量": "1",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "怪兽适用苹果airpods保护套蓝牙AirpodsPro耳机套3代硅胶pro2防摔 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678112445845.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678112445845",
+                "1688_offer_fingerprint": "64f00acea509352958cf59798716225c96555ee11f5be5279643caa8a770cd63"
             },
             {
                 "型號名稱": "1.小怪獸,3代",
@@ -37321,10 +37553,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/d53169a6cfc3a2ef65ef1f97e63c3aec_tn",
                 "月銷量": "2",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "怪兽适用苹果airpods保护套蓝牙AirpodsPro耳机套3代硅胶pro2防摔 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678112445845.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678112445845",
+                "1688_offer_fingerprint": "64f00acea509352958cf59798716225c96555ee11f5be5279643caa8a770cd63"
             },
             {
                 "型號名稱": "1.小怪獸,4代",
@@ -37334,10 +37568,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/d53169a6cfc3a2ef65ef1f97e63c3aec_tn",
                 "月銷量": "2",
                 "建議補貨數量": 4,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "怪兽适用苹果airpods保护套蓝牙AirpodsPro耳机套3代硅胶pro2防摔 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678112445845.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "678112445845",
+                "1688_offer_fingerprint": "64f00acea509352958cf59798716225c96555ee11f5be5279643caa8a770cd63",
+                "1688_sku_id": "5666750957168",
+                "1688_sku_name": "透白满屏小怪兽+黑掛环",
+                "1688_spec_text": "透白 满屏小怪兽+黑挂环>airpods 4代",
+                "1688_sku_second_name": "airpods4代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "2f7aecb3cea1a8b90afd0c17",
+                "1688_verified_at": "2026-08-15T16:36:39Z"
             },
             {
                 "型號名稱": "2.油畫藍莓花,1代 / 2代",
@@ -37399,15 +37642,20 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
                 "1688_offer_id": "676905264540",
-                "1688_sku_id": "",
-                "1688_sku_name": "镜面 油画蓝莓花+银挂扣",
+                "1688_sku_id": "4871894409100",
+                "1688_sku_name": "鏡面油画藍莓花+銀掛扣",
                 "1688_min_order_qty": 1,
                 "1688_package_multiple": 1,
                 "1688_last_price_cny": "",
-                "1688_sku_second_name": "airpods 3代"
+                "1688_sku_second_name": "airpods3代",
+                "1688_spec_text": "镜面 油画蓝莓花+银挂扣>airpods 3代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "6ef10c11676e6c5fab4e26fe",
+                "1688_verified_at": "2026-08-15T16:36:18Z",
+                "1688_offer_fingerprint": "45267b8128bfe37fa62df4ad77c7f732a5538c19269b21bd563bd849aa999a1b"
             },
             {
                 "型號名稱": "2.油畫藍莓花,4代",
@@ -37489,10 +37737,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/257217d629bd62288ac6c113ee8477c7_tn",
                 "月銷量": "1",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "原创狗狗适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro2 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678115977272.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "678115977272",
+                "1688_offer_fingerprint": "10819bfc80d91a7e779009c85602a278d3281cab7fa6fc92513bb39e280a133e"
             },
             {
                 "型號名稱": "4.狗狗頭像,pro1代/pro2代",
@@ -37502,10 +37752,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/257217d629bd62288ac6c113ee8477c7_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "卡通适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro防摔4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677914047417.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "677914047417",
+                "1688_offer_fingerprint": "a0189b115df148f150beefdaefb97bb9f74923a1bb29f51ddb90394fdfc616a1"
             },
             {
                 "型號名稱": "4.狗狗頭像,3代",
@@ -37515,10 +37767,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/257217d629bd62288ac6c113ee8477c7_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "原创狗狗适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro2 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678115977272.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "678115977272",
+                "1688_offer_fingerprint": "10819bfc80d91a7e779009c85602a278d3281cab7fa6fc92513bb39e280a133e",
+                "1688_sku_id": "4867110688139",
+                "1688_sku_name": "透白狗狗头像+黑掛环",
+                "1688_spec_text": "透白 狗狗头像+黑挂环>airpods 3代",
+                "1688_sku_second_name": "airpods3代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "033f6ca91ed787dfde0c8bdb",
+                "1688_verified_at": "2026-08-15T16:42:22Z"
             },
             {
                 "型號名稱": "4.狗狗頭像,4代",
@@ -37528,10 +37789,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/257217d629bd62288ac6c113ee8477c7_tn",
                 "月銷量": "3",
                 "建議補貨數量": 2,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "原创狗狗适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro2 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/678115977272.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "678115977272",
+                "1688_offer_fingerprint": "10819bfc80d91a7e779009c85602a278d3281cab7fa6fc92513bb39e280a133e",
+                "1688_sku_id": "5834053247573",
+                "1688_sku_name": "透白狗狗头像+黑掛环",
+                "1688_sku_second_name": "airpods4代",
+                "1688_spec_text": "透白 狗狗头像+黑挂环>airpods 4代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "db8c9ba6308d74f6d1ee299d",
+                "1688_verified_at": "2026-08-15T17:17:40Z"
             },
             {
                 "型號名稱": "5.綠頭套鴨,1代 / 2代",
@@ -37668,10 +37938,12 @@
                 "商品庫存": "15",
                 "型號圖片網址": "https://cf.shopee.tw/file/0f5ea92cd553afd4da411c7b606c1c2a_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "卡通适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro防摔4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677914047417.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "677914047417",
+                "1688_offer_fingerprint": "a0189b115df148f150beefdaefb97bb9f74923a1bb29f51ddb90394fdfc616a1"
             },
             {
                 "型號名稱": "8.塗鴉方塊,pro1代/pro2代",
@@ -37681,10 +37953,12 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/0f5ea92cd553afd4da411c7b606c1c2a_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "卡通适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro防摔4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677914047417.html",
+                "1688_mapping_status": "pending",
+                "1688_mapping_source": "url_change_pending",
+                "1688_offer_id": "677914047417",
+                "1688_offer_fingerprint": "a0189b115df148f150beefdaefb97bb9f74923a1bb29f51ddb90394fdfc616a1"
             },
             {
                 "型號名稱": "8.塗鴉方塊,3代",
@@ -37694,10 +37968,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/0f5ea92cd553afd4da411c7b606c1c2a_tn",
                 "月銷量": "1",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "卡通适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro防摔4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677914047417.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "677914047417",
+                "1688_offer_fingerprint": "a0189b115df148f150beefdaefb97bb9f74923a1bb29f51ddb90394fdfc616a1",
+                "1688_sku_id": "5044553219262",
+                "1688_sku_name": "透白涂鸦方块+白掛环",
+                "1688_spec_text": "透白 涂鸦方块+白挂环>airpods 3代",
+                "1688_sku_second_name": "airpods3代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "92996ce86852a3e4cbf34d06",
+                "1688_verified_at": "2026-08-15T16:39:45Z"
             },
             {
                 "型號名稱": "8.塗鴉方塊,4代",
@@ -37707,10 +37990,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/0f5ea92cd553afd4da411c7b606c1c2a_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "卡通适用苹果AirpodsPro保护套airpods蓝牙耳机套3代硅胶pro防摔4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677914047417.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "677914047417",
+                "1688_offer_fingerprint": "a0189b115df148f150beefdaefb97bb9f74923a1bb29f51ddb90394fdfc616a1",
+                "1688_sku_id": "5664564104055",
+                "1688_sku_name": "透白涂鸦方块+白掛环",
+                "1688_spec_text": "透白 涂鸦方块+白挂环>airpods 4代",
+                "1688_sku_second_name": "airpods4代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "158c0c1994df35bd722c4c73",
+                "1688_verified_at": "2026-08-15T16:39:47Z"
             },
             {
                 "型號名稱": "9.寵物男孩,1代 / 2代",
@@ -37769,10 +38061,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/5099ada77a39bbcb5aa276ad1897c689_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "原创卡通适用苹果AirPodsPro保护套pro2新款3代蓝牙耳机2代情侣4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677913975745.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "677913975745",
+                "1688_offer_fingerprint": "83199a58930b68e2d3867dbd4ac340f3054cdb154b7a14779f34d3c393a773f1",
+                "1688_sku_id": "5044552191946",
+                "1688_sku_name": "透白蝴蝶女孩+粉掛环",
+                "1688_sku_second_name": "airpods1/2代",
+                "1688_spec_text": "透白 蝴蝶女孩+粉挂环>airpods 1/2代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "e160f7b2534d61f06f620d3f",
+                "1688_verified_at": "2026-08-15T17:27:30Z"
             },
             {
                 "型號名稱": "10.蝴蝶女孩,pro1代/pro2代",
@@ -37781,10 +38082,19 @@
                 "商品庫存": "1",
                 "型號圖片網址": "https://cf.shopee.tw/file/5099ada77a39bbcb5aa276ad1897c689_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "原创卡通适用苹果AirPodsPro保护套pro2新款3代蓝牙耳机2代情侣4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677913975745.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "677913975745",
+                "1688_offer_fingerprint": "83199a58930b68e2d3867dbd4ac340f3054cdb154b7a14779f34d3c393a773f1",
+                "1688_sku_id": "5044552191948",
+                "1688_sku_name": "透白蝴蝶女孩+粉掛环",
+                "1688_sku_second_name": "airpodspro",
+                "1688_spec_text": "透白 蝴蝶女孩+粉挂环>airpodsPro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "e9109fe9c79e22f09255f88c",
+                "1688_verified_at": "2026-08-15T17:27:30Z"
             },
             {
                 "型號名稱": "10.蝴蝶女孩,3代",
@@ -37793,10 +38103,19 @@
                 "商品庫存": "16",
                 "型號圖片網址": "https://cf.shopee.tw/file/5099ada77a39bbcb5aa276ad1897c689_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "原创卡通适用苹果AirPodsPro保护套pro2新款3代蓝牙耳机2代情侣4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677913975745.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "677913975745",
+                "1688_offer_fingerprint": "83199a58930b68e2d3867dbd4ac340f3054cdb154b7a14779f34d3c393a773f1",
+                "1688_sku_id": "5044552191947",
+                "1688_sku_name": "透白蝴蝶女孩+粉掛环",
+                "1688_sku_second_name": "airpods3代",
+                "1688_spec_text": "透白 蝴蝶女孩+粉挂环>airpods 3代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "fe5adfbdcba7cb02c1878f6d",
+                "1688_verified_at": "2026-08-15T17:27:30Z"
             },
             {
                 "型號名稱": "10.蝴蝶女孩,4代",
@@ -37806,10 +38125,19 @@
                 "型號圖片網址": "https://cf.shopee.tw/file/5099ada77a39bbcb5aa276ad1897c689_tn",
                 "月銷量": "0",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/676905264540.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "原创卡通适用苹果AirPodsPro保护套pro2新款3代蓝牙耳机2代情侣4 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/677913975745.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "677913975745",
+                "1688_offer_fingerprint": "83199a58930b68e2d3867dbd4ac340f3054cdb154b7a14779f34d3c393a773f1",
+                "1688_sku_id": "5832412942568",
+                "1688_sku_name": "透白蝴蝶女孩+粉掛环",
+                "1688_sku_second_name": "airpods4代",
+                "1688_spec_text": "透白 蝴蝶女孩+粉挂环>airpods 4代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b086d93469b5d2382066400b",
+                "1688_verified_at": "2026-08-15T17:27:30Z"
             }
         ]
     },
@@ -54382,9 +54710,10 @@
                 "建議補貨數量": 5,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/742408973734.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import",
-                "1688_offer_id": "742408973734"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "742408973734",
+                "1688_verified_at": "2026-08-15T16:43:42Z"
             }
         ]
     },
@@ -68028,8 +68357,9 @@
                 "阿里巴巴商品名稱": "可爱黑色煤球airpods pro耳机套适用苹果无线蓝牙硅胶1/2代保护壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/704268485591.html",
                 "1688_offer_id": "704268485591",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:43:58Z"
             },
             {
                 "型號名稱": "1.綠色青蛙,1代/2代",
@@ -68249,8 +68579,9 @@
                 "阿里巴巴商品名稱": "可爱黑色煤球airpods pro耳机套适用苹果无线蓝牙硅胶1/2代保护壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/704268485591.html",
                 "1688_offer_id": "704268485591",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:30:42Z"
             },
             {
                 "型號名稱": "6.無芽煤球,Pro1代/Pro2代 (通用）",
@@ -68262,8 +68593,9 @@
                 "阿里巴巴商品名稱": "可爱黑色煤球airpods pro耳机套适用苹果无线蓝牙硅胶1/2代保护壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/704268485591.html",
                 "1688_offer_id": "704268485591",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:44:23Z"
             },
             {
                 "型號名稱": "6.無芽煤球,3代",
@@ -68276,8 +68608,9 @@
                 "阿里巴巴商品名稱": "可爱黑色煤球airpods pro耳机套适用苹果无线蓝牙硅胶1/2代保护壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/704268485591.html",
                 "1688_offer_id": "704268485591",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:44:23Z"
             },
             {
                 "型號名稱": "7.發芽煤球,1代/2代",
@@ -68289,8 +68622,9 @@
                 "阿里巴巴商品名稱": "可爱黑色煤球airpods pro耳机套适用苹果无线蓝牙硅胶1/2代保护壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/704268485591.html",
                 "1688_offer_id": "704268485591",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:30:54Z"
             },
             {
                 "型號名稱": "7.發芽煤球,Pro1代/Pro2代 (通用）",
@@ -68303,8 +68637,9 @@
                 "阿里巴巴商品名稱": "可爱黑色煤球airpods pro耳机套适用苹果无线蓝牙硅胶1/2代保护壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/704268485591.html",
                 "1688_offer_id": "704268485591",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:44:23Z"
             },
             {
                 "型號名稱": "8.西紅柿水豚,1代/2代",
@@ -78857,8 +79192,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733640",
+                "1688_sku_name": "紅色",
+                "1688_spec_text": "红色>45mm裸壳",
+                "1688_sku_second_name": "45mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "6c61bfadbb3c567f567cb4f4",
+                "1688_verified_at": "2026-08-15T16:48:26Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—玫瑰金,40mm(4/5/SE/6代適用)",
@@ -78869,8 +79214,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733680",
+                "1688_sku_name": "玫瑰金",
+                "1688_spec_text": "玫瑰金>40mm裸壳",
+                "1688_sku_second_name": "40mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "12137b3b5f450676302b6d5a",
+                "1688_verified_at": "2026-08-15T16:48:29Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—玫瑰金,44mm(4/5/SE/6代適用)",
@@ -78881,8 +79236,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733677",
+                "1688_sku_name": "玫瑰金",
+                "1688_spec_text": "玫瑰金>44mm裸壳",
+                "1688_sku_second_name": "44mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "112c9066aac897b691c6d224",
+                "1688_verified_at": "2026-08-15T16:48:32Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—玫瑰金,45mm(7/8代適用)",
@@ -78893,8 +79258,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733676",
+                "1688_sku_name": "玫瑰金",
+                "1688_spec_text": "玫瑰金>45mm裸壳",
+                "1688_sku_second_name": "45mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "1da2941861c7996925a6607b",
+                "1688_verified_at": "2026-08-15T16:48:34Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—黑色,45mm(7/8代適用)",
@@ -78905,8 +79280,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733688",
+                "1688_sku_name": "黑色",
+                "1688_spec_text": "黑色>45mm裸壳",
+                "1688_sku_second_name": "45mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b321ce589a80a4e68c8630e3",
+                "1688_verified_at": "2026-08-15T16:48:38Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—透明,38mm(1/2/3代適用)",
@@ -78940,9 +79325,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳 - 阿里巴巴",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "pending",
-                "1688_mapping_source": "url_change_pending",
-                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_sku_id": "4885992733594",
+                "1688_sku_name": "透明",
+                "1688_spec_text": "透明>42mm裸壳",
+                "1688_sku_second_name": "42mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "cb9cfeb1860910b348834b54",
+                "1688_verified_at": "2026-08-15T16:48:53Z",
+                "1688_last_price_cny": 4.0
             },
             {
                 "型號名稱": "單排鑽—銀色,38mm(1/2/3代適用)",
@@ -78954,8 +79347,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733609",
+                "1688_sku_name": "銀色",
+                "1688_spec_text": "银色>38mm裸壳",
+                "1688_sku_second_name": "38mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "47d76ff38da62f9ec6f0d83f",
+                "1688_verified_at": "2026-08-15T16:48:55Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—銀色,41mm(7/8代適用)",
@@ -78968,8 +79370,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733607",
+                "1688_sku_name": "銀色",
+                "1688_spec_text": "银色>41mm裸壳",
+                "1688_sku_second_name": "41mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b6be1b8457499e82c68eeeb0",
+                "1688_verified_at": "2026-08-15T16:48:59Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—銀色,42mm(1/2/3代適用)",
@@ -78982,8 +79393,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733606",
+                "1688_sku_name": "銀色",
+                "1688_spec_text": "银色>42mm裸壳",
+                "1688_sku_second_name": "42mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "6cf92115fbd965b3f171befb",
+                "1688_verified_at": "2026-08-15T16:49:02Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—藍色,38mm(1/2/3代適用)",
@@ -78995,8 +79415,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733621",
+                "1688_sku_name": "藍色",
+                "1688_spec_text": "蓝色>38mm裸壳",
+                "1688_sku_second_name": "38mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "19e0efb5aa9de4aac2506791",
+                "1688_verified_at": "2026-08-15T16:49:03Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—藍色,40mm(4/5/SE/6代適用)",
@@ -79008,8 +79437,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733620",
+                "1688_sku_name": "藍色",
+                "1688_spec_text": "蓝色>40mm裸壳",
+                "1688_sku_second_name": "40mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "767a8795faf634426257cc89",
+                "1688_verified_at": "2026-08-15T16:49:06Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—藍色,41mm(7/8代適用)",
@@ -79021,8 +79459,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733619",
+                "1688_sku_name": "藍色",
+                "1688_spec_text": "蓝色>41mm裸壳",
+                "1688_sku_second_name": "41mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "17bff109feece6738b53a89d",
+                "1688_verified_at": "2026-08-15T16:49:08Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—藍色,42mm(1/2/3代適用)",
@@ -79034,8 +79481,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733618",
+                "1688_sku_name": "藍色",
+                "1688_spec_text": "蓝色>42mm裸壳",
+                "1688_sku_second_name": "42mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "94d495c8e86c23e9131385dd",
+                "1688_verified_at": "2026-08-15T16:49:10Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—藍色,44mm(4/5/SE/6代適用)",
@@ -79047,8 +79503,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733617",
+                "1688_sku_name": "藍色",
+                "1688_spec_text": "蓝色>44mm裸壳",
+                "1688_sku_second_name": "44mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "c86a8dc4d5a27776f957678d",
+                "1688_verified_at": "2026-08-15T16:49:12Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—粉金,38mm(1/2/3代適用)",
@@ -79059,8 +79524,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733633",
+                "1688_sku_name": "粉金",
+                "1688_spec_text": "粉金>38mm裸壳",
+                "1688_sku_second_name": "38mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "c9074bcec4a1be36260fd18a",
+                "1688_verified_at": "2026-08-15T16:49:15Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—粉金,42mm(1/2/3代適用)",
@@ -79071,8 +79546,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733630",
+                "1688_sku_name": "粉金",
+                "1688_spec_text": "粉金>42mm裸壳",
+                "1688_sku_second_name": "42mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "cf744f3b2d56806bd5ba25d5",
+                "1688_verified_at": "2026-08-15T16:49:18Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—粉金,44mm(4/5/SE/6代適用)",
@@ -79083,8 +79568,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733629",
+                "1688_sku_name": "粉金",
+                "1688_spec_text": "粉金>44mm裸壳",
+                "1688_sku_second_name": "44mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "290093865719f01e6bed97fc",
+                "1688_verified_at": "2026-08-15T16:49:21Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—紅色,38mm(1/2/3代適用)",
@@ -79095,8 +79590,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733645",
+                "1688_sku_name": "紅色",
+                "1688_spec_text": "红色>38mm裸壳",
+                "1688_sku_second_name": "38mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "9dc2468d17fa43b51afbd796",
+                "1688_verified_at": "2026-08-15T16:49:29Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—紅色,40mm(4/5/SE/6代適用)",
@@ -79107,8 +79612,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733644",
+                "1688_sku_name": "紅色",
+                "1688_spec_text": "红色>40mm裸壳",
+                "1688_sku_second_name": "40mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "9d363948ccc8e476399bcb14",
+                "1688_verified_at": "2026-08-15T16:49:31Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—紅色,41mm(7/8代適用)",
@@ -79119,8 +79634,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733643",
+                "1688_sku_name": "紅色",
+                "1688_spec_text": "红色>41mm裸壳",
+                "1688_sku_second_name": "41mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "aaf0793719a1a151d68048d2",
+                "1688_verified_at": "2026-08-15T16:49:32Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—紅色,42mm(1/2/3代適用)",
@@ -79131,8 +79656,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733642",
+                "1688_sku_name": "紅色",
+                "1688_spec_text": "红色>42mm裸壳",
+                "1688_sku_second_name": "42mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "4d4f26a9c7f5644fc0706676",
+                "1688_verified_at": "2026-08-15T16:49:33Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—紅色,44mm(4/5/SE/6代適用)",
@@ -79143,8 +79678,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733641",
+                "1688_sku_name": "紅色",
+                "1688_spec_text": "红色>44mm裸壳",
+                "1688_sku_second_name": "44mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "9cb5cd767e03038ffa4d91d2",
+                "1688_verified_at": "2026-08-15T16:49:34Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—玫瑰金,38mm(1/2/3代適用)",
@@ -79156,8 +79701,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733681",
+                "1688_sku_name": "玫瑰金",
+                "1688_spec_text": "玫瑰金>38mm裸壳",
+                "1688_sku_second_name": "38mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "5ed472910447cfc813b4f55d",
+                "1688_verified_at": "2026-08-15T16:49:37Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—玫瑰金,41mm(7/8代適用)",
@@ -79169,8 +79723,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733679",
+                "1688_sku_name": "玫瑰金",
+                "1688_spec_text": "玫瑰金>41mm裸壳",
+                "1688_sku_second_name": "41mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "839f02e44a4250ba3bb87c71",
+                "1688_verified_at": "2026-08-15T16:49:39Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—玫瑰金,42mm(1/2/3代適用)",
@@ -79183,8 +79746,17 @@
                 "阿里巴巴商品名稱": "适用苹果手表单排钻纯色电镀一体钢化膜保护壳iwatch567SE8代表壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
                 "1688_offer_id": "682835635192",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4885992733678",
+                "1688_sku_name": "玫瑰金",
+                "1688_spec_text": "玫瑰金>42mm裸壳",
+                "1688_sku_second_name": "42mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b1c99b7d53abc574fd411ba4",
+                "1688_verified_at": "2026-08-15T16:49:41Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—黑色,38mm(1/2/3代適用)",
@@ -79195,8 +79767,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733693",
+                "1688_sku_name": "黑色",
+                "1688_spec_text": "黑色>38mm裸壳",
+                "1688_sku_second_name": "38mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b96763a693a620e0e7f1477f",
+                "1688_verified_at": "2026-08-15T16:49:45Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—黑色,40mm(4/5/SE/6代適用)",
@@ -79207,8 +79789,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733692",
+                "1688_sku_name": "黑色",
+                "1688_spec_text": "黑色>40mm裸壳",
+                "1688_sku_second_name": "40mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "e18c849daaa0978a89830aed",
+                "1688_verified_at": "2026-08-15T16:49:47Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—黑色,41mm(7/8代適用)",
@@ -79219,8 +79811,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733691",
+                "1688_sku_name": "黑色",
+                "1688_spec_text": "黑色>41mm裸壳",
+                "1688_sku_second_name": "41mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "c55e1178a5fbe6617feeb83c",
+                "1688_verified_at": "2026-08-15T16:49:49Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—黑色,42mm(1/2/3代適用)",
@@ -79231,8 +79833,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733690",
+                "1688_sku_name": "黑色",
+                "1688_spec_text": "黑色>42mm裸壳",
+                "1688_sku_second_name": "42mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "51ae7d21519c9a461f94ea92",
+                "1688_verified_at": "2026-08-15T16:49:50Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             },
             {
                 "型號名稱": "單排鑽—黑色,44mm(4/5/SE/6代適用)",
@@ -79243,8 +79855,18 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/682835635192.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_offer_id": "682835635192",
+                "1688_sku_id": "4885992733689",
+                "1688_sku_name": "黑色",
+                "1688_spec_text": "黑色>44mm裸壳",
+                "1688_sku_second_name": "44mm裸殼",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b1949cf221b601f5e49afd85",
+                "1688_verified_at": "2026-08-15T16:49:53Z",
+                "1688_offer_fingerprint": "ea0788f6084a952db881fba1486f34d379300fc034726af28b6b5909efd21bcc",
+                "1688_last_price_cny": 4.5
             }
         ]
     },
@@ -82050,8 +82672,9 @@
                 "建議補貨數量": 0,
                 "阿里巴巴商品名稱": "",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/689044286911.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:46:25Z"
             },
             {
                 "型號名稱": "綠色萌萌龍,3代",
@@ -91400,8 +92023,16 @@
                 "阿里巴巴商品名稱": "创意卡通相机适用于苹果Airpods1/2/3代保护壳套pro蓝牙耳机软壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/678931935965.html",
                 "1688_offer_id": "678931935965",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4870876309746",
+                "1688_sku_name": "相机",
+                "1688_spec_text": "相机>Airpods pro",
+                "1688_sku_second_name": "airpodspro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "006dd0beec228491c44eb6db",
+                "1688_verified_at": "2026-08-15T16:47:05Z",
+                "1688_offer_fingerprint": "1c594d475bdef104da476c1b17128cec926d5e60c6ff53be21029fc6ec77a889"
             },
             {
                 "型號名稱": "相機款,1代 / 2代",
@@ -91414,8 +92045,16 @@
                 "阿里巴巴商品名稱": "创意卡通相机适用于苹果Airpods1/2/3代保护壳套pro蓝牙耳机软壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/678931935965.html",
                 "1688_offer_id": "678931935965",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4870876309745",
+                "1688_sku_name": "相机",
+                "1688_spec_text": "相机>airpods 1/2代",
+                "1688_sku_second_name": "airpods1/2代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "a9aae704bcd600adc50c642b",
+                "1688_verified_at": "2026-08-15T16:47:18Z",
+                "1688_offer_fingerprint": "1c594d475bdef104da476c1b17128cec926d5e60c6ff53be21029fc6ec77a889"
             },
             {
                 "型號名稱": "相機款,3代",
@@ -91428,8 +92067,16 @@
                 "阿里巴巴商品名稱": "创意卡通相机适用于苹果Airpods1/2/3代保护壳套pro蓝牙耳机软壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/678931935965.html",
                 "1688_offer_id": "678931935965",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4870876309747",
+                "1688_sku_name": "相机",
+                "1688_spec_text": "相机>Airpods 3 代（新款）",
+                "1688_sku_second_name": "airpods3代(新款)",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "d4c87c8ec6f0a749b1456021",
+                "1688_verified_at": "2026-08-15T16:47:14Z",
+                "1688_offer_fingerprint": "1c594d475bdef104da476c1b17128cec926d5e60c6ff53be21029fc6ec77a889"
             }
         ]
     },
@@ -91450,8 +92097,16 @@
                 "阿里巴巴商品名稱": "秋冬毛绒眼睛仔适用苹果AirPods 123代蓝牙耳机保护套Pro2耳机壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/703698049570.html",
                 "1688_offer_id": "703698049570",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4957072497638",
+                "1688_sku_name": "奶茶色毛绒眼睛仔耳机殼",
+                "1688_spec_text": "奶茶色毛绒眼睛仔耳机壳>苹果AirPods Pro",
+                "1688_sku_second_name": "苹果airpodspro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "a8f6ae33b03f2c04a81ff02d",
+                "1688_verified_at": "2026-08-15T16:50:40Z",
+                "1688_offer_fingerprint": "4b511386b7cfff029d4d69ac162bd04437431606655f09e813cffbb6c0abcdd7"
             },
             {
                 "型號名稱": "白色,Pro1代 / Pro2代 (通用）",
@@ -91463,8 +92118,16 @@
                 "阿里巴巴商品名稱": "秋冬毛绒眼睛仔适用苹果AirPods 123代蓝牙耳机保护套Pro2耳机壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/703698049570.html",
                 "1688_offer_id": "703698049570",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4957072497634",
+                "1688_sku_name": "白色毛绒眼睛仔耳机殼",
+                "1688_spec_text": "白色毛绒眼睛仔耳机壳>苹果AirPods Pro",
+                "1688_sku_second_name": "苹果airpodspro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "7c60ecfd4df914042a264a83",
+                "1688_verified_at": "2026-08-15T16:50:43Z",
+                "1688_offer_fingerprint": "4b511386b7cfff029d4d69ac162bd04437431606655f09e813cffbb6c0abcdd7"
             },
             {
                 "型號名稱": "奶茶色,1代 / 2代",
@@ -91476,8 +92139,16 @@
                 "阿里巴巴商品名稱": "秋冬毛绒眼睛仔适用苹果AirPods 123代蓝牙耳机保护套Pro2耳机壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/703698049570.html",
                 "1688_offer_id": "703698049570",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4957072497635",
+                "1688_sku_name": "奶茶色毛绒眼睛仔耳机殼",
+                "1688_spec_text": "奶茶色毛绒眼睛仔耳机壳>AirPods 一二代",
+                "1688_sku_second_name": "airpods一二代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "2a54ba64660187606e2b766b",
+                "1688_verified_at": "2026-08-15T16:50:53Z",
+                "1688_offer_fingerprint": "4b511386b7cfff029d4d69ac162bd04437431606655f09e813cffbb6c0abcdd7"
             },
             {
                 "型號名稱": "奶茶色,3代",
@@ -91490,8 +92161,16 @@
                 "阿里巴巴商品名稱": "秋冬毛绒眼睛仔适用苹果AirPods 123代蓝牙耳机保护套Pro2耳机壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/703698049570.html",
                 "1688_offer_id": "703698049570",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4957072497636",
+                "1688_sku_name": "奶茶色毛绒眼睛仔耳机殼",
+                "1688_spec_text": "奶茶色毛绒眼睛仔耳机壳>苹果AirPods 3(2021款)",
+                "1688_sku_second_name": "苹果airpods3(2021款)",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "8b0e7b1c9b1c636a275cb61b",
+                "1688_verified_at": "2026-08-15T16:50:58Z",
+                "1688_offer_fingerprint": "4b511386b7cfff029d4d69ac162bd04437431606655f09e813cffbb6c0abcdd7"
             },
             {
                 "型號名稱": "白色,1代 / 2代",
@@ -91503,8 +92182,16 @@
                 "阿里巴巴商品名稱": "秋冬毛绒眼睛仔适用苹果AirPods 123代蓝牙耳机保护套Pro2耳机壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/703698049570.html",
                 "1688_offer_id": "703698049570",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4957072497631",
+                "1688_sku_name": "白色毛绒眼睛仔耳机殼",
+                "1688_spec_text": "白色毛绒眼睛仔耳机壳>AirPods 一二代",
+                "1688_sku_second_name": "airpods一二代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "e0b0466370d9ee1c8058378a",
+                "1688_verified_at": "2026-08-15T16:51:18Z",
+                "1688_offer_fingerprint": "4b511386b7cfff029d4d69ac162bd04437431606655f09e813cffbb6c0abcdd7"
             },
             {
                 "型號名稱": "白色,3代",
@@ -91517,8 +92204,16 @@
                 "阿里巴巴商品名稱": "秋冬毛绒眼睛仔适用苹果AirPods 123代蓝牙耳机保护套Pro2耳机壳",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/703698049570.html",
                 "1688_offer_id": "703698049570",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4957072497632",
+                "1688_sku_name": "白色毛绒眼睛仔耳机殼",
+                "1688_spec_text": "白色毛绒眼睛仔耳机壳>苹果AirPods 3(2021款)",
+                "1688_sku_second_name": "苹果airpods3(2021款)",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "e1410a3c20d758e4a9963f31",
+                "1688_verified_at": "2026-08-15T16:51:20Z",
+                "1688_offer_fingerprint": "4b511386b7cfff029d4d69ac162bd04437431606655f09e813cffbb6c0abcdd7"
             }
         ]
     },
@@ -91876,10 +92571,19 @@
                 "商品庫存": "5",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukz-lkilmd8k1eew28_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/703696473747.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "抹茶绿花朵适用苹果AirPods 4代蓝牙耳机保护套Pro2苹果耳机壳3代 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/703698489478.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "703698489478",
+                "1688_offer_fingerprint": "8137d04146530f775bfb70eae595453257e8c5007b53bcf560d8809f02371baf",
+                "1688_sku_id": "4952563212106",
+                "1688_sku_name": "抹茶綠花朵耳机殼+花朵掛件",
+                "1688_sku_second_name": "airpods一二代",
+                "1688_spec_text": "抹茶绿花朵耳机壳+花朵挂件>AirPods 一二代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b927dd198512338bcd2bdfe1",
+                "1688_verified_at": "2026-08-15T17:15:42Z"
             },
             {
                 "型號名稱": "抹茶綠向日葵+圖上吊飾,Pro1代/Pro2代 (通用）",
@@ -91888,10 +92592,19 @@
                 "商品庫存": "8",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukz-lkilmd8k1eew28_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/703696473747.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "抹茶绿花朵适用苹果AirPods 4代蓝牙耳机保护套Pro2苹果耳机壳3代 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/703698489478.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "703698489478",
+                "1688_offer_fingerprint": "8137d04146530f775bfb70eae595453257e8c5007b53bcf560d8809f02371baf",
+                "1688_sku_id": "4952563212105",
+                "1688_sku_name": "抹茶綠花朵耳机殼+花朵掛件",
+                "1688_sku_second_name": "airpodspro苹果藍牙耳机",
+                "1688_spec_text": "抹茶绿花朵耳机壳+花朵挂件>AirPods pro苹果蓝牙耳机",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b27aa5af6b2aa5495adeacf0",
+                "1688_verified_at": "2026-08-15T17:15:42Z"
             },
             {
                 "型號名稱": "抹茶綠向日葵+圖上吊飾,3代",
@@ -91900,10 +92613,19 @@
                 "商品庫存": "5",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qukz-lkilmd8k1eew28_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/703696473747.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "抹茶绿花朵适用苹果AirPods 4代蓝牙耳机保护套Pro2苹果耳机壳3代 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/703698489478.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "703698489478",
+                "1688_offer_fingerprint": "8137d04146530f775bfb70eae595453257e8c5007b53bcf560d8809f02371baf",
+                "1688_sku_id": "4952563212107",
+                "1688_sku_name": "抹茶綠花朵耳机殼+花朵掛件",
+                "1688_sku_second_name": "苹果airpods3(2021款)",
+                "1688_spec_text": "抹茶绿花朵耳机壳+花朵挂件>苹果AirPods 3(2021款)",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b6f397f22c106809412ddfef",
+                "1688_verified_at": "2026-08-15T17:15:42Z"
             },
             {
                 "型號名稱": "抹茶綠奶白愛心+圖上掛飾,1代/2代",
@@ -91984,10 +92706,19 @@
                 "商品庫存": "8",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul7-lkilmd8lejrq3f_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/703696473747.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "星星花朵适用苹果AirPods Pro2代蓝牙耳机保护套苹果4代耳机壳3代 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/728131004957.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "728131004957",
+                "1688_offer_fingerprint": "47cdb412a3af70ceb0f6b62317ad52569a225e58b7aa42cc6bfab6d1c9eaa5f8",
+                "1688_sku_id": "5220772370020",
+                "1688_sku_name": "星星蝴蝶高透耳机殼+圓环",
+                "1688_sku_second_name": "airpods一二代",
+                "1688_spec_text": "星星蝴蝶高透耳机壳+圆环>AirPods 一二代",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "0ee5bafde7ef2980e2dc1448",
+                "1688_verified_at": "2026-08-15T17:38:30Z"
             },
             {
                 "型號名稱": "星星蝴蝶+圖上掛飾,Pro1代/Pro2代 (通用）",
@@ -91996,10 +92727,19 @@
                 "商品庫存": "7",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul7-lkilmd8lejrq3f_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/703696473747.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "星星花朵适用苹果AirPods Pro2代蓝牙耳机保护套苹果4代耳机壳3代 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/728131004957.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "728131004957",
+                "1688_offer_fingerprint": "47cdb412a3af70ceb0f6b62317ad52569a225e58b7aa42cc6bfab6d1c9eaa5f8",
+                "1688_sku_id": "5220772370026",
+                "1688_sku_name": "星星蝴蝶高透耳机殼+圓环",
+                "1688_sku_second_name": "苹果airpodspro",
+                "1688_spec_text": "星星蝴蝶高透耳机壳+圆环>苹果AirPods Pro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "6e0f8a0d3f4750340e66399d",
+                "1688_verified_at": "2026-08-15T17:38:30Z"
             },
             {
                 "型號名稱": "星星蝴蝶+圖上掛飾,3代",
@@ -92008,10 +92748,19 @@
                 "商品庫存": "2",
                 "型號圖片網址": "https://cf.shopee.tw/file/tw-11134207-7qul7-lkilmd8lejrq3f_tn",
                 "建議補貨數量": 0,
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "https://detail.1688.com/offer/703696473747.html",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "星星花朵适用苹果AirPods Pro2代蓝牙耳机保护套苹果4代耳机壳3代 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/728131004957.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "728131004957",
+                "1688_offer_fingerprint": "47cdb412a3af70ceb0f6b62317ad52569a225e58b7aa42cc6bfab6d1c9eaa5f8",
+                "1688_sku_id": "5220772370023",
+                "1688_sku_name": "星星蝴蝶高透耳机殼+圓环",
+                "1688_sku_second_name": "苹果airpods3(2021款)",
+                "1688_spec_text": "星星蝴蝶高透耳机壳+圆环>苹果AirPods 3(2021款)",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "504bc93a1e81726a2a86ebb8",
+                "1688_verified_at": "2026-08-15T17:38:30Z"
             },
             {
                 "型號名稱": "可愛奶酪+圖上掛飾,1代/2代",
@@ -92937,8 +93686,9 @@
                 "阿里巴巴商品名稱": "韩版夏季短款内搭性感v领冰丝针织衫短袖心机t恤上衣女泫雅风薄款",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/618449692308.html",
                 "1688_offer_id": "618449692308",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:46:26Z"
             },
             {
                 "型號名稱": "白色,M",
@@ -92950,8 +93700,9 @@
                 "阿里巴巴商品名稱": "韩版夏季短款内搭性感v领冰丝针织衫短袖心机t恤上衣女泫雅风薄款",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/618449692308.html",
                 "1688_offer_id": "618449692308",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:46:26Z"
             },
             {
                 "型號名稱": "白色,L",
@@ -92963,8 +93714,9 @@
                 "阿里巴巴商品名稱": "韩版夏季短款内搭性感v领冰丝针织衫短袖心机t恤上衣女泫雅风薄款",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/618449692308.html",
                 "1688_offer_id": "618449692308",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "discontinued",
+                "1688_mapping_source": "manual",
+                "1688_verified_at": "2026-08-15T16:46:26Z"
             },
             {
                 "型號名稱": "黑色,S",
@@ -95163,8 +95915,17 @@
                 "阿里巴巴商品名稱": "大江卡通秋田犬植绒地毯地垫 家用卫生间门口浴室防滑垫吸水脚垫",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/587334245624.html",
                 "1688_offer_id": "587334245624",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "ai_reviewed",
+                "1688_sku_id": "4163241434911",
+                "1688_sku_name": "秋田犬",
+                "1688_spec_text": "秋田犬>50*80cm",
+                "1688_sku_second_name": "50*80cm",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "fc2893aea89a5b34d1c6d051",
+                "1688_verified_at": "2026-08-15T16:45:29Z",
+                "1688_offer_fingerprint": "0b5676bd1dd562338d2dad3064fa22ac945190ea9b8d290efbbe59b2dc525794",
+                "1688_last_price_cny": 35.9
             },
             {
                 "型號名稱": "柯基",

@@ -1890,6 +1890,40 @@ class SkuMappingServiceTest(unittest.TestCase):
             row = conn.execute("SELECT scope,total FROM sku_mapping_runs WHERE job_id=?", (job["jobId"],)).fetchone()
         self.assertEqual((row["scope"], row["total"]), ("url_health_visible", 1))
 
+    def test_stale_persisted_job_is_released_before_new_reanalysis(self):
+        stale_job_id = f"sku-map-review-{int(time.time())}-{os.getpid()}-deadbeef"
+        now = int(time.time())
+        with self.service.connect() as conn:
+            conn.execute(
+                "INSERT INTO sku_mapping_runs(job_id,status,scope,created_at,updated_at) VALUES(?,?,?,?,?)",
+                (stale_job_id, "running", "existing_snapshots", now, now),
+            )
+
+        with patch.object(self.service, "_snapshot_reanalysis_worker"):
+            job = self.service.start_snapshot_reanalysis(targets=[{"productId": "p-socks", "modelId": "sock-white"}])
+
+        self.assertTrue(job["jobId"])
+        with self.service.connect() as conn:
+            row = conn.execute(
+                "SELECT status,error,message FROM sku_mapping_runs WHERE job_id=?",
+                (stale_job_id,),
+            ).fetchone()
+        self.assertEqual(row["status"], "error")
+        self.assertEqual(row["error"], "worker_not_running")
+        self.assertIn("解除殘留工作鎖", row["message"])
+
+    def test_dead_in_memory_worker_does_not_block_new_job(self):
+        stale_job_id = "orphaned-in-memory-job"
+        self.service._jobs[stale_job_id] = {"jobId": stale_job_id, "status": "running"}
+        self.service._job_threads[stale_job_id] = MagicMock(is_alive=MagicMock(return_value=False))
+
+        with patch.object(self.service, "_snapshot_reanalysis_worker"):
+            job = self.service.start_snapshot_reanalysis(targets=[{"productId": "p-socks", "modelId": "sock-white"}])
+
+        self.assertTrue(job["jobId"])
+        self.assertEqual(self.service._jobs[stale_job_id]["status"], "error")
+        self.assertEqual(self.service._jobs[stale_job_id]["error"], "worker_not_running")
+
     def test_url_health_history_drives_independent_filter_and_expiry(self):
         now = int(time.time())
         with self.service.connect() as conn:
