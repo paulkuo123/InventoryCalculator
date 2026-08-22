@@ -589,7 +589,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!response.ok || data.status !== 'success') {
                     throw new Error(data.message || '啟動 1688 補貨流程失敗');
                 }
-                alert(data.message || '已啟動 1688 補貨流程。');
             })
             .catch(error => {
                 console.error('1688 補貨流程失敗:', error);

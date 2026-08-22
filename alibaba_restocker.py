@@ -8,6 +8,8 @@ import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional
 
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from housekeeping import prune_generated_files
@@ -904,6 +906,31 @@ def launch_dedicated_context(playwright, profile_dir: str, headless: bool):
         ), "Playwright Chromium"
 
 
+def wait_for_inspection_or_page_close(page, pause_seconds: int, debug: DebugLogger) -> str:
+    """保留頁面供人工檢查，但在使用者關閉頁面時立即結束。"""
+    if pause_seconds <= 0:
+        return "disabled"
+
+    timeout_ms = int(pause_seconds * 1000)
+    if page.is_closed():
+        debug.log("inspection_page_already_closed")
+        return "page_closed"
+
+    try:
+        # 只等待本機瀏覽器事件，不輪詢或操作 1688 網頁。
+        page.wait_for_event("close", timeout=timeout_ms)
+    except PlaywrightTimeoutError:
+        debug.log("inspection_wait_timeout", {"pauseSeconds": pause_seconds})
+        return "timeout"
+    except PlaywrightError as e:
+        # 關閉整個瀏覽器時，部分 Chrome 版本會回報連線已關閉。
+        debug.log("inspection_browser_closed", {"message": str(e)})
+        return "page_closed"
+
+    debug.log("inspection_page_closed")
+    return "page_closed"
+
+
 def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause_seconds: int = 300) -> None:
     product_id = str(payload.get("productId") or "")
     product_name = str(payload.get("productName") or "")
@@ -1161,8 +1188,13 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
 
         if pause_seconds > 0:
             final_action = "已嘗試按「加采购车」。" if add_to_cart else "未按加采购车。"
-            print(f"瀏覽器會保留 {pause_seconds} 秒供檢查。{final_action}", flush=True)
-            time.sleep(pause_seconds)
+            print(
+                f"瀏覽器最多保留 {pause_seconds} 秒供檢查；關閉視窗即可立即結束。{final_action}",
+                flush=True,
+            )
+            wait_result = wait_for_inspection_or_page_close(page, pause_seconds, debug)
+            if wait_result == "page_closed":
+                print("已偵測到 1688 視窗關閉，補貨流程立即結束。", flush=True)
 
         context.close()
 
