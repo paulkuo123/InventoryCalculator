@@ -296,8 +296,14 @@ class ShopeeCrawler:
                 By.XPATH,
                 "//div[contains(@class, 'product-more-models__content')]//button[contains(@class, 'eds-button--link')]"
             )
-            print(f"找到 {len(buttons)} 個展開更多型號按鈕")
-            return buttons
+            # 展開後同一顆按鈕會變成「隱藏／收起」；不可再次點擊把型號收回去。
+            expand_buttons = [
+                button for button in buttons
+                if button.is_displayed()
+                and not re.search(r"隱藏|收起|hide|collapse", button.text, re.IGNORECASE)
+            ]
+            print(f"找到 {len(expand_buttons)} 個展開更多型號按鈕")
+            return expand_buttons
 
         except Exception as e:
             print(f"尋找展開按鈕時發生錯誤: {e}")
@@ -305,8 +311,7 @@ class ShopeeCrawler:
 
     def click_matched_buttons(self, buttons):
         """
-        點擊展開更多型號按鈕
-        優化：移除不必要的延遲，使用批次處理
+        逐一點擊展開更多型號按鈕，確認該商品的型號數增加後再處理下一個。
         """
         total_buttons = len(buttons)
         if total_buttons == 0:
@@ -318,17 +323,58 @@ class ShopeeCrawler:
 
         for i, button in enumerate(buttons, 1):
             try:
+                row_state = self.driver.execute_script(r"""
+                    const button = arguments[0];
+                    const row = button.closest('.eds-table__row');
+                    if (!row) return null;
+                    const idText = row.querySelector('.item-id')?.textContent || '';
+                    const href = row.querySelector('a.product-name-wrap[href]')?.getAttribute('href') || '';
+                    const inputName = row.querySelector('input.eds-checkbox__input[name]')?.getAttribute('name') || '';
+                    const productId = idText.match(/商品\s*ID:\s*(\d+)/)?.[1]
+                        || href.match(/\/portal\/product\/(\d+)/)?.[1]
+                        || (/^\d+$/.test(inputName) ? inputName : '');
+                    return {
+                        productId,
+                        modelCount: row.querySelectorAll('.model-list-item').length
+                    };
+                """, button)
+                before_count = int((row_state or {}).get("modelCount") or 0)
+                product_id = str((row_state or {}).get("productId") or "")
+
                 # 確保元素可見
                 WebDriverWait(self.driver, 1).until(EC.visibility_of(button))
 
                 # 優先嘗試直接點擊
                 try:
                     button.click()
-                    success_count += 1
                 except Exception:
                     # 如果失敗，使用 JavaScript 點擊
                     self.driver.execute_script("arguments[0].click();", button)
-                    success_count += 1
+
+                # 多商品搜尋時頁面會逐列重繪；等這一列真的多出型號再點下一列。
+                if product_id and before_count > 0:
+                    def models_are_expanded(_driver):
+                        return int(self.page.evaluate(r"""
+                            ({ productId, beforeCount }) => {
+                                const rows = Array.from(document.querySelectorAll('.eds-table__row'));
+                                const row = rows.find((candidate) => {
+                                    const idText = candidate.querySelector('.item-id')?.textContent || '';
+                                    const href = candidate.querySelector('a.product-name-wrap[href]')?.getAttribute('href') || '';
+                                    const inputName = candidate.querySelector('input.eds-checkbox__input[name]')?.getAttribute('name') || '';
+                                    return idText.match(/商品\s*ID:\s*(\d+)/)?.[1] === productId
+                                        || href.match(/\/portal\/product\/(\d+)/)?.[1] === productId
+                                        || inputName === productId;
+                                });
+                                if (!row) return 0;
+                                const modelCount = row.querySelectorAll('.model-list-item').length;
+                                return modelCount > beforeCount ? modelCount : 0;
+                            }
+                        """, {"productId": product_id, "beforeCount": before_count}) or 0)
+
+                    after_count = WebDriverWait(self.driver, 3).until(models_are_expanded)
+                    print(f"  - 商品 {product_id} 型號已展開：{before_count} -> {after_count}")
+
+                success_count += 1
 
             except Exception as e:
                 # 記錄錯誤但繼續處理其他按鈕
@@ -2716,7 +2762,7 @@ class ShopeeCrawler:
                     more_buttons = self.find_more_items_buttons()
                     if more_buttons:
                         self.click_matched_buttons(more_buttons)
-                        time.sleep(0.3)  # 等待展開動畫完成
+                        time.sleep(0.3)  # 全部展開後再讓頁面短暫穩定，保留原有節奏
                     else:
                         print("沒有找到「展開更多型號」按鈕，跳過此步驟")
                 except Exception as e:
