@@ -97,6 +97,7 @@ from cookie_import import MAX_COOKIE_IMPORT_BYTES, save_shopee_cookies
 from sku_mapping_service import MappingConflict, SkuMappingService, mapping_candidate_key, prune_golden_table_backups
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 from housekeeping import remove_files, remove_stale_matching_files
+from restock_rules import resolve_restock_quantity, validate_restock_sku_count
 
 # 導入版本管理
 
@@ -225,6 +226,9 @@ logger.info(f"操作系統: {os.name}, Python版本: {sys.version}")
 PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
 FILE_NAME = get_resource_path("index.html")
 current_crawler_process = None
+ALIBABA_RESTOCK_SESSION_CLOSED_MARKER = "__INVENTORY_1688_SESSION_CLOSED__"
+alibaba_restock_jobs = {}
+alibaba_restock_jobs_lock = threading.Lock()
 inbound_jobs = {}
 inbound_jobs_lock = threading.Lock()
 sku_mapping_service = None
@@ -351,6 +355,13 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
+        restock_job_match = re.match(r'^/api/alibaba-restock/jobs/([a-f0-9]+)$', request_path)
+        if restock_job_match:
+            try:
+                self._send_json_response(200, self._read_alibaba_restock_job(restock_job_match.group(1)))
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            return
         if request_path == '/api/inbound/status':
             self._send_json_response(200, self._inbound_status())
             return
@@ -1386,6 +1397,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         except (OSError, json.JSONDecodeError):
             return {}
 
+    @staticmethod
+    def _read_alibaba_restock_job(job_id):
+        with alibaba_restock_jobs_lock:
+            job = alibaba_restock_jobs.get(job_id)
+            if not job:
+                raise FileNotFoundError("找不到 1688 補貨工作")
+            return {key: value for key, value in job.items() if not key.startswith("_")}
+
     def _read_inbound_job(self, job_id):
         with inbound_jobs_lock:
             job = inbound_jobs.get(job_id)
@@ -2021,6 +2040,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         items = restock_payload["items"]
         if not items:
             raise ValueError("沒有可啟動 1688 採購車流程的有效型號")
+        validate_restock_sku_count(len(items))
 
         script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alibaba_restocker.py")
         if not os.path.exists(script_path):
@@ -2041,6 +2061,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             tempfile.gettempdir(),
             f"alibaba_restock_result_{product_id}_{int(time.time())}.json"
         )
+        job_id = uuid.uuid4().hex
 
         cmd = [
             os.path.abspath(sys.executable),
@@ -2070,11 +2091,60 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 logger.warning("1688 採購車啟動失敗後無法刪除暫存檔: %s", failed_cleanup)
             raise
         current_crawler_process = process
+        with alibaba_restock_jobs_lock:
+            alibaba_restock_jobs[job_id] = {
+                "jobId": job_id,
+                "status": "running",
+                "message": "1688 補貨流程執行中",
+                "startedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                "itemCount": len(items),
+                "totalQty": sum(item["restockQty"] for item in items),
+            }
+
+        def publish_worker_result(worker_result=None, fallback_message=""):
+            result = worker_result if isinstance(worker_result, dict) else self._load_json_if_exists(output_path)
+            with alibaba_restock_jobs_lock:
+                job = alibaba_restock_jobs.get(job_id)
+                if not job or job.get("status") in ("completed", "failed"):
+                    return bool(result)
+                if result:
+                    job.update({
+                        "status": "completed",
+                        "message": result.get("message") or "1688 補貨流程已完成",
+                        "completedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                        "result": result,
+                    })
+                    return True
+                if fallback_message:
+                    job.update({
+                        "status": "failed",
+                        "message": fallback_message,
+                        "completedAt": datetime.datetime.now().isoformat(timespec="seconds"),
+                    })
+            return False
+
+        def watch_result_file():
+            # 只輪詢本機結果檔，不會向 1688 發送任何額外請求。
+            while process.poll() is None:
+                if publish_worker_result():
+                    return
+                time.sleep(0.5)
+            if not publish_worker_result():
+                publish_worker_result(fallback_message=f"1688 補貨流程異常結束（返回碼 {process.returncode}）")
 
         def read_output(pipe, prefix):
+            global current_crawler_process
             try:
                 for line in pipe:
                     line_text = line.strip()
+                    if line_text == ALIBABA_RESTOCK_SESSION_CLOSED_MARKER:
+                        # Worker 已寫完結果，使用者也已關閉 Chrome。
+                        # Playwright 的本機清理偶爾還會拖幾秒，不讓這段
+                        # 純清理時間繼續擋住下一次補貨。
+                        if current_crawler_process is process:
+                            current_crawler_process = None
+                            logger.info("1688 視窗已關閉，已提前解除補貨執行中狀態")
+                        continue
                     if line_text:
                         print(f"{prefix}: {line_text}")
                         logger.info(f"{prefix}: {line_text}")
@@ -2090,6 +2160,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 process.wait()
                 logger.info(f"1688 採購車流程完成，返回碼: {process.returncode}")
             finally:
+                if not publish_worker_result():
+                    publish_worker_result(fallback_message=f"1688 補貨流程未產生結果（返回碼 {process.returncode}）")
                 if current_crawler_process is process:
                     current_crawler_process = None
                 failed_cleanup = remove_files((input_path, output_path))
@@ -2098,11 +2170,13 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
         threading.Thread(target=read_output, args=(process.stdout, "1688採購車輸出"), daemon=True).start()
         threading.Thread(target=read_output, args=(process.stderr, "1688採購車錯誤"), daemon=True).start()
+        threading.Thread(target=watch_result_file, daemon=True).start()
         threading.Thread(target=wait_and_clear, daemon=True).start()
 
         return {
             "status": "success",
             "message": f"已啟動 1688 採購車流程：{len(items)} 個型號。瀏覽器會保留約 {payload.get('pauseSeconds') or 300} 秒供檢查。",
+            "jobId": job_id,
             "draftId": restock_payload.get("draftId"),
             "productId": restock_payload.get("productId", ""),
             "itemCount": len(items),
@@ -2276,14 +2350,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         return str(line.get("alibaba_product_url") or line.get("alibabaProductUrl") or line.get("alibabaUrl") or "").strip()
 
     def _line_restock_qty(self, line):
-        for key in ("adjusted_qty", "adjustedQty", "restockQty", "suggested_qty", "suggestedQty"):
-            try:
-                qty = int(float(line.get(key) or 0))
-            except (TypeError, ValueError):
-                qty = 0
-            if qty > 0:
-                return self._round_restock_qty(qty)
-        return 0
+        return resolve_restock_quantity(line, self._round_restock_qty)
 
     def _round_restock_qty(self, quantity):
         qty = int(quantity or 0)
