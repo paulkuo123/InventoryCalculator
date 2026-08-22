@@ -223,6 +223,17 @@
             <p id="statusMessage" class="status-message">初始化爬蟲...</p>
             <p>這可能需要幾分鐘時間，取決於商品數量</p>
         </div>
+
+        <div id="batchRestockToolbar" class="card batch-restock-toolbar" hidden>
+            <div>
+                <strong><i class="fas fa-cart-plus"></i> 批次 1688 補貨</strong>
+                <p id="batchRestockToolbarSummary">搜尋後可選擇多個商品依序加入採購車。</p>
+            </div>
+            <button id="openBatchRestockButton" type="button" class="btn-primary">
+                <i class="fas fa-list-check"></i>
+                選擇商品並批次補貨
+            </button>
+        </div>
         
         <div class="table-container">
             <table class="product-list" id="productTable">
@@ -242,6 +253,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260809-cookie-import1"></script>
+    <script src="script.js?v=20260822-cart-limit-result"></script>
 </body>
 </html>
