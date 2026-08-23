@@ -85,6 +85,23 @@
             </div>
         </div>
 
+        <div class="card cookie-import-card shopee-products-import-card">
+            <div class="cookie-import-header">
+                <div>
+                    <h3><i class="fas fa-file-import"></i> 手動匯入 shopee_products.json</h3>
+                    <p>選擇 crawler 已成功產出的 JSON；不會重新執行 /search crawler，匯入後直接沿用主頁庫存、篩選與 1688 補貨流程。</p>
+                </div>
+            </div>
+            <div class="shopee-products-import-actions">
+                <input id="shopeeProductsFile" type="file">
+                <button id="shopeeProductsImportButton" class="btn-secondary" type="button" disabled>
+                    <i class="fas fa-file-import"></i>
+                    匯入並套用
+                </button>
+                <span id="shopeeProductsImportStatus" class="shopee-products-import-status" role="status" aria-live="polite"></span>
+            </div>
+        </div>
+
         <div class="card cookie-import-card">
             <div class="cookie-import-header">
                 <div>
@@ -253,6 +270,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260822-cart-limit-result"></script>
+    <script src="script.js?v=20260823-restock-minimum"></script>
 </body>
 </html>

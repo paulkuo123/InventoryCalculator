@@ -41,11 +41,15 @@ cd InventoryCalculator
 ```
 
 ### 瀏覽器設置
-1688 SKU live scan 透過 **ego-lite / ego-browser** 開啟商品頁，沿用 ego-lite 的登入狀態與獨立 task space；不會再啟動 Google Chrome。
+1688 SKU live scan 與「開啟 1688 加採購車」都優先透過 **ego-lite / ego-browser** 開啟商品頁，沿用 ego-lite 的登入狀態與各自獨立的 task space。若電腦沒有安裝 `ego-browser`，採購車流程會自動退回 Google Chrome；Chrome 無法啟動時再退回 Playwright Chromium。
 
 **必要條件**：
-1. 確認 ego-lite 已安裝並可由 `ego-browser nodejs` 控制
-2. 若 1688 出現登入或滑塊驗證，系統會保留 ego-lite 頁面，完成後再重新掃描
+1. 建議安裝 ego-lite 並確認可由 `ego-browser nodejs` 控制；未安裝仍可使用 Chrome／Playwright Chromium 採購車流程
+2. 若 1688 出現登入或滑塊驗證，系統會保留目前選定瀏覽器的頁面，完成後再重新執行
+
+預設 Task Space 為 `InventoryCalculater 1688 live scan`（唯讀掃描）及 `InventoryCalculater 1688 restock`（採購車）；可分別用 `EGO_BROWSER_TASK_SPACE`、`EGO_BROWSER_RESTOCK_TASK_SPACE` 覆寫。
+
+`ALIBABA_RESTOCK_BROWSER=auto` 是預設值；也可設成 `ego` 強制要求 ego-lite，或設成 `playwright` 讓沒有／不使用 ego-lite 的環境固定走 Chrome／Chromium。ego-lite 已被選用後若發生執行、登入或驗證錯誤，不會中途切換瀏覽器。
 
 舊有蝦皮爬蟲仍可使用 Playwright Chromium；這與 1688 SKU live scan 的瀏覽器路徑分開。
 

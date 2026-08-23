@@ -6,12 +6,14 @@ import os
 import re
 import time
 from collections import defaultdict
+from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
 
 from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
+from ego_browser_page import EgoBrowserContext
 from housekeeping import prune_generated_files
 
 
@@ -1012,22 +1014,39 @@ def dismiss_cart_feedback(page) -> Dict[str, Any]:
         return {"ok": False, "message": str(e)}
 
 
-def launch_dedicated_context(playwright, profile_dir: str, headless: bool):
+def resolve_restock_browser_backend() -> str:
+    configured = str(os.environ.get("ALIBABA_RESTOCK_BROWSER", "auto")).strip().lower() or "auto"
+    if configured not in {"auto", "ego", "playwright"}:
+        raise ValueError("ALIBABA_RESTOCK_BROWSER 必須是 auto、ego 或 playwright")
+    if configured == "playwright":
+        return "playwright"
+    if EgoBrowserContext.is_available():
+        return "ego"
+    if configured == "ego":
+        raise RuntimeError("ALIBABA_RESTOCK_BROWSER=ego，但找不到可執行的 ego-browser 指令")
+    return "playwright"
+
+
+def launch_dedicated_context(backend: str, playwright, profile_dir: str, headless: bool):
+    if backend == "ego":
+        return EgoBrowserContext(), "ego-lite"
+    if backend != "playwright":
+        raise ValueError(f"不支援的 1688 瀏覽器 backend：{backend}")
+
     launch_options = {
         "headless": headless,
         "viewport": {"width": 1440, "height": 1000},
         "locale": "zh-CN",
         "args": ["--disable-blink-features=AutomationControlled"],
     }
-
     try:
         return playwright.chromium.launch_persistent_context(
             profile_dir,
             channel="chrome",
             **launch_options,
         ), "Google Chrome"
-    except Exception as e:
-        print(f"啟動 Google Chrome 失敗，改用 Playwright Chromium：{e}", flush=True)
+    except Exception as exc:
+        print(f"啟動 Google Chrome 失敗，改用 Playwright Chromium：{exc}", flush=True)
         return playwright.chromium.launch_persistent_context(
             profile_dir,
             **launch_options,
@@ -1045,14 +1064,13 @@ def wait_for_inspection_or_page_close(page, pause_seconds: int, debug: DebugLogg
         return "page_closed"
 
     try:
-        # Playwright 只等待本機瀏覽器的 close 事件，不會輪詢或操作 1688 網頁。
+        # 只等待 ego-lite 頁面關閉，不操作 1688 網頁。
         page.wait_for_event("close", timeout=timeout_ms)
     except PlaywrightTimeoutError:
         debug.log("inspection_wait_timeout", {"pauseSeconds": pause_seconds})
         return "timeout"
     except PlaywrightError as e:
-        # 使用者關閉整個瀏覽器時，部分 Chrome 版本可能回報連線已關閉，
-        # 對保留檢查階段而言等同於頁面已關閉。
+        # 使用者關閉頁面或取回 Task Space 控制時，對保留檢查階段而言等同結束。
         debug.log("inspection_browser_closed", {"message": str(e)})
         return "page_closed"
 
@@ -1112,11 +1130,16 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
         return
 
     profile_dir = os.path.join(base_dir, "alibaba_chrome_profile")
+    browser_backend = resolve_restock_browser_backend()
+    browser_runtime = nullcontext(None) if browser_backend == "ego" else sync_playwright()
 
-    with sync_playwright() as playwright:
-        context, browser_name = launch_dedicated_context(playwright, profile_dir, headless)
-        print(f"使用 1688 補貨專用瀏覽器：{browser_name}", flush=True)
-        print(f"1688 登入資料夾：{profile_dir}", flush=True)
+    with browser_runtime as playwright:
+        context, browser_name = launch_dedicated_context(browser_backend, playwright, profile_dir, headless)
+        if browser_name == "ego-lite":
+            print("使用 1688 補貨專用瀏覽器：ego-lite（沿用 ego-lite 登入狀態）", flush=True)
+        else:
+            print(f"使用 1688 補貨專用瀏覽器：{browser_name}", flush=True)
+            print(f"1688 登入資料夾：{profile_dir}", flush=True)
         page = context.pages[0] if context.pages else context.new_page()
 
         grouped_entries = list(grouped.items())
@@ -1404,8 +1427,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 print(SESSION_CLOSED_MARKER, flush=True)
                 debug.log("restock_session_released")
 
-        # 使用者已關閉專用 Chrome 視窗時，context.close() 是多餘的，
-        # 而且部分 Chrome 版本會在這裡額外卡住數十秒。
+        # 使用者已關閉 ego-lite 頁面時，不需再次關閉 Task Space。
         close_context_after_inspection(context, wait_result, debug)
 
 

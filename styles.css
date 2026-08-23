@@ -504,6 +504,24 @@ button {
     color: #c62828;
 }
 
+.shopee-products-import-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.shopee-products-import-status {
+    min-height: 22px;
+    color: var(--dark-gray);
+    font-size: 14px;
+}
+
+.shopee-products-import-status.success { color: #2e7d32; }
+.shopee-products-import-status.error { color: #c62828; }
+.shopee-products-import-status.loading { color: #2563c7; }
+
 @media (max-width: 768px) {
     .cookie-import-header {
         flex-direction: column;
@@ -516,6 +534,11 @@ button {
     .cookie-import-actions {
         align-items: stretch;
         flex-wrap: wrap;
+    }
+
+    .shopee-products-import-actions {
+        align-items: stretch;
+        flex-direction: column;
     }
 }
 

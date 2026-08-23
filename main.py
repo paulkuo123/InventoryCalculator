@@ -94,6 +94,12 @@ from ads_analysis import (
 )
 from config_loader import load_openai_api_key, load_openai_config_value
 from cookie_import import MAX_COOKIE_IMPORT_BYTES, save_shopee_cookies
+from shopee_products_import import (
+    MAX_SHOPEE_PRODUCTS_IMPORT_BYTES,
+    merge_shopee_products_with_golden,
+    replace_shopee_products,
+    validate_shopee_products,
+)
 from sku_mapping_service import MappingConflict, SkuMappingService, mapping_candidate_key, prune_golden_table_backups
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 from housekeeping import remove_files, remove_stale_matching_files
@@ -723,6 +729,44 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         request_path = urllib.parse.urlparse(self.path).path
 
+        if request_path == '/api/shopee-products/import':
+            try:
+                data = self._read_json_body(MAX_SHOPEE_PRODUCTS_IMPORT_BYTES)
+                validate_shopee_products(data)
+                golden_table = self._load_json_file(self._golden_table_path())
+                merged_products, match_counts = merge_shopee_products_with_golden(
+                    data, golden_table
+                )
+                replace_shopee_products(self._shopee_products_path(), merged_products)
+                self._send_json_response(200, {
+                    "status": "success",
+                    "message": "已匯入並合併最新 shopee_products.json；未執行 crawler",
+                    **match_counts,
+                    "products": merged_products,
+                })
+            except json.JSONDecodeError:
+                self._send_json_response(400, {
+                    "status": "error",
+                    "message": "匯入內容不是有效的 JSON 檔案",
+                })
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except OSError:
+                logger.exception("寫入 shopee_products.json 失敗")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": "shopee_products.json 寫入失敗，原檔未完成替換",
+                })
+            except Exception as e:
+                logger.exception(f"匯入 shopee_products.json 失敗: {e}")
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": "匯入商品資料失敗，請檢查檔案內容或伺服器日誌",
+                })
+            return
+
         if request_path == '/api/cookies/import':
             try:
                 content_length = int(self.headers.get('Content-Length', 0))
@@ -1336,9 +1380,20 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
 
-    def _read_json_body(self):
-        content_length = int(self.headers.get('Content-Length', 0))
-        post_data = self.rfile.read(content_length).decode('utf-8')
+    def _read_json_body(self, max_bytes=None):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+        except (TypeError, ValueError):
+            raise ValueError("請求內容長度無效")
+        if max_bytes is not None and content_length > max_bytes:
+            raise ValueError(f"匯入檔案過大，限制為 {max_bytes // (1024 * 1024)} MB")
+        post_data = self.rfile.read(content_length)
+        if len(post_data) != content_length:
+            raise ValueError("請求內容不完整")
+        try:
+            post_data = post_data.decode('utf-8')
+        except UnicodeDecodeError as e:
+            raise ValueError("匯入檔案必須使用 UTF-8 編碼") from e
         return json.loads(post_data) if post_data else {}
 
     def _procurement_store(self):
@@ -1656,6 +1711,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
     def _golden_table_path(self):
         return Path(os.path.dirname(os.path.abspath(__file__))) / "golden_table.json"
+
+    def _shopee_products_path(self):
+        return Path(os.path.dirname(os.path.abspath(__file__))) / "shopee_products.json"
 
     def _load_json_file(self, path):
         with open(path, "r", encoding="utf-8") as f:

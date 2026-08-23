@@ -38,6 +38,78 @@ def cart_items():
 
 
 class AlibabaRestockerTests(unittest.TestCase):
+    @patch.object(alibaba_restocker, "EgoBrowserContext")
+    def test_restock_browser_uses_ego_lite_context(self, context_class):
+        context = Mock()
+        context_class.return_value = context
+
+        actual, browser_name = alibaba_restocker.launch_dedicated_context("ego", None, "", False)
+
+        self.assertIs(actual, context)
+        self.assertEqual(browser_name, "ego-lite")
+        context_class.assert_called_once_with()
+
+    @patch.object(alibaba_restocker, "EgoBrowserContext", side_effect=RuntimeError("ego runtime failed"))
+    def test_ego_runtime_error_does_not_silently_switch_browser(self, _context_class):
+        with self.assertRaisesRegex(RuntimeError, "ego runtime failed"):
+            alibaba_restocker.launch_dedicated_context("ego", None, "", False)
+
+    def test_restock_browser_falls_back_to_google_chrome_without_ego_lite(self):
+        playwright = Mock()
+        context = Mock()
+        playwright.chromium.launch_persistent_context.return_value = context
+
+        actual, browser_name = alibaba_restocker.launch_dedicated_context(
+            "playwright", playwright, "/tmp/alibaba-profile", False
+        )
+
+        self.assertIs(actual, context)
+        self.assertEqual(browser_name, "Google Chrome")
+        kwargs = playwright.chromium.launch_persistent_context.call_args.kwargs
+        self.assertEqual(kwargs["channel"], "chrome")
+
+    def test_restock_browser_falls_back_to_playwright_chromium_when_chrome_fails(self):
+        playwright = Mock()
+        chromium_context = Mock()
+        playwright.chromium.launch_persistent_context.side_effect = [
+            RuntimeError("Chrome unavailable"),
+            chromium_context,
+        ]
+
+        actual, browser_name = alibaba_restocker.launch_dedicated_context(
+            "playwright", playwright, "/tmp/alibaba-profile", False
+        )
+
+        self.assertIs(actual, chromium_context)
+        self.assertEqual(browser_name, "Playwright Chromium")
+        self.assertEqual(playwright.chromium.launch_persistent_context.call_count, 2)
+        self.assertNotIn(
+            "channel",
+            playwright.chromium.launch_persistent_context.call_args_list[1].kwargs,
+        )
+
+    @patch.object(alibaba_restocker.EgoBrowserContext, "is_available", return_value=True)
+    def test_auto_browser_backend_prefers_ego_lite(self, _available):
+        with patch.dict(alibaba_restocker.os.environ, {"ALIBABA_RESTOCK_BROWSER": "auto"}):
+            self.assertEqual(alibaba_restocker.resolve_restock_browser_backend(), "ego")
+
+    @patch.object(alibaba_restocker.EgoBrowserContext, "is_available", return_value=False)
+    def test_auto_browser_backend_uses_playwright_when_ego_is_missing(self, _available):
+        with patch.dict(alibaba_restocker.os.environ, {"ALIBABA_RESTOCK_BROWSER": "auto"}):
+            self.assertEqual(alibaba_restocker.resolve_restock_browser_backend(), "playwright")
+
+    @patch.object(alibaba_restocker.EgoBrowserContext, "is_available", return_value=False)
+    def test_forced_ego_backend_fails_instead_of_falling_back(self, _available):
+        with patch.dict(alibaba_restocker.os.environ, {"ALIBABA_RESTOCK_BROWSER": "ego"}):
+            with self.assertRaisesRegex(RuntimeError, "找不到可執行"):
+                alibaba_restocker.resolve_restock_browser_backend()
+
+    @patch.object(alibaba_restocker.EgoBrowserContext, "is_available")
+    def test_forced_playwright_backend_skips_ego_check(self, available):
+        with patch.dict(alibaba_restocker.os.environ, {"ALIBABA_RESTOCK_BROWSER": "playwright"}):
+            self.assertEqual(alibaba_restocker.resolve_restock_browser_backend(), "playwright")
+        available.assert_not_called()
+
     def test_cart_limit_feedback_detects_1688_limit_message(self):
         message = alibaba_restocker.cart_limit_feedback_message({
             "status": "error",

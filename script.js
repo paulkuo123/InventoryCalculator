@@ -28,15 +28,20 @@ document.addEventListener('DOMContentLoaded', function() {
     const cookieImportButton = document.getElementById('cookieImportButton');
     const cookieImportClearButton = document.getElementById('cookieImportClearButton');
     const cookieImportStatus = document.getElementById('cookieImportStatus');
+    const shopeeProductsFile = document.getElementById('shopeeProductsFile');
+    const shopeeProductsImportButton = document.getElementById('shopeeProductsImportButton');
+    const shopeeProductsImportStatus = document.getElementById('shopeeProductsImportStatus');
     const batchRestockToolbar = document.getElementById('batchRestockToolbar');
     const batchRestockToolbarSummary = document.getElementById('batchRestockToolbarSummary');
     const openBatchRestockButton = document.getElementById('openBatchRestockButton');
+    const MAX_SHOPEE_PRODUCTS_IMPORT_BYTES = 20 * 1024 * 1024;
     
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
     const statusMessage = document.getElementById('statusMessage');
     // 保存當前狀態變量
     window.currentSearchResults = null; // 保存原始搜尋結果
+    window.lastSearchResults = null; // crawler/manual import 共用的原始結果
     window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
     window.currentSearchOption = 'product'; // 預設搜尋選項為商品名稱
     window.isPieChartVisible = false; // 圓餅圖顯示狀態
@@ -122,6 +127,41 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!cookieImportStatus) return;
         cookieImportStatus.textContent = text || '';
         cookieImportStatus.className = `cookie-import-status ${type}`.trim();
+    }
+
+    function setShopeeProductsImportStatus(text, type = '') {
+        if (!shopeeProductsImportStatus) return;
+        shopeeProductsImportStatus.textContent = text || '';
+        shopeeProductsImportStatus.className = `shopee-products-import-status ${type}`.trim();
+    }
+
+    function formatImportFileSize(bytes) {
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    function isShopeeProductsJsonFile(file) {
+        return Boolean(file && file.name.toLowerCase().endsWith('.json'));
+    }
+
+    function updateShopeeProductsImportFile() {
+        if (!shopeeProductsFile || !shopeeProductsImportButton) return;
+        const file = shopeeProductsFile.files[0];
+        shopeeProductsImportButton.disabled = !file;
+        if (!file) {
+            setShopeeProductsImportStatus('');
+            return;
+        }
+        if (!isShopeeProductsJsonFile(file)) {
+            shopeeProductsImportButton.disabled = true;
+            setShopeeProductsImportStatus('請選擇 .json 檔案。', 'error');
+            return;
+        }
+        if (file.size > MAX_SHOPEE_PRODUCTS_IMPORT_BYTES) {
+            shopeeProductsImportButton.disabled = true;
+            setShopeeProductsImportStatus('檔案過大，限制為 20 MB。', 'error');
+            return;
+        }
+        setShopeeProductsImportStatus(`已選擇 ${file.name}（${formatImportFileSize(file.size)}），可開始匯入。`);
     }
 
     async function importShopeeCookies() {
@@ -2971,6 +3011,81 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // (已移除圓餅圖相關按鈕事件)
     
+    function resetSearchResultState() {
+        window.currentAdvancedKeyword = '';
+        window.currentSearchOption = 'product';
+        if (advancedSearchInput) advancedSearchInput.value = '';
+        if (searchOptionProduct) searchOptionProduct.checked = true;
+        if (advancedSearchCard) advancedSearchCard.style.display = 'none';
+        const oldInfo = document.querySelector('.search-results-info');
+        if (oldInfo) oldInfo.remove();
+        if (productList) productList.innerHTML = '';
+        window.currentRestockProducts = [];
+        window.currentRestockAdjustment = null;
+        window.currentBatchRestockSelection = null;
+        updateBatchRestockToolbar();
+    }
+
+    // crawler 與手動匯入共用：套用 raw 商品資料並走同一套主頁 renderer。
+    function applyCrawlerSuccessResults(products) {
+        if (!products || typeof products !== 'object' || Array.isArray(products) || products.error || products.status === 'error') {
+            throw new Error((products && (products.error || products.message)) || '商品資料格式錯誤');
+        }
+        resetSearchResultState();
+        window.lastSearchResults = products;
+        window.currentSearchResults = products;
+        loadAlibabaLinks();
+        return loadAlibabaBindings(true).then(() => {
+            displayProducts(products, '', 'product');
+            if (advancedSearchCard) {
+                advancedSearchCard.style.display = Object.keys(products).length > 0 ? 'block' : 'none';
+            }
+            return products;
+        });
+    }
+
+    async function importShopeeProducts() {
+        if (!shopeeProductsFile || !shopeeProductsImportButton) return;
+        const file = shopeeProductsFile.files[0];
+        if (!file) {
+            setShopeeProductsImportStatus('請先選擇 shopee_products.json。', 'error');
+            return;
+        }
+        if (!isShopeeProductsJsonFile(file)) {
+            setShopeeProductsImportStatus('請選擇 .json 檔案。', 'error');
+            return;
+        }
+        if (file.size > MAX_SHOPEE_PRODUCTS_IMPORT_BYTES) {
+            setShopeeProductsImportStatus('檔案過大，限制為 20 MB。', 'error');
+            return;
+        }
+
+        shopeeProductsImportButton.disabled = true;
+        setShopeeProductsImportStatus('正在驗證、合併並套用商品資料…', 'loading');
+        try {
+            const response = await fetch('/api/shopee-products/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: await file.text(),
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.status !== 'success') {
+                throw new Error(data.message || '匯入商品資料失敗');
+            }
+            await applyCrawlerSuccessResults(data.products);
+            setShopeeProductsImportStatus(
+                `匯入成功：${data.sourceProductCount || 0} 個商品、${data.sourceModelCount || 0} 個規格；` +
+                `Golden 對應 ${data.goldenMatchedProductCount || 0} 個商品／${data.goldenMatchedModelCount || 0} 個規格。`,
+                'success'
+            );
+        } catch (error) {
+            setShopeeProductsImportStatus(error.message || '匯入商品資料失敗', 'error');
+        } finally {
+            shopeeProductsImportButton.disabled = !isShopeeProductsJsonFile(shopeeProductsFile.files[0])
+                || shopeeProductsFile.files[0].size > MAX_SHOPEE_PRODUCTS_IMPORT_BYTES;
+        }
+    }
+
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
         // console.log removed
@@ -2996,20 +3111,7 @@ document.addEventListener('DOMContentLoaded', function() {
         // console.log removed
         
         // 移除關鍵字檢查，無論是否有關鍵字都執行以下代碼
-        // 重置進階搜尋
-        window.currentAdvancedKeyword = '';
-        window.currentSearchOption = 'product';
-        advancedSearchInput.value = '';
-        searchOptionProduct.checked = true;
-        
-        // 隱藏進階搜尋區塊
-        advancedSearchCard.style.display = 'none';
-        
-        // 移除舊的搜尋結果信息（如果有）
-        const oldInfo = document.querySelector('.search-results-info');
-        if (oldInfo) {
-            oldInfo.remove();
-        }
+        resetSearchResultState();
         
         // 設置爬蟲運行狀態
         window.crawlerRunning = true;
@@ -3022,13 +3124,10 @@ document.addEventListener('DOMContentLoaded', function() {
         // console.log removed
         }
         
-        const productList = document.getElementById('productList');
         if (productList) {
             productList.innerHTML = '';
         // console.log removed
         }
-        window.currentRestockProducts = [];
-        updateBatchRestockToolbar();
         
         // 開始進度模擬，使用改進的進度模擬函數
         const progressInterval = startProgressSimulation();
@@ -3058,22 +3157,10 @@ document.addEventListener('DOMContentLoaded', function() {
         // console.log removed
         // console.log removed
                 
-                // 保存最後的搜尋結果
-                window.lastSearchResults = data;
-                
-                // 短暫延遲後隱藏載入提示
-                setTimeout(() => {
-                    if (loading) loading.style.display = 'none';
-                    loadAlibabaLinks(); // 載入阿里巴巴連結
-                    loadAlibabaBindings(true).then(() => {
-                        displayProducts(data, '', 'product'); // 傳遞正確的參數
-                    });
-                    
-                    // 顯示進階搜尋區塊
-                    if (data && typeof data === 'object' && Object.keys(data).length > 0) {
-                        advancedSearchCard.style.display = 'block';
-                    }
-                }, 500);
+                return applyCrawlerSuccessResults(data);
+            })
+            .then(() => {
+                if (loading) loading.style.display = 'none';
             })
             .catch(error => {
                 // 停止進度模擬
@@ -3170,6 +3257,12 @@ document.addEventListener('DOMContentLoaded', function() {
             setCookieImportStatus('');
             if (cookieImportText) cookieImportText.focus();
         });
+    }
+    if (shopeeProductsFile) {
+        shopeeProductsFile.addEventListener('change', updateShopeeProductsImportFile);
+    }
+    if (shopeeProductsImportButton) {
+        shopeeProductsImportButton.addEventListener('click', importShopeeProducts);
     }
     loadAlibabaBindings();
     loadSkuReviewReports().then(() => {
