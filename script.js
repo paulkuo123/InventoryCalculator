@@ -623,7 +623,9 @@ document.addEventListener('DOMContentLoaded', function() {
         (Array.isArray(items) ? items : []).forEach(item => {
             const productName = String(item.productName || `商品 ${item.productId || ''}`).trim() || '未命名商品';
             if (!groups.has(productName)) groups.set(productName, []);
-            groups.get(productName).push(String(item.modelName || item.alibabaSkuName || '未命名型號'));
+            const modelName = String(item.modelName || item.alibabaSkuName || '未命名型號');
+            const reason = String(item.message || '').trim();
+            groups.get(productName).push(reason ? `${modelName}（${reason}）` : modelName);
         });
         return Array.from(groups, ([productName, models]) => ({ productName, models }));
     }
@@ -674,15 +676,16 @@ document.addEventListener('DOMContentLoaded', function() {
         const unverified = Array.isArray(summary.unverified) ? summary.unverified : [];
         const cartFull = Array.isArray(summary.cartFull) ? summary.cartFull : [];
         const unprocessed = Array.isArray(summary.unprocessed) ? summary.unprocessed : [];
+        const failed = Array.isArray(summary.failed) ? summary.failed : [];
         const stoppedByLimit = workerResult?.stoppedReason === 'cart_limit_reached' || workerResult?.status === 'cart_limit_reached';
         modal.querySelector('#restockResultTitle').textContent = stoppedByLimit
             ? '1688 採購車已達上限'
-            : '1688 補貨流程結果';
+            : (failed.length ? '1688 補貨未完整送出' : '1688 補貨流程結果');
         modal.querySelector('#restockResultMessage').textContent = workerResult?.message || fallbackMessage || '補貨流程已結束。';
         modal.querySelector('#restockResultCounts').innerHTML = `
             <span class="is-success">已確認加入 <strong>${succeeded.length}</strong> 型號</span>
             <span class="is-warning">結果未確認 <strong>${unverified.length}</strong> 型號</span>
-            <span class="is-error">未加入 <strong>${cartFull.length + unprocessed.length}</strong> 型號</span>
+            <span class="is-error">未加入 <strong>${cartFull.length + unprocessed.length + failed.length}</strong> 型號</span>
         `;
         modal.querySelector('#restockResultSections').innerHTML = `
             <section>
@@ -692,6 +695,7 @@ document.addEventListener('DOMContentLoaded', function() {
             ${unverified.length ? `<section><h4>已按下加入，但 1688 未回傳明確結果</h4>${renderRestockReportList(unverified, '')}</section>` : ''}
             ${cartFull.length ? `<section class="is-error"><h4>這一組因採購車已滿，未成功加入</h4>${renderRestockReportList(cartFull, '')}</section>` : ''}
             ${unprocessed.length ? `<section class="is-error"><h4>偵測到上限後，尚未執行</h4>${renderRestockReportList(unprocessed, '')}</section>` : ''}
+            ${failed.length ? `<section class="is-error"><h4>型號未完整，該商品整組未送出</h4>${renderRestockReportList(failed, '')}</section>` : ''}
         `;
         modal.classList.remove('hidden');
     }
@@ -713,12 +717,14 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
                 const workerResult = data.result || {};
                 const stoppedByLimit = workerResult.stoppedReason === 'cart_limit_reached' || workerResult.status === 'cart_limit_reached';
+                const failedItems = Array.isArray(workerResult.summary?.failed) ? workerResult.summary.failed : [];
+                const hasFailures = failedItems.length > 0 || workerResult.status === 'partial_failure';
                 setRestockMessage(
                     statusTarget,
                     workerResult.message || '1688 補貨流程已完成',
-                    stoppedByLimit ? 'error' : 'success'
+                    (stoppedByLimit || hasFailures) ? 'error' : 'success'
                 );
-                if (stoppedByLimit || (workerResult.summary?.unverified || []).length > 0) {
+                if (stoppedByLimit || hasFailures || (workerResult.summary?.unverified || []).length > 0) {
                     showRestockResult(workerResult);
                 }
             })

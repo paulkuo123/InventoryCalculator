@@ -276,6 +276,8 @@
 }
 
 .catalog-modal {
+    display: flex;
+    flex-direction: column;
     width: min(100%, 970px);
     max-height: min(760px, calc(100vh - 44px));
     overflow: hidden;
@@ -285,6 +287,13 @@
 }
 
 .alibaba-edit-modal { width: min(100%, 720px); }
+
+.alibaba-edit-modal > form {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+}
 
 .catalog-modal-header,
 .catalog-modal-footer {
@@ -318,9 +327,15 @@
 .modal-close:hover { background: #e7ebef; }
 
 .catalog-modal-body {
-    max-height: calc(min(760px, 100vh - 44px) - 142px);
+    flex: 1;
+    min-height: 0;
     overflow-y: auto;
     padding: 20px;
+}
+
+.catalog-modal-header,
+.catalog-modal-footer {
+    flex: 0 0 auto;
 }
 
 .modal-product-summary {

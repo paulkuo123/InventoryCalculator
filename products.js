@@ -366,6 +366,7 @@
             alibabaLastPriceCny: fields.alibabaLastPriceCny.value.trim(),
             alibabaMinOrderQty: fields.alibabaMinOrderQty.value || '1',
             alibabaPackageMultiple: fields.alibabaPackageMultiple.value || '1',
+            mappingApproved: Boolean(fields.alibabaSkuName.value.trim()),
             applyScope,
         };
         if (payload.alibabaProductUrl && !/^https?:\/\//i.test(payload.alibabaProductUrl)) {
@@ -376,19 +377,6 @@
         if (offerIdFromProductUrl) {
             payload.alibabaOfferId = offerIdFromProductUrl;
             fields.alibabaOfferId.value = offerIdFromProductUrl;
-        }
-        const currentUrl = String(model.alibabaProductUrl || '').trim();
-        const currentOfferId = String(model.alibabaOfferId || offerIdFromUrl(currentUrl) || '').trim();
-        const urlChanged = payload.alibabaProductUrl !== currentUrl || payload.alibabaOfferId !== currentOfferId;
-        if (applyScope === 'url_offer_all' || urlChanged) {
-            const params = new URLSearchParams({
-                mode: 'urls',
-                productId: product.productId,
-                modelId: model.specId || model.modelName || '',
-            });
-            if (payload.alibabaProductUrl) params.set('newUrl', payload.alibabaProductUrl);
-            window.location.href = `/sku-mapping.html?${params}`;
-            return;
         }
         saveAlibabaEditButton.disabled = true;
         applyUrlOfferToAllButton.disabled = true;

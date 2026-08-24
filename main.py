@@ -83,7 +83,7 @@ from alibaba_client import AlibabaApiClient
 from alibaba_review_report import clean_options, classify, is_sock_product_name
 from procurement_store import ProcurementStore, parse_offer_id
 from inbound_store import InboundStore
-from product_catalog import build_product_catalog
+from product_catalog import apply_offer_to_models, build_product_catalog
 from ads_analysis import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENAI_REASONING_EFFORT,
@@ -2480,7 +2480,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         mapping_approved = bool(payload.get("mappingApproved"))
         apply_scope = str(payload.get("applyScope", "single")).strip()
 
-        if apply_scope not in ("single", "fill_missing", "overwrite_all", "selected_models"):
+        if apply_scope not in (
+            "single", "fill_missing", "overwrite_all", "selected_models", "url_offer_all"
+        ):
             raise ValueError("套用範圍不正確")
         if not product_id:
             raise ValueError("缺少商品ID")
@@ -2488,8 +2490,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             raise ValueError("缺少規格ID或型號名稱")
         if alibaba_product_url and not re.match(r'^https?://', alibaba_product_url, re.IGNORECASE):
             raise ValueError("阿里巴巴商品URL 必須以 http:// 或 https:// 開頭")
+        if apply_scope == "url_offer_all" and not alibaba_product_url:
+            raise ValueError("請先填寫要套用的阿里巴巴商品 URL")
+        if apply_scope == "url_offer_all" and not alibaba_offer_id:
+            raise ValueError("無法從阿里巴巴商品 URL 解析 Offer ID")
 
-        golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
+        golden_path = str(self._golden_table_path())
         if not os.path.exists(golden_path):
             raise FileNotFoundError("找不到 golden_table.json")
 
@@ -2508,11 +2514,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if target_model is None:
             raise FileNotFoundError("找不到對應型號")
 
-        current_url = str(target_model.get("阿里巴巴商品URL") or "").strip()
-        current_offer_id = normalize_identifier(target_model.get("1688_offer_id")) or parse_offer_id(current_url)
-        if alibaba_product_url and alibaba_offer_id != current_offer_id:
-            raise ValueError("1688 offer 已改變；請到「1688 SKU Mapping → URL 管理」檢查新連結與 SKU 後再更新")
-
         if apply_scope == "single":
             models_to_update = [target_model]
         elif apply_scope == "fill_missing":
@@ -2522,7 +2523,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             ]
             if target_model not in models_to_update:
                 models_to_update.append(target_model)
-        elif apply_scope == "overwrite_all":
+        elif apply_scope in ("overwrite_all", "url_offer_all"):
             models_to_update = models
         else:
             selected_models = payload.get("selectedModels")
@@ -2550,25 +2551,28 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             if len(models_to_update) == 0:
                 raise ValueError("找不到勾選的型號")
 
-        for model in models_to_update:
-            model["阿里巴巴商品名稱"] = alibaba_product_name
-            model["阿里巴巴商品URL"] = alibaba_product_url
-            model["1688_offer_id"] = alibaba_offer_id
-            model["1688_sku_id"] = alibaba_sku_id
-            model["1688_sku_name"] = alibaba_sku_name
-            if alibaba_sku_second_name:
-                model["1688_sku_second_name"] = alibaba_sku_second_name
-            else:
-                model.pop("1688_sku_second_name", None)
-            model["1688_min_order_qty"] = alibaba_min_order_qty
-            model["1688_package_multiple"] = alibaba_package_multiple
-            model["1688_last_price_cny"] = alibaba_last_price_cny
-            model["1688_mapping_status"] = "approved" if mapping_approved and alibaba_sku_name else "missing"
-            model["1688_mapping_source"] = "manual" if mapping_approved and alibaba_sku_name else "legacy_import"
-            if mapping_approved and alibaba_sku_name:
-                model["1688_dimension_count"] = 2 if alibaba_sku_second_name else 1
-                model["1688_mapping_fingerprint"] = mapping_candidate_key(alibaba_offer_id, alibaba_sku_name, alibaba_sku_second_name)
-                model["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        if apply_scope == "url_offer_all":
+            apply_offer_to_models(models_to_update, alibaba_product_url, alibaba_offer_id)
+        else:
+            for model in models_to_update:
+                model["阿里巴巴商品名稱"] = alibaba_product_name
+                model["阿里巴巴商品URL"] = alibaba_product_url
+                model["1688_offer_id"] = alibaba_offer_id
+                model["1688_sku_id"] = alibaba_sku_id
+                model["1688_sku_name"] = alibaba_sku_name
+                if alibaba_sku_second_name:
+                    model["1688_sku_second_name"] = alibaba_sku_second_name
+                else:
+                    model.pop("1688_sku_second_name", None)
+                model["1688_min_order_qty"] = alibaba_min_order_qty
+                model["1688_package_multiple"] = alibaba_package_multiple
+                model["1688_last_price_cny"] = alibaba_last_price_cny
+                model["1688_mapping_status"] = "approved" if mapping_approved and alibaba_sku_name else "missing"
+                model["1688_mapping_source"] = "manual" if mapping_approved and alibaba_sku_name else "legacy_import"
+                if mapping_approved and alibaba_sku_name:
+                    model["1688_dimension_count"] = 2 if alibaba_sku_second_name else 1
+                    model["1688_mapping_fingerprint"] = mapping_candidate_key(alibaba_offer_id, alibaba_sku_name, alibaba_sku_second_name)
+                    model["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
         backup_path = f"{golden_path}.bak"
         shutil.copy2(golden_path, backup_path)
@@ -2583,21 +2587,24 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "modelId": normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱", "")).strip(),
                 "productName": product.get("商品名稱", ""),
                 "modelName": model.get("型號名稱", ""),
-                "alibabaProductName": alibaba_product_name,
-                "alibabaProductUrl": alibaba_product_url,
-                "alibabaOfferId": alibaba_offer_id,
-                "alibabaSkuId": alibaba_sku_id,
-                "alibabaSkuName": alibaba_sku_name,
-                "alibabaSkuSecondName": alibaba_sku_second_name,
-                "alibabaMinOrderQty": alibaba_min_order_qty,
-                "alibabaPackageMultiple": alibaba_package_multiple,
-                "alibabaLastPriceCny": alibaba_last_price_cny,
+                "alibabaProductName": model.get("阿里巴巴商品名稱", ""),
+                "alibabaProductUrl": model.get("阿里巴巴商品URL", ""),
+                "alibabaOfferId": model.get("1688_offer_id", ""),
+                "alibabaSkuId": model.get("1688_sku_id", ""),
+                "alibabaSkuName": model.get("1688_sku_name", ""),
+                "alibabaSkuSecondName": model.get("1688_sku_second_name", ""),
+                "alibabaMinOrderQty": model.get("1688_min_order_qty", 1),
+                "alibabaPackageMultiple": model.get("1688_package_multiple", 1),
+                "alibabaLastPriceCny": model.get("1688_last_price_cny"),
                 "alibabaMappingStatus": model.get("1688_mapping_status", "missing"),
                 "alibabaSpecText": model.get("1688_spec_text", ""),
                 "alibabaOfferFingerprint": model.get("1688_offer_fingerprint", ""),
             })
 
-        message = "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料"
+        if apply_scope == "url_offer_all":
+            message = f"已將 1688 商品 URL 與 Offer ID 套用到 {len(models_to_update)} 個型號"
+        else:
+            message = "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料"
 
         return {
             "status": "success",

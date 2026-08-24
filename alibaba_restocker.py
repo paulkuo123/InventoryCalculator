@@ -877,6 +877,98 @@ def refill_cart_items(page, cart_items: List[Dict[str, Any]], debug: DebugLogger
     return refill_results
 
 
+def read_selected_cart_summary(page) -> Dict[str, Any]:
+    """Read the live 1688 "selected N variants" summary before cart submission."""
+    script = r"""
+    () => {
+        const isVisible = el => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style && style.visibility !== 'hidden' && style.display !== 'none' &&
+                rect.width > 0 && rect.height > 0;
+        };
+        const candidates = Array.from(document.querySelectorAll('div, span, p'))
+            .filter(isVisible)
+            .map(el => String(el.innerText || el.textContent || '').trim())
+            .filter(text => /已选\s*\d+\s*款/.test(text))
+            .sort((a, b) => a.length - b.length);
+        for (const text of candidates) {
+            const countMatch = text.match(/已选\s*(\d+)\s*款/);
+            if (!countMatch) continue;
+            const quantityMatch = text.match(/已选\s*\d+\s*款\s*(\d+)\s*(?:双|件|个|套|支|条|包|组|盒|副)/);
+            return {
+                found: true,
+                count: Number(countMatch[1]),
+                quantity: quantityMatch ? Number(quantityMatch[1]) : null,
+                text,
+            };
+        }
+        return { found: false, count: null, quantity: null, text: '' };
+    }
+    """
+    try:
+        result = page.evaluate(script) or {}
+        return {
+            "found": bool(result.get("found")),
+            "count": result.get("count"),
+            "quantity": result.get("quantity"),
+            "text": str(result.get("text") or ""),
+        }
+    except Exception as exc:
+        return {"found": False, "count": None, "quantity": None, "text": "", "error": str(exc)}
+
+
+def fill_sku_quantity_with_retry(
+    page,
+    model_name: str,
+    alibaba_sku_name: str,
+    alibaba_sku_second_name: str,
+    quantity: int,
+    attempts: int = 2,
+) -> Dict[str, Any]:
+    """Retry a transient 1688 rerender/navigation without silently dropping a SKU."""
+    last_result: Dict[str, Any] = {}
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            last_result = fill_sku_quantity(
+                page,
+                model_name,
+                alibaba_sku_name,
+                alibaba_sku_second_name,
+                quantity,
+            )
+        except Exception as exc:
+            message = str(exc)
+            transient = any(marker in message.lower() for marker in (
+                "execution context was destroyed",
+                "most likely because of a navigation",
+                "cannot find context",
+            ))
+            if not transient or attempt >= attempts:
+                raise
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=10000)
+            except Exception:
+                pass
+            page.wait_for_timeout(800)
+            continue
+
+        if last_result.get("status") == "filled" or attempt >= attempts:
+            return last_result
+        if last_result.get("status") not in {"not_found", "error"}:
+            return last_result
+        page.wait_for_timeout(500)
+    return last_result
+
+
+def group_submission_failures(item_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A product page is safe to submit only when every requested SKU was filled."""
+    return [
+        item for item in item_results
+        if str(item.get("status") or "") != "filled"
+    ]
+
+
 def add_to_cart_with_retry(
     page,
     cart_items: List[Dict[str, Any]],
@@ -905,6 +997,32 @@ def add_to_cart_with_retry(
                 })
                 break
             page.wait_for_timeout(AFTER_FILL_WAIT_MS)
+
+        selected_summary = read_selected_cart_summary(page)
+        debug.log("pre_submit_selected_summary", {
+            "modelNames": model_names,
+            "expectedItemCount": len(cart_items),
+            "expectedQuantityTotal": quantity_total,
+            "attempt": attempt,
+            "selectedSummary": selected_summary,
+        })
+        count_mismatch = selected_summary.get("found") and int(selected_summary.get("count") or 0) != len(cart_items)
+        quantity_mismatch = (
+            selected_summary.get("found")
+            and selected_summary.get("quantity") is not None
+            and int(selected_summary.get("quantity") or 0) != quantity_total
+        )
+        if count_mismatch or quantity_mismatch:
+            attempts.append({
+                "attempt": attempt,
+                "selectionSummary": selected_summary,
+                "feedback": {
+                    "status": "selection_mismatch",
+                    "message": "1688 頁面顯示的已選型號／數量與本次補貨不一致，未按加採購車",
+                },
+            })
+            final_status = "selection_mismatch"
+            break
 
         click_result = click_add_to_cart(page)
         debug.log("clicked_add_to_cart", {
@@ -971,6 +1089,10 @@ def add_to_cart_with_retry(
     return {
         "ok": final_status in ("success", "clicked_unverified"),
         "status": final_status,
+        "message": (
+            "1688 頁面顯示的已選型號／數量與本次補貨不一致，未按加採購車"
+            if final_status == "selection_mismatch" else ""
+        ),
         "mode": "single_submit_for_product_page",
         "itemCount": len(cart_items),
         "modelNames": model_names,
@@ -1100,6 +1222,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
     unverified_cart_items: List[Dict[str, Any]] = []
     cart_limit_items: List[Dict[str, Any]] = []
     unprocessed_items: List[Dict[str, Any]] = []
+    failed_items: List[Dict[str, Any]] = []
     stopped_reason = ""
     base_dir = os.path.dirname(os.path.abspath(__file__))
     sku_mappings = load_sku_mappings(base_dir)
@@ -1245,7 +1368,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                     "quantity": quantity,
                 })
                 try:
-                    item_result = fill_sku_quantity(
+                    item_result = fill_sku_quantity_with_retry(
                         page,
                         model_name,
                         target_name,
@@ -1320,7 +1443,36 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                         "message": str(e),
                     })
 
-            if add_to_cart and cart_items:
+            group_failures = group_submission_failures(group_result["items"])
+            if group_failures:
+                for failure in group_failures:
+                    failure_model = str(failure.get("modelName") or "").strip()
+                    source_item = next((
+                        source for source in url_items
+                        if str(source.get("modelName") or "").strip() == failure_model
+                    ), {})
+                    failed_items.append({
+                        **failure,
+                        "productId": str(source_item.get("productId") or product_id or ""),
+                        "productName": str(source_item.get("productName") or product_name or "").strip(),
+                        "alibabaUrl": url,
+                    })
+
+            if add_to_cart and group_failures:
+                failed_names = [str(item.get("modelName") or "未命名型號") for item in group_failures]
+                debug.log("group_cart_submit_blocked_incomplete", {
+                    "url": url,
+                    "requestedItemCount": len(url_items),
+                    "filledItemCount": len(cart_items),
+                    "failedModelNames": failed_names,
+                    "reason": "同一商品頁必須全部型號填入成功才會按加採購車",
+                })
+                print(
+                    f"未按加采购车：{len(group_failures)} 個型號未成功（{'、'.join(failed_names)}）；"
+                    "為避免漏補，該商品整組未送出。",
+                    flush=True,
+                )
+            elif add_to_cart and cart_items:
                 debug.log("wait_after_all_skus_before_single_cart_submit", {
                     "url": url,
                     "modelNames": [entry["modelName"] for entry in cart_items],
@@ -1361,6 +1513,17 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                             })
                     print("1688 採購車已達上限，停止後續補貨商品。", flush=True)
                 else:
+                    failure_message = str(
+                        cart_result.get("message")
+                        or "1688 頁面選取結果不完整，整組未加入採購車"
+                    )
+                    for cart_item in cart_items:
+                        failed_items.append({
+                            **cart_item,
+                            "status": str(add_status or "failed"),
+                            "message": failure_message,
+                            "alibabaUrl": url,
+                        })
                     print(f"加采购车可能失敗：{cart_result}", flush=True)
 
                 if add_status != "cart_full":
@@ -1387,13 +1550,21 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 "alibabaSkuName": str(item.get("alibabaSkuName") or "").strip(),
                 "alibabaSkuSecondName": str(item.get("alibabaSkuSecondName") or "").strip(),
                 "alibabaUrl": str(item.get("alibabaUrl") or "").strip(),
+                "status": str(item.get("status") or "").strip(),
+                "message": str(item.get("message") or "").strip(),
             } for item in source_items]
 
         write_result(output_path, {
-            "status": "cart_limit_reached" if stopped_reason else "success",
+            "status": (
+                "cart_limit_reached" if stopped_reason
+                else ("partial_failure" if failed_items else "success")
+            ),
             "message": (
                 "1688 採購車已達上限，已停止後續補貨。"
-                if stopped_reason else "1688 補貨流程已完成。"
+                if stopped_reason else (
+                    f"有 {len(failed_items)} 個型號未加入；為避免漏補，不完整的商品整組未送出。"
+                    if failed_items else "1688 補貨流程已完成。"
+                )
             ),
             "stoppedReason": stopped_reason,
             "productId": product_id,
@@ -1407,6 +1578,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 "unverified": report_items(unverified_cart_items),
                 "cartFull": report_items(cart_limit_items),
                 "unprocessed": report_items(unprocessed_items),
+                "failed": report_items(failed_items),
             },
             "results": results,
         })
