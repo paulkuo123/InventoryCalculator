@@ -51,6 +51,7 @@ document.addEventListener('DOMContentLoaded', function() {
     window.currentRestockProducts = [];
     window.currentRestockAdjustment = null;
     window.currentBatchRestockSelection = null;
+    window.restockInProgress = false; // 防止並發補貨操作
     window.skuReviewState = {
         reports: [],
         currentReport: '',
@@ -697,7 +698,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function monitorAlibabaRestockJob(jobId, statusTarget) {
-        if (!jobId) return;
+        if (!jobId) {
+            window.restockInProgress = false;
+            return;
+        }
         const poll = () => fetch(`/api/alibaba-restock/jobs/${encodeURIComponent(jobId)}`)
             .then(async response => {
                 const data = await response.json().catch(() => ({}));
@@ -706,6 +710,8 @@ document.addEventListener('DOMContentLoaded', function() {
                     window.setTimeout(poll, 1000);
                     return;
                 }
+                // 任務完成（成功或失敗）- 釋放鎖定
+                window.restockInProgress = false;
                 if (data.status === 'failed') {
                     setRestockMessage(statusTarget, data.message || '1688 補貨流程失敗', 'error');
                     showRestockResult({}, data.message || '1688 補貨流程失敗');
@@ -723,6 +729,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             })
             .catch(error => {
+                window.restockInProgress = false;
                 console.error('讀取 1688 補貨結果失敗:', error);
                 setRestockMessage(statusTarget, error.message || '讀取補貨結果失敗', 'error');
             });
@@ -730,6 +737,17 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function startAlibabaRestock(productId, product, items, options = {}) {
+        // 防止並發補貨操作導致狀態混亂
+        if (window.restockInProgress) {
+            const message = '目前已有補貨流程進行中，請等待完成後再試。';
+            const statusTarget = options.statusTarget || null;
+            if (statusTarget) setRestockMessage(statusTarget, message, 'error');
+            else alert(message);
+            return Promise.resolve(false);
+        }
+        
+        window.restockInProgress = true;
+        
         const addToCart = Boolean(options.addToCart);
         const skippedCount = Math.max(0, Number(options.skippedCount) || 0);
         const statusTarget = options.statusTarget || null;
@@ -740,12 +758,14 @@ document.addEventListener('DOMContentLoaded', function() {
             }))
             .filter(item => item.alibabaUrl && item.restockQty > 0);
         if (restockItems.length === 0) {
+            window.restockInProgress = false;
             const message = '沒有可補貨的 1688 型號。請先確認型號有 1688 連結且數量大於 0。';
             if (statusTarget) setRestockMessage(statusTarget, message, 'error');
             else alert(message);
             return Promise.resolve(false);
         }
         if (restockItems.length > MAX_ALIBABA_CART_SKUS) {
+            window.restockInProgress = false;
             const message = `本次共 ${restockItems.length} 個型號，超過 1688 採購車單次上限 ${MAX_ALIBABA_CART_SKUS} 個。`;
             if (statusTarget) setRestockMessage(statusTarget, message, 'error');
             else alert(message);
@@ -759,7 +779,10 @@ document.addEventListener('DOMContentLoaded', function() {
             : '';
         if (!options.skipConfirmation) {
             const confirmed = confirm(`將開啟 1688 補貨流程，嘗試填入 ${restockItems.length} 個型號，共 ${totalQty} 件。\n\n${skippedText}${finalActionText}\n是否繼續？`);
-            if (!confirmed) return Promise.resolve(false);
+            if (!confirmed) {
+                window.restockInProgress = false;
+                return Promise.resolve(false);
+            }
         }
 
         setRestockMessage(statusTarget, `正在啟動 ${restockItems.length} 個型號的 1688 補貨流程...`);
@@ -784,6 +807,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 return data;
             })
             .catch(error => {
+                window.restockInProgress = false;
                 console.error('1688 補貨流程失敗:', error);
                 if (statusTarget) setRestockMessage(statusTarget, error.message || '啟動失敗', 'error');
                 else alert(`1688 補貨流程失敗：${error.message}`);
@@ -1818,6 +1842,15 @@ document.addEventListener('DOMContentLoaded', function() {
     function startAlibabaCartFromCurrentDraft() {
         const draft = window.currentProcurementDraft;
         if (!draft) return;
+        
+        // 防止並發補貨操作
+        if (window.restockInProgress) {
+            alert('目前已有補貨流程進行中，請等待完成後再試。');
+            return;
+        }
+        
+        window.restockInProgress = true;
+        
         const modal = ensureProcurementDraftModal();
         const cartButton = modal.querySelector('#startAlibabaCartButton');
         const message = modal.querySelector('#procurementDraftMessage');
@@ -1841,8 +1874,15 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 message.textContent = data.message || '已啟動 1688 採購車流程，請檢查開啟的瀏覽器。';
                 message.className = 'alibaba-edit-message success';
+                // 如果有 jobId 則監控任務，否則釋放鎖定
+                if (data.jobId) {
+                    monitorAlibabaRestockJob(data.jobId, message);
+                } else {
+                    window.restockInProgress = false;
+                }
             })
             .catch(error => {
+                window.restockInProgress = false;
                 message.textContent = error.message || '啟動 1688 採購車流程失敗';
                 message.className = 'alibaba-edit-message error';
                 cartButton.disabled = false;
@@ -1879,10 +1919,44 @@ document.addEventListener('DOMContentLoaded', function() {
             };
         }
         
-        // 儀表板統計始終使用全部商品資料，不受進階搜尋或篩選條件影響
-        // 這樣可以提供一致的全局視圖
-        // advancedKeyword 參數保留但不使用，以維持函式簽名相容性
-        const filteredProducts = products;  // 使用全部商品
+        // 根據進階搜尋過濾商品（如果有提供搜尋關鍵字）
+        // filterMode 不影響儀表板統計 - 營運顧問需要全門市補貨覆蓋率
+        let filteredProducts = products;
+        
+        if (advancedKeyword && advancedKeyword.trim() !== '') {
+            const keyword = advancedKeyword.trim().toLowerCase();
+            const filtered = {};
+            
+            Object.entries(products).forEach(([productId, product]) => {
+                let shouldInclude = false;
+                
+                // 根據搜尋選項過濾
+                if (searchOption === 'product' || searchOption === 'both') {
+                    // 檢查商品名稱是否包含關鍵字
+                    if (product.商品名稱 && product.商品名稱.toLowerCase().includes(keyword)) {
+                        shouldInclude = true;
+                    }
+                }
+                
+                if ((searchOption === 'model' || searchOption === 'both') && !shouldInclude) {
+                    // 檢查型號名稱是否包含關鍵字
+                    if (product.型號 && Array.isArray(product.型號)) {
+                        for (const model of product.型號) {
+                            if (model.型號名稱 && model.型號名稱.toLowerCase().includes(keyword)) {
+                                shouldInclude = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (shouldInclude) {
+                    filtered[productId] = product;
+                }
+            });
+            
+            filteredProducts = filtered;
+        }
         
         // 獲取過濾條件（只用於判斷需補貨型號數量，不影響總計）
         const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
