@@ -1879,10 +1879,44 @@ document.addEventListener('DOMContentLoaded', function() {
             };
         }
         
-        // 儀表板統計始終使用全部商品資料，不受進階搜尋或篩選條件影響
-        // 這樣可以提供一致的全局視圖
-        // advancedKeyword 參數保留但不使用，以維持函式簽名相容性
-        const filteredProducts = products;  // 使用全部商品
+        // 根據進階搜尋過濾商品（如果有提供搜尋關鍵字）
+        // filterMode 不影響儀表板統計 - 營運顧問需要全門市補貨覆蓋率
+        let filteredProducts = products;
+        
+        if (advancedKeyword && advancedKeyword.trim() !== '') {
+            const keyword = advancedKeyword.trim().toLowerCase();
+            const filtered = {};
+            
+            Object.entries(products).forEach(([productId, product]) => {
+                let shouldInclude = false;
+                
+                // 根據搜尋選項過濾
+                if (searchOption === 'product' || searchOption === 'both') {
+                    // 檢查商品名稱是否包含關鍵字
+                    if (product.商品名稱 && product.商品名稱.toLowerCase().includes(keyword)) {
+                        shouldInclude = true;
+                    }
+                }
+                
+                if ((searchOption === 'model' || searchOption === 'both') && !shouldInclude) {
+                    // 檢查型號名稱是否包含關鍵字
+                    if (product.型號 && Array.isArray(product.型號)) {
+                        for (const model of product.型號) {
+                            if (model.型號名稱 && model.型號名稱.toLowerCase().includes(keyword)) {
+                                shouldInclude = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                
+                if (shouldInclude) {
+                    filtered[productId] = product;
+                }
+            });
+            
+            filteredProducts = filtered;
+        }
         
         // 獲取過濾條件（只用於判斷需補貨型號數量，不影響總計）
         const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
