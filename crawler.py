@@ -441,6 +441,11 @@ class ShopeeCrawler:
         """
         計算建議補貨數量
         
+        根據 restock_rules.py 文件化的規則：
+        - 計算預期庫存 = 月銷量 × 期望月數
+        - 建議補貨 = 預期庫存 - 當前庫存
+        - 以 10 為單位四捨五入（與 GUI 一致）
+        
         Args:
             product_sold (int): 型號已售出數量
             total_sold (int): 商品總已售出數量
@@ -468,7 +473,11 @@ class ShopeeCrawler:
             restock = expected_inventory - current_inventory
 
             # 如果補貨數量為負數或零，表示不需要補貨
-            return max(0, int(restock))
+            raw_restock = max(0, restock)
+            
+            # 以 10 為單位四捨五入（與 GUI script.js roundRestockQty 一致）
+            # 使用 int() 加 0.5 來確保正確的四捨五入，避免 Python banker's rounding
+            return int((raw_restock + 5) / 10) * 10
             
         except Exception as e:
             print(f"計算補貨數量時出錯: {e}")
