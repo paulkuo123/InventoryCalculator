@@ -1879,41 +1879,14 @@ document.addEventListener('DOMContentLoaded', function() {
             };
         }
         
-        // 過濾商品（如果有進階搜尋）
-        let filteredProducts = products;
-        if (advancedKeyword && advancedKeyword.trim() !== '') {
-            const keyword = advancedKeyword.trim().toLowerCase();
-            filteredProducts = {};
-            
-            Object.entries(products).forEach(([productId, product]) => {
-                let shouldInclude = false;
-                
-                if (searchOption === 'product' || searchOption === 'both') {
-                    if (product.商品名稱 && product.商品名稱.toLowerCase().includes(keyword)) {
-                        shouldInclude = true;
-                    }
-                }
-                
-                if ((searchOption === 'model' || searchOption === 'both') && !shouldInclude) {
-                    if (product.型號 && Array.isArray(product.型號)) {
-                        for (const model of product.型號) {
-                            if (model.型號名稱 && model.型號名稱.toLowerCase().includes(keyword)) {
-                                shouldInclude = true;
-                                break;
-                            }
-                        }
-                    }
-                }
-                
-                if (shouldInclude) {
-                    filteredProducts[productId] = product;
-                }
-            });
-        }
+        // 儀表板統計始終使用全部商品資料，不受進階搜尋或篩選條件影響
+        // 這樣可以提供一致的全局視圖
+        // advancedKeyword 參數保留但不使用，以維持函式簽名相容性
+        const filteredProducts = products;  // 使用全部商品
         
-        // 獲取過濾條件
+        // 獲取過濾條件（只用於判斷需補貨型號數量，不影響總計）
         const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
-        const filterMode = document.getElementById('filterMode')?.checked || false;
+        // filterMode 不再用於統計計算，只用於表格顯示
         
         let totalProducts = 0;
         let totalModels = 0;
@@ -1949,17 +1922,10 @@ document.addEventListener('DOMContentLoaded', function() {
                     
                     const expectedStock = Math.round(monthlyRate * months);
                     
-                    // 過濾邏輯（與 displayProducts 相同）：
-                    // 1. 有月銷量時：若庫存 >= 預期庫存，代表充足，隱藏
-                    // 2. 月銷量為 0 時：若庫存 > 0，代表不需補貨，隱藏；庫存也為 0 則顯示
-                    if (filterMode) {
-                        if (expectedStock > 0 && currentStock >= expectedStock) {
-                            return;
-                        }
-                        if (expectedStock === 0 && currentStock > 0) {
-                            return;
-                        }
-                    }
+                    // 儀表板統計應該包含全部型號，不受 filterMode 影響
+                    // filterMode 只用於表格顯示的過濾，不影響統計計算
+                    
+                    // 計算需補貨型號數量（始終計算，不受 filterMode 影響）
                     if (currentStock < expectedStock && expectedStock > 0) {
                         modelsNeedingRestock++;
                     }
