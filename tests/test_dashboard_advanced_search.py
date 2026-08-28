@@ -1,10 +1,10 @@
 """
-Test dashboard statistics behavior with advanced search and filterMode.
+測試 Dashboard 統計數據與進階搜尋和 filterMode 的行為。
 
-Requirements:
-- Dashboard MUST update when advanced search (進階搜尋) is used
-- Dashboard must NOT change when filterMode (僅顯示需補貨型號) is toggled
-- Clearing search should restore original dashboard totals
+需求：
+- Dashboard 必須在使用進階搜尋時更新
+- Dashboard 不受 filterMode (僅顯示需補貨型號) 影響
+- 清除搜尋應恢復原始 Dashboard 總計
 """
 import json
 import os
@@ -12,7 +12,7 @@ from playwright.sync_api import sync_playwright, expect
 
 
 def test_dashboard_follows_advanced_search():
-    """Test that dashboard statistics update with advanced search but not filterMode."""
+    """測試 Dashboard 統計數據隨進階搜尋更新，但不受 filterMode 影響。"""
     
     test_dir = os.path.dirname(__file__)
     fixture_path = os.path.join(test_dir, 'fixtures', 'dashboard_test_products.json')
@@ -25,48 +25,48 @@ def test_dashboard_follows_advanced_search():
         browser = p.chromium.launch()
         page = browser.new_page()
         
-        # Load the page
+        # 載入頁面
         page.goto(f'file://{os.path.abspath(index_path)}')
         page.wait_for_load_state('networkidle')
         
-        # Inject test data into the page
+        # 注入測試資料到頁面
         page.evaluate(f'''
             window.productsData = {json.dumps(test_data)};
             displayProducts(window.productsData);
         ''')
         
-        # Wait for dashboard to render
+        # 等待 Dashboard 渲染
         page.wait_for_selector('#dashboardSummary', state='visible')
         
-        # Get initial dashboard stats (all products)
+        # 取得初始 Dashboard 統計（全部商品）
         initial_models = page.locator('#totalModelsCount').inner_text()
         initial_stock = page.locator('#totalStockCount').inner_text()
         initial_sales = page.locator('#totalSalesCount').inner_text()
         
-        print(f"Initial stats - Models: {initial_models}, Stock: {initial_stock}, Sales: {initial_sales}")
+        print(f"初始統計 - 型號: {initial_models}, 庫存: {initial_stock}, 銷量: {initial_sales}")
         
-        # Expected: 6 models (2+2+2), 215 stock (50+30+20+10+100+5), 60 sales (12+8+10+5+15+10)
-        assert int(initial_models) == 6, f"Expected 6 models initially, got {initial_models}"
-        assert int(initial_stock) == 215, f"Expected 215 stock initially, got {initial_stock}"
-        assert int(initial_sales) == 60, f"Expected 60 sales initially, got {initial_sales}"
+        # 預期：6 個型號 (2+2+2), 215 庫存 (50+30+20+10+100+5), 60 銷量 (12+8+10+5+15+10)
+        assert int(initial_models) == 6, f"預期初始有 6 個型號，實際為 {initial_models}"
+        assert int(initial_stock) == 215, f"預期初始有 215 庫存，實際為 {initial_stock}"
+        assert int(initial_sales) == 60, f"預期初始有 60 銷量，實際為 {initial_sales}"
         
-        # Test 1: Apply advanced search for "iPhone" - should filter to 1 product (2 models)
+        # 測試 1：套用進階搜尋 "iPhone" - 應過濾到 1 個商品（2 個型號）
         page.fill('#advancedKeywordInput', 'iPhone')
         page.click('button:has-text("搜尋")')
-        page.wait_for_timeout(500)  # Wait for update
+        page.wait_for_timeout(500)  # 等待更新
         
         searched_models = page.locator('#totalModelsCount').inner_text()
         searched_stock = page.locator('#totalStockCount').inner_text()
         searched_sales = page.locator('#totalSalesCount').inner_text()
         
-        print(f"After search 'iPhone' - Models: {searched_models}, Stock: {searched_stock}, Sales: {searched_sales}")
+        print(f"搜尋 'iPhone' 後 - 型號: {searched_models}, 庫存: {searched_stock}, 銷量: {searched_sales}")
         
-        # Expected: 2 models (iPhone only), 80 stock (50+30), 20 sales (12+8)
-        assert int(searched_models) == 2, f"Expected 2 models after search, got {searched_models}"
-        assert int(searched_stock) == 80, f"Expected 80 stock after search, got {searched_stock}"
-        assert int(searched_sales) == 20, f"Expected 20 sales after search, got {searched_sales}"
+        # 預期：2 個型號（僅 iPhone），80 庫存 (50+30)，20 銷量 (12+8)
+        assert int(searched_models) == 2, f"預期搜尋後有 2 個型號，實際為 {searched_models}"
+        assert int(searched_stock) == 80, f"預期搜尋後有 80 庫存，實際為 {searched_stock}"
+        assert int(searched_sales) == 20, f"預期搜尋後有 20 銷量，實際為 {searched_sales}"
         
-        # Test 2: Clear search - should restore original totals
+        # 測試 2：清除搜尋 - 應恢復原始總計
         page.fill('#advancedKeywordInput', '')
         page.click('button:has-text("搜尋")')
         page.wait_for_timeout(500)
@@ -75,13 +75,13 @@ def test_dashboard_follows_advanced_search():
         restored_stock = page.locator('#totalStockCount').inner_text()
         restored_sales = page.locator('#totalSalesCount').inner_text()
         
-        print(f"After clearing search - Models: {restored_models}, Stock: {restored_stock}, Sales: {restored_sales}")
+        print(f"清除搜尋後 - 型號: {restored_models}, 庫存: {restored_stock}, 銷量: {restored_sales}")
         
-        assert restored_models == initial_models, f"Models not restored: {restored_models} != {initial_models}"
-        assert restored_stock == initial_stock, f"Stock not restored: {restored_stock} != {initial_stock}"
-        assert restored_sales == initial_sales, f"Sales not restored: {restored_sales} != {initial_sales}"
+        assert restored_models == initial_models, f"型號未恢復：{restored_models} != {initial_models}"
+        assert restored_stock == initial_stock, f"庫存未恢復：{restored_stock} != {initial_stock}"
+        assert restored_sales == initial_sales, f"銷量未恢復：{restored_sales} != {initial_sales}"
         
-        # Test 3: Toggle filterMode (僅顯示需補貨型號) - dashboard should NOT change
+        # 測試 3：切換 filterMode (僅顯示需補貨型號) - Dashboard 不應改變
         page.check('#filterMode')
         page.wait_for_timeout(500)
         
@@ -89,17 +89,17 @@ def test_dashboard_follows_advanced_search():
         filtered_stock = page.locator('#totalStockCount').inner_text()
         filtered_sales = page.locator('#totalSalesCount').inner_text()
         
-        print(f"After filterMode toggle - Models: {filtered_models}, Stock: {filtered_stock}, Sales: {filtered_sales}")
+        print(f"切換 filterMode 後 - 型號: {filtered_models}, 庫存: {filtered_stock}, 銷量: {filtered_sales}")
         
-        # Dashboard should remain unchanged (營運顧問需要全門市補貨覆蓋率)
-        assert filtered_models == initial_models, f"FilterMode changed dashboard models: {filtered_models} != {initial_models}"
-        assert filtered_stock == initial_stock, f"FilterMode changed dashboard stock: {filtered_stock} != {initial_stock}"
-        assert filtered_sales == initial_sales, f"FilterMode changed dashboard sales: {filtered_sales} != {initial_sales}"
+        # Dashboard 應保持不變（營運顧問需要全門市補貨覆蓋率）
+        assert filtered_models == initial_models, f"filterMode 改變了 Dashboard 型號：{filtered_models} != {initial_models}"
+        assert filtered_stock == initial_stock, f"filterMode 改變了 Dashboard 庫存：{filtered_stock} != {initial_stock}"
+        assert filtered_sales == initial_sales, f"filterMode 改變了 Dashboard 銷量：{filtered_sales} != {initial_sales}"
         
-        # Uncheck filterMode to restore
+        # 取消勾選 filterMode 以恢復
         page.uncheck('#filterMode')
         
-        # Test 4: Search with filterMode enabled - dashboard should follow search, not filterMode
+        # 測試 4：搜尋 + filterMode 啟用 - Dashboard 應跟隨搜尋，不跟 filterMode
         page.check('#filterMode')
         page.fill('#advancedKeywordInput', '收納')
         page.click('button:has-text("搜尋")')
@@ -109,20 +109,20 @@ def test_dashboard_follows_advanced_search():
         combo_stock = page.locator('#totalStockCount').inner_text()
         combo_sales = page.locator('#totalSalesCount').inner_text()
         
-        print(f"Search '收納' + filterMode - Models: {combo_models}, Stock: {combo_stock}, Sales: {combo_sales}")
+        print(f"搜尋 '收納' + filterMode - 型號: {combo_models}, 庫存: {combo_stock}, 銷量: {combo_sales}")
         
-        # Expected: 2 models (收納盒 only), 105 stock (100+5), 25 sales (15+10)
-        assert int(combo_models) == 2, f"Expected 2 models with search+filter, got {combo_models}"
-        assert int(combo_stock) == 105, f"Expected 105 stock with search+filter, got {combo_stock}"
-        assert int(combo_sales) == 25, f"Expected 25 sales with search+filter, got {combo_sales}"
+        # 預期：2 個型號（僅收納盒），105 庫存 (100+5)，25 銷量 (15+10)
+        assert int(combo_models) == 2, f"預期搜尋+篩選有 2 個型號，實際為 {combo_models}"
+        assert int(combo_stock) == 105, f"預期搜尋+篩選有 105 庫存，實際為 {combo_stock}"
+        assert int(combo_sales) == 25, f"預期搜尋+篩選有 25 銷量，實際為 {combo_sales}"
         
         browser.close()
         
-        print("\n✓ All dashboard tests passed!")
-        print("  - Dashboard updates with advanced search")
-        print("  - Dashboard clears when search is removed")
-        print("  - Dashboard ignores filterMode toggle")
-        print("  - Dashboard follows search even when filterMode is on")
+        print("\n✓ 所有 Dashboard 測試通過！")
+        print("  - Dashboard 隨進階搜尋更新")
+        print("  - Dashboard 在清除搜尋後恢復")
+        print("  - Dashboard 忽略 filterMode 切換")
+        print("  - Dashboard 在 filterMode 開啟時仍跟隨搜尋")
 
 
 if __name__ == '__main__':

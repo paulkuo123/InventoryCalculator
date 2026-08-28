@@ -1,15 +1,15 @@
 """
-Comprehensive UI and logic testing for InventoryCalculator
+InventoryCalculator 的全面 UI 和邏輯測試
 
-Test coverage:
-1. SKU mapping workbench UI controls (offline, no 1688 login)
-2. Dashboard statistics verification against shopee_products.json
-3. 1688 restock button logic and state management
+測試範圍：
+1. SKU mapping 工作台 UI 控制項（離線，無需 1688 登入）
+2. Dashboard 統計數據驗證（對照 shopee_products.json）
+3. 1688 補貨按鈕邏輯和狀態管理
 
-Constraints:
-- No live 1688/Shopee login
-- Use existing fixtures or generate from golden_table.json
-- Small surgical fixes only
+約束條件：
+- 無實際 1688/Shopee 登入
+- 使用現有 fixture 或從 golden_table.json 生成
+- 僅小型手術式修復
 """
 import json
 import os
@@ -17,7 +17,7 @@ from pathlib import Path
 
 
 class TestReport:
-    """Collect test results for final report."""
+    """收集測試結果以生成最終報告。"""
     def __init__(self):
         self.passed = []
         self.failed = []
@@ -26,36 +26,36 @@ class TestReport:
     
     def add_pass(self, test_name):
         self.passed.append(test_name)
-        print(f"✓ PASS: {test_name}")
+        print(f"✓ 通過：{test_name}")
     
     def add_fail(self, test_name, reason):
         self.failed.append((test_name, reason))
-        print(f"✗ FAIL: {test_name} - {reason}")
+        print(f"✗ 失敗：{test_name} - {reason}")
     
     def add_skip(self, test_name, reason):
         self.skipped.append((test_name, reason))
-        print(f"⊘ SKIP: {test_name} - {reason}")
+        print(f"⊘ 跳過：{test_name} - {reason}")
     
     def add_bug(self, bug_description, severity="medium"):
         self.bugs_found.append({"description": bug_description, "severity": severity})
-        print(f"🐛 BUG FOUND [{severity.upper()}]: {bug_description}")
+        print(f"🐛 發現 BUG [{severity.upper()}]：{bug_description}")
     
     def summary(self):
         print("\n" + "="*80)
-        print("TEST SUMMARY")
+        print("測試摘要")
         print("="*80)
-        print(f"Passed:  {len(self.passed)}")
-        print(f"Failed:  {len(self.failed)}")
-        print(f"Skipped: {len(self.skipped)}")
-        print(f"Bugs:    {len(self.bugs_found)}")
+        print(f"通過：  {len(self.passed)}")
+        print(f"失敗：  {len(self.failed)}")
+        print(f"跳過：  {len(self.skipped)}")
+        print(f"Bug：   {len(self.bugs_found)}")
         
         if self.failed:
-            print("\nFailed tests:")
+            print("\n失敗的測試：")
             for test_name, reason in self.failed:
                 print(f"  - {test_name}: {reason}")
         
         if self.bugs_found:
-            print("\nBugs found:")
+            print("\n發現的 Bug：")
             for bug in self.bugs_found:
                 print(f"  - [{bug['severity'].upper()}] {bug['description']}")
 
@@ -64,122 +64,121 @@ report = TestReport()
 
 
 def test_sku_mapping_ui_state():
-    """Test SKU mapping workbench button states and interactions (offline)."""
+    """測試 SKU mapping 工作台按鈕狀態和互動（離線）。"""
     print("\n" + "="*80)
-    print("1. SKU MAPPING WORKBENCH UI TESTING")
+    print("1. SKU MAPPING 工作台 UI 測試")
     print("="*80)
     
-    # Test: Button availability without auth
+    # 測試：無需認證的按鈕可用性
     report.add_skip(
-        "scanAll button - requires 1688 access",
-        "Button triggers /api/sku-mapping/scan which needs ego-lite 1688 scraper"
+        "scanAll 按鈕 - 需要 1688 存取",
+        "按鈕觸發 /api/sku-mapping/scan 需要 ego-lite 1688 爬蟲"
     )
     
     report.add_skip(
-        "scanVisiblePage button - requires 1688 access", 
-        "Button triggers 1688 product page scraping"
+        "scanVisiblePage 按鈕 - 需要 1688 存取", 
+        "按鈕觸發 1688 商品頁爬取"
     )
     
-    # Test: Reanalyze buttons (should work offline with existing snapshots)
+    # 測試：重新分析按鈕（應可離線使用現有快照）
     report.add_pass(
-        "reanalyzeExisting button - uses cached snapshots"
+        "reanalyzeExisting 按鈕 - 使用快取快照"
     )
     
     report.add_pass(
-        "reanalyzeExistingAi button - uses cached snapshots with AI"
+        "reanalyzeExistingAi 按鈕 - 使用快取快照配合 AI"
     )
     
-    # Test: Batch approval buttons
-    report.add_pass("selectAllItems checkbox - client-side only")
-    report.add_pass("selectGreen button - client-side filter")
-    report.add_pass("batchApprove button - server write operation")
-    report.add_pass("batchDefer button - server write operation")
-    report.add_pass("batchNoMatch button - server write operation")
-    report.add_pass("batchDiscontinued button - server write operation")
+    # 測試：批次核准按鈕
+    report.add_pass("selectAllItems 核取方塊 - 僅客戶端")
+    report.add_pass("selectGreen 按鈕 - 客戶端篩選")
+    report.add_pass("batchApprove 按鈕 - 伺服器寫入操作")
+    report.add_pass("batchDefer 按鈕 - 伺服器寫入操作")
+    report.add_pass("batchNoMatch 按鈕 - 伺服器寫入操作")
+    report.add_pass("batchDiscontinued 按鈕 - 伺服器寫入操作")
     
-    # Test: Filters and search
-    report.add_pass("query input - client-side debounced search")
-    report.add_pass("status select - filters queue display")
-    report.add_pass("tier select - filters by safety tier")
-    report.add_pass("urlPresence select - filters by URL status")
-    report.add_pass("restockOnly checkbox - filters needing restock")
-    report.add_pass("reload button - refreshes from server")
+    # 測試：篩選器和搜尋
+    report.add_pass("query 輸入欄 - 客戶端防抖搜尋")
+    report.add_pass("status 下拉選單 - 篩選佇列顯示")
+    report.add_pass("tier 下拉選單 - 依安全分級篩選")
+    report.add_pass("urlPresence 下拉選單 - 依 URL 狀態篩選")
+    report.add_pass("restockOnly 核取方塊 - 篩選需補貨項目")
+    report.add_pass("reload 按鈕 - 從伺服器重新整理")
     
-    # Test: Tab switching
-    report.add_pass("skuReviewTab button - switches to SKU review view")
-    report.add_pass("urlManagerTab button - switches to URL manager view")
+    # 測試：標籤切換
+    report.add_pass("skuReviewTab 按鈕 - 切換到 SKU 審核視圖")
+    report.add_pass("urlManagerTab 按鈕 - 切換到 URL 管理視圖")
     
-    # Test: URL manager buttons
-    report.add_pass("reloadUrlGroups button - refreshes URL groups")
-    report.add_pass("urlGroupStatus select - filters URL groups")
-    report.add_pass("urlLinkStatus select - filters by link health")
+    # 測試：URL 管理器按鈕
+    report.add_pass("reloadUrlGroups 按鈕 - 重新整理 URL 群組")
+    report.add_pass("urlGroupStatus 下拉選單 - 篩選 URL 群組")
+    report.add_pass("urlLinkStatus 下拉選單 - 依連結健康度篩選")
     
     report.add_skip(
-        "checkUrlHealth button - requires 1688 access",
-        "Button validates 1688 URLs by fetching pages"
+        "checkUrlHealth 按鈕 - 需要 1688 存取",
+        "按鈕透過取得頁面驗證 1688 URL"
     )
     
     report.add_skip(
-        "previewUrlChange button - requires 1688 access",
-        "Button fetches new 1688 product page to preview SKUs"
+        "previewUrlChange 按鈕 - 需要 1688 存取",
+        "按鈕取得新的 1688 商品頁面以預覽 SKU"
     )
     
-    report.add_pass("clearUrlChange button - client-side modal reset")
-    report.add_pass("commitUrlChange button - server write operation")
+    report.add_pass("clearUrlChange 按鈕 - 客戶端 modal 重設")
+    report.add_pass("commitUrlChange 按鈕 - 伺服器寫入操作")
     
-    # Check for potential UI bugs
-    # Bug: batch buttons might not update disabled state correctly
-    print("\n  Checking for potential UI state bugs...")
+    # 檢查潛在的 UI bug
+    print("\n  檢查潛在的 UI 狀態 bug...")
     
-    # Read sku-mapping.js to check state management
+    # 讀取 sku-mapping.js 檢查狀態管理
     sku_js_path = Path("sku-mapping.js")
     if sku_js_path.exists():
         content = sku_js_path.read_text()
         
-        # Check: Do batch buttons get disabled during operations?
+        # 檢查：批次按鈕在操作期間是否被禁用？
         if "setBatchBusy" in content:
-            report.add_pass("setBatchBusy function exists - batch buttons managed")
+            report.add_pass("setBatchBusy 函數存在 - 批次按鈕已管理")
         else:
             report.add_bug(
-                "No setBatchBusy management found - batch buttons might allow double-clicks",
+                "未找到 setBatchBusy 管理 - 批次按鈕可能允許重複點擊",
                 severity="low"
             )
         
-        # Check: Are selections cleared on filter change?
+        # 檢查：篩選變更時是否清除選擇項目？
         if "clearSelections" in content and "addEventListener('change'" in content:
-            report.add_pass("clearSelections called on filter changes")
+            report.add_pass("clearSelections 在篩選變更時被呼叫")
         else:
             report.add_bug(
-                "Selections might persist across filter changes, causing stale batch operations",
+                "選擇項目可能在篩選變更時保留，導致過時的批次操作",
                 severity="medium"
             )
         
-        # Check: Pagination handling
+        # 檢查：分頁處理
         if "batchRemaining" in content:
-            report.add_pass("batchRemaining function exists - handles pagination cleanup")
+            report.add_pass("batchRemaining 函數存在 - 正確處理分頁清理")
         else:
             report.add_bug(
-                "No batchRemaining check - completed items might stay on screen after batch ops",
+                "無 batchRemaining 檢查 - 已完成項目可能在批次操作後留在螢幕上",
                 severity="medium"
             )
 
 
 def test_dashboard_statistics():
-    """Test dashboard numbers against fixture data."""
+    """測試 Dashboard 數字對照 fixture 資料。"""
     print("\n" + "="*80)
-    print("2. DASHBOARD STATISTICS VERIFICATION")
+    print("2. DASHBOARD 統計數據驗證")
     print("="*80)
     
-    # Use our test fixture
+    # 使用我們的測試 fixture
     fixture_path = Path("tests/fixtures/dashboard_test_products.json")
     if not fixture_path.exists():
-        report.add_skip("Dashboard verification", "No shopee_products.json found")
+        report.add_skip("Dashboard 驗證", "找不到 shopee_products.json")
         return
     
     with open(fixture_path, 'r', encoding='utf-8') as f:
         products = json.load(f)
     
-    # Calculate expected values
+    # 計算預期值
     total_models = 0
     total_stock = 0
     total_sales = 0
@@ -191,193 +190,193 @@ def test_dashboard_statistics():
                 total_stock += int(model.get('商品庫存', 0))
                 total_sales += int(model.get('月銷量', 0))
     
-    print(f"\n  Expected dashboard totals:")
-    print(f"    Total models: {total_models}")
-    print(f"    Total stock: {total_stock}")
-    print(f"    Total monthly sales: {total_sales}")
+    print(f"\n  預期 Dashboard 總計：")
+    print(f"    總型號數：{total_models}")
+    print(f"    總庫存：{total_stock}")
+    print(f"    總月銷量：{total_sales}")
     
-    # Verify calculateInventoryStatistics logic
+    # 驗證 calculateInventoryStatistics 邏輯
     script_js_path = Path("script.js")
     if script_js_path.exists():
         content = script_js_path.read_text()
         
-        # Check: Does dashboard filter by advancedKeyword?
+        # 檢查：Dashboard 是否依 advancedKeyword 篩選？
         if "advancedKeyword && advancedKeyword.trim()" in content and \
            "filteredProducts = filtered" in content:
-            report.add_pass("Dashboard filters by advancedKeyword - correct behavior")
+            report.add_pass("Dashboard 依 advancedKeyword 篩選 - 正確行為")
         else:
             report.add_bug(
-                "Dashboard may not filter by advancedKeyword correctly",
+                "Dashboard 可能無法正確依 advancedKeyword 篩選",
                 severity="high"
             )
         
-        # Check: Does dashboard ignore filterMode?
+        # 檢查：Dashboard 是否忽略 filterMode？
         if "filterMode 不影響儀表板" in content or \
            "filterMode" not in content[content.find("calculateInventoryStatistics"):content.find("calculateInventoryStatistics")+3000]:
-            report.add_pass("Dashboard ignores filterMode - correct for ops coverage")
+            report.add_pass("Dashboard 忽略 filterMode - 營運覆蓋率正確")
         else:
             report.add_bug(
-                "Dashboard might incorrectly filter by filterMode toggle",
+                "Dashboard 可能錯誤地依 filterMode 切換篩選",
                 severity="high"
             )
         
-        # Check: Restock count calculation
+        # 檢查：補貨數量計算
         if "modelsNeedingRestock" in content:
-            report.add_pass("modelsNeedingRestock calculation exists")
+            report.add_pass("modelsNeedingRestock 計算存在")
         else:
-            report.add_fail("Dashboard missing restock count", "No modelsNeedingRestock")
+            report.add_fail("Dashboard 缺少補貨數量", "無 modelsNeedingRestock")
     
-    report.add_pass("Dashboard test fixture validated")
+    report.add_pass("Dashboard 測試 fixture 已驗證")
 
 
 def test_restock_logic_bugs():
-    """Test 1688 restock button logic for bugs (offline)."""
+    """測試 1688 補貨按鈕邏輯的 bug（離線）。"""
     print("\n" + "="*80)
-    print("3. 1688 RESTOCK LOGIC TESTING")
+    print("3. 1688 補貨邏輯測試")
     print("="*80)
     
     script_js_path = Path("script.js")
     if not script_js_path.exists():
-        report.add_skip("Restock logic tests", "script.js not found")
+        report.add_skip("補貨邏輯測試", "找不到 script.js")
         return
     
     content = script_js_path.read_text()
     
-    # Test: Batch restock modal state management
+    # 測試：批次補貨 modal 狀態管理
     if "batchRestockModal" in content:
-        report.add_pass("batchRestockModal exists in script.js")
+        report.add_pass("batchRestockModal 存在於 script.js")
         
-        # Check: Are products properly filtered?
+        # 檢查：商品是否正確篩選？
         if "readyProducts" in content and "filter" in content:
-            report.add_pass("readyProducts filtering exists")
+            report.add_pass("readyProducts 篩選存在")
         else:
             report.add_bug(
-                "Batch restock might include products without proper mapping",
+                "批次補貨可能包含沒有正確 mapping 的商品",
                 severity="high"
             )
         
-        # Check: Is selection state maintained?
+        # 檢查：選擇狀態是否維持？
         if "dataset.batchRestockIndex" in content:
-            report.add_pass("Batch restock uses index tracking")
+            report.add_pass("批次補貨使用索引追蹤")
         else:
             report.add_bug(
-                "Batch restock selection might be fragile without index tracking",
+                "批次補貨選擇可能因缺少索引追蹤而脆弱",
                 severity="medium"
             )
         
-        # Check: Error handling for partial success
+        # 檢查：部分成功的錯誤處理
         if "setRestockMessage" in content:
-            report.add_pass("setRestockMessage function exists for error display")
+            report.add_pass("setRestockMessage 函數存在以顯示錯誤")
         else:
             report.add_bug(
-                "No restock message handler - partial failures might be silent",
+                "無補貨訊息處理器 - 部分失敗可能無聲無息",
                 severity="medium"
             )
     
-    # Test: Individual restock button logic
+    # 測試：個別補貨按鈕邏輯
     if "badge-alibaba-restock" in content:
-        report.add_pass("Individual restock buttons exist")
+        report.add_pass("個別補貨按鈕存在")
         
-        # Check: Button disabled state
+        # 檢查：按鈕禁用狀態
         if ".disabled" in content or "btn.disabled" in content:
-            report.add_pass("Restock button disabled state managed")
+            report.add_pass("補貨按鈕禁用狀態已管理")
         else:
             report.add_bug(
-                "Restock buttons might allow double-submission",
+                "補貨按鈕可能允許重複提交",
                 severity="medium"
             )
     
-    # Check: Lock mechanism for concurrent operations
+    # 檢查：並發操作的鎖定機制
     if "restockInProgress" in content or "window.restockInProgress" in content:
-        report.add_pass("Restock lock mechanism exists - concurrent operations protected")
+        report.add_pass("補貨鎖定機制存在 - 並發操作受保護")
     else:
         report.add_bug(
-            "No restock lock found - concurrent restock operations might corrupt state",
+            "未找到補貨鎖定 - 並發補貨操作可能損壞狀態",
             severity="high"
         )
     
-    # Test: alibaba_restocker.py logic
+    # 測試：alibaba_restocker.py 邏輯
     restocker_path = Path("alibaba_restocker.py")
     if restocker_path.exists():
         py_content = restocker_path.read_text()
         
-        # Check: Partial success handling
+        # 檢查：部分成功處理
         if "partial" in py_content.lower() or "skipped" in py_content.lower():
-            report.add_pass("alibaba_restocker.py handles partial success")
+            report.add_pass("alibaba_restocker.py 處理部分成功")
         else:
             report.add_bug(
-                "alibaba_restocker.py might not report skipped SKUs in batch operations",
+                "alibaba_restocker.py 可能不報告批次操作中跳過的 SKU",
                 severity="medium"
             )
         
-        # Check: SKU count mismatch detection
+        # 檢查：SKU 數量不符檢測
         if "mismatch" in py_content.lower() or "len(" in py_content:
-            report.add_pass("SKU count validation exists")
+            report.add_pass("SKU 數量驗證存在")
         else:
             report.add_bug(
-                "No SKU count mismatch detection - might add wrong quantities",
+                "無 SKU 數量不符檢測 - 可能加入錯誤數量",
                 severity="high"
             )
         
-        # Check: Stale state cleanup
+        # 檢查：過時狀態清理
         if "results = []" in py_content and "confirmed_cart_items: List" in py_content:
-            report.add_pass("State cleanup: fresh local state created per invocation")
+            report.add_pass("狀態清理：每次呼叫建立新的本地狀態")
         else:
             report.add_bug(
-                "alibaba_restocker.py might accumulate stale state across operations",
+                "alibaba_restocker.py 可能在操作間累積過時狀態",
                 severity="low"
             )
     
     report.add_skip(
-        "Live 1688 restock test",
-        "Requires authenticated 1688 session - tested offline logic only"
+        "實際 1688 補貨測試",
+        "需要已認證的 1688 工作階段 - 僅測試離線邏輯"
     )
 
 
 def test_sku_mapping_service():
-    """Test sku_mapping_service.py logic (offline)."""
+    """測試 sku_mapping_service.py 邏輯（離線）。"""
     print("\n" + "="*80)
-    print("4. SKU MAPPING SERVICE LOGIC")
+    print("4. SKU MAPPING SERVICE 邏輯")
     print("="*80)
     
     service_path = Path("sku_mapping_service.py")
     if not service_path.exists():
-        report.add_skip("SKU mapping service", "sku_mapping_service.py not found")
+        report.add_skip("SKU mapping service", "找不到 sku_mapping_service.py")
         return
     
     content = service_path.read_text()
     
-    # Check: Summary counts accuracy
+    # 檢查：摘要計數準確性
     if "mappingCounts" in content or "restockCounts" in content:
-        report.add_pass("Summary counts calculated in service")
+        report.add_pass("Service 中計算摘要計數")
     else:
         report.add_bug(
-            "Summary counts might be missing or inaccurate",
+            "摘要計數可能遺失或不準確",
             severity="medium"
         )
     
-    # Check: Badge/count updates after operations
+    # 檢查：操作後的徽章/計數更新
     if "update" in content.lower() and ("count" in content.lower() or "badge" in content.lower()):
-        report.add_pass("Count update mechanism exists")
+        report.add_pass("計數更新機制存在")
     else:
         report.add_bug(
-            "Counts/badges might not update after approve/defer/batch operations",
+            "核准/延後/批次操作後計數/徽章可能不更新",
             severity="high"
         )
     
-    # Check: Thread safety for concurrent operations
+    # 檢查：並發操作的執行緒安全
     if "lock" in content.lower() or "thread" in content.lower() or "async" in content:
-        report.add_pass("Concurrency control exists in service")
+        report.add_pass("Service 中存在並發控制")
     else:
         report.add_bug(
-            "sku_mapping_service.py might have race conditions with concurrent operations",
+            "sku_mapping_service.py 並發操作時可能有競爭條件",
             severity="high"
         )
 
 
 if __name__ == '__main__':
-    print("Starting comprehensive testing...")
-    print(f"Working directory: {os.getcwd()}")
+    print("開始全面測試...")
+    print(f"工作目錄：{os.getcwd()}")
     
     test_sku_mapping_ui_state()
     test_dashboard_statistics()
@@ -387,10 +386,10 @@ if __name__ == '__main__':
     report.summary()
     
     print("\n" + "="*80)
-    print("RECOMMENDATIONS")
+    print("建議")
     print("="*80)
-    print("1. Add unit tests for batch operation state management")
-    print("2. Add integration test for restock lock mechanism")
-    print("3. Add e2e test for dashboard filtering with real Shopee data")
-    print("4. Add error handling test for partial batch failures")
-    print("5. Consider adding operation cancellation for long-running jobs")
+    print("1. 為批次操作狀態管理新增單元測試")
+    print("2. 為補貨鎖定機制新增整合測試")
+    print("3. 為 Dashboard 篩選新增使用真實 Shopee 資料的 e2e 測試")
+    print("4. 為批次部分失敗新增錯誤處理測試")
+    print("5. 考慮為長時間執行的任務新增操作取消功能")

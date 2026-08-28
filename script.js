@@ -710,7 +710,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     window.setTimeout(poll, 1000);
                     return;
                 }
-                // Job completed (success or failed) - release lock
+                // 任務完成（成功或失敗）- 釋放鎖定
                 window.restockInProgress = false;
                 if (data.status === 'failed') {
                     setRestockMessage(statusTarget, data.message || '1688 補貨流程失敗', 'error');
@@ -1874,7 +1874,7 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 message.textContent = data.message || '已啟動 1688 採購車流程，請檢查開啟的瀏覽器。';
                 message.className = 'alibaba-edit-message success';
-                // Monitor job if jobId is returned, otherwise release lock
+                // 如果有 jobId 則監控任務，否則釋放鎖定
                 if (data.jobId) {
                     monitorAlibabaRestockJob(data.jobId, message);
                 } else {

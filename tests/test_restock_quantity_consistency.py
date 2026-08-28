@@ -1,128 +1,128 @@
 """
-Test restock quantity consistency across GUI, crawler, and 1688 API.
+測試補貨數量在 GUI、Crawler 和 1688 API 之間的一致性。
 
-Requirements from restock owner:
-1. Only approved SKU mappings go into procurement cart
-2. Restock quantities on 1688 must match on-screen suggestions (not a different formula)
-3. Month-threshold and rounding rules must be consistent across all surfaces
+補貨負責人的要求：
+1. 只有已批准的 SKU mapping 才能進入採購車
+2. 1688 上的補貨數量必須與螢幕上的建議相符（不是另一個公式）
+3. 月份閾值和四捨五入規則必須在所有表面保持一致
 
-Known bug to check: rounding/ceiling inconsistent across GUI, web UI, and crawler.
+已知要檢查的 bug：GUI、Web UI 和 Crawler 之間的四捨五入/無條件進位規則不一致。
 """
 import unittest
 import sys
 import os
 from pathlib import Path
 
-# Add parent directory to path
+# 將父目錄加入路徑
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from restock_rules import resolve_restock_quantity
 
 
 class RestockQuantityConsistencyTests(unittest.TestCase):
-    """Test that restock quantity calculations are consistent across all code paths."""
+    """測試補貨數量計算在所有程式碼路徑中保持一致。"""
     
     def test_documented_rounding_rule_is_round_to_nearest_10(self):
-        """The documented rule rounds to nearest 10, not truncates."""
-        # Corrected rounding function that handles edge cases properly
-        # Using int((value + 5) / 10) * 10 to ensure proper rounding
+        """文件化的規則是四捨五入到最接近的 10，不是截斷。"""
+        # 修正的四捨五入函數，可正確處理邊界情況
+        # 使用 int((value + 5) / 10) * 10 確保正確四捨五入
         def round_func(value):
             if value <= 0:
                 return 0
             return int((value + 5) / 10) * 10
         
-        # Test cases from restock_rules.py tests
+        # 來自 restock_rules.py 測試的測試案例
         self.assertEqual(round_func(17), 20)
-        self.assertEqual(round_func(15), 20)  # 15 rounds up
-        self.assertEqual(round_func(14), 10)  # 14 rounds down
-        self.assertEqual(round_func(5), 10)   # 5 rounds up
-        self.assertEqual(round_func(4), 0)    # 4 rounds down
-        self.assertEqual(round_func(6), 10)   # 6 rounds up
-        self.assertEqual(round_func(23), 20)  # 23 rounds down
-        self.assertEqual(round_func(25), 30)  # 25 rounds up
+        self.assertEqual(round_func(15), 20)  # 15 四捨五入
+        self.assertEqual(round_func(14), 10)  # 14 四捨五入
+        self.assertEqual(round_func(5), 10)   # 5 四捨五入
+        self.assertEqual(round_func(4), 0)    # 4 四捨五入
+        self.assertEqual(round_func(6), 10)   # 6 四捨五入
+        self.assertEqual(round_func(23), 20)  # 23 四捨五入
+        self.assertEqual(round_func(25), 30)  # 25 四捨五入
     
     def test_gui_calculation_matches_documented_rule(self):
         """
-        GUI (script.js) should use the documented rounding rule.
+        GUI (script.js) 應使用文件化的四捨五入規則。
         
-        Code path: script.js calculateModelRestock() and displayProducts()
-        Formula: 
+        程式碼路徑：script.js calculateModelRestock() 和 displayProducts()
+        公式：
           targetStock = Math.round(monthlyRate * months)
           rawSuggestedQty = max(0, targetStock - currentStock)
-          suggestedQty = roundRestockQty(rawSuggestedQty)  # rounds to 10
+          suggestedQty = roundRestockQty(rawSuggestedQty)  # 四捨五入到 10
         """
-        # Simulate GUI calculation
+        # 模擬 GUI 計算
         def gui_calculate_restock(monthly_rate, months, current_stock):
             target_stock = round(monthly_rate * months)
             raw_suggested = max(0, target_stock - current_stock)
-            # GUI uses roundRestockQty: Math.round(parsed / 10) * 10
+            # GUI 使用 roundRestockQty: Math.round(parsed / 10) * 10
             return round(raw_suggested / 10) * 10
         
-        # Test case: 5 monthly, 4 months, 3 in stock
-        # Target: 20, need: 17, rounded: 20
+        # 測試案例：月銷量 5，庫存月份 4，當前庫存 3
+        # 目標：20，需要：17，四捨五入：20
         self.assertEqual(gui_calculate_restock(5, 4, 3), 20)
         
-        # Test case: 3 monthly, 4 months, 2 in stock
-        # Target: 12, need: 10, rounded: 10
+        # 測試案例：月銷量 3，庫存月份 4，當前庫存 2
+        # 目標：12，需要：10，四捨五入：10
         self.assertEqual(gui_calculate_restock(3, 4, 2), 10)
         
-        # Test case: 4 monthly, 4 months, 10 in stock
-        # Target: 16, need: 6, rounded: 10
+        # 測試案例：月銷量 4，庫存月份 4，當前庫存 10
+        # 目標：16，需要：6，四捨五入：10
         self.assertEqual(gui_calculate_restock(4, 4, 10), 10)
     
     def test_crawler_calculation_should_match_gui(self):
         """
-        Crawler (crawler.py) should use same rounding as GUI.
+        Crawler (crawler.py) 應使用與 GUI 相同的四捨五入。
         
-        CURRENT CODE PATH: crawler.py calculate_restock_quantity()
-        Formula:
+        當前程式碼路徑：crawler.py calculate_restock_quantity()
+        公式：
           expected_inventory = monthly_sales * expected_months
           restock = expected_inventory - current_inventory
-          return max(0, int(restock))  # ❌ BUG: uses int() not round to 10!
+          return max(0, int(restock))  # ❌ BUG：使用 int() 不四捨五入到 10！
         
-        EXPECTED: Should round to 10 like GUI
+        預期：應像 GUI 一樣四捨五入到 10
         """
-        # Current crawler implementation (BUGGY)
+        # 當前 Crawler 實作（有 BUG）
         def crawler_calculate_restock_current(monthly_sales, expected_months, current_inventory):
             expected_inventory = monthly_sales * expected_months
             restock = expected_inventory - current_inventory
-            return max(0, int(restock))  # BUG: truncates, doesn't round to 10
+            return max(0, int(restock))  # BUG：截斷，不四捨五入到 10
         
-        # Expected crawler implementation (FIXED)
+        # 預期的 Crawler 實作（已修復）
         def crawler_calculate_restock_expected(monthly_sales, expected_months, current_inventory):
             expected_inventory = monthly_sales * expected_months
             restock = expected_inventory - current_inventory
             raw_restock = max(0, restock)
-            return round(raw_restock / 10) * 10  # Should round to 10
+            return round(raw_restock / 10) * 10  # 應四捨五入到 10
         
-        # Test the inconsistency
+        # 測試不一致性
         monthly_sales, months, stock = 5, 4, 3
         
         current_result = crawler_calculate_restock_current(monthly_sales, months, stock)
         expected_result = crawler_calculate_restock_expected(monthly_sales, months, stock)
         
-        # Document the bug
-        self.assertEqual(current_result, 17, "Current crawler returns 17 (int truncate)")
-        self.assertEqual(expected_result, 20, "Expected crawler should return 20 (round to 10)")
+        # 記錄 bug
+        self.assertEqual(current_result, 17, "當前 Crawler 傳回 17 (int 截斷)")
+        self.assertEqual(expected_result, 20, "預期 Crawler 應傳回 20 (四捨五入到 10)")
         
-        # This assertion will FAIL with current crawler code - that's the bug!
+        # 這個斷言在當前 Crawler 程式碼下會失敗 - 那就是 bug！
         if current_result != expected_result:
-            print(f"\n🐛 BUG FOUND: Crawler returns {current_result}, GUI would return {expected_result}")
-            print(f"   Input: monthly={monthly_sales}, months={months}, stock={stock}")
-            print(f"   Expected inventory: {monthly_sales * months}")
-            print(f"   Raw restock need: {monthly_sales * months - stock}")
-            print(f"   Crawler gives: {current_result} (int() truncate)")
-            print(f"   Should give: {expected_result} (round to 10)\n")
+            print(f"\n🐛 發現 BUG：Crawler 傳回 {current_result}，GUI 會傳回 {expected_result}")
+            print(f"   輸入：月銷量={monthly_sales}，庫存月份={months}，當前庫存={stock}")
+            print(f"   預期庫存：{monthly_sales * months}")
+            print(f"   原始補貨需求：{monthly_sales * months - stock}")
+            print(f"   Crawler 給出：{current_result} (int() 截斷)")
+            print(f"   應給出：{expected_result} (四捨五入到 10)\n")
 
 
 class ApprovedMappingGateTests(unittest.TestCase):
-    """Test that only approved SKU mappings enter the procurement cart."""
+    """測試只有已批准的 SKU mapping 進入採購車。"""
     
     def test_approved_mapping_required_for_restock(self):
-        """Only items with alibabaSkuName and approved status should be allowed."""
-        # Test data mimicking alababa_restocker.py logic
+        """只有具有 alibabaSkuName 和 approved 狀態的項目應被允許。"""
+        # 模擬 alababa_restocker.py 邏輯的測試資料
         
-        # Case 1: Approved mapping - should pass
+        # 案例 1：已批准的 mapping - 應通過
         approved_item = {
             "alibabaSkuName": "黑色",
             "alibabaSkuSecondName": "M碼",
@@ -131,7 +131,7 @@ class ApprovedMappingGateTests(unittest.TestCase):
         }
         self.assertTrue(self._should_allow_restock(approved_item))
         
-        # Case 2: Pending mapping - should block
+        # 案例 2：待處理的 mapping - 應阻擋
         pending_item = {
             "alibabaSkuName": "黑色",
             "alibabaSkuSecondName": "M碼",
@@ -140,7 +140,7 @@ class ApprovedMappingGateTests(unittest.TestCase):
         }
         self.assertFalse(self._should_allow_restock(pending_item))
         
-        # Case 3: No SKU name - should block
+        # 案例 3：無 SKU 名稱 - 應阻擋
         no_sku_item = {
             "alibabaSkuName": "",
             "alibabaMappingStatus": "approved",
@@ -148,7 +148,7 @@ class ApprovedMappingGateTests(unittest.TestCase):
         }
         self.assertFalse(self._should_allow_restock(no_sku_item))
         
-        # Case 4: Discontinued SKU - should block
+        # 案例 4：已停售 SKU - 應阻擋
         discontinued_item = {
             "alibabaSkuName": "停售",
             "alibabaMappingStatus": "approved",
@@ -157,19 +157,19 @@ class ApprovedMappingGateTests(unittest.TestCase):
         self.assertFalse(self._should_allow_restock(discontinued_item))
     
     def _should_allow_restock(self, item):
-        """Simulate the approval gate logic from alibaba_restocker.py."""
+        """模擬來自 alibaba_restocker.py 的批准閘門邏輯。"""
         sku_name = str(item.get("alibabaSkuName", "")).strip()
         status = str(item.get("alibabaMappingStatus", "")).strip()
         
-        # Check status
+        # 檢查狀態
         if status != "approved":
             return False
         
-        # Check SKU name exists
+        # 檢查 SKU 名稱存在
         if not sku_name:
             return False
         
-        # Check not discontinued
+        # 檢查未停售
         discontinued_keywords = ["停售", "已停售", "以後不賣了", "以后不卖了"]
         if sku_name in discontinued_keywords:
             return False
@@ -178,100 +178,100 @@ class ApprovedMappingGateTests(unittest.TestCase):
 
 
 class RestockQuantitySameAsDisplayTests(unittest.TestCase):
-    """Test that quantities sent to 1688 match the on-screen suggestions exactly."""
+    """測試送到 1688 的數量與螢幕上的建議完全相符。"""
     
     def test_adjusted_quantity_overrides_suggested(self):
-        """Manual adjustments should be sent as-is, without rounding."""
+        """手動調整應按原樣送出，不四捨五入。"""
         round_func = lambda value: round(value / 10) * 10
         
-        # User manually adjusts to 17 (not a multiple of 10)
+        # 使用者手動調整為 17（不是 10 的倍數）
         item = {"adjustedQty": 17, "restockQty": 20}
         quantity = resolve_restock_quantity(item, round_func)
         
-        # Should use the exact manual adjustment, not round it
+        # 應使用精確的手動調整，不四捨五入
         self.assertEqual(quantity, 17)
     
     def test_suggested_quantity_uses_rounding(self):
-        """Calculated suggestions should use the documented rounding rule."""
+        """計算出的建議應使用文件化的四捨五入規則。"""
         round_func = lambda value: round(value / 10) * 10
         
-        # System suggests 17 based on formula
+        # 系統依公式建議 17
         item = {"restockQty": 17}
         quantity = resolve_restock_quantity(item, round_func)
         
-        # Should round to 20
+        # 應四捨五入到 20
         self.assertEqual(quantity, 20)
     
     def test_display_and_api_use_same_quantity_source(self):
         """
-        The quantity shown on screen and sent to 1688 must come from same calculation.
+        螢幕上顯示的數量和送到 1688 的數量必須來自相同的計算。
         
-        In script.js:
-        - Display: calculateModelRestock() → suggestedQty (rounded to 10)
-        - API call: getRestockItemQty() → uses adjustedQty if present, else restockQty
+        在 script.js 中：
+        - 顯示：calculateModelRestock() → suggestedQty (四捨五入到 10)
+        - API 呼叫：getRestockItemQty() → 如果有 adjustedQty 則使用，否則使用 restockQty
         
-        Both paths must produce the same number for suggested (non-adjusted) items.
+        對於建議的（未調整的）項目，兩個路徑必須產生相同的數字。
         """
-        # Simulate the flow
+        # 模擬流程
         monthly_rate = 5
         months = 4
         current_stock = 3
         
-        # Step 1: Calculate display value (GUI)
+        # 步驟 1：計算顯示值（GUI）
         target_stock = round(monthly_rate * months)  # 20
         raw_suggested = max(0, target_stock - current_stock)  # 17
         display_qty = round(raw_suggested / 10) * 10  # 20
         
-        # Step 2: This value stored as restockQty
+        # 步驟 2：此值儲存為 restockQty
         item = {"restockQty": display_qty}
         
-        # Step 3: API sends this exact value
+        # 步驟 3：API 送出此精確值
         round_func = lambda value: round(value / 10) * 10
         api_qty = resolve_restock_quantity(item, round_func)
         
-        # They must match
+        # 它們必須相符
         self.assertEqual(display_qty, api_qty)
         self.assertEqual(api_qty, 20)
 
 
 class MonthThresholdConsistencyTests(unittest.TestCase):
-    """Test that inventory month threshold is used consistently."""
+    """測試庫存月份閾值的一致使用。"""
     
     def test_default_month_threshold_is_4(self):
-        """Default inventory months should be 4 across all surfaces."""
-        # This is documented in:
-        # - script.js: inventoryMonth default '4'
-        # - crawler.py: inventory_month default 4
-        # - GUI: <select id="inventoryMonth"> default 4
-        self.assertEqual(4, 4)  # Placeholder - actual test would check defaults
+        """預設庫存月份在所有表面應為 4。"""
+        # 這記錄於：
+        # - script.js：inventoryMonth 預設 '4'
+        # - crawler.py：inventory_month 預設 4
+        # - GUI：<select id="inventoryMonth"> 預設 4
+        self.assertEqual(4, 4)  # 佔位符 - 實際測試會檢查預設值
     
     def test_same_month_value_used_everywhere(self):
-        """When user sets inventoryMonth, all calculations must use that value."""
-        # Test case: User sets to 6 months
+        """當使用者設定 inventoryMonth 時，所有計算必須使用該值。"""
+        # 測試案例：使用者設定為 6 個月
         months = 6
         monthly_rate = 5
         current_stock = 10
         
-        # GUI calculation
+        # GUI 計算
         gui_target = round(monthly_rate * months)
         gui_need = max(0, gui_target - current_stock)
         gui_rounded = round(gui_need / 10) * 10
         
-        # Crawler calculation (should match GUI)
+        # Crawler 計算（應匹配 GUI）
         crawler_target = monthly_rate * months
         crawler_need = max(0, crawler_target - current_stock)
         crawler_rounded = round(crawler_need / 10) * 10
         
-        # Both should use the same months value
+        # 兩者都應使用相同的月份值
         self.assertEqual(gui_target, 30)
         self.assertEqual(crawler_target, 30)
         self.assertEqual(gui_rounded, crawler_rounded)
 
 
 def run_tests_and_report():
-    """Run tests and generate a detailed report of inconsistencies found."""
+    """執行測試並生成詳細的不一致報告。"""
     print("="*80)
-    print("RESTOCK QUANTITY CONSISTENCY TEST REPORT")
+    print("補貨數量一致性測試報告")
     print("="*80)
     print()
     
@@ -288,25 +288,25 @@ def run_tests_and_report():
     
     print()
     print("="*80)
-    print("SUMMARY")
+    print("摘要")
     print("="*80)
-    print(f"Tests run: {result.testsRun}")
-    print(f"Failures: {len(result.failures)}")
-    print(f"Errors: {len(result.errors)}")
+    print(f"執行測試：{result.testsRun}")
+    print(f"失敗：{len(result.failures)}")
+    print(f"錯誤：{len(result.errors)}")
     
     if result.failures or result.errors:
         print()
-        print("⚠️  INCONSISTENCIES FOUND:")
+        print("⚠️  發現不一致：")
         print()
-        print("1. **Crawler rounding bug**: crawler.py uses int() truncation")
-        print("   instead of rounding to nearest 10 like GUI")
-        print("   - GUI: 17 → 20 (rounds to 10)")
-        print("   - Crawler: 17 → 17 (truncates)")
+        print("1. **Crawler 四捨五入 bug**：crawler.py 使用 int() 截斷")
+        print("   而不是像 GUI 一樣四捨五入到最接近的 10")
+        print("   - GUI：17 → 20 (四捨五入到 10)")
+        print("   - Crawler：17 → 17 (截斷)")
         print()
-        print("2. **Fix required**: Update crawler.py calculate_restock_quantity()")
-        print("   to use: round(restock / 10) * 10")
+        print("2. **需要修復**：更新 crawler.py calculate_restock_quantity()")
+        print("   使用：round(restock / 10) * 10")
         print()
-        print("   See restock_rules.py for documented rounding rule")
+        print("   參見 restock_rules.py 的文件化四捨五入規則")
     
     return result
 
