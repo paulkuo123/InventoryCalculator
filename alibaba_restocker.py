@@ -31,9 +31,13 @@ ADD_TO_CART_TEXTS = [
 ]
 GOLDEN_TABLE_FILE = "golden_table.json"
 # 1688 會在內部記住每個已確認規格的數量；同一商品頁可先依序填完所有
-# SKU，再以一次「加采购车」送出。短暫等待只讓 React 同步目前 SKU 狀態，
+# SKU，再以一次「加采购车」送出。優先用 live skuId 寫數量，名稱點擊只是
+# 找不到對應欄位時的後備。短暫等待只讓 React 同步目前 SKU 狀態，
 # 真正的成功與否仍由後續提示輪詢確認。
 AFTER_FILL_WAIT_MS = 500
+AFTER_SKU_ID_FILL_WAIT_MS = 150
+AFTER_COLOR_FILTER_WAIT_MS = 500
+AFTER_SOLDOUT_EXPAND_WAIT_MS = 400
 AFTER_CART_CLICK_WAIT_MS = 300
 AFTER_CART_DISMISS_WAIT_MS = 500
 BETWEEN_SKU_SETTLE_MS = 350
@@ -191,6 +195,18 @@ def normalize_text(value: Any) -> str:
     return _format_comparison_text(value)
 
 
+_ROPE_AFFIX_RE = re.compile(r"[掌挂]绳")
+
+
+def _rope_affix_key(value: Any) -> str:
+    """Treat 掌绳 / 挂绳 as the same affix after Traditional/Simplified conversion.
+
+    1688 uses 陶瓷鱼挂绳 while the Shopee/Golden Table label is 陶瓷魚掌繩.
+    The animal token must still uniquely identify one live row.
+    """
+    return _ROPE_AFFIX_RE.sub("绳", canonicalize_chinese(value))
+
+
 def cart_limit_feedback_message(feedback: Dict[str, Any]) -> str:
     """從 1688 的可見提示判斷採購車是否已達商品種類上限。"""
     texts = [feedback.get("message")]
@@ -317,6 +333,22 @@ def mapped_sku_selection(
         "spec_text": str(selection.get("spec_text") or "").strip(),
         "status": str(selection.get("status") or "missing").strip(),
         "offer_fingerprint": str(selection.get("offer_fingerprint") or "").strip(),
+    }
+
+
+def restock_sku_fields(item: Dict[str, Any], mapped_selection: Dict[str, str]) -> Dict[str, str]:
+    """Prefer Golden Table mapping over crawler/UI snapshots."""
+    mapped = mapped_selection if isinstance(mapped_selection, dict) else {}
+    payload = item if isinstance(item, dict) else {}
+    return {
+        "sku_id": str(mapped.get("sku_id") or payload.get("alibabaSkuId") or "").strip(),
+        "sku_name": str(mapped.get("primary") or payload.get("alibabaSkuName") or "").strip(),
+        "sku_second_name": str(mapped.get("secondary") or payload.get("alibabaSkuSecondName") or "").strip(),
+        "spec_text": str(mapped.get("spec_text") or payload.get("alibabaSpecText") or "").strip(),
+        "status": str(mapped.get("status") or payload.get("alibabaMappingStatus") or "missing").strip(),
+        "offer_fingerprint": str(
+            mapped.get("offer_fingerprint") or payload.get("alibabaOfferFingerprint") or ""
+        ).strip(),
     }
 
 
@@ -511,6 +543,20 @@ def catalog_mapping_check(selection: Dict[str, str], catalog: Dict[str, Dict[str
                 }
             match_mode = "canonical"
         if not matches:
+            try:
+                matches, same_primary, inferred_unique_secondary = _find_catalog_name_matches(
+                    catalog, primary, secondary, _rope_affix_key
+                )
+            except ChineseCanonicalizationUnavailable as exc:
+                return {
+                    "ok": False,
+                    "reason": "canonicalization_unavailable",
+                    "sku_name": primary,
+                    "sku_second_name": secondary,
+                    "message": str(exc),
+                }
+            match_mode = "rope_affix"
+        if not matches:
             reason = "missing_second_name" if same_primary and not secondary else "name_pair_not_on_live_page"
             return {"ok": False, "reason": "spec_fingerprint_mismatch" if legacy_spec_only else reason, "sku_name": primary, "sku_second_name": secondary}
         if len(matches) > 1:
@@ -556,25 +602,153 @@ def sku_catalog_fingerprint(offer_id: str, catalog: Dict[str, Dict[str, Any]]) -
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def fill_quantity_by_sku_id(page, sku_id: str, quantity: int) -> Dict[str, Any]:
+    """Write quantity using the live page's skuId, without clicking spec labels."""
+    sku_id = str(sku_id or "").strip()
+    if not sku_id:
+        return {"ok": False, "method": "missing-sku-id"}
+    script = """
+    ({ skuId, quantity }) => {
+""" + JS_NORMALIZE_HELPER + r"""
+        const skuIdKey = String(skuId || '').trim();
+        const isVisible = el => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style && style.visibility !== 'hidden' && style.display !== 'none' &&
+                rect.width > 0 && rect.height > 0;
+        };
+        const setInputValue = (input, value) => {
+            const proto = input.tagName === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (setter) setter.call(input, String(value));
+            else input.value = String(value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new Event('blur', { bubbles: true }));
+        };
+        const isQtyInput = input => {
+            const marker = norm(`${input.type} ${input.name} ${input.className} ${input.placeholder} ${input.getAttribute('aria-label') || ''}`);
+            if (marker.includes('search') || marker.includes('搜') || marker.includes('keyword') ||
+                marker.includes('url') || marker.includes('phone') || marker.includes('login')) {
+                return false;
+            }
+            return input.type === 'number' || marker.includes('num') || marker.includes('qty') ||
+                marker.includes('quantity') || marker.includes('amount') || marker.includes('count') ||
+                input.getAttribute('role') === 'spinbutton';
+        };
+        const nodeHasSkuId = el => {
+            if (!el || typeof el.getAttributeNames !== 'function') return false;
+            const dataset = el.dataset || {};
+            if ([dataset.skuId, dataset.skuid, dataset.sku_id, dataset.skuID].some(value => String(value || '') === skuIdKey)) {
+                return true;
+            }
+            return el.getAttributeNames().some(name => {
+                const lowered = name.toLowerCase();
+                if (!lowered.includes('sku') && lowered !== 'data-id' && lowered !== 'id') return false;
+                return String(el.getAttribute(name) || '') === skuIdKey;
+            });
+        };
+        const findQtyInput = scope => {
+            if (!scope) return null;
+            const root = scope.nodeType === 1 ? scope : null;
+            if (!root) return null;
+            const inputs = [root, ...root.querySelectorAll('input:not([type="hidden"]):not([disabled]), textarea:not([disabled])')]
+                .filter(el => el && el.matches && el.matches('input, textarea') && isVisible(el));
+            return inputs.find(isQtyInput) || inputs.find(input => input.type === 'text' || input.type === 'tel' || !input.type) || null;
+        };
+
+        const scopes = Array.from(document.querySelectorAll(
+            '[data-sku-id], [data-skuid], [data-skuId], [class*="sku"], [class*="Sku"], [class*="spec"], tr, li, [data-id]'
+        ));
+        const matchedScope = scopes.find(nodeHasSkuId);
+        if (matchedScope) {
+            let current = matchedScope;
+            for (let depth = 0; current && depth < 5; depth += 1) {
+                const input = findQtyInput(current);
+                if (input) {
+                    input.scrollIntoView({ block: 'center', inline: 'center' });
+                    input.focus();
+                    setInputValue(input, quantity);
+                    return {
+                        ok: true,
+                        method: 'sku-id-bound-input',
+                        skuId: skuIdKey,
+                        input: {
+                            type: input.type,
+                            name: input.name,
+                            className: String(input.className || '').slice(0, 120),
+                            value: String(quantity)
+                        }
+                    };
+                }
+                current = current.parentElement;
+            }
+        }
+
+        const asRows = value => Array.isArray(value) ? value : Object.values(value || {});
+        const data = window.context?.result?.data || {};
+        const priceModel = data?.mainPrice?.fields?.finalPriceModel || {};
+        let rows = asRows(priceModel?.tradeWithoutPromotion?.skuMapOriginal);
+        if (!rows.length) rows = asRows(priceModel?.tradeWithPromotion?.skuMapOriginal);
+        const row = rows.find(item => String(item?.skuId ?? item?.sku_id ?? '') === skuIdKey);
+        if (!row) {
+            return {
+                ok: false,
+                method: matchedScope ? 'sku-id-quantity-input-not-found' : 'sku-id-not-in-page-map',
+                skuId: skuIdKey
+            };
+        }
+        return {
+            ok: false,
+            method: 'sku-id-bound-input-not-found',
+            skuId: skuIdKey,
+            specText: String(row.specAttrs || row.specText || row.spec_text || '')
+        };
+    }
+    """
+    result = page.evaluate(script, {"skuId": sku_id, "quantity": int(quantity)})
+    if isinstance(result, dict):
+        return result
+    return {"ok": False, "method": "invalid-sku-id-fill-result"}
+
+
 def fill_sku_quantity(
     page,
     model_name: str,
     alibaba_sku_name: str,
     alibaba_sku_second_name: str,
     quantity: int,
+    alibaba_sku_id: str = "",
 ) -> Dict[str, Any]:
     target_name = alibaba_sku_name or model_name
     target = str(target_name or "").strip()
     secondary_target_name = str(alibaba_sku_second_name or "").strip()
     secondary_target = secondary_target_name
+    sku_id = str(alibaba_sku_id or "").strip()
     if not target:
         return {
             "status": "skipped",
             "modelName": model_name,
             "alibabaSkuName": alibaba_sku_name,
             "alibabaSkuSecondName": secondary_target_name,
+            "alibabaSkuId": sku_id,
             "quantity": quantity,
             "message": "缺少型號名稱",
+        }
+
+    sku_id_fill = fill_quantity_by_sku_id(page, sku_id, quantity) if sku_id else {"ok": False, "method": "missing-sku-id"}
+    if sku_id_fill.get("ok"):
+        page.wait_for_timeout(AFTER_SKU_ID_FILL_WAIT_MS)
+        return {
+            "status": "filled",
+            "modelName": model_name,
+            "alibabaSkuName": target_name,
+            "alibabaSkuSecondName": secondary_target_name,
+            "alibabaSkuId": sku_id,
+            "quantity": quantity,
+            "details": {**sku_id_fill, "addEach": False},
         }
 
     option_script = """
@@ -679,8 +853,13 @@ def fill_sku_quantity(
             "modelName": model_name,
             "alibabaSkuName": target_name,
             "alibabaSkuSecondName": secondary_target_name,
+            "alibabaSkuId": sku_id,
             "quantity": quantity,
-            "details": {"method": "first-option-not-found", "candidates": first_selection.get("candidates", [])},
+            "details": {
+                "method": "first-option-not-found",
+                "candidates": first_selection.get("candidates", []),
+                "skuIdFill": sku_id_fill,
+            },
         }
 
     selected_options = [first_selection.get("rawText", "")]
@@ -693,11 +872,13 @@ def fill_sku_quantity(
                 "modelName": model_name,
                 "alibabaSkuName": target_name,
                 "alibabaSkuSecondName": secondary_target_name,
+                "alibabaSkuId": sku_id,
                 "quantity": quantity,
                 "details": {
                     "method": "second-option-not-found",
                     "firstSelectedText": first_selection.get("rawText", ""),
                     "candidates": second_selection.get("candidates", []),
+                    "skuIdFill": sku_id_fill,
                 },
             }
         final_selection = second_selection
@@ -762,8 +943,12 @@ def fill_sku_quantity(
             "modelName": model_name,
             "alibabaSkuName": target_name,
             "alibabaSkuSecondName": secondary_target_name,
+            "alibabaSkuId": sku_id,
             "quantity": quantity,
-            "details": {"method": quantity_input.get("method", "quantity-input-not-found")},
+            "details": {
+                "method": quantity_input.get("method", "quantity-input-not-found"),
+                "skuIdFill": sku_id_fill,
+            },
         }
     input_locator = page.locator(quantity_input["selector"])
     input_locator.fill(str(quantity), timeout=5000)
@@ -774,6 +959,7 @@ def fill_sku_quantity(
         "modelName": model_name,
         "alibabaSkuName": target_name,
         "alibabaSkuSecondName": secondary_target_name,
+        "alibabaSkuId": sku_id,
         "quantity": quantity,
         "details": {
             "method": "selected-two-options-native-quantity-input" if secondary_target else "selected-option-native-quantity-input",
@@ -781,6 +967,7 @@ def fill_sku_quantity(
             "clickedText": final_selection.get("clickedText", ""),
             "selectedOptions": selected_options,
             "quantityInput": {**quantity_input.get("input", {}), "value": str(quantity)},
+            "skuIdFill": sku_id_fill,
             "addEach": False,
         },
     }
@@ -887,6 +1074,268 @@ def fill_sku_quantity_legacy(page, model_name: str, alibaba_sku_name: str, quant
         "quantity": quantity,
         "details": result,
     }
+
+
+def detect_sku_selection_ui(page) -> Dict[str, Any]:
+    """Detect the 1688 color-filter + model-row quantity UI."""
+    script = """
+    () => {
+      const colors = document.querySelectorAll('.sku-filter-button');
+      const rows = document.querySelectorAll('.expand-view-item');
+      return {
+        hasColorFilter: colors.length > 0,
+        hasModelRows: rows.length > 0,
+        colorCount: colors.length,
+        modelRowCount: rows.length
+      };
+    }
+    """
+    result = page.evaluate(script)
+    return result if isinstance(result, dict) else {}
+
+
+def select_color_filter(page, color: str) -> Dict[str, Any]:
+    script = """
+    ({ color, marker }) => {
+""" + JS_NORMALIZE_HELPER + r"""
+        const targetKey = norm(color);
+        const isVisible = el => {
+            const style = window.getComputedStyle(el);
+            const rect = el.getBoundingClientRect();
+            return style && style.visibility !== 'hidden' && style.display !== 'none' &&
+                rect.width > 0 && rect.height > 0;
+        };
+        const labelOf = el => {
+            const label = el.querySelector('.label-name');
+            return String((label && (label.innerText || label.textContent)) || el.innerText || '').trim();
+        };
+        const buttons = Array.from(document.querySelectorAll('.sku-filter-button')).filter(isVisible);
+        const selected = buttons.find(el => norm(labelOf(el)) === targetKey);
+        if (!selected) {
+            return {
+                ok: false,
+                method: 'color-filter-not-found',
+                candidates: buttons.map(labelOf).slice(0, 20)
+            };
+        }
+        document.querySelectorAll('[data-alibaba-restock-color]').forEach(el => {
+            el.removeAttribute('data-alibaba-restock-color');
+        });
+        selected.setAttribute('data-alibaba-restock-color', marker);
+        selected.scrollIntoView({ block: 'center', inline: 'center' });
+        return {
+            ok: true,
+            alreadyActive: selected.classList.contains('active'),
+            selector: `[data-alibaba-restock-color="${marker}"]`,
+            clickedText: labelOf(selected)
+        };
+    }
+    """
+    selection = page.evaluate(script, {"color": color, "marker": "color"})
+    if not isinstance(selection, dict) or not selection.get("ok"):
+        return selection if isinstance(selection, dict) else {"ok": False, "method": "color-filter-not-found"}
+    if not selection.get("alreadyActive"):
+        page.locator(selection["selector"]).click(timeout=5000)
+        page.wait_for_timeout(AFTER_COLOR_FILTER_WAIT_MS)
+    return selection
+
+
+def expand_soldout_model_rows(page) -> Dict[str, Any]:
+    script = """
+    () => {
+      const link = Array.from(document.querySelectorAll('a, span, div')).find(el => {
+        const text = String(el.innerText || el.textContent || '').trim();
+        return text === '展开已售罄商品' || text === '展開已售罄商品' ||
+          text.includes('展开已售罄') || text.includes('展開已售罄');
+      });
+      if (!link) return { ok: true, needed: false };
+      const clickable = link.closest('a') || link;
+      clickable.setAttribute('data-alibaba-restock-soldout', 'expand');
+      clickable.scrollIntoView({ block: 'center', inline: 'center' });
+      return { ok: true, needed: true, selector: '[data-alibaba-restock-soldout="expand"]' };
+    }
+    """
+    result = page.evaluate(script)
+    if not isinstance(result, dict):
+        return {"ok": False, "needed": False}
+    if result.get("needed"):
+        page.locator(result["selector"]).click(timeout=5000)
+        page.wait_for_timeout(AFTER_SOLDOUT_EXPAND_WAIT_MS)
+        result["expanded"] = True
+    return result
+
+
+def fill_model_row_quantities(page, models: List[Dict[str, Any]]) -> Dict[str, Any]:
+    script = """
+    ({ models }) => {
+""" + JS_NORMALIZE_HELPER + r"""
+        const setInputValue = (input, value) => {
+            const proto = input.tagName === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
+            const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+            if (setter) setter.call(input, String(value));
+            else input.value = String(value);
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            input.dispatchEvent(new Event('blur', { bubbles: true }));
+        };
+        const results = [];
+        for (const model of models) {
+            const targetKey = norm(model.label);
+            const row = Array.from(document.querySelectorAll('.expand-view-item')).find(el => {
+                const label = el.querySelector('.item-label');
+                const text = label
+                    ? (label.getAttribute('title') || label.innerText || label.textContent || '')
+                    : (el.innerText || '');
+                return norm(text) === targetKey;
+            });
+            if (!row) {
+                results.push({ ok: false, label: model.label, method: 'model-row-not-found' });
+                continue;
+            }
+            const input = row.querySelector('input.ant-input-number-input, input[role="spinbutton"], input:not([type="hidden"])');
+            if (!input) {
+                results.push({ ok: false, label: model.label, method: 'model-row-quantity-input-not-found' });
+                continue;
+            }
+            input.scrollIntoView({ block: 'center', inline: 'center' });
+            input.focus();
+            setInputValue(input, model.quantity);
+            results.push({
+                ok: true,
+                label: model.label,
+                method: 'color-filter-model-row-input',
+                quantity: model.quantity
+            });
+        }
+        const soldoutCollapsed = Array.from(document.querySelectorAll('a, span, div')).some(el => {
+            const text = String(el.innerText || '').trim();
+            return text.includes('展开已售罄') || text.includes('展開已售罄');
+        });
+        return { ok: results.every(row => row.ok), results, soldoutCollapsed };
+    }
+    """
+    result = page.evaluate(script, {"models": models})
+    return result if isinstance(result, dict) else {"ok": False, "results": []}
+
+
+def _filled_from_row(item: Dict[str, Any], row: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "status": "filled",
+        "modelName": item.get("modelName"),
+        "alibabaSkuName": item.get("alibabaSkuName"),
+        "alibabaSkuSecondName": item.get("alibabaSkuSecondName"),
+        "alibabaSkuId": item.get("alibabaSkuId") or "",
+        "quantity": item.get("quantity"),
+        "details": {**row, "addEach": False},
+    }
+
+
+def fill_sku_quantities_grouped_by_color(page, items: List[Dict[str, Any]], debug: Optional[DebugLogger] = None) -> List[Dict[str, Any]]:
+    """Click each color once, then fill that color's model-row quantity inputs."""
+    grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        grouped[str(item.get("alibabaSkuName") or "")].append(item)
+    assigned: Dict[int, Dict[str, Any]] = {}
+    for color, color_items in grouped.items():
+        if debug:
+            debug.log("select_color_filter", {"color": color, "itemCount": len(color_items)})
+        print(f"選取 1688 顏色：{color}（{len(color_items)} 個型號）", flush=True)
+        selection = select_color_filter(page, color)
+        if debug:
+            debug.log("color_filter_result", {"color": color, "result": selection})
+        if not selection.get("ok"):
+            for item in color_items:
+                assigned[id(item)] = fill_sku_quantity(
+                    page,
+                    str(item.get("modelName") or ""),
+                    str(item.get("alibabaSkuName") or ""),
+                    str(item.get("alibabaSkuSecondName") or ""),
+                    int(item.get("quantity") or 0),
+                    str(item.get("alibabaSkuId") or ""),
+                )
+            continue
+        models = [{
+            "label": str(item.get("alibabaSkuSecondName") or ""),
+            "quantity": int(item.get("quantity") or 0),
+        } for item in color_items]
+        filled = fill_model_row_quantities(page, models)
+        result_by_label = {str(row.get("label") or ""): row for row in filled.get("results") or []}
+        missing_items = [
+            item for item in color_items
+            if not (result_by_label.get(str(item.get("alibabaSkuSecondName") or "")) or {}).get("ok")
+        ]
+        if missing_items and filled.get("soldoutCollapsed"):
+            expand_result = expand_soldout_model_rows(page)
+            if debug:
+                debug.log("expand_soldout_model_rows", {"color": color, "result": expand_result})
+            retry = fill_model_row_quantities(page, [{
+                "label": str(item.get("alibabaSkuSecondName") or ""),
+                "quantity": int(item.get("quantity") or 0),
+            } for item in missing_items])
+            for row in retry.get("results") or []:
+                result_by_label[str(row.get("label") or "")] = row
+        for item in color_items:
+            row = result_by_label.get(str(item.get("alibabaSkuSecondName") or ""))
+            if row and row.get("ok"):
+                assigned[id(item)] = _filled_from_row(item, row)
+                continue
+            assigned[id(item)] = fill_sku_quantity(
+                page,
+                str(item.get("modelName") or ""),
+                str(item.get("alibabaSkuName") or ""),
+                str(item.get("alibabaSkuSecondName") or ""),
+                int(item.get("quantity") or 0),
+                str(item.get("alibabaSkuId") or ""),
+            )
+        page.wait_for_timeout(BETWEEN_SKU_SETTLE_MS)
+    return [assigned[id(item)] for item in items]
+
+
+def fill_sku_quantities_on_page(page, items: List[Dict[str, Any]], debug: Optional[DebugLogger] = None) -> List[Dict[str, Any]]:
+    """Fill quantities using the live page UI; color+model rows when present."""
+    if not items:
+        return []
+    ui = detect_sku_selection_ui(page)
+    if debug:
+        debug.log("sku_selection_ui", ui)
+    two_spec = [item for item in items if str(item.get("alibabaSkuSecondName") or "").strip()]
+    one_spec = [item for item in items if not str(item.get("alibabaSkuSecondName") or "").strip()]
+    assigned: Dict[int, Dict[str, Any]] = {}
+    if ui.get("hasColorFilter") and ui.get("hasModelRows") and two_spec:
+        for item, result in zip(two_spec, fill_sku_quantities_grouped_by_color(page, two_spec, debug)):
+            assigned[id(item)] = result
+    else:
+        for item in two_spec:
+            assigned[id(item)] = fill_sku_quantity(
+                page,
+                str(item.get("modelName") or ""),
+                str(item.get("alibabaSkuName") or ""),
+                str(item.get("alibabaSkuSecondName") or ""),
+                int(item.get("quantity") or 0),
+                str(item.get("alibabaSkuId") or ""),
+            )
+    for item in one_spec:
+        result = fill_sku_quantity(
+            page,
+            str(item.get("modelName") or ""),
+            str(item.get("alibabaSkuName") or ""),
+            str(item.get("alibabaSkuSecondName") or ""),
+            int(item.get("quantity") or 0),
+            str(item.get("alibabaSkuId") or ""),
+        )
+        if result.get("status") != "filled":
+            legacy_result = fill_sku_quantity_legacy(
+                page,
+                str(item.get("modelName") or ""),
+                str(item.get("alibabaSkuName") or ""),
+                int(item.get("quantity") or 0),
+            )
+            if legacy_result.get("status") == "filled":
+                result = legacy_result
+        assigned[id(item)] = result
+    return [assigned[id(item)] for item in items]
 
 
 def click_add_to_cart(page) -> Dict[str, Any]:
@@ -1036,35 +1485,20 @@ def should_retry_add_to_cart(click_result: Dict[str, Any], feedback: Dict[str, A
 
 def refill_cart_items(page, cart_items: List[Dict[str, Any]], debug: DebugLogger) -> List[Dict[str, Any]]:
     """在明確可重試時，重新確認整組 SKU 的數量仍保留在 1688 頁面。"""
+    fill_results = fill_sku_quantities_on_page(page, cart_items, debug)
     refill_results = []
-    for cart_item in cart_items:
-        refill_result = fill_sku_quantity(
-            page,
-            cart_item["modelName"],
-            cart_item["alibabaSkuName"],
-            cart_item["alibabaSkuSecondName"],
-            cart_item["quantity"],
-        )
-        if refill_result.get("status") != "filled" and not cart_item["alibabaSkuSecondName"]:
-            legacy_result = fill_sku_quantity_legacy(
-                page,
-                cart_item["modelName"],
-                cart_item["alibabaSkuName"],
-                cart_item["quantity"],
-            )
-            if legacy_result.get("status") == "filled":
-                refill_result = legacy_result
+    for cart_item, refill_result in zip(cart_items, fill_results):
         refill_results.append({
             "modelName": cart_item["modelName"],
             "alibabaSkuName": cart_item["alibabaSkuName"],
             "alibabaSkuSecondName": cart_item["alibabaSkuSecondName"],
+            "alibabaSkuId": str(cart_item.get("alibabaSkuId") or ""),
             "quantity": cart_item["quantity"],
             "result": refill_result,
         })
         debug.log("retry_refill_quantity_result", refill_results[-1])
         if refill_result.get("status") != "filled":
             break
-        page.wait_for_timeout(BETWEEN_SKU_SETTLE_MS)
     return refill_results
 
 
@@ -1346,18 +1780,20 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
 
             group_result = {"url": url, "items": [], "addToCart": []}
             cart_items: List[Dict[str, Any]] = []
+            pending_fills: List[Dict[str, Any]] = []
 
             for item in url_items:
                 item_product_id = str(item.get("productId") or product_id or "")
                 item_product_name = str(item.get("productName") or product_name or "").strip()
                 model_name = str(item.get("modelName") or "").strip()
                 mapped_selection = mapped_sku_selection(sku_mappings, item_product_id, model_name)
-                alibaba_sku_id = str(item.get("alibabaSkuId") or mapped_selection.get("sku_id") or "").strip()
-                alibaba_sku_name = str(item.get("alibabaSkuName") or mapped_selection.get("primary") or "").strip()
-                alibaba_sku_second_name = str(item.get("alibabaSkuSecondName") or mapped_selection.get("secondary") or "").strip()
-                mapping_status = str(item.get("alibabaMappingStatus") or mapped_selection.get("status") or "missing").strip()
-                spec_text = str(item.get("alibabaSpecText") or mapped_selection.get("spec_text") or "").strip()
-                expected_fingerprint = str(item.get("alibabaOfferFingerprint") or mapped_selection.get("offer_fingerprint") or "").strip()
+                sku_fields = restock_sku_fields(item, mapped_selection)
+                alibaba_sku_id = sku_fields["sku_id"]
+                alibaba_sku_name = sku_fields["sku_name"]
+                alibaba_sku_second_name = sku_fields["sku_second_name"]
+                mapping_status = sku_fields["status"]
+                spec_text = sku_fields["spec_text"]
+                expected_fingerprint = sku_fields["offer_fingerprint"]
                 offer_id = str(item.get("alibabaOfferId") or "").strip()
                 quantity = int(item.get("restockQty") or item.get("adjustedQty") or 0)
                 if mapping_status != "approved":
@@ -1432,91 +1868,64 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                     continue
                 target_name = alibaba_sku_name or model_name
                 selection_label = f"{target_name} / {alibaba_sku_second_name}" if alibaba_sku_second_name else target_name
-                print(f"正在填入 1688 型號：{model_name} -> {selection_label}，數量：{quantity}", flush=True)
-                debug.log("item_start", {
+                print(f"準備填入 1688 型號：{model_name} -> {selection_label}，數量：{quantity}", flush=True)
+                pending = {
                     "productId": item_product_id,
+                    "productName": item_product_name,
                     "modelName": model_name,
-                    "alibabaSkuId": alibaba_sku_id,
                     "alibabaSkuName": target_name,
                     "alibabaSkuSecondName": alibaba_sku_second_name,
+                    "alibabaSkuId": alibaba_sku_id,
                     "alibabaSpecText": spec_text,
                     "quantity": quantity,
-                })
+                }
+                debug.log("item_start", pending)
+                pending_fills.append(pending)
+
+            if pending_fills:
                 try:
-                    item_result = fill_sku_quantity(
-                        page,
-                        model_name,
-                        target_name,
-                        alibaba_sku_second_name,
-                        quantity,
-                    )
+                    fill_results = fill_sku_quantities_on_page(page, pending_fills, debug)
+                except Exception as exc:
+                    debug.log("batch_fill_error", {"message": str(exc), "itemCount": len(pending_fills)})
+                    fill_results = [{
+                        "status": "error",
+                        "modelName": pending.get("modelName"),
+                        "alibabaSkuId": pending.get("alibabaSkuId"),
+                        "alibabaSkuName": pending.get("alibabaSkuName"),
+                        "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+                        "quantity": pending.get("quantity"),
+                        "message": str(exc),
+                    } for pending in pending_fills]
+                for pending, item_result in zip(pending_fills, fill_results):
                     debug.log("fill_quantity_result", {
-                        "modelName": model_name,
-                        "alibabaSkuId": alibaba_sku_id,
-                        "alibabaSkuName": target_name,
-                        "alibabaSkuSecondName": alibaba_sku_second_name,
-                        "quantity": quantity,
+                        "modelName": pending.get("modelName"),
+                        "alibabaSkuId": pending.get("alibabaSkuId"),
+                        "alibabaSkuName": pending.get("alibabaSkuName"),
+                        "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+                        "quantity": pending.get("quantity"),
                         "fillResult": item_result,
                     })
-                    if item_result.get("status") != "filled" and not alibaba_sku_second_name:
-                        legacy_result = fill_sku_quantity_legacy(page, model_name, target_name, quantity)
-                        debug.log("legacy_fill_quantity_result", {
-                            "modelName": model_name,
-                            "alibabaSkuId": alibaba_sku_id,
-                            "alibabaSkuName": target_name,
-                            "alibabaSkuSecondName": alibaba_sku_second_name,
-                            "quantity": quantity,
-                            "fillResult": legacy_result,
-                        })
-                        if legacy_result.get("status") == "filled":
-                            item_result = legacy_result
-
                     if item_result.get("status") == "filled":
-                        cart_items.append({
-                            "productId": item_product_id,
-                            "productName": item_product_name,
-                            "modelName": model_name,
-                            "alibabaSkuName": target_name,
-                            "alibabaSkuSecondName": alibaba_sku_second_name,
-                            "quantity": quantity,
-                            "itemResult": item_result,
-                        })
+                        cart_items.append({**pending, "itemResult": item_result})
                         debug.log("queued_sku_for_single_cart_submit", {
-                            "modelName": model_name,
-                            "alibabaSkuName": target_name,
-                            "alibabaSkuSecondName": alibaba_sku_second_name,
-                            "quantity": quantity,
+                            "modelName": pending.get("modelName"),
+                            "alibabaSkuName": pending.get("alibabaSkuName"),
+                            "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+                            "quantity": pending.get("quantity"),
                         })
                     elif add_to_cart:
-                        print(f"跳過加采购车：{model_name} -> {target_name}，原因：型號或數量未成功填入", flush=True)
+                        print(
+                            f"跳過加采购车：{pending.get('modelName')} -> {pending.get('alibabaSkuName')}，原因：型號或數量未成功填入",
+                            flush=True,
+                        )
                         debug.log("skip_add_to_cart", {
-                            "modelName": model_name,
-                            "alibabaSkuName": target_name,
-                            "alibabaSkuSecondName": alibaba_sku_second_name,
-                            "quantity": quantity,
+                            "modelName": pending.get("modelName"),
+                            "alibabaSkuName": pending.get("alibabaSkuName"),
+                            "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+                            "quantity": pending.get("quantity"),
                             "fillResult": item_result,
                         })
-
                     group_result["items"].append(item_result)
-                    page.wait_for_timeout(BETWEEN_SKU_SETTLE_MS)
-                except Exception as e:
-                    debug.log("item_error", {
-                        "modelName": model_name,
-                        "alibabaSkuId": alibaba_sku_id,
-                        "alibabaSkuName": target_name,
-                        "alibabaSkuSecondName": alibaba_sku_second_name,
-                        "quantity": quantity,
-                        "message": str(e),
-                    })
-                    group_result["items"].append({
-                        "status": "error",
-                        "modelName": model_name,
-                        "alibabaSkuId": alibaba_sku_id,
-                        "alibabaSkuName": target_name,
-                        "alibabaSkuSecondName": alibaba_sku_second_name,
-                        "quantity": quantity,
-                        "message": str(e),
-                    })
 
             if add_to_cart and cart_items:
                 debug.log("wait_after_all_skus_before_single_cart_submit", {

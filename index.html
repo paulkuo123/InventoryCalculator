@@ -189,6 +189,31 @@
             </div>
         </div>
 
+        <div class="card cookie-import-card personal-watchlist-card" id="personalWatchlistCard" hidden>
+            <div class="cookie-import-header">
+                <div>
+                    <h3><i class="fas fa-bookmark"></i> 個人觀察清單</h3>
+                    <p>依商品 ID 縮小目前搜尋結果；進階搜尋、補貨篩選與儀表板都在同一範圍內。</p>
+                </div>
+                <span class="cookie-import-hint" id="personalWatchlistSummary">尚未匯入</span>
+            </div>
+            <div class="personal-watchlist-actions">
+                <input id="personalWatchlistFile" type="file" accept=".json,application/json">
+                <button id="personalWatchlistImportButton" class="btn-secondary" type="button" disabled>
+                    <i class="fas fa-file-import"></i>
+                    匯入 JSON
+                </button>
+                <div class="filter-option personal-watchlist-toggle">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="personalWatchlistOnlyToggle" disabled>
+                        <span class="toggle-slider"></span>
+                    </label>
+                    <span>只顯示我的觀察清單</span>
+                </div>
+                <span id="personalWatchlistStatus" class="personal-watchlist-status" role="status" aria-live="polite"></span>
+            </div>
+        </div>
+
         <!-- 進階搜尋區塊 -->
         <div class="card" id="advancedSearchCard" style="display: none;">
             <div class="search-container">
@@ -270,6 +295,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260823-restock-minimum"></script>
+    <script src="script.js?v=20260830-personal-watchlist"></script>
 </body>
 </html>

@@ -522,6 +522,35 @@ button {
 .shopee-products-import-status.error { color: #c62828; }
 .shopee-products-import-status.loading { color: #2563c7; }
 
+.personal-watchlist-card {
+    background: linear-gradient(180deg, #f7fbff 0%, #ffffff 100%);
+    border: 1px solid rgba(37, 99, 199, 0.18);
+}
+
+.personal-watchlist-card .cookie-import-header h3 {
+    color: #1d4f91;
+}
+
+.personal-watchlist-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.personal-watchlist-toggle {
+    margin: 0;
+}
+
+.personal-watchlist-status {
+    min-height: 22px;
+    color: var(--dark-gray);
+    font-size: 14px;
+}
+
+.personal-watchlist-status.success { color: #2e7d32; }
+.personal-watchlist-status.error { color: #c62828; }
+
 @media (max-width: 768px) {
     .cookie-import-header {
         flex-direction: column;
@@ -537,6 +566,11 @@ button {
     }
 
     .shopee-products-import-actions {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .personal-watchlist-actions {
         align-items: stretch;
         flex-direction: column;
     }

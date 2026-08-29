@@ -1,3 +1,113 @@
+(function installPersonalWatchlistHelpers(global) {
+    function normalizeProductId(value) {
+        if (typeof value === 'number') {
+            if (!Number.isSafeInteger(value) || value <= 0) return '';
+            return String(value);
+        }
+        if (typeof value !== 'string') return '';
+        const id = value.trim();
+        if (!/^[1-9][0-9]*$/.test(id)) return '';
+        return id;
+    }
+
+    function uniqueProductIds(values) {
+        const seen = new Set();
+        const ids = [];
+        (Array.isArray(values) ? values : []).forEach(value => {
+            const id = normalizeProductId(value);
+            if (!id || seen.has(id)) return;
+            seen.add(id);
+            ids.push(id);
+        });
+        return ids;
+    }
+
+    function parseWatchlistPayload(raw) {
+        if (raw == null || typeof raw !== 'object' || Array.isArray(raw)) {
+            throw new Error('觀察清單 JSON 必須是物件，且含 productIds 陣列');
+        }
+        if (Number(raw.schemaVersion) !== 1) {
+            throw new Error('觀察清單 schemaVersion 必須為 1');
+        }
+        if (!Array.isArray(raw.productIds)) {
+            throw new Error('觀察清單缺少 productIds 字串陣列');
+        }
+        const productIds = uniqueProductIds(raw.productIds);
+        if (productIds.length === 0) {
+            throw new Error('觀察清單沒有有效的商品 ID');
+        }
+        return { schemaVersion: 1, productIds };
+    }
+
+    function applyWatchlistScope(products, productIds, enabled) {
+        if (!products || typeof products !== 'object' || Array.isArray(products)) return products;
+        const ids = uniqueProductIds(productIds);
+        if (!enabled || ids.length === 0) return products;
+        const allowed = new Set(ids);
+        const scoped = {};
+        Object.entries(products).forEach(([productId, product]) => {
+            if (allowed.has(normalizeProductId(productId))) {
+                scoped[productId] = product;
+            }
+        });
+        return scoped;
+    }
+
+    function watchlistMatchCounts(products, productIds) {
+        const ids = uniqueProductIds(productIds);
+        const searchIds = new Set(
+            products && typeof products === 'object' && !Array.isArray(products)
+                ? Object.keys(products).map(normalizeProductId).filter(Boolean)
+                : []
+        );
+        let matched = 0;
+        ids.forEach(id => {
+            if (searchIds.has(id)) matched += 1;
+        });
+        return { imported: ids.length, matched, missed: Math.max(ids.length - matched, 0) };
+    }
+
+    function readStoredWatchlist(storage) {
+        const empty = { productIds: [], enabled: false };
+        if (!storage) return empty;
+        try {
+            const parsed = JSON.parse(storage.getItem('inventoryPersonalWatchlistIds') || 'null');
+            const productIds = uniqueProductIds(parsed);
+            let enabled = false;
+            try {
+                enabled = storage.getItem('inventoryPersonalWatchlistEnabled') === '1' && productIds.length > 0;
+            } catch (error) {
+                enabled = false;
+            }
+            return { productIds, enabled };
+        } catch (error) {
+            return empty;
+        }
+    }
+
+    function writeStoredWatchlist(storage, productIds, enabled) {
+        if (!storage || typeof storage.setItem !== 'function') return false;
+        try {
+            const ids = uniqueProductIds(productIds);
+            storage.setItem('inventoryPersonalWatchlistIds', JSON.stringify(ids));
+            storage.setItem('inventoryPersonalWatchlistEnabled', ids.length > 0 && enabled ? '1' : '0');
+            return true;
+        } catch (error) {
+            return false;
+        }
+    }
+
+    global.PersonalWatchlist = {
+        normalizeProductId,
+        uniqueProductIds,
+        parseWatchlistPayload,
+        applyWatchlistScope,
+        watchlistMatchCounts,
+        readStoredWatchlist,
+        writeStoredWatchlist
+    };
+})(typeof globalThis !== 'undefined' ? globalThis : this);
+
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('searchInput');
     const searchButton = document.getElementById('searchButton');
@@ -34,7 +144,19 @@ document.addEventListener('DOMContentLoaded', function() {
     const batchRestockToolbar = document.getElementById('batchRestockToolbar');
     const batchRestockToolbarSummary = document.getElementById('batchRestockToolbarSummary');
     const openBatchRestockButton = document.getElementById('openBatchRestockButton');
+    const personalWatchlistCard = document.getElementById('personalWatchlistCard');
+    const personalWatchlistFile = document.getElementById('personalWatchlistFile');
+    const personalWatchlistImportButton = document.getElementById('personalWatchlistImportButton');
+    const personalWatchlistOnlyToggle = document.getElementById('personalWatchlistOnlyToggle');
+    const personalWatchlistStatus = document.getElementById('personalWatchlistStatus');
+    const personalWatchlistSummary = document.getElementById('personalWatchlistSummary');
     const MAX_SHOPEE_PRODUCTS_IMPORT_BYTES = 20 * 1024 * 1024;
+    const MAX_PERSONAL_WATCHLIST_BYTES = 2 * 1024 * 1024;
+    const PersonalWatchlist = window.PersonalWatchlist || {};
+    const storedWatchlist = PersonalWatchlist.readStoredWatchlist
+        ? PersonalWatchlist.readStoredWatchlist(window.localStorage)
+        : { productIds: [], enabled: false };
+    let personalWatchlistIds = storedWatchlist.productIds || [];
     
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
@@ -51,6 +173,7 @@ document.addEventListener('DOMContentLoaded', function() {
     window.currentRestockProducts = [];
     window.currentRestockAdjustment = null;
     window.currentBatchRestockSelection = null;
+    window.restockInProgress = false; // 防止並發補貨操作
     window.skuReviewState = {
         reports: [],
         currentReport: '',
@@ -162,6 +285,129 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
         setShopeeProductsImportStatus(`已選擇 ${file.name}（${formatImportFileSize(file.size)}），可開始匯入。`);
+    }
+
+    function persistPersonalWatchlist(enabled) {
+        if (PersonalWatchlist.writeStoredWatchlist) {
+            PersonalWatchlist.writeStoredWatchlist(window.localStorage, personalWatchlistIds, enabled);
+        }
+    }
+
+    function isPersonalWatchlistEnabled() {
+        return Boolean(personalWatchlistOnlyToggle && personalWatchlistOnlyToggle.checked && personalWatchlistIds.length > 0);
+    }
+
+    function applyCurrentWatchlistScope(products) {
+        if (!PersonalWatchlist.applyWatchlistScope) return products;
+        return PersonalWatchlist.applyWatchlistScope(products, personalWatchlistIds, isPersonalWatchlistEnabled());
+    }
+
+    function setPersonalWatchlistStatus(text, type = '') {
+        if (!personalWatchlistStatus) return;
+        personalWatchlistStatus.textContent = text || '';
+        personalWatchlistStatus.className = `personal-watchlist-status ${type}`.trim();
+    }
+
+    function updatePersonalWatchlistUi() {
+        const hasIds = personalWatchlistIds.length > 0;
+        if (personalWatchlistOnlyToggle) {
+            personalWatchlistOnlyToggle.disabled = !hasIds;
+            if (!hasIds) personalWatchlistOnlyToggle.checked = false;
+        }
+        const counts = PersonalWatchlist.watchlistMatchCounts
+            ? PersonalWatchlist.watchlistMatchCounts(window.lastSearchResults, personalWatchlistIds)
+            : { imported: personalWatchlistIds.length, matched: 0, missed: personalWatchlistIds.length };
+        if (personalWatchlistSummary) {
+            if (!hasIds) {
+                personalWatchlistSummary.textContent = '尚未匯入';
+            } else if (!window.lastSearchResults) {
+                personalWatchlistSummary.textContent = `已匯入 ${counts.imported} 個商品 ID`;
+            } else {
+                personalWatchlistSummary.textContent = `${counts.matched} / ${counts.imported} 命中目前搜尋`;
+            }
+        }
+        persistPersonalWatchlist(isPersonalWatchlistEnabled());
+    }
+
+    function showPersonalWatchlistCard(visible) {
+        if (!personalWatchlistCard) return;
+        personalWatchlistCard.hidden = !visible;
+        if (visible) updatePersonalWatchlistUi();
+    }
+
+    function rerenderCurrentSearchResults() {
+        if (!window.lastSearchResults) return;
+        if (window.currentAdvancedKeyword && window.currentAdvancedKeyword.trim() !== '') {
+            displayProducts(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
+        } else {
+            displayProducts(window.lastSearchResults, '', 'product');
+        }
+    }
+
+    function updatePersonalWatchlistFile() {
+        if (!personalWatchlistFile || !personalWatchlistImportButton) return;
+        const file = personalWatchlistFile.files[0];
+        personalWatchlistImportButton.disabled = !file;
+        if (!file) return;
+        if (!file.name.toLowerCase().endsWith('.json')) {
+            personalWatchlistImportButton.disabled = true;
+            setPersonalWatchlistStatus('請選擇 .json 檔案。', 'error');
+            return;
+        }
+        if (file.size > MAX_PERSONAL_WATCHLIST_BYTES) {
+            personalWatchlistImportButton.disabled = true;
+            setPersonalWatchlistStatus('檔案過大，限制為 2 MB。', 'error');
+            return;
+        }
+        setPersonalWatchlistStatus(`已選擇 ${file.name}，可開始匯入。`);
+    }
+
+    async function importPersonalWatchlist() {
+        if (!personalWatchlistFile || !personalWatchlistImportButton) return;
+        const file = personalWatchlistFile.files[0];
+        if (!file) {
+            setPersonalWatchlistStatus('請先選擇觀察清單 JSON。', 'error');
+            return;
+        }
+        personalWatchlistImportButton.disabled = true;
+        try {
+            const rawText = await file.text();
+            let parsed;
+            try {
+                parsed = JSON.parse(rawText);
+            } catch (error) {
+                throw new Error('不是有效的 JSON');
+            }
+            const payload = PersonalWatchlist.parseWatchlistPayload(parsed);
+            const previousIds = personalWatchlistIds.slice();
+            try {
+                personalWatchlistIds = payload.productIds;
+                const counts = PersonalWatchlist.watchlistMatchCounts
+                    ? PersonalWatchlist.watchlistMatchCounts(window.lastSearchResults, personalWatchlistIds)
+                    : { imported: personalWatchlistIds.length, matched: 0, missed: 0 };
+                const hitText = window.lastSearchResults
+                    ? `目前搜尋命中 ${counts.matched}、未命中 ${counts.missed}`
+                    : '目前尚無搜尋結果可對照';
+                setPersonalWatchlistStatus(`已匯入 ${counts.imported} 個商品 ID；${hitText}。`, 'success');
+                updatePersonalWatchlistUi();
+                if (window.lastSearchResults && isPersonalWatchlistEnabled()) {
+                    rerenderCurrentSearchResults();
+                }
+            } catch (error) {
+                personalWatchlistIds = previousIds;
+                throw error;
+            }
+        } catch (error) {
+            setPersonalWatchlistStatus(error.message || '匯入觀察清單失敗', 'error');
+            updatePersonalWatchlistUi();
+        } finally {
+            if (personalWatchlistImportButton && personalWatchlistFile) {
+                const selected = personalWatchlistFile.files[0];
+                personalWatchlistImportButton.disabled = !selected
+                    || !selected.name.toLowerCase().endsWith('.json')
+                    || selected.size > MAX_PERSONAL_WATCHLIST_BYTES;
+            }
+        }
     }
 
     async function importShopeeCookies() {
@@ -548,21 +794,26 @@ document.addEventListener('DOMContentLoaded', function() {
 
     function getAlibabaBinding(productId, modelData, productName = '', modelName = '') {
         const modelId = normalizeId(modelData ? modelData.規格ID : '');
-        const key = `${normalizeId(productId)}|||${modelId}`;
-        const stored = window.alibabaBindings && window.alibabaBindings[key] ? window.alibabaBindings[key] : {};
+        const resolvedModelName = normalizeId(modelName || (modelData && modelData.型號名稱) || '');
+        const bindings = window.alibabaBindings || {};
+        const stored = bindings[`${normalizeId(productId)}|||${modelId}`]
+            || bindings[`${normalizeId(productId)}|||${resolvedModelName}`]
+            || {};
         const url = stored.alibabaProductUrl || modelData.阿里巴巴商品URL || getAlibabaLink(modelData, productName, modelName);
-        const offerId = stored.alibabaOfferId || modelData['1688_offer_id'] || parseAlibabaOfferId(url);
-        const skuId = stored.alibabaSkuId || modelData['1688_sku_id'] || '';
-        const skuName = stored.alibabaSkuName || modelData['1688_sku_name'] || '';
+        const offerId = stored.alibabaOfferId || parseAlibabaOfferId(url);
+        // 1688 對應只信 Golden Table bindings；爬蟲快照的 1688_sku_* 可能是舊值。
+        const skuId = stored.alibabaSkuId || '';
+        const skuName = stored.alibabaSkuName || '';
+        const skuSecondName = stored.alibabaSkuSecondName || '';
         const price = stored.alibabaLastPriceCny ?? modelData['1688_last_price_cny'] ?? null;
         const status = offerId && skuName ? 'ready' : (offerId || skuId || skuName ? 'partial' : 'missing');
         return {
             alibabaProductName: stored.alibabaProductName || modelData.阿里巴巴商品名稱 || '',
             alibabaProductUrl: url || '',
             alibabaOfferId: offerId || '',
-            alibabaSkuId: skuId || '',
+            alibabaSkuId: skuId,
             alibabaSkuName: skuName,
-            alibabaSkuSecondName: stored.alibabaSkuSecondName || modelData['1688_sku_second_name'] || '',
+            alibabaSkuSecondName: skuSecondName,
             alibabaMinOrderQty: parseInt(stored.alibabaMinOrderQty || modelData['1688_min_order_qty'] || '1', 10) || 1,
             alibabaPackageMultiple: parseInt(stored.alibabaPackageMultiple || modelData['1688_package_multiple'] || '1', 10) || 1,
             alibabaLastPriceCny: price === null || price === '' || price === undefined ? null : Number(price),
@@ -703,7 +954,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function monitorAlibabaRestockJob(jobId, statusTarget) {
-        if (!jobId) return;
+        if (!jobId) {
+            window.restockInProgress = false;
+            return;
+        }
         const poll = () => fetch(`/api/alibaba-restock/jobs/${encodeURIComponent(jobId)}`)
             .then(async response => {
                 const data = await response.json().catch(() => ({}));
@@ -712,6 +966,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     window.setTimeout(poll, 1000);
                     return;
                 }
+                window.restockInProgress = false;
                 if (data.status === 'failed') {
                     setRestockMessage(statusTarget, data.message || '1688 補貨流程失敗', 'error');
                     showRestockResult({}, data.message || '1688 補貨流程失敗');
@@ -733,29 +988,60 @@ document.addEventListener('DOMContentLoaded', function() {
                 }
             })
             .catch(error => {
+                window.restockInProgress = false;
                 console.error('讀取 1688 補貨結果失敗:', error);
                 setRestockMessage(statusTarget, error.message || '讀取補貨結果失敗', 'error');
             });
         window.setTimeout(poll, 1000);
     }
 
+    function overlayRestockItemsWithGoldenBindings(productId, product, items) {
+        const models = Array.isArray(product?.型號) ? product.型號 : [];
+        return (Array.isArray(items) ? items : []).map(item => {
+            const modelData = models.find(model =>
+                String(model.規格ID || '') === String(item.specId || item.modelId || '') ||
+                String(model.型號名稱 || '') === String(item.modelName || '')
+            ) || { 規格ID: item.specId || item.modelId || '', 型號名稱: item.modelName || '' };
+            const binding = getAlibabaBinding(productId, modelData, product?.商品名稱 || '', item.modelName || '');
+            return {
+                ...item,
+                alibabaSkuName: binding.alibabaSkuName,
+                alibabaSkuSecondName: binding.alibabaSkuSecondName,
+                alibabaSkuId: binding.alibabaSkuId,
+                alibabaUrl: binding.alibabaProductUrl || item.alibabaUrl
+            };
+        });
+    }
+
     function startAlibabaRestock(productId, product, items, options = {}) {
+        if (window.restockInProgress) {
+            const message = '目前已有補貨流程進行中，請等待完成後再試。';
+            const statusTarget = options.statusTarget || null;
+            if (statusTarget) setRestockMessage(statusTarget, message, 'error');
+            else alert(message);
+            return Promise.resolve(false);
+        }
+
+        window.restockInProgress = true;
         const addToCart = Boolean(options.addToCart);
         const skippedCount = Math.max(0, Number(options.skippedCount) || 0);
         const statusTarget = options.statusTarget || null;
-        const restockItems = (Array.isArray(items) ? items : [])
+        return loadAlibabaBindings(true).then(() => {
+        const restockItems = overlayRestockItemsWithGoldenBindings(productId, product, items)
             .map(item => ({
                 ...item,
                 restockQty: getRestockItemQty(item)
             }))
             .filter(item => item.alibabaUrl && item.restockQty > 0);
         if (restockItems.length === 0) {
+            window.restockInProgress = false;
             const message = '沒有可補貨的 1688 型號。請先確認型號有 1688 連結且數量大於 0。';
             if (statusTarget) setRestockMessage(statusTarget, message, 'error');
             else alert(message);
             return Promise.resolve(false);
         }
         if (restockItems.length > MAX_ALIBABA_CART_SKUS) {
+            window.restockInProgress = false;
             const message = `本次共 ${restockItems.length} 個型號，超過 1688 採購車單次上限 ${MAX_ALIBABA_CART_SKUS} 個。`;
             if (statusTarget) setRestockMessage(statusTarget, message, 'error');
             else alert(message);
@@ -769,7 +1055,10 @@ document.addEventListener('DOMContentLoaded', function() {
             : '';
         if (!options.skipConfirmation) {
             const confirmed = confirm(`將開啟 1688 補貨流程，嘗試填入 ${restockItems.length} 個型號，共 ${totalQty} 件。\n\n${skippedText}${finalActionText}\n是否繼續？`);
-            if (!confirmed) return Promise.resolve(false);
+            if (!confirmed) {
+                window.restockInProgress = false;
+                return Promise.resolve(false);
+            }
         }
 
         setRestockMessage(statusTarget, `正在啟動 ${restockItems.length} 個型號的 1688 補貨流程...`);
@@ -794,11 +1083,19 @@ document.addEventListener('DOMContentLoaded', function() {
                 return data;
             })
             .catch(error => {
+                window.restockInProgress = false;
                 console.error('1688 補貨流程失敗:', error);
                 if (statusTarget) setRestockMessage(statusTarget, error.message || '啟動失敗', 'error');
                 else alert(`1688 補貨流程失敗：${error.message}`);
                 return false;
             });
+        }).catch(error => {
+            window.restockInProgress = false;
+            console.error('準備 1688 補貨流程失敗:', error);
+            if (statusTarget) setRestockMessage(statusTarget, error.message || '啟動失敗', 'error');
+            else alert(`1688 補貨流程失敗：${error.message}`);
+            return false;
+        });
     }
 
     function ensureRestockAdjustmentModal() {
@@ -1828,6 +2125,12 @@ document.addEventListener('DOMContentLoaded', function() {
     function startAlibabaCartFromCurrentDraft() {
         const draft = window.currentProcurementDraft;
         if (!draft) return;
+        if (window.restockInProgress) {
+            alert('目前已有補貨流程進行中，請等待完成後再試。');
+            return;
+        }
+
+        window.restockInProgress = true;
         const modal = ensureProcurementDraftModal();
         const cartButton = modal.querySelector('#startAlibabaCartButton');
         const message = modal.querySelector('#procurementDraftMessage');
@@ -1851,8 +2154,14 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 message.textContent = data.message || '已啟動 1688 採購車流程，請檢查開啟的瀏覽器。';
                 message.className = 'alibaba-edit-message success';
+                if (data.jobId) {
+                    monitorAlibabaRestockJob(data.jobId, message);
+                } else {
+                    window.restockInProgress = false;
+                }
             })
             .catch(error => {
+                window.restockInProgress = false;
                 message.textContent = error.message || '啟動 1688 採購車流程失敗';
                 message.className = 'alibaba-edit-message error';
                 cartButton.disabled = false;
@@ -1872,6 +2181,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 整體庫存水位統計計算函數
     function calculateInventoryStatistics(products, advancedKeyword = '', searchOption = 'product') {
+        products = applyCurrentWatchlistScope(products);
         if (!products || typeof products !== 'object' || Object.keys(products).length === 0) {
             return {
                 totalProducts: 0,
@@ -2296,6 +2606,9 @@ document.addEventListener('DOMContentLoaded', function() {
             console.error('搜尋失敗', products);
             return;
         }
+
+        products = applyCurrentWatchlistScope(products);
+        updatePersonalWatchlistUi();
         
         // 檢查 products 是否有效
         if (!products || typeof products !== 'object' || Object.keys(products).length === 0) {
@@ -2304,12 +2617,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     <td colspan="5">
                         <div class="empty-state">
                             <i class="fas fa-search"></i>
-                            <p>沒有找到符合的商品</p>
+                            <p>${isPersonalWatchlistEnabled() ? '觀察清單沒有命中目前搜尋結果' : '沒有找到符合的商品'}</p>
                         </div>
                     </td>
                 </tr>
             `;
-            console.error('無商品資料或資料格式錯誤', products);
+            updateDashboardUI(products, advancedKeyword, searchOption);
             return;
         }
         
@@ -3034,6 +3347,7 @@ document.addEventListener('DOMContentLoaded', function() {
         window.currentRestockAdjustment = null;
         window.currentBatchRestockSelection = null;
         updateBatchRestockToolbar();
+        showPersonalWatchlistCard(false);
     }
 
     // crawler 與手動匯入共用：套用 raw 商品資料並走同一套主頁 renderer。
@@ -3050,6 +3364,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (advancedSearchCard) {
                 advancedSearchCard.style.display = Object.keys(products).length > 0 ? 'block' : 'none';
             }
+            showPersonalWatchlistCard(true);
             return products;
         });
     }
@@ -3274,6 +3589,20 @@ document.addEventListener('DOMContentLoaded', function() {
     if (shopeeProductsImportButton) {
         shopeeProductsImportButton.addEventListener('click', importShopeeProducts);
     }
+    if (personalWatchlistFile) {
+        personalWatchlistFile.addEventListener('change', updatePersonalWatchlistFile);
+    }
+    if (personalWatchlistImportButton) {
+        personalWatchlistImportButton.addEventListener('click', importPersonalWatchlist);
+    }
+    if (personalWatchlistOnlyToggle) {
+        personalWatchlistOnlyToggle.checked = Boolean(storedWatchlist.enabled && personalWatchlistIds.length);
+        personalWatchlistOnlyToggle.addEventListener('change', function() {
+            updatePersonalWatchlistUi();
+            rerenderCurrentSearchResults();
+        });
+    }
+    updatePersonalWatchlistUi();
     loadAlibabaBindings();
     loadSkuReviewReports().then(() => {
         if (skuReviewReportSelect && skuReviewReportSelect.value) {

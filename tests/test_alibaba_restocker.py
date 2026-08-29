@@ -28,8 +28,12 @@ class RawLabelPage(FakePage):
     def __init__(self):
         super().__init__()
         self.option_arguments = []
+        self.sku_id_arguments = []
 
     def evaluate(self, script, argument=None):
+        if "({ skuId, quantity })" in script:
+            self.sku_id_arguments.append(argument)
+            return {"ok": False, "method": "sku-id-bound-input-not-found"}
         if "({ target, marker })" in script:
             self.option_arguments.append(argument)
             return {
@@ -44,6 +48,69 @@ class RawLabelPage(FakePage):
                 "selector": '[data-alibaba-restock-quantity="quantity"]',
                 "input": {"type": "text"},
             }
+        raise AssertionError("unexpected page script")
+
+    def locator(self, selector):
+        return FakeLocator()
+
+
+class SkuIdPage(FakePage):
+    def __init__(self):
+        super().__init__()
+        self.sku_id_arguments = []
+
+    def evaluate(self, script, argument=None):
+        if "hasColorFilter" in script:
+            return {"hasColorFilter": False, "hasModelRows": False, "colorCount": 0, "modelRowCount": 0}
+        if "({ skuId, quantity })" in script:
+            self.sku_id_arguments.append(argument)
+            return {
+                "ok": True,
+                "method": "sku-id-bound-input",
+                "skuId": argument["skuId"],
+                "input": {"type": "number", "value": str(argument["quantity"])},
+            }
+        raise AssertionError("skuId fill should not fall back to name click")
+
+
+class ColorModelPage(FakePage):
+    def __init__(self, soldout_first=False):
+        super().__init__()
+        self.color_args = []
+        self.model_args = []
+        self.expand_calls = 0
+        self.soldout_first = soldout_first
+
+    def evaluate(self, script, argument=None):
+        if "hasColorFilter" in script:
+            return {"hasColorFilter": True, "hasModelRows": True, "colorCount": 18, "modelRowCount": 2}
+        if "({ color, marker })" in script:
+            self.color_args.append(argument["color"])
+            already = self.color_args.count(argument["color"]) > 1
+            return {
+                "ok": True,
+                "alreadyActive": already,
+                "selector": '[data-alibaba-restock-color="color"]',
+                "clickedText": argument["color"],
+            }
+        if "data-alibaba-restock-soldout" in script:
+            self.expand_calls += 1
+            return {"ok": True, "needed": True, "selector": '[data-alibaba-restock-soldout="expand"]'}
+        if "({ models })" in script:
+            self.model_args.append(list(argument["models"]))
+            missing = self.soldout_first and len(self.model_args) == 1
+            results = []
+            for model in argument["models"]:
+                if missing:
+                    results.append({"ok": False, "label": model["label"], "method": "model-row-not-found"})
+                else:
+                    results.append({
+                        "ok": True,
+                        "label": model["label"],
+                        "method": "color-filter-model-row-input",
+                        "quantity": model["quantity"],
+                    })
+            return {"ok": not missing, "results": results, "soldoutCollapsed": missing}
         raise AssertionError("unexpected page script")
 
     def locator(self, selector):
@@ -225,6 +292,97 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(result["matchMode"], "canonical")
 
     @unittest.skipUnless(sys.platform == "darwin", "uses the macOS system Chinese converter")
+    def test_catalog_mapping_matches_unique_zhang_to_gua_rope(self):
+        catalog = {
+            "fish": {
+                "sku_id": "5191344225957",
+                "sku_name": "陶瓷鱼挂绳",
+                "second_name": "",
+                "parts": ["陶瓷鱼挂绳"],
+                "spec_text": "陶瓷鱼挂绳",
+            },
+            "bear": {
+                "sku_id": "5191344225956",
+                "sku_name": "陶瓷熊掌绳",
+                "second_name": "",
+                "parts": ["陶瓷熊掌绳"],
+                "spec_text": "陶瓷熊掌绳",
+            },
+            "dog": {
+                "sku_id": "5191344225955",
+                "sku_name": "陶瓷狗挂绳",
+                "second_name": "",
+                "parts": ["陶瓷狗挂绳"],
+                "spec_text": "陶瓷狗挂绳",
+            },
+        }
+
+        result = alibaba_restocker.catalog_mapping_check(
+            {"sku_name": "陶瓷魚掌繩", "sku_second_name": ""}, catalog
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["sku_id"], "5191344225957")
+        self.assertEqual(result["matchMode"], "rope_affix")
+        self.assertEqual(result["current"]["sku_name"], "陶瓷鱼挂绳")
+
+    @unittest.skipUnless(sys.platform == "darwin", "uses the macOS system Chinese converter")
+    def test_catalog_mapping_does_not_map_fish_rope_to_bear_paw(self):
+        catalog = {
+            "bear": {
+                "sku_id": "5191344225956",
+                "sku_name": "陶瓷熊掌绳",
+                "second_name": "",
+                "parts": ["陶瓷熊掌绳"],
+                "spec_text": "陶瓷熊掌绳",
+            }
+        }
+
+        result = alibaba_restocker.catalog_mapping_check(
+            {"sku_name": "陶瓷魚掌繩", "sku_second_name": ""}, catalog
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "name_pair_not_on_live_page")
+
+    def test_restock_sku_fields_prefer_golden_table_over_stale_ui_name(self):
+        item = {
+            "alibabaSkuName": "陶瓷熊掌繩",
+            "alibabaSkuId": "5191344225956",
+            "alibabaSkuSecondName": "",
+            "alibabaSpecText": "陶瓷熊掌繩",
+            "alibabaMappingStatus": "approved",
+        }
+        mapped = {
+            "primary": "陶瓷鱼挂绳",
+            "secondary": "",
+            "sku_id": "5191344225957",
+            "spec_text": "陶瓷鱼挂绳",
+            "status": "approved",
+            "offer_fingerprint": "live-fish",
+        }
+
+        fields = alibaba_restocker.restock_sku_fields(item, mapped)
+
+        self.assertEqual(fields["sku_name"], "陶瓷鱼挂绳")
+        self.assertEqual(fields["sku_id"], "5191344225957")
+        self.assertEqual(fields["spec_text"], "陶瓷鱼挂绳")
+        self.assertEqual(fields["offer_fingerprint"], "live-fish")
+
+    def test_restock_sku_fields_fall_back_to_item_when_golden_mapping_is_empty(self):
+        item = {
+            "alibabaSkuName": "陶瓷鱼挂绳",
+            "alibabaSkuId": "5191344225957",
+            "alibabaMappingStatus": "approved",
+        }
+
+        fields = alibaba_restocker.restock_sku_fields(item, {})
+
+        self.assertEqual(fields["sku_name"], "陶瓷鱼挂绳")
+        self.assertEqual(fields["sku_id"], "5191344225957")
+        self.assertEqual(fields["status"], "approved")
+
+    @unittest.skipUnless(sys.platform == "darwin", "uses the macOS system Chinese converter")
     def test_catalog_mapping_canonicalizes_primary_and_secondary_separately(self):
         catalog = {
             "key-ring-phone": {
@@ -391,6 +549,107 @@ class AlibabaRestockerTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "filled")
         self.assertEqual(page.option_arguments[0]["target"], "爱心熊黑绳")
+        self.assertEqual(page.sku_id_arguments, [])
+
+    def test_fill_uses_live_sku_id_instead_of_clicking_names(self):
+        page = SkuIdPage()
+
+        result = alibaba_restocker.fill_sku_quantity(
+            page, "愛心熊黑繩", "爱心熊黑绳", "", 4, "4471377721050"
+        )
+
+        self.assertEqual(result["status"], "filled")
+        self.assertEqual(result["alibabaSkuId"], "4471377721050")
+        self.assertEqual(result["details"]["method"], "sku-id-bound-input")
+        self.assertEqual(page.sku_id_arguments, [{"skuId": "4471377721050", "quantity": 4}])
+        self.assertEqual(page.waits, [alibaba_restocker.AFTER_SKU_ID_FILL_WAIT_MS])
+
+    def test_fill_falls_back_to_name_click_when_sku_id_input_is_missing(self):
+        page = RawLabelPage()
+
+        result = alibaba_restocker.fill_sku_quantity(
+            page, "愛心熊黑繩", "爱心熊黑绳", "", 4, "4471377721050"
+        )
+
+        self.assertEqual(result["status"], "filled")
+        self.assertEqual(page.sku_id_arguments, [{"skuId": "4471377721050", "quantity": 4}])
+        self.assertEqual(page.option_arguments[0]["target"], "爱心熊黑绳")
+        self.assertEqual(result["details"]["method"], "selected-option-native-quantity-input")
+        self.assertEqual(result["details"]["skuIdFill"]["method"], "sku-id-bound-input-not-found")
+
+    def test_refill_uses_live_sku_id(self):
+        page = SkuIdPage()
+        debug = FakeDebug()
+        items = [{
+            "modelName": "黑色",
+            "alibabaSkuName": "黑色",
+            "alibabaSkuSecondName": "",
+            "alibabaSkuId": "sku-black",
+            "quantity": 30,
+        }]
+
+        results = alibaba_restocker.refill_cart_items(page, items, debug)
+
+        self.assertEqual(results[0]["result"]["status"], "filled")
+        self.assertEqual(results[0]["result"]["details"]["method"], "sku-id-bound-input")
+        self.assertEqual(page.sku_id_arguments[0]["skuId"], "sku-black")
+
+    def test_grouped_fill_clicks_each_color_once(self):
+        page = ColorModelPage()
+        debug = FakeDebug()
+        items = [
+            {
+                "modelName": "紅,17Pro",
+                "alibabaSkuName": "樱桃红",
+                "alibabaSkuSecondName": "iPhone17Pro/18Pro",
+                "alibabaSkuId": "1",
+                "quantity": 10,
+            },
+            {
+                "modelName": "紅,17ProMax",
+                "alibabaSkuName": "樱桃红",
+                "alibabaSkuSecondName": "iPhone17ProMax/18ProMax",
+                "alibabaSkuId": "2",
+                "quantity": 4,
+            },
+            {
+                "modelName": "黑,17Pro",
+                "alibabaSkuName": "黑色",
+                "alibabaSkuSecondName": "iPhone17Pro/18Pro",
+                "alibabaSkuId": "3",
+                "quantity": 6,
+            },
+        ]
+
+        results = alibaba_restocker.fill_sku_quantities_on_page(page, items, debug)
+
+        self.assertEqual([row["details"]["method"] for row in results], [
+            "color-filter-model-row-input",
+            "color-filter-model-row-input",
+            "color-filter-model-row-input",
+        ])
+        self.assertEqual(page.color_args, ["樱桃红", "黑色"])
+        self.assertEqual(len(page.model_args[0]), 2)
+        self.assertEqual(page.model_args[0][0]["label"], "iPhone17Pro/18Pro")
+        self.assertEqual(page.model_args[1][0]["quantity"], 6)
+        self.assertEqual(page.expand_calls, 0)
+
+    def test_grouped_fill_expands_soldout_rows_then_retries(self):
+        page = ColorModelPage(soldout_first=True)
+        items = [{
+            "modelName": "紅,13",
+            "alibabaSkuName": "樱桃红",
+            "alibabaSkuSecondName": "iPhone13/14通用",
+            "alibabaSkuId": "4",
+            "quantity": 8,
+        }]
+
+        results = alibaba_restocker.fill_sku_quantities_on_page(page, items, FakeDebug())
+
+        self.assertEqual(results[0]["status"], "filled")
+        self.assertEqual(results[0]["details"]["method"], "color-filter-model-row-input")
+        self.assertEqual(page.expand_calls, 1)
+        self.assertEqual(len(page.model_args), 2)
 
     @unittest.skipUnless(sys.platform == "darwin", "uses the macOS system Chinese converter")
     def test_catalog_mapping_normalizes_characters_outside_the_legacy_map(self):
