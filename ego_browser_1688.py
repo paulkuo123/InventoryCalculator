@@ -59,8 +59,9 @@ try {{
   const pageData = await js(String.raw`(() => {{
     const contextData = window.context?.result?.data || {{}};
     const priceModel = contextData?.mainPrice?.fields?.finalPriceModel || {{}};
-    const rows = priceModel?.tradeWithoutPromotion?.skuMapOriginal ||
-      priceModel?.tradeWithPromotion?.skuMapOriginal || [];
+    const asRows = value => Array.isArray(value) ? value : Object.values(value || {{}});
+    let rows = asRows(priceModel?.tradeWithoutPromotion?.skuMapOriginal);
+    if (!rows.length) rows = asRows(priceModel?.tradeWithPromotion?.skuMapOriginal);
     return {{
       title: document.title || '',
       rows,

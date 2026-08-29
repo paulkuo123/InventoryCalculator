@@ -1,10 +1,13 @@
 import argparse
+import ctypes
 import hashlib
 import html
 import json
 import os
 import re
+import sys
 import time
+import unicodedata
 from collections import defaultdict
 from contextlib import nullcontext
 from typing import Any, Dict, List, Optional
@@ -36,6 +39,8 @@ AFTER_CART_DISMISS_WAIT_MS = 500
 BETWEEN_SKU_SETTLE_MS = 350
 FEEDBACK_TIMEOUT_MS = 4000
 MAX_ADD_TO_CART_ATTEMPTS = 2
+LIVE_CATALOG_MAX_ATTEMPTS = 3
+LIVE_CATALOG_RETRY_WAIT_MS = 1000
 SESSION_CLOSED_MARKER = "__INVENTORY_1688_SESSION_CLOSED__"
 RETRYABLE_CART_ERRORS = {
     "请输入订购数量",
@@ -62,48 +67,98 @@ CART_LIMIT_PHRASES = (
     "采购车中的商品数已达上限",
     "购物车中的商品数已达上限",
 )
-CHAR_TRANSLATION = str.maketrans({
-    "纯": "純",
-    "浅": "淺",
-    "蓝": "藍",
-    "绿": "綠",
-    "黄": "黃",
-    "红": "紅",
-    "肤": "膚",
-    "桔": "橘",
-    "姜": "薑",
-    "猫": "貓",
-    "长": "長",
-    "郁": "鬱",
-    "卷": "捲",
-    "点": "點",
-    "条": "條",
-    "宝": "寶",
-})
+class ChineseCanonicalizationUnavailable(RuntimeError):
+    """The full Traditional/Simplified converter is not safely available."""
+
+
+def _format_comparison_text(value: Any) -> str:
+    """Normalize markup, Unicode width, case, whitespace, and SKU separators."""
+    text = html.unescape(str(value or "")).replace("&gt", ">")
+    text = unicodedata.normalize("NFKC", text).casefold()
+    text = re.sub(r"\s+", "", text)
+    return re.sub(r"[|,，;；>＞]+", ">", text)
+
+
+def _load_macos_chinese_converter():
+    if sys.platform != "darwin":
+        return None
+    try:
+        core_foundation = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+        )
+        core_foundation.CFStringCreateWithCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32,
+        ]
+        core_foundation.CFStringCreateWithCString.restype = ctypes.c_void_p
+        core_foundation.CFStringCreateMutableCopy.argtypes = [
+            ctypes.c_void_p, ctypes.c_long, ctypes.c_void_p,
+        ]
+        core_foundation.CFStringCreateMutableCopy.restype = ctypes.c_void_p
+        core_foundation.CFStringTransform.argtypes = [
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_bool,
+        ]
+        core_foundation.CFStringTransform.restype = ctypes.c_bool
+        core_foundation.CFStringGetCString.argtypes = [
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_long, ctypes.c_uint32,
+        ]
+        core_foundation.CFStringGetCString.restype = ctypes.c_bool
+        core_foundation.CFRelease.argtypes = [ctypes.c_void_p]
+        return core_foundation
+    except (AttributeError, OSError):
+        return None
+
+
+_CORE_FOUNDATION = _load_macos_chinese_converter()
+_CF_UTF8 = 0x08000100
+
+
+def canonicalize_chinese(value: Any) -> str:
+    """Convert the complete label to simplified Chinese for comparison only.
+
+    There is deliberately no partial character-map fallback.  A raw/format
+    exact match can still be used by the caller, but a cross-script match must
+    fail closed when the full converter is unavailable or fails.
+    """
+    text = _format_comparison_text(value)
+    if not text:
+        return ""
+    if _CORE_FOUNDATION is None:
+        raise ChineseCanonicalizationUnavailable("完整繁簡轉換器不可用")
+    source = mutable = transform = None
+    try:
+        source = _CORE_FOUNDATION.CFStringCreateWithCString(None, text.encode("utf-8"), _CF_UTF8)
+        if not source:
+            raise ChineseCanonicalizationUnavailable("無法建立 CoreFoundation 字串")
+        mutable = _CORE_FOUNDATION.CFStringCreateMutableCopy(None, 0, source)
+        transform = _CORE_FOUNDATION.CFStringCreateWithCString(
+            None, b"Traditional-Simplified", _CF_UTF8
+        )
+        if not mutable or not transform:
+            raise ChineseCanonicalizationUnavailable("無法建立繁簡轉換資源")
+        if not _CORE_FOUNDATION.CFStringTransform(mutable, None, transform, False):
+            raise ChineseCanonicalizationUnavailable("CoreFoundation 繁簡轉換失敗")
+        buffer = ctypes.create_string_buffer(max(64, len(text.encode("utf-8")) * 4 + 1))
+        if not _CORE_FOUNDATION.CFStringGetCString(mutable, buffer, len(buffer), _CF_UTF8):
+            raise ChineseCanonicalizationUnavailable("無法讀取繁簡轉換結果")
+        return _format_comparison_text(buffer.value.decode("utf-8"))
+    except ChineseCanonicalizationUnavailable:
+        raise
+    except Exception as exc:
+        raise ChineseCanonicalizationUnavailable("CoreFoundation 繁簡轉換失敗") from exc
+    finally:
+        for ref in (transform, mutable, source):
+            if ref:
+                _CORE_FOUNDATION.CFRelease(ref)
 
 
 JS_NORMALIZE_HELPER = r"""
-        const charMap = {
-            '纯': '純',
-            '浅': '淺',
-            '蓝': '藍',
-            '绿': '綠',
-            '黄': '黃',
-            '红': '紅',
-            '肤': '膚',
-            '桔': '橘',
-            '姜': '薑',
-            '猫': '貓',
-            '长': '長',
-            '郁': '鬱',
-            '卷': '捲',
-            '点': '點',
-            '条': '條',
-            '宝': '寶'
-        };
-        const norm = value => String(value || '')
-            .replace(/[纯浅蓝绿黄红肤桔姜猫长郁卷点条宝]/g, ch => charMap[ch] || ch)
+        // The Python preflight already matched the live row.  The browser
+        // selector receives that row's raw label; only format normalization is
+        // needed here, never a partial Traditional/Simplified map.
+        const norm = value => String(value ?? '')
+            .normalize('NFKC')
             .replace(/\s+/g, '')
+            .replace(/[|,，;；>＞]+/g, '>')
             .toLowerCase();
 """
 
@@ -128,7 +183,12 @@ class DebugLogger:
 
 
 def normalize_text(value: Any) -> str:
-    return re.sub(r"\s+", "", html.unescape(str(value or "").translate(CHAR_TRANSLATION))).replace(">", ",").replace("＞", ",").lower()
+    """Format-only normalization for DOM labels and diagnostics.
+
+    Full Traditional/Simplified conversion belongs exclusively to the
+    catalog comparison path in ``catalog_mapping_check``.
+    """
+    return _format_comparison_text(value)
 
 
 def cart_limit_feedback_message(feedback: Dict[str, Any]) -> str:
@@ -266,8 +326,9 @@ def extract_page_sku_catalog(page) -> Dict[str, Dict[str, Any]]:
     () => {
       const data = window.context?.result?.data || {};
       const model = data?.mainPrice?.fields?.finalPriceModel || {};
-      let rows = model?.tradeWithoutPromotion?.skuMapOriginal || model?.tradeWithPromotion?.skuMapOriginal || [];
-      if (!Array.isArray(rows)) rows = Object.values(rows || {});
+      const asRows = value => Array.isArray(value) ? value : Object.values(value || {});
+      let rows = asRows(model?.tradeWithoutPromotion?.skuMapOriginal);
+      if (!rows.length) rows = asRows(model?.tradeWithPromotion?.skuMapOriginal);
       return rows.map(row => ({
         skuId: row?.skuId ?? row?.sku_id ?? '',
         skuName: row?.skuName ?? row?.sku_name ?? row?.name ?? '',
@@ -300,10 +361,124 @@ def extract_page_sku_catalog(page) -> Dict[str, Dict[str, Any]]:
     return result
 
 
+def read_live_catalog_with_retry(page, debug, url: str) -> Dict[str, Dict[str, Any]]:
+    """Allow late 1688 page state to settle without treating an empty read as a mapping change."""
+    for attempt in range(1, LIVE_CATALOG_MAX_ATTEMPTS + 1):
+        try:
+            catalog = extract_page_sku_catalog(page)
+        except Exception as exc:
+            catalog = {}
+            debug.log("live_catalog_read_error", {
+                "url": url,
+                "attempt": attempt,
+                "message": str(exc),
+            })
+        debug.log("live_catalog_read", {
+            "url": url,
+            "attempt": attempt,
+            "skuCount": len(catalog),
+        })
+        if catalog:
+            return catalog
+        if attempt < LIVE_CATALOG_MAX_ATTEMPTS:
+            page.wait_for_timeout(LIVE_CATALOG_RETRY_WAIT_MS)
+    return {}
+
+
+def restock_result_outcome(
+    stopped_reason: str,
+    confirmed_count: int,
+    unverified_count: int,
+    blocked_count: int,
+    unavailable_count: int = 0,
+    failed_count: int = 0,
+) -> Dict[str, str]:
+    if stopped_reason:
+        return {
+            "status": "cart_limit_reached",
+            "message": "1688 採購車已達上限，已停止後續補貨。",
+        }
+    if (
+        unavailable_count
+        and unavailable_count == blocked_count
+        and not confirmed_count
+        and not unverified_count
+        and not failed_count
+    ):
+        return {
+            "status": "live_catalog_unavailable",
+            "message": f"未加入採購車：{unavailable_count} 個型號暫時無法讀取 1688 規格資料。",
+        }
+    if (blocked_count or failed_count) and not confirmed_count and not unverified_count:
+        return {
+            "status": "error",
+            "message": f"未加入採購車：{blocked_count + failed_count} 個型號失敗或未通過安全檢查。",
+        }
+    if blocked_count or failed_count or unverified_count:
+        return {
+            "status": "partial",
+            "message": f"流程未完全確認：{blocked_count + failed_count} 個型號未加入，{unverified_count} 個結果未確認。",
+        }
+    return {"status": "success", "message": "1688 補貨流程已完成。"}
+
+
+def _catalog_row_name_pair(row: Dict[str, Any]):
+    parts = row.get("parts") if isinstance(row.get("parts"), list) else spec_parts(row.get("spec_text"))
+    primary = str(row.get("sku_name") or (parts[0] if parts else "")).strip()
+    secondary = str(row.get("second_name") or (parts[1] if len(parts) > 1 else "")).strip()
+    return primary, secondary
+
+
+def _find_catalog_name_matches(catalog, expected_primary, expected_secondary, key):
+    expected_primary_key = key(expected_primary)
+    expected_secondary_key = key(expected_secondary)
+    matches = []
+    same_primary = []
+    for row in catalog.values():
+        if not isinstance(row, dict):
+            continue
+        current_primary, current_secondary = _catalog_row_name_pair(row)
+        if key(current_primary) != expected_primary_key:
+            continue
+        same_primary.append(row)
+        if expected_secondary_key:
+            if key(current_secondary) == expected_secondary_key:
+                matches.append(row)
+        elif not key(current_secondary):
+            matches.append(row)
+    inferred_unique_secondary = False
+    if not matches and not expected_secondary_key and len(same_primary) == 1:
+        matches = same_primary
+        inferred_unique_secondary = True
+    return matches, same_primary, inferred_unique_secondary
+
+
+def live_selection_labels(
+    check: Dict[str, Any],
+    fallback_primary: str = "",
+    fallback_secondary: str = "",
+) -> Dict[str, str]:
+    """Return the matched live row's raw labels for the browser click layer."""
+    current = check.get("current") or {}
+    current_primary, current_secondary = _catalog_row_name_pair(current)
+    current_parts = current.get("parts") if isinstance(current.get("parts"), list) else spec_parts(current.get("spec_text"))
+    has_live_secondary = "second_name" in current or (
+        len(current_parts) > 1
+    )
+    return {
+        "sku_id": str(current.get("sku_id") or check.get("sku_id") or "").strip(),
+        "sku_name": current_primary or str(fallback_primary or "").strip(),
+        "sku_second_name": current_secondary if has_live_secondary else str(fallback_secondary or "").strip(),
+        "spec_text": str(current.get("spec_text") or "").strip(),
+    }
+
+
 def catalog_mapping_check(selection: Dict[str, str], catalog: Dict[str, Dict[str, Any]]) -> Dict[str, Any]:
     sku_id = str(selection.get("sku_id") or "").strip()
     primary = str(selection.get("sku_name") or selection.get("primary") or "").strip()
     secondary = str(selection.get("sku_second_name") or selection.get("secondary") or "").strip()
+    if not catalog:
+        return {"ok": False, "reason": "live_catalog_unavailable"}
     legacy_spec_only = not primary and not secondary and bool(selection.get("spec_text"))
     if legacy_spec_only:
         if sku_id and sku_id not in catalog:
@@ -312,33 +487,47 @@ def catalog_mapping_check(selection: Dict[str, str], catalog: Dict[str, Dict[str
         primary = old_parts[0] if old_parts else ""
         secondary = old_parts[1] if len(old_parts) > 1 else ""
     if primary:
-        expected_primary = normalize_text(primary)
         expected_secondary = normalize_text(secondary)
-        matches = []
-        same_primary = []
-        for row in catalog.values():
-            row_parts = row.get("parts") or spec_parts(row.get("spec_text"))
-            current_primary = normalize_text(row.get("sku_name") or (row_parts[0] if row_parts else ""))
-            current_secondary = normalize_text(row.get("second_name") or (row_parts[1] if len(row_parts) > 1 else ""))
-            if current_primary != expected_primary:
-                continue
-            same_primary.append(row)
-            if expected_secondary:
-                if current_secondary == expected_secondary:
-                    matches.append(row)
-            elif not current_secondary:
-                matches.append(row)
-        inferred_unique_secondary = False
-        if not matches and not expected_secondary and len(same_primary) == 1:
-            matches = same_primary
-            inferred_unique_secondary = True
+        matches, same_primary, inferred_unique_secondary = _find_catalog_name_matches(
+            catalog, primary, secondary, normalize_text
+        )
+        if matches:
+            match_mode = "raw_or_format_exact"
+        elif same_primary and not expected_secondary:
+            reason = "missing_second_name"
+            return {"ok": False, "reason": "spec_fingerprint_mismatch" if legacy_spec_only else reason, "sku_name": primary, "sku_second_name": secondary}
+        else:
+            try:
+                matches, same_primary, inferred_unique_secondary = _find_catalog_name_matches(
+                    catalog, primary, secondary, canonicalize_chinese
+                )
+            except ChineseCanonicalizationUnavailable as exc:
+                return {
+                    "ok": False,
+                    "reason": "canonicalization_unavailable",
+                    "sku_name": primary,
+                    "sku_second_name": secondary,
+                    "message": str(exc),
+                }
+            match_mode = "canonical"
         if not matches:
-            reason = "missing_second_name" if same_primary and not secondary and any(row.get("second_name") for row in same_primary) else "name_pair_not_on_live_page"
+            reason = "missing_second_name" if same_primary and not secondary else "name_pair_not_on_live_page"
             return {"ok": False, "reason": "spec_fingerprint_mismatch" if legacy_spec_only else reason, "sku_name": primary, "sku_second_name": secondary}
         if len(matches) > 1:
-            return {"ok": False, "reason": "ambiguous_name_pair", "sku_name": primary, "sku_second_name": secondary, "matches": len(matches)}
+            return {
+                "ok": False,
+                "reason": "ambiguous_name_pair",
+                "sku_name": primary,
+                "sku_second_name": secondary,
+                "matches": len(matches),
+            }
         current = matches[0]
-        result = {"ok": True, "sku_id": str(current.get("sku_id") or sku_id), "current": current}
+        result = {
+            "ok": True,
+            "sku_id": str(current.get("sku_id") or sku_id),
+            "current": current,
+            "matchMode": match_mode,
+        }
         if inferred_unique_secondary:
             result["warning"] = "inferred_unique_second_name"
         if sku_id and sku_id != str(current.get("sku_id") or ""):
@@ -375,9 +564,9 @@ def fill_sku_quantity(
     quantity: int,
 ) -> Dict[str, Any]:
     target_name = alibaba_sku_name or model_name
-    target = normalize_text(target_name)
+    target = str(target_name or "").strip()
     secondary_target_name = str(alibaba_sku_second_name or "").strip()
-    secondary_target = normalize_text(secondary_target_name)
+    secondary_target = secondary_target_name
     if not target:
         return {
             "status": "skipped",
@@ -391,6 +580,7 @@ def fill_sku_quantity(
     option_script = """
     ({ target, marker }) => {
 """ + JS_NORMALIZE_HELPER + r"""
+        const targetKey = norm(target);
         const isVisible = el => {
             const style = window.getComputedStyle(el);
             const rect = el.getBoundingClientRect();
@@ -423,7 +613,7 @@ def fill_sku_quantity(
                     role === 'button' || cls.includes('sku') || cls.includes('Sku') ||
                     cls.includes('prop') || cls.includes('value') || cls.includes('item') ||
                     current.onclick || current.getAttribute?.('tabindex') !== null;
-                if (isClickable && text.includes(targetValue) && text.length <= Math.max(targetValue.length + 12, 24)) {
+                if (isClickable && text === targetValue) {
                     return current;
                 }
                 current = current.parentElement;
@@ -436,11 +626,11 @@ def fill_sku_quantity(
             .map(el => {
                 const rawText = textOf(el);
                 const text = norm(rawText);
-                if (!text.includes(target)) return null;
-                if (phoneModelMismatch(text, target)) return null;
-                if (text.length > Math.max(target.length + 18, 32)) return null;
+                if (text !== targetKey) return null;
+                if (phoneModelMismatch(text, targetKey)) return null;
+                if (text.length > Math.max(targetKey.length + 18, 32)) return null;
                 const rect = el.getBoundingClientRect();
-                let score = text === target ? 0 : text.length - target.length;
+                let score = text === targetKey ? 0 : text.length - targetKey.length;
                 const tag = el.tagName ? el.tagName.toLowerCase() : '';
                 if (tag === 'button' || tag === 'label' || tag === 'li') score -= 4;
                 if (String(el.className || '').includes('selected')) score += 2;
@@ -462,7 +652,7 @@ def fill_sku_quantity(
             el.removeAttribute('data-alibaba-restock-option');
         });
         const selected = candidates[0];
-        const clickable = clickableFor(selected.el, target);
+        const clickable = clickableFor(selected.el, targetKey);
         clickable.setAttribute('data-alibaba-restock-option', marker);
         clickable.scrollIntoView({ block: 'center', inline: 'center' });
         return {
@@ -598,7 +788,7 @@ def fill_sku_quantity(
 
 def fill_sku_quantity_legacy(page, model_name: str, alibaba_sku_name: str, quantity: int) -> Dict[str, Any]:
     target_name = alibaba_sku_name or model_name
-    target = normalize_text(target_name)
+    target = str(target_name or "").strip()
     if not target:
         return {
             "status": "skipped",
@@ -611,6 +801,7 @@ def fill_sku_quantity_legacy(page, model_name: str, alibaba_sku_name: str, quant
     script = """
     ({ target, quantity }) => {
 """ + JS_NORMALIZE_HELPER + r"""
+        const targetKey = norm(target);
         const isVisible = el => {
             const style = window.getComputedStyle(el);
             const rect = el.getBoundingClientRect();
@@ -636,7 +827,7 @@ def fill_sku_quantity_legacy(page, model_name: str, alibaba_sku_name: str, quant
             .filter(el => isVisible(el))
             .filter(el => {
                 const text = norm(el.innerText || el.textContent || '');
-                return text.includes(target) && text.length <= Math.max(target.length + 100, 140);
+                return text === targetKey;
             });
 
         for (const candidate of allCandidates) {
@@ -1098,6 +1289,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
     results = []
     confirmed_cart_items: List[Dict[str, Any]] = []
     unverified_cart_items: List[Dict[str, Any]] = []
+    failed_cart_items: List[Dict[str, Any]] = []
     cart_limit_items: List[Dict[str, Any]] = []
     unprocessed_items: List[Dict[str, Any]] = []
     stopped_reason = ""
@@ -1150,11 +1342,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
             page.wait_for_timeout(3000)
             debug.log("url_loaded", {"url": url, "pageUrl": page.url})
 
-            try:
-                live_catalog = extract_page_sku_catalog(page)
-            except Exception as exc:
-                live_catalog = {}
-                debug.log("live_catalog_read_error", {"url": url, "message": str(exc)})
+            live_catalog = read_live_catalog_with_retry(page, debug, url)
 
             group_result = {"url": url, "items": [], "addToCart": []}
             cart_items: List[Dict[str, Any]] = []
@@ -1186,27 +1374,37 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                     continue
                 check = catalog_mapping_check({"sku_id": alibaba_sku_id, "sku_name": alibaba_sku_name, "sku_second_name": alibaba_sku_second_name, "spec_text": spec_text}, live_catalog)
                 if not check.get("ok"):
+                    check_reason = str(check.get("reason") or "")
+                    if check_reason == "live_catalog_unavailable":
+                        blocker_message = "目前無法讀取 1688 頁面規格資料；為避免加錯型號，未選取或加入採購車"
+                    else:
+                        blocker_message = f"目前 1688 頁面未通過完整規格名稱驗證：{check_reason}"
                     item_result = {
                         "status": "blocked_live_catalog",
                         "modelName": model_name,
                         "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": alibaba_sku_name,
                         "quantity": quantity,
-                        "message": f"目前 1688 頁面未通過完整規格名稱驗證：{check.get('reason')}",
+                        "message": blocker_message,
                         "catalogCheck": check,
                     }
                     group_result["items"].append(item_result)
                     debug.log("item_blocked_live_catalog", item_result)
                     continue
-                live_row = check.get("current") or {}
                 # 名稱組合是正式選取依據；ID 與 offer fingerprint 僅保留作
                 # 診斷資料，不因無 ID 或無關 SKU 變動而阻擋。
-                if not alibaba_sku_name:
-                    alibaba_sku_name = str(live_row.get("sku_name") or "").strip()
-                if not alibaba_sku_second_name:
-                    alibaba_sku_second_name = str(live_row.get("second_name") or "").strip()
+                # The approved mapping is used for identity validation. Once it
+                # matches, pass the exact current 1688 labels to the browser so
+                # selection no longer depends on a manually maintained glyph map.
+                live_selection = live_selection_labels(
+                    check, alibaba_sku_name, alibaba_sku_second_name
+                )
+                live_row = check.get("current") or {}
+                alibaba_sku_id = live_selection["sku_id"] or alibaba_sku_id
+                alibaba_sku_name = live_selection["sku_name"]
+                alibaba_sku_second_name = live_selection["sku_second_name"]
                 if not spec_text:
-                    spec_text = str(live_row.get("spec_text") or "").strip()
+                    spec_text = live_selection["spec_text"]
                 if is_discontinued_sku(alibaba_sku_name):
                     item_result = {
                         "status": "skipped",
@@ -1361,6 +1559,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                             })
                     print("1688 採購車已達上限，停止後續補貨商品。", flush=True)
                 else:
+                    failed_cart_items.extend(cart_items)
                     print(f"加采购车可能失敗：{cart_result}", flush=True)
 
                 if add_status != "cart_full":
@@ -1389,12 +1588,36 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 "alibabaUrl": str(item.get("alibabaUrl") or "").strip(),
             } for item in source_items]
 
+        blocked_items = []
+        for group in results:
+            for item in group.get("items") or []:
+                if item.get("status") not in {"blocked_mapping", "blocked_live_catalog", "skipped", "error", "not_found"}:
+                    continue
+                blocked_items.append({
+                    "productId": product_id,
+                    "productName": product_name,
+                    "modelName": str(item.get("modelName") or ""),
+                    "quantity": int(item.get("quantity") or 0),
+                    "alibabaSkuName": str(item.get("alibabaSkuName") or ""),
+                    "alibabaSkuSecondName": str(item.get("alibabaSkuSecondName") or ""),
+                    "alibabaUrl": str(group.get("url") or ""),
+                    "status": str(item.get("status") or ""),
+                    "reason": str((item.get("catalogCheck") or {}).get("reason") or item.get("status") or ""),
+                    "message": str(item.get("message") or ""),
+                })
+
+        outcome = restock_result_outcome(
+            stopped_reason,
+            len(confirmed_cart_items),
+            len(unverified_cart_items),
+            len(blocked_items),
+            sum(1 for item in blocked_items if item.get("reason") == "live_catalog_unavailable"),
+            len(failed_cart_items),
+        )
+
         write_result(output_path, {
-            "status": "cart_limit_reached" if stopped_reason else "success",
-            "message": (
-                "1688 採購車已達上限，已停止後續補貨。"
-                if stopped_reason else "1688 補貨流程已完成。"
-            ),
+            "status": outcome["status"],
+            "message": outcome["message"],
             "stoppedReason": stopped_reason,
             "productId": product_id,
             "productName": product_name,
@@ -1407,6 +1630,8 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 "unverified": report_items(unverified_cart_items),
                 "cartFull": report_items(cart_limit_items),
                 "unprocessed": report_items(unprocessed_items),
+                "blocked": blocked_items,
+                "failed": report_items(failed_cart_items),
             },
             "results": results,
         })
@@ -1414,7 +1639,12 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
 
         wait_result = "disabled"
         if pause_seconds > 0:
-            final_action = "已嘗試按「加采购车」。" if add_to_cart else "未按加采购车。"
+            if confirmed_cart_items or unverified_cart_items or cart_limit_items:
+                final_action = "已執行「加采购车」，結果請見補貨報告。"
+            elif add_to_cart:
+                final_action = "沒有型號通過安全檢查，未按「加采购车」。"
+            else:
+                final_action = "未按加采购车。"
             print(
                 f"瀏覽器最多保留 {pause_seconds} 秒供檢查；關閉視窗即可立即結束。{final_action}",
                 flush=True,
