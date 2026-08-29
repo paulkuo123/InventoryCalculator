@@ -7,9 +7,16 @@ import alibaba_restocker
 class FakePage:
     def __init__(self):
         self.waits = []
+        self.selected_summary = {"found": False, "count": None, "quantity": None, "text": ""}
 
     def wait_for_timeout(self, milliseconds):
         self.waits.append(milliseconds)
+
+    def wait_for_load_state(self, *args, **kwargs):
+        return None
+
+    def evaluate(self, _script):
+        return self.selected_summary
 
 
 class FakeDebug:
@@ -172,6 +179,48 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["reason"], "missing_second_name")
 
+    def test_catalog_mapping_rejects_wrong_primary_name_even_with_one_size(self):
+        catalog = {
+            "white": {
+                "sku_id": "white",
+                "sku_name": "白色",
+                "second_name": "均码",
+                "parts": ["白色", "均码"],
+                "spec_text": "白色>均码",
+            }
+        }
+
+        result = alibaba_restocker.catalog_mapping_check(
+            {"sku_name": "纯白", "sku_second_name": ""}, catalog
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["reason"], "name_pair_not_on_live_page")
+
+    def test_transient_navigation_during_fill_is_retried(self):
+        page = FakePage()
+        filled = {"status": "filled", "modelName": "白色"}
+        with patch.object(
+            alibaba_restocker,
+            "fill_sku_quantity",
+            side_effect=[RuntimeError("Execution context was destroyed, most likely because of a navigation"), filled],
+        ) as fill:
+            result = alibaba_restocker.fill_sku_quantity_with_retry(
+                page, "白色", "白色", "均码", 10
+            )
+
+        self.assertEqual(result, filled)
+        self.assertEqual(fill.call_count, 2)
+        self.assertIn(800, page.waits)
+
+    def test_group_with_any_failed_sku_is_incomplete(self):
+        failures = alibaba_restocker.group_submission_failures([
+            {"status": "filled", "modelName": "黑色"},
+            {"status": "blocked_live_catalog", "modelName": "純白"},
+        ])
+
+        self.assertEqual([item["modelName"] for item in failures], ["純白"])
+
     def test_inspection_wait_ends_on_page_close_event_without_polling(self):
         page = FakePage()
         page.is_closed = lambda: False
@@ -285,6 +334,22 @@ class AlibabaRestockerTests(unittest.TestCase):
         refill.assert_not_called()
         self.assertFalse(result["ok"])
         self.assertEqual(result["status"], "cart_full")
+
+    def test_selected_count_mismatch_stops_before_cart_click(self):
+        page = FakePage()
+        page.selected_summary = {
+            "found": True,
+            "count": 1,
+            "quantity": 30,
+            "text": "已选1款30双",
+        }
+        debug = FakeDebug()
+        with patch.object(alibaba_restocker, "click_add_to_cart") as click:
+            result = alibaba_restocker.add_to_cart_with_retry(page, cart_items(), debug)
+
+        click.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "selection_mismatch")
 
 
 if __name__ == "__main__":
