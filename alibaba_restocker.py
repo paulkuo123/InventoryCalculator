@@ -149,13 +149,17 @@ def restock_count_check(
     expected_count: int,
     confirmed_count: int,
     add_to_cart: bool = True,
+    stopped_reason: str = "",
 ) -> Dict[str, Any]:
     """Compare promised SKUs with those actually confirmed into the cart."""
     expected = max(0, int(expected_count or 0))
     confirmed = max(0, int(confirmed_count or 0))
-    mismatch = bool(add_to_cart) and expected != confirmed
+    cart_full = str(stopped_reason or "") == "cart_limit_reached"
+    mismatch = bool(add_to_cart) and expected != confirmed and not cart_full
     if not add_to_cart:
         message = ""
+    elif cart_full:
+        message = f"1688 採購車已達上限，已確認加入 {confirmed} / {expected} 個型號，其餘尚未執行。"
     elif mismatch:
         message = f"預期補貨 {expected} 個型號，實際確認加入 {confirmed} 個。請核對 1688 採購車。"
     else:
@@ -165,6 +169,7 @@ def restock_count_check(
         "expected": expected,
         "confirmed": confirmed,
         "message": message,
+        "stoppedReason": str(stopped_reason or ""),
     }
 
 
@@ -198,10 +203,11 @@ def _name_match_keys(value: Any) -> set:
 
 def cart_text_has_name(haystack: Any, name: Any) -> bool:
     """True when a cart blob contains the SKU name, not only an exact-string key."""
-    name_keys = {key for key in _name_match_keys(name) if len(key) >= 2}
+    name_keys = {key for key in _name_match_keys(name) if key}
     if not name_keys:
         return False
-    if name_keys & _name_match_keys(haystack):
+    long_keys = {key for key in name_keys if len(key) >= 2}
+    if long_keys and long_keys & _name_match_keys(haystack):
         return True
     parts = [normalize_text(haystack)]
     try:
@@ -209,7 +215,15 @@ def cart_text_has_name(haystack: Any, name: Any) -> bool:
     except Exception:
         pass
     hay_flat = "\n".join(part for part in parts if part)
-    return any(key in hay_flat for key in name_keys)
+    if long_keys and any(key in hay_flat for key in long_keys):
+        return True
+    spaced = re.sub(r"\s+", " ", html.unescape(str(haystack or "")))
+    for key in name_keys:
+        if len(key) >= 2:
+            continue
+        if re.search(rf"(?:^|[\s,，、/|]){re.escape(key)}(?:$|[\s,，、/|])", spaced):
+            return True
+    return False
 
 
 def cart_line_matches_item(line: Dict[str, Any], item: Dict[str, Any]) -> bool:
@@ -231,6 +245,9 @@ def cart_line_matches_item(line: Dict[str, Any], item: Dict[str, Any]) -> bool:
         return False
     offer = extract_offer_id(item.get("alibabaUrl") or "")
     line_offer = str(line.get("offerId") or "").strip()
+    short_name = min((len(key) for key in _name_match_keys(primary_name) if key), default=0) < 2
+    if short_name and (not offer or not line_offer or offer != line_offer):
+        return False
     short_label = len(str(line.get("skuName") or "").strip()) < 60
     if offer and line_offer and offer != line_offer and short_label:
         return False
@@ -972,6 +989,17 @@ def catalog_mapping_check(selection: Dict[str, str], catalog: Dict[str, Dict[str
                     "message": str(exc),
                 }
             match_mode = "rope_affix"
+        if not matches and sku_id and sku_id in catalog:
+            current = catalog[sku_id]
+            return {
+                "ok": True,
+                "sku_id": sku_id,
+                "current": current,
+                "matchMode": "sku_id_fallback",
+                "warning": "name_pair_not_on_live_page_used_sku_id",
+                "sku_name": primary,
+                "sku_second_name": secondary,
+            }
         if not matches:
             reason = "missing_second_name" if same_primary and not secondary else "name_pair_not_on_live_page"
             return {"ok": False, "reason": "spec_fingerprint_mismatch" if legacy_spec_only else reason, "sku_name": primary, "sku_second_name": secondary}
@@ -2585,7 +2613,12 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
             len(failed_cart_items),
             len(items),
         )
-        count_check = restock_count_check(len(items), len(confirmed_cart_items), add_to_cart)
+        count_check = restock_count_check(
+            len(items),
+            len(confirmed_cart_items),
+            add_to_cart,
+            stopped_reason,
+        )
         if count_check["mismatch"]:
             print(f"補貨數量不符：{count_check['message']}", flush=True)
             if outcome["status"] == "success":

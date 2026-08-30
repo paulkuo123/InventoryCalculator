@@ -1032,9 +1032,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const failed = Array.isArray(summary.failed) ? summary.failed : [];
         const countCheck = restockCountCheck(workerResult, fallbackExpected);
         const stoppedByLimit = workerResult?.stoppedReason === 'cart_limit_reached' || workerResult?.status === 'cart_limit_reached';
-        modal.querySelector('#restockResultTitle').textContent = countCheck.mismatch
-            ? '1688 補貨數量不符'
-            : (stoppedByLimit ? '1688 採購車已達上限' : '1688 補貨流程結果');
+        modal.querySelector('#restockResultTitle').textContent = stoppedByLimit
+            ? '1688 採購車已達上限'
+            : (countCheck.mismatch ? '1688 補貨數量不符' : '1688 補貨流程結果');
         modal.querySelector('#restockResultMessage').textContent = countCheck.message || workerResult?.message || fallbackMessage || '補貨流程已結束。';
         let checkBanner = modal.querySelector('#restockResultCountCheck');
         if (!checkBanner) {
@@ -1042,17 +1042,21 @@ document.addEventListener('DOMContentLoaded', function() {
             checkBanner.id = 'restockResultCountCheck';
             modal.querySelector('#restockResultMessage').after(checkBanner);
         }
-        checkBanner.className = `restock-result-count-check${countCheck.mismatch ? ' is-error' : ' is-success'}`;
+        checkBanner.className = `restock-result-count-check${stoppedByLimit ? ' is-warning' : (countCheck.mismatch ? ' is-error' : ' is-success')}`;
         checkBanner.hidden = !countCheck.expected;
         const cartVerified = Boolean(workerResult?.cartVerification?.ok);
         const confirmedLabel = cartVerified ? '採購車實際有' : '實際確認加入';
         checkBanner.innerHTML = countCheck.expected
-            ? `預期 <strong>${countCheck.expected}</strong> 個型號，${confirmedLabel} <strong>${countCheck.confirmed}</strong> 個${countCheck.mismatch ? '。請立刻核對 1688 採購車。' : '。'}`
+            ? (stoppedByLimit
+                ? `預期 <strong>${countCheck.expected}</strong> 個型號，因採購車已滿只確認 <strong>${countCheck.confirmed}</strong> 個，其餘尚未執行。`
+                : `預期 <strong>${countCheck.expected}</strong> 個型號，${confirmedLabel} <strong>${countCheck.confirmed}</strong> 個${countCheck.mismatch ? '。請立刻核對 1688 採購車。' : '。'}`)
             : '';
+        const pendingByLimit = cartFull.length + unprocessed.length;
         modal.querySelector('#restockResultCounts').innerHTML = `
             <span class="is-success">已確認加入 <strong>${succeeded.length}</strong> 型號</span>
             <span class="is-warning">結果未確認 <strong>${unverified.length + selectionMismatch.length}</strong> 型號</span>
-            <span class="is-error">未加入 <strong>${cartFull.length + unprocessed.length + blocked.length + failed.length}</strong> 型號</span>
+            <span class="is-warning">因車滿未處理 <strong>${pendingByLimit}</strong> 型號</span>
+            <span class="is-error">未加入 <strong>${blocked.length + failed.length}</strong> 型號</span>
         `;
         const failedHeading = cartVerified ? '採購車中找不到（未加入）' : '加入採購車失敗';
         modal.querySelector('#restockResultSections').innerHTML = `

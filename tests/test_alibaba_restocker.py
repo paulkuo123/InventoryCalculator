@@ -1083,6 +1083,14 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertFalse(match["mismatch"])
         self.assertIn("7 / 7", match["message"])
 
+    def test_cart_full_count_check_is_not_a_mismatch(self):
+        result = alibaba_restocker.restock_count_check(7, 3, stopped_reason="cart_limit_reached")
+
+        self.assertFalse(result["mismatch"])
+        self.assertEqual(result["expected"], 7)
+        self.assertEqual(result["confirmed"], 3)
+        self.assertIn("採購車已達上限", result["message"])
+
     def test_restock_result_outcome_is_partial_when_confirmed_count_misses_expected(self):
         result = alibaba_restocker.restock_result_outcome("", 6, 0, 0, expected_count=7)
 
@@ -1160,6 +1168,49 @@ class AlibabaRestockerTests(unittest.TestCase):
         )
         self.assertEqual([item["modelName"] for item in result["found"]], ["紫花蝴蝶", "愛心熊黑繩"])
         self.assertEqual(result["missing"], [])
+
+    def test_short_sku_name_matches_only_on_same_offer_token(self):
+        line = {
+            "offerId": "661581929061",
+            "skuId": "",
+            "skuName": "新款可爱简笔画亚克力钥匙扣挂件\n\n5\n\t\n2-99个：1.13\n≈NT$5\n再选一款",
+            "specText": "新款可爱简笔画亚克力钥匙扣挂件\n\n5\n\t\n2-99个：1.13\n≈NT$5\n再选一款",
+        }
+        item = {
+            "modelName": "可愛筆畫壓克力 - YSK0854",
+            "alibabaSkuName": "5",
+            "alibabaUrl": "https://detail.1688.com/offer/661581929061.html",
+        }
+        other_offer = {
+            "offerId": "758067751014",
+            "skuName": "白色\n1-199个：0.90\n≈NT$5\n绿色",
+            "specText": "白色\n1-199个：0.90\n≈NT$5\n绿色",
+        }
+
+        self.assertTrue(alibaba_restocker.cart_line_matches_item(line, item))
+        self.assertFalse(alibaba_restocker.cart_line_matches_item(other_offer, item))
+        result = alibaba_restocker.apply_cart_reconciliation([item], [other_offer, line])
+        self.assertEqual([row["modelName"] for row in result["found"]], ["可愛筆畫壓克力 - YSK0854"])
+
+    def test_catalog_mapping_uses_sku_id_when_live_color_label_drifted(self):
+        catalog = {
+            "5228880725920": {
+                "sku_id": "5228880725920",
+                "sku_name": "桔红色",
+                "second_name": "",
+                "parts": ["桔红色"],
+                "spec_text": "桔红色",
+            }
+        }
+
+        result = alibaba_restocker.catalog_mapping_check(
+            {"sku_name": "橘紅色", "sku_second_name": "", "sku_id": "5228880725920"},
+            catalog,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["matchMode"], "sku_id_fallback")
+        self.assertEqual(result["current"]["sku_name"], "桔红色")
 
     def test_cart_lines_from_mtop_payload(self):
         payload = {
