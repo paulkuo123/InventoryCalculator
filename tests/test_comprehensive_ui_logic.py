@@ -296,6 +296,30 @@ def test_restock_logic_bugs():
             "未找到補貨鎖定 - 並發補貨操作可能損壞狀態",
             severity="high"
         )
+
+    if "showRestockOperationStatus" in content and "restock-operation-progress" in content:
+        report.add_pass("1688 補貨進度卡存在")
+    else:
+        report.add_bug(
+            "一鍵補貨沒有進度卡，背景工作狀態對使用者不可見",
+            severity="high"
+        )
+
+    if "updateRestockOperationFromJob" in content and "data.status === 'running'" in content:
+        report.add_pass("補貨輪詢會在執行中更新進度卡")
+    else:
+        report.add_bug(
+            "補貨輪詢可能只在結束時更新畫面",
+            severity="high"
+        )
+
+    if "restockCountCheck" in content and "1688 補貨數量不符" in content:
+        report.add_pass("補貨完成後會比對預期與實際加入數量")
+    else:
+        report.add_bug(
+            "補貨完成後沒有預期／實際數量檢查，短少型號可能無聲結束",
+            severity="high"
+        )
     
     # 測試：alibaba_restocker.py 邏輯
     restocker_path = Path("alibaba_restocker.py")

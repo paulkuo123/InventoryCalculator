@@ -863,6 +863,83 @@ document.addEventListener('DOMContentLoaded', function() {
         return Math.max(0, Math.floor(Number(value) || 0));
     }
 
+    const RESTOCK_JOB_STORAGE_KEY = 'alibabaRestockActiveJobId';
+    const restockPageTitle = document.title;
+    let restockOperationDismissTimer = null;
+    let restockOperationFadeTimer = null;
+
+    function persistRestockJobId(jobId) {
+        try {
+            if (jobId) window.sessionStorage.setItem(RESTOCK_JOB_STORAGE_KEY, jobId);
+            else window.sessionStorage.removeItem(RESTOCK_JOB_STORAGE_KEY);
+        } catch (error) {
+            // sessionStorage 在隱私模式可能不可用，進度卡仍可在本頁運作。
+        }
+    }
+
+    function readPersistedRestockJobId() {
+        try {
+            return window.sessionStorage.getItem(RESTOCK_JOB_STORAGE_KEY) || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function cancelRestockOperationDismiss() {
+        if (restockOperationDismissTimer) window.clearTimeout(restockOperationDismissTimer);
+        if (restockOperationFadeTimer) window.clearTimeout(restockOperationFadeTimer);
+        restockOperationDismissTimer = null;
+        restockOperationFadeTimer = null;
+    }
+
+    function dismissRestockOperationStatus() {
+        const node = document.getElementById('restockOperationStatus');
+        if (!node) return;
+        cancelRestockOperationDismiss();
+        node.classList.add('is-dismissing');
+        restockOperationFadeTimer = window.setTimeout(() => {
+            node.hidden = true;
+            node.classList.remove('is-dismissing');
+            restockOperationFadeTimer = null;
+        }, 180);
+        document.title = restockPageTitle;
+    }
+
+    function showRestockOperationStatus(text, type = 'running', details = {}) {
+        const node = document.getElementById('restockOperationStatus');
+        if (!node) return;
+        cancelRestockOperationDismiss();
+        const completed = Math.max(0, Number(details.completed || 0));
+        const total = Math.max(0, Number(details.total || 0));
+        const percent = total ? Math.min(100, Math.round((completed / total) * 100)) : 0;
+        const title = details.title || (type === 'running' ? '1688 補貨執行中' : type === 'success' ? '1688 補貨已完成' : '1688 補貨需要注意');
+        const badge = type === 'running' ? '執行中' : type === 'success' ? '已完成' : '失敗／中止';
+        const closeButton = type === 'running' ? '' : '<button type="button" class="restock-operation-close" data-restock-operation-close="true" aria-label="關閉完成提示">×</button>';
+        node.hidden = false;
+        node.className = `restock-operation-status ${type}`.trim();
+        node.innerHTML = `<div class="restock-operation-heading">${type === 'running' ? '<span class="restock-operation-spinner" aria-hidden="true"></span>' : ''}<strong>${escapeHtml(title)}</strong><span class="restock-operation-badge">${badge}</span>${closeButton}</div>
+            <div class="restock-operation-message">${escapeHtml(text)}</div>
+            ${type === 'running' ? `<div class="restock-operation-progress-row"><div class="restock-operation-progress" role="progressbar" aria-label="1688 補貨進度" aria-valuemin="0" aria-valuemax="${total || 0}" aria-valuenow="${completed}"><i style="width:${total ? percent : 8}%"></i></div><b>${total ? `${completed} / ${total}（${percent}%）` : '準備中…'}</b></div><small>本頁會每秒更新；即使重新整理，也會自動接回這項工作。</small>` : '<small>補貨流程已結束。詳細清單可看結果視窗。</small>'}`;
+        document.title = type === 'running' ? `${total ? `${completed}/${total}` : '執行中'}｜${restockPageTitle}` : restockPageTitle;
+        if (type !== 'running') {
+            restockOperationDismissTimer = window.setTimeout(dismissRestockOperationStatus, type === 'error' ? 8000 : 6000);
+        }
+    }
+
+    function updateRestockOperationFromJob(data, fallbackMessage = '') {
+        const completed = Number(data?.completed || 0);
+        const total = Number(data?.total || data?.itemCount || 0);
+        showRestockOperationStatus(
+            data?.message || fallbackMessage || '1688 補貨流程執行中',
+            'running',
+            {
+                title: '1688 補貨執行中',
+                completed,
+                total
+            }
+        );
+    }
+
     function setRestockMessage(target, message, type = '') {
         if (!target) return;
         target.textContent = message || '';
@@ -920,35 +997,75 @@ document.addEventListener('DOMContentLoaded', function() {
         return modal;
     }
 
-    function showRestockResult(workerResult, fallbackMessage = '') {
+    function restockCountCheck(workerResult, fallbackExpected = 0) {
+        const check = workerResult?.countCheck;
+        if (check && typeof check === 'object') {
+            return {
+                mismatch: Boolean(check.mismatch),
+                expected: Number(check.expected || 0),
+                confirmed: Number(check.confirmed || 0),
+                message: String(check.message || '')
+            };
+        }
+        const confirmed = Array.isArray(workerResult?.summary?.succeeded) ? workerResult.summary.succeeded.length : 0;
+        const expected = Number(fallbackExpected || 0);
+        const mismatch = expected > 0 && confirmed !== expected;
+        return {
+            mismatch,
+            expected,
+            confirmed,
+            message: mismatch
+                ? `預期補貨 ${expected} 個型號，實際確認加入 ${confirmed} 個。請核對 1688 採購車。`
+                : ''
+        };
+    }
+
+    function showRestockResult(workerResult, fallbackMessage = '', fallbackExpected = 0) {
         const modal = ensureRestockResultModal();
         const summary = workerResult?.summary || {};
         const succeeded = Array.isArray(summary.succeeded) ? summary.succeeded : [];
         const unverified = Array.isArray(summary.unverified) ? summary.unverified : [];
+        const selectionMismatch = Array.isArray(summary.selectionMismatch) ? summary.selectionMismatch : [];
         const cartFull = Array.isArray(summary.cartFull) ? summary.cartFull : [];
         const unprocessed = Array.isArray(summary.unprocessed) ? summary.unprocessed : [];
         const blocked = Array.isArray(summary.blocked) ? summary.blocked : [];
         const failed = Array.isArray(summary.failed) ? summary.failed : [];
+        const countCheck = restockCountCheck(workerResult, fallbackExpected);
         const stoppedByLimit = workerResult?.stoppedReason === 'cart_limit_reached' || workerResult?.status === 'cart_limit_reached';
-        modal.querySelector('#restockResultTitle').textContent = stoppedByLimit
-            ? '1688 採購車已達上限'
-            : '1688 補貨流程結果';
-        modal.querySelector('#restockResultMessage').textContent = workerResult?.message || fallbackMessage || '補貨流程已結束。';
+        modal.querySelector('#restockResultTitle').textContent = countCheck.mismatch
+            ? '1688 補貨數量不符'
+            : (stoppedByLimit ? '1688 採購車已達上限' : '1688 補貨流程結果');
+        modal.querySelector('#restockResultMessage').textContent = countCheck.message || workerResult?.message || fallbackMessage || '補貨流程已結束。';
+        let checkBanner = modal.querySelector('#restockResultCountCheck');
+        if (!checkBanner) {
+            checkBanner = document.createElement('div');
+            checkBanner.id = 'restockResultCountCheck';
+            modal.querySelector('#restockResultMessage').after(checkBanner);
+        }
+        checkBanner.className = `restock-result-count-check${countCheck.mismatch ? ' is-error' : ' is-success'}`;
+        checkBanner.hidden = !countCheck.expected;
+        const cartVerified = Boolean(workerResult?.cartVerification?.ok);
+        const confirmedLabel = cartVerified ? '採購車實際有' : '實際確認加入';
+        checkBanner.innerHTML = countCheck.expected
+            ? `預期 <strong>${countCheck.expected}</strong> 個型號，${confirmedLabel} <strong>${countCheck.confirmed}</strong> 個${countCheck.mismatch ? '。請立刻核對 1688 採購車。' : '。'}`
+            : '';
         modal.querySelector('#restockResultCounts').innerHTML = `
             <span class="is-success">已確認加入 <strong>${succeeded.length}</strong> 型號</span>
-            <span class="is-warning">結果未確認 <strong>${unverified.length}</strong> 型號</span>
+            <span class="is-warning">結果未確認 <strong>${unverified.length + selectionMismatch.length}</strong> 型號</span>
             <span class="is-error">未加入 <strong>${cartFull.length + unprocessed.length + blocked.length + failed.length}</strong> 型號</span>
         `;
+        const failedHeading = cartVerified ? '採購車中找不到（未加入）' : '加入採購車失敗';
         modal.querySelector('#restockResultSections').innerHTML = `
             <section>
                 <h4>已成功加入採購車</h4>
                 ${renderRestockReportList(succeeded, '沒有已確認成功的型號。')}
             </section>
+            ${selectionMismatch.length ? `<section class="is-error"><h4>頁面已選數量與填入不符，這批無法確認都已加入</h4>${renderRestockReportList(selectionMismatch, '')}</section>` : ''}
             ${unverified.length ? `<section><h4>已按下加入，但 1688 未回傳明確結果</h4>${renderRestockReportList(unverified, '')}</section>` : ''}
             ${cartFull.length ? `<section class="is-error"><h4>這一組因採購車已滿，未成功加入</h4>${renderRestockReportList(cartFull, '')}</section>` : ''}
             ${unprocessed.length ? `<section class="is-error"><h4>偵測到上限後，尚未執行</h4>${renderRestockReportList(unprocessed, '')}</section>` : ''}
             ${blocked.length ? `<section class="is-error"><h4>未通過安全檢查，沒有加入採購車</h4>${renderRestockReportList(blocked, '')}</section>` : ''}
-            ${failed.length ? `<section class="is-error"><h4>加入採購車失敗</h4>${renderRestockReportList(failed, '')}</section>` : ''}
+            ${failed.length ? `<section class="is-error"><h4>${failedHeading}</h4>${renderRestockReportList(failed, '')}</section>` : ''}
         `;
         modal.classList.remove('hidden');
     }
@@ -956,43 +1073,88 @@ document.addEventListener('DOMContentLoaded', function() {
     function monitorAlibabaRestockJob(jobId, statusTarget) {
         if (!jobId) {
             window.restockInProgress = false;
+            persistRestockJobId('');
             return;
         }
+        persistRestockJobId(jobId);
         const poll = () => fetch(`/api/alibaba-restock/jobs/${encodeURIComponent(jobId)}`)
             .then(async response => {
                 const data = await response.json().catch(() => ({}));
-                if (!response.ok) throw new Error(data.message || '讀取補貨結果失敗');
+                if (!response.ok) {
+                    const error = new Error(data.message || '讀取補貨結果失敗');
+                    error.fatal = response.status === 404;
+                    throw error;
+                }
                 if (data.status === 'running') {
+                    updateRestockOperationFromJob(data);
+                    setRestockMessage(statusTarget, data.message || '1688 補貨流程執行中');
                     window.setTimeout(poll, 1000);
                     return;
                 }
                 window.restockInProgress = false;
+                persistRestockJobId('');
                 if (data.status === 'failed') {
-                    setRestockMessage(statusTarget, data.message || '1688 補貨流程失敗', 'error');
-                    showRestockResult({}, data.message || '1688 補貨流程失敗');
+                    const failedMessage = data.message || '1688 補貨流程失敗';
+                    showRestockOperationStatus(failedMessage, 'error', {
+                        title: '1688 補貨失敗',
+                        completed: Number(data.completed || 0),
+                        total: Number(data.total || data.itemCount || 0)
+                    });
+                    setRestockMessage(statusTarget, failedMessage, 'error');
+                    showRestockResult({}, failedMessage);
                     return;
                 }
                 const workerResult = data.result || {};
+                const countCheck = restockCountCheck(workerResult, data.total || data.itemCount || 0);
                 const stoppedByLimit = workerResult.stoppedReason === 'cart_limit_reached' || workerResult.status === 'cart_limit_reached';
                 const hasBlocked = (workerResult.summary?.blocked || []).length > 0;
                 const hasFailed = (workerResult.summary?.failed || []).length > 0;
+                const hasSelectionMismatch = (workerResult.summary?.selectionMismatch || []).length > 0;
+                const statusType = stoppedByLimit || workerResult.status === 'error' || workerResult.status === 'live_catalog_unavailable' || countCheck.mismatch
+                    ? 'error'
+                    : workerResult.status === 'partial' ? 'error' : 'success';
+                const doneMessage = countCheck.mismatch
+                    ? countCheck.message
+                    : (countCheck.message || workerResult.message || '1688 補貨流程已完成');
+                const succeeded = (workerResult.summary?.succeeded || []).length;
+                const total = Number(countCheck.expected || data.total || data.itemCount || 0);
+                showRestockOperationStatus(doneMessage, statusType, {
+                    title: countCheck.mismatch
+                        ? '1688 補貨數量不符'
+                        : (stoppedByLimit ? '1688 採購車已達上限' : (statusType === 'success' ? '1688 補貨已完成' : '1688 補貨需要注意')),
+                    completed: countCheck.mismatch ? countCheck.confirmed : (total || succeeded),
+                    total: total || succeeded
+                });
                 setRestockMessage(
                     statusTarget,
-                    workerResult.message || '1688 補貨流程已完成',
-                    stoppedByLimit || workerResult.status === 'error' || workerResult.status === 'live_catalog_unavailable'
+                    doneMessage,
+                    stoppedByLimit || workerResult.status === 'error' || workerResult.status === 'live_catalog_unavailable' || countCheck.mismatch
                         ? 'error'
                         : workerResult.status === 'partial' ? 'warning' : 'success'
                 );
-                if (stoppedByLimit || hasBlocked || hasFailed || workerResult.status !== 'success' || (workerResult.summary?.unverified || []).length > 0) {
-                    showRestockResult(workerResult);
+                if (countCheck.mismatch || stoppedByLimit || hasBlocked || hasFailed || hasSelectionMismatch || workerResult.status !== 'success' || (workerResult.summary?.unverified || []).length > 0) {
+                    showRestockResult(workerResult, doneMessage, total);
                 }
             })
             .catch(error => {
-                window.restockInProgress = false;
                 console.error('讀取 1688 補貨結果失敗:', error);
-                setRestockMessage(statusTarget, error.message || '讀取補貨結果失敗', 'error');
+                if (error.fatal) {
+                    window.restockInProgress = false;
+                    persistRestockJobId('');
+                    const failedMessage = error.message || '找不到補貨工作';
+                    showRestockOperationStatus(failedMessage, 'error', { title: '無法讀取補貨進度' });
+                    setRestockMessage(statusTarget, failedMessage, 'error');
+                    return;
+                }
+                showRestockOperationStatus(
+                    `暫時無法讀取進度，系統會自動重試。${error.message || ''}`.trim(),
+                    'running',
+                    { title: '1688 補貨仍在執行' }
+                );
+                setRestockMessage(statusTarget, error.message || '讀取補貨結果失敗，正在重試…');
+                window.setTimeout(poll, 3000);
             });
-        window.setTimeout(poll, 1000);
+        poll();
     }
 
     function overlayRestockItemsWithGoldenBindings(productId, product, items) {
@@ -1036,6 +1198,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (restockItems.length === 0) {
             window.restockInProgress = false;
             const message = '沒有可補貨的 1688 型號。請先確認型號有 1688 連結且數量大於 0。';
+            showRestockOperationStatus(message, 'error', { title: '無法啟動 1688 補貨' });
             if (statusTarget) setRestockMessage(statusTarget, message, 'error');
             else alert(message);
             return Promise.resolve(false);
@@ -1043,6 +1206,7 @@ document.addEventListener('DOMContentLoaded', function() {
         if (restockItems.length > MAX_ALIBABA_CART_SKUS) {
             window.restockInProgress = false;
             const message = `本次共 ${restockItems.length} 個型號，超過 1688 採購車單次上限 ${MAX_ALIBABA_CART_SKUS} 個。`;
+            showRestockOperationStatus(message, 'error', { title: '無法啟動 1688 補貨' });
             if (statusTarget) setRestockMessage(statusTarget, message, 'error');
             else alert(message);
             return Promise.resolve(false);
@@ -1061,7 +1225,13 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        setRestockMessage(statusTarget, `正在啟動 ${restockItems.length} 個型號的 1688 補貨流程...`);
+        const startingMessage = `正在啟動 ${restockItems.length} 個型號的 1688 補貨流程...`;
+        setRestockMessage(statusTarget, startingMessage);
+        showRestockOperationStatus(startingMessage, 'running', {
+            title: '1688 補貨執行中',
+            completed: 0,
+            total: restockItems.length
+        });
 
         return fetch('/api/alibaba-restock', {
             method: 'POST',
@@ -1078,24 +1248,53 @@ document.addEventListener('DOMContentLoaded', function() {
                 if (!response.ok || data.status !== 'success') {
                     throw new Error(data.message || '啟動 1688 補貨流程失敗');
                 }
-                setRestockMessage(statusTarget, `已啟動：${data.itemCount || restockItems.length} 個型號，共 ${data.totalQty || totalQty} 件。`, 'success');
+                const startedMessage = `已啟動：${data.itemCount || restockItems.length} 個型號，共 ${data.totalQty || totalQty} 件。`;
+                setRestockMessage(statusTarget, startedMessage, 'success');
+                showRestockOperationStatus(startedMessage, 'running', {
+                    title: '1688 補貨執行中',
+                    completed: 0,
+                    total: data.itemCount || restockItems.length
+                });
                 monitorAlibabaRestockJob(data.jobId, statusTarget);
                 return data;
             })
             .catch(error => {
                 window.restockInProgress = false;
+                persistRestockJobId('');
                 console.error('1688 補貨流程失敗:', error);
-                if (statusTarget) setRestockMessage(statusTarget, error.message || '啟動失敗', 'error');
+                const failedMessage = error.message || '啟動失敗';
+                showRestockOperationStatus(failedMessage, 'error', { title: '無法啟動 1688 補貨' });
+                if (statusTarget) setRestockMessage(statusTarget, failedMessage, 'error');
                 else alert(`1688 補貨流程失敗：${error.message}`);
                 return false;
             });
         }).catch(error => {
             window.restockInProgress = false;
+            persistRestockJobId('');
             console.error('準備 1688 補貨流程失敗:', error);
-            if (statusTarget) setRestockMessage(statusTarget, error.message || '啟動失敗', 'error');
+            const failedMessage = error.message || '啟動失敗';
+            showRestockOperationStatus(failedMessage, 'error', { title: '無法啟動 1688 補貨' });
+            if (statusTarget) setRestockMessage(statusTarget, failedMessage, 'error');
             else alert(`1688 補貨流程失敗：${error.message}`);
             return false;
         });
+    }
+
+    const restockOperationStatus = document.getElementById('restockOperationStatus');
+    if (restockOperationStatus) {
+        restockOperationStatus.addEventListener('click', event => {
+            if (event.target.closest('[data-restock-operation-close="true"]')) {
+                dismissRestockOperationStatus();
+            }
+        });
+    }
+    const persistedRestockJobId = readPersistedRestockJobId();
+    if (persistedRestockJobId) {
+        window.restockInProgress = true;
+        showRestockOperationStatus('偵測到尚未完成的 1688 補貨工作，正在接回進度。', 'running', {
+            title: '1688 補貨執行中'
+        });
+        monitorAlibabaRestockJob(persistedRestockJobId, null);
     }
 
     function ensureRestockAdjustmentModal() {
@@ -2137,13 +2336,16 @@ document.addEventListener('DOMContentLoaded', function() {
         cartButton.disabled = true;
         message.textContent = '正在啟動 1688 瀏覽器採購車流程...';
         message.className = 'alibaba-edit-message';
+        showRestockOperationStatus('正在啟動 1688 瀏覽器採購車流程...', 'running', {
+            title: '1688 補貨執行中'
+        });
         fetch('/api/alibaba-restock', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 draftId: draft.id,
                 addToCart: true,
-                pauseSeconds: 300
+                pauseSeconds: 0
             })
         })
             .then(async response => {
@@ -2155,15 +2357,27 @@ document.addEventListener('DOMContentLoaded', function() {
                 message.textContent = data.message || '已啟動 1688 採購車流程，請檢查開啟的瀏覽器。';
                 message.className = 'alibaba-edit-message success';
                 if (data.jobId) {
+                    showRestockOperationStatus(data.message || '已啟動 1688 採購車流程。', 'running', {
+                        title: '1688 補貨執行中',
+                        completed: 0,
+                        total: data.itemCount || 0
+                    });
                     monitorAlibabaRestockJob(data.jobId, message);
                 } else {
                     window.restockInProgress = false;
+                    persistRestockJobId('');
+                    showRestockOperationStatus(data.message || '已啟動，但沒有工作編號可追蹤進度。', 'error', {
+                        title: '無法追蹤 1688 補貨'
+                    });
                 }
             })
             .catch(error => {
                 window.restockInProgress = false;
-                message.textContent = error.message || '啟動 1688 採購車流程失敗';
+                persistRestockJobId('');
+                const failedMessage = error.message || '啟動 1688 採購車流程失敗';
+                message.textContent = failedMessage;
                 message.className = 'alibaba-edit-message error';
+                showRestockOperationStatus(failedMessage, 'error', { title: '無法啟動 1688 補貨' });
                 cartButton.disabled = false;
             });
     }

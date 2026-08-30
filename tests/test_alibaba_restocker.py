@@ -117,6 +117,78 @@ class ColorModelPage(FakePage):
         return FakeLocator()
 
 
+class OneSpecModelRowPage(FakePage):
+    def __init__(self, soldout_first=False, rows_missing=False):
+        super().__init__()
+        self.model_args = []
+        self.expand_calls = 0
+        self.option_arguments = []
+        self.soldout_first = soldout_first
+        self.rows_missing = rows_missing
+
+    def evaluate(self, script, argument=None):
+        if "hasColorFilter" in script:
+            return {"hasColorFilter": False, "hasModelRows": True, "colorCount": 0, "modelRowCount": 19}
+        if "data-alibaba-restock-soldout" in script:
+            self.expand_calls += 1
+            return {"ok": True, "needed": True, "selector": '[data-alibaba-restock-soldout="expand"]'}
+        if "({ models })" in script:
+            self.model_args.append(list(argument["models"]))
+            missing = self.rows_missing or (self.soldout_first and len(self.model_args) == 1)
+            results = []
+            for model in argument["models"]:
+                if missing:
+                    results.append({"ok": False, "label": model["label"], "method": "model-row-not-found"})
+                else:
+                    results.append({
+                        "ok": True,
+                        "label": model["label"],
+                        "method": "color-filter-model-row-input",
+                        "quantity": model["quantity"],
+                    })
+            return {"ok": not missing, "results": results, "soldoutCollapsed": self.soldout_first and missing}
+        if "({ skuId, quantity })" in script:
+            return {"ok": False, "method": "sku-id-bound-input-not-found"}
+        if "({ target, marker })" in script:
+            self.option_arguments.append(argument)
+            return {
+                "ok": True,
+                "rawText": argument["target"],
+                "clickedText": argument["target"],
+                "selector": '[data-alibaba-restock-option="first"]',
+            }
+        if "({ marker })" in script:
+            return {
+                "ok": True,
+                "selector": '[data-alibaba-restock-quantity="quantity"]',
+                "input": {"type": "text"},
+            }
+        raise AssertionError("unexpected page script")
+
+    def locator(self, selector):
+        return FakeLocator()
+
+
+class CartReadPage(FakePage):
+    def __init__(self, lines=None, body="", url="https://cart.1688.com/"):
+        super().__init__()
+        self.lines = lines or []
+        self.body = body
+        self._url = url
+
+    @property
+    def url(self):
+        return self._url
+
+    def goto(self, url, wait_until="domcontentloaded", timeout=60000):
+        self._url = url
+
+    def evaluate(self, script, argument=None):
+        if "const lines" in script:
+            return self.lines
+        return self.body
+
+
 class FakeDebug:
     def __init__(self):
         self.events = []
@@ -651,6 +723,61 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(page.expand_calls, 1)
         self.assertEqual(len(page.model_args), 2)
 
+    def test_one_spec_model_rows_fill_each_style_without_color_chips(self):
+        page = OneSpecModelRowPage()
+        items = [
+            {"modelName": "紫花蝴蝶", "alibabaSkuName": "紫花蝴蝶绳", "alibabaSkuSecondName": "", "quantity": 40},
+            {"modelName": "粉熊珍珠水晶繩", "alibabaSkuName": "粉熊珍珠水晶绳", "alibabaSkuSecondName": "", "quantity": 20},
+            {"modelName": "白星熊", "alibabaSkuName": "白星熊珠绳", "alibabaSkuSecondName": "", "quantity": 90},
+            {"modelName": "陶瓷魚掌繩", "alibabaSkuName": "陶瓷鱼挂绳", "alibabaSkuSecondName": "", "quantity": 20},
+            {"modelName": "海洋星珠繩", "alibabaSkuName": "海洋星珠绳", "alibabaSkuSecondName": "", "quantity": 20},
+            {"modelName": "巴洛克珠繩", "alibabaSkuName": "巴洛克珠绳", "alibabaSkuSecondName": "", "quantity": 10},
+        ]
+
+        results = alibaba_restocker.fill_sku_quantities_on_page(page, items, FakeDebug())
+
+        self.assertEqual([row["status"] for row in results], ["filled"] * 6)
+        self.assertEqual([row["details"]["method"] for row in results], ["color-filter-model-row-input"] * 6)
+        self.assertEqual(len(page.model_args), 1)
+        self.assertEqual([model["label"] for model in page.model_args[0]], [
+            "紫花蝴蝶绳", "粉熊珍珠水晶绳", "白星熊珠绳", "陶瓷鱼挂绳", "海洋星珠绳", "巴洛克珠绳",
+        ])
+        self.assertEqual(page.model_args[0][-1]["quantity"], 10)
+        self.assertEqual(page.option_arguments, [])
+        self.assertEqual(page.waits, [alibaba_restocker.BETWEEN_SKU_SETTLE_MS])
+
+    def test_one_spec_model_rows_expand_soldout_then_retry(self):
+        page = OneSpecModelRowPage(soldout_first=True)
+        items = [{
+            "modelName": "巴洛克珠繩",
+            "alibabaSkuName": "巴洛克珠绳",
+            "alibabaSkuSecondName": "",
+            "quantity": 10,
+        }]
+
+        results = alibaba_restocker.fill_sku_quantities_on_page(page, items, FakeDebug())
+
+        self.assertEqual(results[0]["status"], "filled")
+        self.assertEqual(results[0]["details"]["method"], "color-filter-model-row-input")
+        self.assertEqual(page.expand_calls, 1)
+        self.assertEqual(len(page.model_args), 2)
+        self.assertEqual(page.option_arguments, [])
+
+    def test_one_spec_model_rows_fall_back_when_row_label_is_missing(self):
+        page = OneSpecModelRowPage(rows_missing=True)
+        items = [{
+            "modelName": "巴洛克珠繩",
+            "alibabaSkuName": "巴洛克珠绳",
+            "alibabaSkuSecondName": "",
+            "quantity": 10,
+        }]
+
+        results = alibaba_restocker.fill_sku_quantities_on_page(page, items, FakeDebug())
+
+        self.assertEqual(results[0]["status"], "filled")
+        self.assertEqual(results[0]["details"]["method"], "selected-option-native-quantity-input")
+        self.assertEqual(page.option_arguments[0]["target"], "巴洛克珠绳")
+
     @unittest.skipUnless(sys.platform == "darwin", "uses the macOS system Chinese converter")
     def test_catalog_mapping_normalizes_characters_outside_the_legacy_map(self):
         catalog = {
@@ -804,6 +931,24 @@ class AlibabaRestockerTests(unittest.TestCase):
         context.close.assert_not_called()
         self.assertEqual(debug.events[-1][0], "context_close_skipped_after_page_close")
 
+    def test_inspection_wait_is_disabled_when_pause_is_zero(self):
+        page = FakePage()
+        debug = FakeDebug()
+
+        result = alibaba_restocker.wait_for_inspection_or_page_close(page, 0, debug)
+
+        self.assertEqual(result, "disabled")
+
+    def test_disabled_inspection_closes_browser(self):
+        context = Mock()
+        debug = FakeDebug()
+
+        closed = alibaba_restocker.close_context_after_inspection(context, "disabled", debug)
+
+        self.assertTrue(closed)
+        context.close.assert_called_once_with()
+        self.assertEqual(debug.events[-1][0], "context_closed_after_inspection")
+
     def test_timeout_still_closes_context_normally(self):
         context = Mock()
         debug = FakeDebug()
@@ -877,6 +1022,215 @@ class AlibabaRestockerTests(unittest.TestCase):
         refill.assert_not_called()
         self.assertFalse(result["ok"])
         self.assertEqual(result["status"], "cart_full")
+
+    def test_progress_line_counts_filled_skus_and_ignores_debug(self):
+        progress = {"completed": 0, "total": 3, "message": "", "pageIndex": 0}
+
+        self.assertFalse(alibaba_restocker.apply_progress_line(progress, "1688 debug log：/tmp/x"))
+        self.assertEqual(progress["completed"], 0)
+        self.assertTrue(alibaba_restocker.apply_progress_line(progress, "使用 1688 補貨專用瀏覽器：ego-lite"))
+        self.assertEqual(progress["message"], "使用 1688 補貨專用瀏覽器：ego-lite")
+        self.assertTrue(alibaba_restocker.apply_progress_line(progress, "開啟 1688 商品頁：https://detail.1688.com/offer/1.html"))
+        self.assertEqual(progress["pageIndex"], 1)
+        self.assertEqual(progress["completed"], 0)
+        self.assertTrue(alibaba_restocker.apply_progress_line(
+            progress, "準備填入 1688 型號：iPhone 15 -> 黑色 / iPhone 15，數量：20"
+        ))
+        self.assertEqual(progress["completed"], 1)
+        self.assertTrue(alibaba_restocker.apply_progress_line(
+            progress, "準備填入 1688 型號：iPhone 16 -> 黑色 / iPhone 16，數量：10"
+        ))
+        self.assertEqual(progress["completed"], 2)
+        self.assertTrue(alibaba_restocker.apply_progress_line(progress, "已確認一次加入采购车：2 個規格"))
+        self.assertEqual(progress["completed"], 2)
+        self.assertTrue(alibaba_restocker.apply_progress_line(progress, "補貨完成，正在關閉瀏覽器。"))
+        self.assertEqual(progress["completed"], 3)
+        self.assertEqual(progress["total"], 3)
+        self.assertTrue(alibaba_restocker.apply_progress_line(
+            progress, "瀏覽器最多保留 300 秒供檢查；關閉視窗即可立即結束。"
+        ))
+        self.assertEqual(progress["completed"], 3)
+
+    def test_progress_line_does_not_count_past_total(self):
+        progress = {"completed": 0, "total": 1}
+
+        alibaba_restocker.apply_progress_line(progress, "準備填入 1688 型號：A -> A，數量：1")
+        alibaba_restocker.apply_progress_line(progress, "準備填入 1688 型號：B -> B，數量：1")
+
+        self.assertEqual(progress["completed"], 1)
+
+    def test_page_selection_summary_reads_1688_footer(self):
+        sample = "已选5款190个\n商品价格：¥556.38\n已优惠¥5.62\n包邮\n立即下单\n加采购车"
+        result = alibaba_restocker.parse_page_selection_summary([
+            "加购成功\n\n采购车支持自动领券结算\n\n去采购车",
+            sample,
+        ])
+
+        self.assertEqual(result, {"skuCount": 5, "quantity": 190})
+        self.assertTrue(alibaba_restocker.selection_summary_mismatch(result, 6, 200))
+        self.assertFalse(alibaba_restocker.selection_summary_mismatch(result, 5, 190))
+        self.assertFalse(alibaba_restocker.selection_summary_mismatch(None, 6, 200))
+
+    def test_restock_count_check_warns_when_confirmed_differs_from_expected(self):
+        mismatch = alibaba_restocker.restock_count_check(7, 6)
+        match = alibaba_restocker.restock_count_check(7, 7)
+
+        self.assertTrue(mismatch["mismatch"])
+        self.assertEqual(mismatch["expected"], 7)
+        self.assertEqual(mismatch["confirmed"], 6)
+        self.assertIn("預期補貨 7", mismatch["message"])
+        self.assertIn("實際確認加入 6", mismatch["message"])
+        self.assertFalse(match["mismatch"])
+        self.assertIn("7 / 7", match["message"])
+
+    def test_restock_result_outcome_is_partial_when_confirmed_count_misses_expected(self):
+        result = alibaba_restocker.restock_result_outcome("", 6, 0, 0, expected_count=7)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("預期補貨 7", result["message"])
+        self.assertIn("實際確認加入 6", result["message"])
+
+    def test_progress_line_counts_cart_verification(self):
+        progress = {"completed": 1, "total": 7, "message": ""}
+
+        self.assertTrue(alibaba_restocker.apply_progress_line(progress, "採購車核對：正在開啟採購車頁"))
+        self.assertEqual(progress["message"], "採購車核對：正在開啟採購車頁")
+        self.assertEqual(progress["completed"], 1)
+
+    def test_cart_reconciliation_corrects_inverted_toast_classification(self):
+        offer_a = "https://detail.1688.com/offer/752797767076.html"
+        offer_b = "https://detail.1688.com/offer/676841046990.html"
+        submitted = [
+            {"modelName": "紫花蝴蝶", "alibabaSkuName": "紫花蝴蝶绳", "alibabaUrl": offer_a},
+            {"modelName": "粉熊珍珠水晶繩", "alibabaSkuName": "粉熊珍珠水晶绳", "alibabaUrl": offer_a},
+            {"modelName": "白星熊", "alibabaSkuName": "白星熊珠绳", "alibabaUrl": offer_a},
+            {"modelName": "陶瓷魚掌繩", "alibabaSkuName": "陶瓷鱼挂绳", "alibabaUrl": offer_a},
+            {"modelName": "海洋星珠繩", "alibabaSkuName": "海洋星珠绳", "alibabaUrl": offer_a},
+            {"modelName": "巴洛克珠繩", "alibabaSkuName": "巴洛克珠绳", "alibabaUrl": offer_a},
+            {"modelName": "愛心熊黑繩", "alibabaSkuName": "爱心熊黑绳", "alibabaUrl": offer_b},
+        ]
+        cart_lines = [
+            {"offerId": "752797767076", "skuName": "紫花蝴蝶绳", "skuSecondName": "", "specText": "紫花蝴蝶绳", "quantity": 40},
+            {"offerId": "752797767076", "skuName": "粉熊珍珠水晶绳", "skuSecondName": "", "specText": "粉熊珍珠水晶绳", "quantity": 20},
+            {"offerId": "752797767076", "skuName": "白星熊珠绳", "skuSecondName": "", "specText": "白星熊珠绳", "quantity": 90},
+            {"offerId": "752797767076", "skuName": "陶瓷鱼挂绳", "skuSecondName": "", "specText": "陶瓷鱼挂绳", "quantity": 20},
+            {"offerId": "752797767076", "skuName": "海洋星珠绳", "skuSecondName": "", "specText": "海洋星珠绳", "quantity": 20},
+            {"offerId": "752797767076", "skuName": "巴洛克珠绳", "skuSecondName": "", "specText": "巴洛克珠绳", "quantity": 10},
+        ]
+
+        self.assertIsNone(alibaba_restocker.apply_cart_reconciliation(submitted, None))
+        result = alibaba_restocker.apply_cart_reconciliation(submitted, cart_lines)
+
+        self.assertEqual([item["modelName"] for item in result["found"]], [
+            "紫花蝴蝶", "粉熊珍珠水晶繩", "白星熊", "陶瓷魚掌繩", "海洋星珠繩", "巴洛克珠繩",
+        ])
+        self.assertEqual(len(result["missing"]), 1)
+        self.assertEqual(result["missing"][0]["modelName"], "愛心熊黑繩")
+        self.assertIn("採購車中找不到", result["missing"][0]["message"])
+        self.assertFalse(alibaba_restocker.cart_line_matches_item(
+            {"offerId": "752797767076", "skuName": "紫花蝴蝶绳", "specText": "紫花蝴蝶绳"},
+            submitted[-1],
+        ))
+
+    def test_cart_store_blob_matches_names_inside_page_text(self):
+        body = (
+            "采购车\n现货(118)\n广东塔下科技有限责任公司\n"
+            "爱心熊黑绳\n3.20\n陶瓷鱼挂绳\n4.80\n白星熊珠绳\n2.60\n"
+            "粉熊珍珠水晶绳\n2.50\n巴洛克珠绳\n3.50\n紫花蝴蝶绳\n2.80\n海洋星珠绳\n3.50\n"
+        )
+        blob = {
+            "offerId": "676841046990",
+            "skuName": "广东塔下科技有限责任公司\n爱心熊黑绳\n3.20\n再选一款",
+            "specText": "广东塔下科技有限责任公司\n爱心熊黑绳\n3.20\n再选一款",
+        }
+        submitted = [
+            {"modelName": "紫花蝴蝶", "alibabaSkuName": "紫花蝴蝶绳", "alibabaUrl": "https://detail.1688.com/offer/752797767076.html"},
+            {"modelName": "愛心熊黑繩", "alibabaSkuName": "爱心熊黑绳", "alibabaUrl": "https://detail.1688.com/offer/676841046990.html"},
+        ]
+
+        self.assertTrue(alibaba_restocker.cart_text_has_name(body, "紫花蝴蝶绳"))
+        self.assertTrue(alibaba_restocker.cart_line_matches_item(
+            {"offerId": "", "skuName": "", "specText": body},
+            submitted[0],
+        ))
+        self.assertTrue(alibaba_restocker.cart_line_matches_item(blob, submitted[1]))
+        result = alibaba_restocker.apply_cart_reconciliation(
+            submitted,
+            [blob, {"offerId": "", "skuName": body, "specText": body}],
+        )
+        self.assertEqual([item["modelName"] for item in result["found"]], ["紫花蝴蝶", "愛心熊黑繩"])
+        self.assertEqual(result["missing"], [])
+
+    def test_cart_lines_from_mtop_payload(self):
+        payload = {
+            "data": {
+                "orders": [
+                    {"offerId": 752797767076, "skuTitle": "紫花蝴蝶绳", "skuId": "1", "quantity": 40},
+                    {"offer_id": "676841046990", "skuName": "爱心熊黑绳", "amount": 10},
+                ]
+            }
+        }
+
+        lines = alibaba_restocker.cart_lines_from_data(payload)
+
+        self.assertEqual([row["skuName"] for row in lines], ["紫花蝴蝶绳", "爱心熊黑绳"])
+        self.assertEqual(lines[0]["offerId"], "752797767076")
+
+    def test_unread_cart_is_not_treated_as_empty(self):
+        page = CartReadPage(lines=[], body="采购车\n去结算\n商品价格")
+        debug = FakeDebug()
+
+        with patch.object(alibaba_restocker, "CART_READ_WAIT_MS", 0), patch.object(
+            alibaba_restocker, "CART_READ_ATTEMPTS", 1
+        ):
+            result = alibaba_restocker.open_and_read_cart(page, debug)
+
+        self.assertIsNone(result)
+
+    def test_empty_cart_copy_returns_empty_list(self):
+        page = CartReadPage(lines=[], body="采购车是空的，快去选购吧")
+
+        with patch.object(alibaba_restocker, "CART_READ_WAIT_MS", 0), patch.object(
+            alibaba_restocker, "CART_READ_ATTEMPTS", 1
+        ):
+            result = alibaba_restocker.open_and_read_cart(page, FakeDebug())
+
+        self.assertEqual(result, [])
+
+    def test_quantity_missing_retry_uses_option_fill(self):
+        page = FakePage()
+        debug = FakeDebug()
+        items = [{
+            "modelName": "愛心熊黑繩",
+            "alibabaSkuName": "爱心熊黑绳",
+            "alibabaSkuSecondName": "",
+            "alibabaSkuId": "5086683740024",
+            "quantity": 10,
+        }]
+
+        with patch.object(
+            alibaba_restocker, "click_add_to_cart", side_effect=[{"ok": True}, {"ok": True}]
+        ), patch.object(
+            alibaba_restocker,
+            "wait_for_cart_feedback",
+            side_effect=[
+                {"status": "error", "message": "请输入订购数量", "retryable": True},
+                {"status": "success", "message": "加购成功"},
+            ],
+        ), patch.object(
+            alibaba_restocker,
+            "fill_sku_quantity",
+            return_value={"status": "filled", "modelName": "愛心熊黑繩"},
+        ) as option_fill, patch.object(
+            alibaba_restocker,
+            "fill_sku_quantities_on_page",
+            return_value=[{"status": "filled"}],
+        ) as row_fill:
+            result = alibaba_restocker.add_to_cart_with_retry(page, items, debug)
+
+        self.assertEqual(result["status"], "success")
+        option_fill.assert_called_once()
+        row_fill.assert_not_called()
 
 
 if __name__ == "__main__":

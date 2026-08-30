@@ -233,6 +233,19 @@ PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
 FILE_NAME = get_resource_path("index.html")
 current_crawler_process = None
 ALIBABA_RESTOCK_SESSION_CLOSED_MARKER = "__INVENTORY_1688_SESSION_CLOSED__"
+
+
+def restock_pause_seconds(payload):
+    """0 means close the 1688 window when done. Do not treat 0 as missing."""
+    raw = payload.get("pauseSeconds") if isinstance(payload, dict) else None
+    if raw is None or raw == "":
+        return 0
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 0
+
+
 alibaba_restock_jobs = {}
 alibaba_restock_jobs_lock = threading.Lock()
 inbound_jobs = {}
@@ -2127,7 +2140,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "--input", input_path,
             "--output", output_path,
             "--headless", "false",
-            "--pause-seconds", str(int(payload.get("pauseSeconds") or 300)),
+            "--pause-seconds", str(restock_pause_seconds(payload)),
         ]
         if restock_payload.get("addToCart", True):
             cmd.append("--add-to-cart")
@@ -2157,6 +2170,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "startedAt": datetime.datetime.now().isoformat(timespec="seconds"),
                 "itemCount": len(items),
                 "totalQty": sum(item["restockQty"] for item in items),
+                "completed": 0,
+                "total": len(items),
+                "pageIndex": 0,
             }
 
         def publish_worker_result(worker_result=None, fallback_message=""):
@@ -2192,6 +2208,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
         def read_output(pipe, prefix):
             global current_crawler_process
+            from alibaba_restocker import apply_progress_line
             try:
                 for line in pipe:
                     line_text = line.strip()
@@ -2206,6 +2223,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     if line_text:
                         print(f"{prefix}: {line_text}")
                         logger.info(f"{prefix}: {line_text}")
+                        with alibaba_restock_jobs_lock:
+                            job = alibaba_restock_jobs.get(job_id)
+                            if job and job.get("status") == "running":
+                                apply_progress_line(job, line_text)
             finally:
                 try:
                     pipe.close()
@@ -2231,9 +2252,15 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         threading.Thread(target=watch_result_file, daemon=True).start()
         threading.Thread(target=wait_and_clear, daemon=True).start()
 
+        pause_seconds = restock_pause_seconds(payload)
+        inspect_note = (
+            f"瀏覽器會保留約 {pause_seconds} 秒供檢查。"
+            if pause_seconds > 0
+            else "完成後會關閉瀏覽器。"
+        )
         return {
             "status": "success",
-            "message": f"已啟動 1688 採購車流程：{len(items)} 個型號。瀏覽器會保留約 {payload.get('pauseSeconds') or 300} 秒供檢查。",
+            "message": f"已啟動 1688 採購車流程：{len(items)} 個型號。{inspect_note}",
             "jobId": job_id,
             "draftId": restock_payload.get("draftId"),
             "productId": restock_payload.get("productId", ""),

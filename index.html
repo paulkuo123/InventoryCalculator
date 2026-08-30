@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>莉莉安蝦皮庫存管理系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="styles.css?v=20260830-close-browser">
 </head>
 <body class="inventory-home">
     <header>
@@ -93,7 +93,7 @@
                 </div>
             </div>
             <div class="shopee-products-import-actions">
-                <input id="shopeeProductsFile" type="file">
+                <input id="shopeeProductsFile" type="file" accept=".json,application/json">
                 <button id="shopeeProductsImportButton" class="btn-secondary" type="button" disabled>
                     <i class="fas fa-file-import"></i>
                     匯入並套用
@@ -295,6 +295,8 @@
         </div>
     </div>
 
-    <script src="script.js?v=20260830-personal-watchlist"></script>
+    <section id="restockOperationStatus" class="restock-operation-status" aria-live="polite" hidden></section>
+
+    <script src="script.js?v=20260830-close-browser"></script>
 </body>
 </html>
