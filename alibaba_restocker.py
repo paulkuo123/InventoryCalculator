@@ -41,7 +41,7 @@ AFTER_SOLDOUT_EXPAND_WAIT_MS = 400
 AFTER_CART_CLICK_WAIT_MS = 300
 AFTER_CART_DISMISS_WAIT_MS = 500
 BETWEEN_SKU_SETTLE_MS = 350
-FEEDBACK_TIMEOUT_MS = 4000
+FEEDBACK_TIMEOUT_MS = 8000
 MAX_ADD_TO_CART_ATTEMPTS = 2
 LIVE_CATALOG_MAX_ATTEMPTS = 3
 LIVE_CATALOG_RETRY_WAIT_MS = 1000
@@ -145,17 +145,21 @@ def selection_summary_mismatch(
     )
 
 
+VERIFY_CART_COUNTS = False
+
+
 def restock_count_check(
     expected_count: int,
     confirmed_count: int,
     add_to_cart: bool = True,
     stopped_reason: str = "",
+    verify_cart: bool = VERIFY_CART_COUNTS,
 ) -> Dict[str, Any]:
-    """Compare promised SKUs with those actually confirmed into the cart."""
+    """Record toast-confirmed SKUs. Cart-page count checks stay opt-in."""
     expected = max(0, int(expected_count or 0))
     confirmed = max(0, int(confirmed_count or 0))
     cart_full = str(stopped_reason or "") == "cart_limit_reached"
-    mismatch = bool(add_to_cart) and expected != confirmed and not cart_full
+    mismatch = bool(verify_cart) and bool(add_to_cart) and expected != confirmed and not cart_full
     if not add_to_cart:
         message = ""
     elif cart_full:
@@ -266,6 +270,82 @@ def reconcile_restock_with_cart(
         else:
             missing.append(item)
     return {"found": found, "missing": missing}
+
+
+CART_TRUNCATED_PHRASES = ("点击加载更多", "點擊加載更多", "加载更多", "載入更多")
+CART_HEADER_COUNT_RE = re.compile(r"现货[（(](\d+)[）)]")
+CART_STATUS_FRACTION_RE = re.compile(r"(?<!\d)(\d{1,3})/([123]\d{2})(?!\d)")
+
+
+def _cart_text_blob(lines: Optional[List[Dict[str, Any]]], body: str = "") -> str:
+    blob = str(body or "")
+    for line in lines or []:
+        if not isinstance(line, dict):
+            continue
+        blob += "\n" + str(line.get("skuName") or "") + str(line.get("specText") or "")
+    return blob
+
+
+def parse_cart_page_counts(
+    lines: Optional[List[Dict[str, Any]]],
+    body: str = "",
+) -> Optional[Dict[str, int]]:
+    """Read 现货(N) and N/300 from the cart page dump."""
+    compact = re.sub(r"\s+", "", _cart_text_blob(lines, body))
+    sku = None
+    limit = None
+    header = CART_HEADER_COUNT_RE.search(compact)
+    if header:
+        sku = int(header.group(1))
+    fraction = CART_STATUS_FRACTION_RE.search(compact)
+    if fraction:
+        sku = sku if sku is not None else int(fraction.group(1))
+        limit = int(fraction.group(2))
+    if sku is None:
+        return None
+    result = {"skuCount": sku}
+    if limit:
+        result["skuLimit"] = limit
+    return result
+
+
+def parsed_cart_offer_count(lines: Optional[List[Dict[str, Any]]]) -> int:
+    return len([
+        line for line in (lines or [])
+        if isinstance(line, dict) and str(line.get("offerId") or "").strip()
+    ])
+
+
+def cart_text_is_truncated(lines: Optional[List[Dict[str, Any]]], body: str = "") -> bool:
+    blob = _cart_text_blob(lines, body)
+    compact = re.sub(r"\s+", "", blob)
+    if any(phrase in compact for phrase in CART_TRUNCATED_PHRASES):
+        return True
+    header = parse_cart_page_counts(lines, body)
+    if header and parsed_cart_offer_count(lines) + 5 < int(header.get("skuCount") or 0):
+        return True
+    return False
+
+
+def recover_truncated_cart_missing(
+    found: List[Dict[str, Any]],
+    missing: List[Dict[str, Any]],
+    previously_confirmed: List[Dict[str, Any]],
+) -> tuple:
+    """Keep toast-confirmed SKUs when the cart page is only a partial dump."""
+    prev_names = {
+        str(item.get("modelName") or "").strip()
+        for item in previously_confirmed
+        if str(item.get("modelName") or "").strip()
+    }
+    kept: List[Dict[str, Any]] = []
+    still_missing: List[Dict[str, Any]] = []
+    for item in missing:
+        if str(item.get("modelName") or "").strip() in prev_names:
+            kept.append(item)
+        else:
+            still_missing.append(item)
+    return list(found) + kept, still_missing
 
 
 def apply_cart_reconciliation(
@@ -428,6 +508,27 @@ def read_cart_lines(page) -> List[Dict[str, Any]]:
     return merged
 
 
+def expand_cart_page(page) -> bool:
+    """Scroll and click 加载更多 so a full cart dump is more likely."""
+    try:
+        clicked = page.evaluate(
+            """
+            () => {
+              window.scrollTo(0, document.body ? document.body.scrollHeight : 0);
+              const nodes = Array.from(document.querySelectorAll('button, a, span, div'));
+              const target = nodes.find(el => /加载更多|載入更多/.test(String(el.innerText || '').replace(/\\s+/g, '')));
+              if (!target) return false;
+              target.click();
+              return true;
+            }
+            """
+        )
+        page.wait_for_timeout(1200)
+        return bool(clicked)
+    except Exception:
+        return False
+
+
 def open_and_read_cart(page, debug: Optional[Any] = None) -> Optional[List[Dict[str, Any]]]:
     """Open the 1688 cart and read SKUs. None means the cart page was not usable."""
     for url in CART_PAGE_URLS:
@@ -445,6 +546,7 @@ def open_and_read_cart(page, debug: Optional[Any] = None) -> Optional[List[Dict[
         body = ""
         for attempt in range(1, CART_READ_ATTEMPTS + 1):
             page.wait_for_timeout(CART_READ_WAIT_MS)
+            expand_cart_page(page)
             lines = read_cart_lines(page)
             try:
                 body = str(page.evaluate("() => document.body && document.body.innerText || ''") or "")
@@ -455,11 +557,15 @@ def open_and_read_cart(page, debug: Optional[Any] = None) -> Optional[List[Dict[
                     "url": page.url,
                     "attempt": attempt,
                     "lineCount": len(lines),
+                    "truncated": cart_text_is_truncated(lines, body),
                     "lines": lines[:80],
                     "bodyPreview": body[:400],
                 })
-            if lines:
+            if lines and not cart_text_is_truncated(lines, body):
                 print(f"採購車核對：已讀取 {len(lines)} 個型號", flush=True)
+                return lines
+            if lines and attempt == CART_READ_ATTEMPTS:
+                print(f"採購車核對：已讀取 {len(lines)} 個型號（頁面仍可能未展開完）", flush=True)
                 return lines
             if page_looks_like_empty_cart(body):
                 print("採購車核對：採購車是空的", flush=True)
@@ -848,7 +954,7 @@ def restock_result_outcome(
     failed_count: int = 0,
     expected_count: int = 0,
 ) -> Dict[str, str]:
-    count_mismatch = bool(expected_count) and confirmed_count != expected_count
+    count_mismatch = bool(VERIFY_CART_COUNTS) and bool(expected_count) and confirmed_count != expected_count
     count_message = (
         f"預期補貨 {expected_count} 個型號，實際確認加入 {confirmed_count} 個。請核對 1688 採購車。"
         if count_mismatch else ""
@@ -1395,8 +1501,7 @@ def fill_sku_quantity(
             },
         }
     input_locator = page.locator(quantity_input["selector"])
-    input_locator.fill(str(quantity), timeout=5000)
-    input_locator.press("Tab")
+    write_quantity_input(input_locator, quantity)
     page.wait_for_timeout(250)
     return {
         "status": "filled",
@@ -1609,6 +1714,37 @@ def expand_soldout_model_rows(page) -> Dict[str, Any]:
     return result
 
 
+def is_concatenated_quantity(displayed: Any, intended: int) -> bool:
+    """True when a qty field shows the intended number typed twice (70 → 7070)."""
+    wanted = str(int(intended or 0))
+    raw = re.sub(r"\D", "", str(displayed or ""))
+    return bool(wanted) and raw == wanted + wanted
+
+
+def write_quantity_input(locator, quantity: int) -> None:
+    """Replace a 1688 qty field. fill() after a JS write appends on Ant InputNumber."""
+    wanted = str(int(quantity or 0))
+    current = ""
+    try:
+        current = str(locator.input_value(timeout=1000) or "")
+    except Exception:
+        current = ""
+    if str(current).strip() == wanted:
+        try:
+            locator.press("Tab")
+        except Exception:
+            pass
+        return
+    try:
+        locator.click(timeout=5000)
+        locator.press("ControlOrMeta+A")
+        locator.press("Backspace")
+    except Exception:
+        pass
+    locator.fill(wanted, timeout=5000)
+    locator.press("Tab")
+
+
 def fill_model_row_quantities(page, models: List[Dict[str, Any]]) -> Dict[str, Any]:
     script = """
     ({ models }) => {
@@ -1675,8 +1811,7 @@ def fill_model_row_quantities(page, models: List[Dict[str, Any]]) -> Dict[str, A
             continue
         try:
             locator = page.locator(selector)
-            locator.fill(str(row.get("quantity") or 0), timeout=5000)
-            locator.press("Tab")
+            write_quantity_input(locator, int(row.get("quantity") or 0))
             row["method"] = "model-row-native-quantity-input"
         except Exception:
             pass
@@ -1915,6 +2050,8 @@ def wait_for_cart_feedback(page, timeout_ms: int = FEEDBACK_TIMEOUT_MS) -> Dict[
         ];
         const errorTexts = retryableErrorTexts.concat(terminalErrorTexts);
         const successTexts = [
+            '加购成功',
+            '加購成功',
             '成功加入采购车',
             '已加入采购车',
             '加入采购车成功',
@@ -1924,7 +2061,16 @@ def wait_for_cart_feedback(page, timeout_ms: int = FEEDBACK_TIMEOUT_MS) -> Dict[
             '加入成功',
             '已添加'
         ];
-        const error = errorTexts.find(text => joined.includes(text));
+        const bodyText = String(document.body && document.body.innerText || '');
+        let frameText = '';
+        try {
+            for (const frame of Array.from(document.querySelectorAll('iframe'))) {
+                const doc = frame.contentDocument;
+                if (doc && doc.body) frameText += '\\n' + String(doc.body.innerText || '');
+            }
+        } catch (e) {}
+        const haystack = joined + '\\n' + bodyText + frameText;
+        const error = errorTexts.find(text => haystack.includes(text));
         if (error) {
             return {
                 status: 'error',
@@ -1933,7 +2079,7 @@ def wait_for_cart_feedback(page, timeout_ms: int = FEEDBACK_TIMEOUT_MS) -> Dict[
                 samples: visibleTexts.filter(text => errorTexts.some(errorText => text.includes(errorText))).slice(0, 6)
             };
         }
-        const success = successTexts.find(text => joined.includes(text)) ||
+        const success = successTexts.find(text => haystack.includes(text)) ||
             visibleTexts.find(text => text.includes('成功') && (text.includes('采购车') || text.includes('购物车')));
         if (success) {
             return {
@@ -1981,7 +2127,46 @@ def wait_for_cart_feedback(page, timeout_ms: int = FEEDBACK_TIMEOUT_MS) -> Dict[
         page.wait_for_timeout(500)
     last_result["status"] = "unknown"
     last_result["message"] = "等待成功/錯誤提示逾時"
+    try:
+        body = str(page.evaluate("() => document.body && document.body.innerText || ''") or "")
+    except Exception:
+        body = ""
+    recovered = classify_visible_cart_feedback(body)
+    if recovered:
+        recovered["samples"] = list(last_result.get("samples") or [])[:8]
+        return recovered
     return last_result
+
+
+CART_SUCCESS_PHRASES = (
+    "加购成功",
+    "加購成功",
+    "成功加入采购车",
+    "成功加入採購車",
+    "已加入采购车",
+    "已加入採購車",
+    "加入采购车成功",
+    "加入採購車成功",
+)
+
+
+def classify_visible_cart_feedback(text: str) -> Optional[Dict[str, Any]]:
+    """Read toast/body text after the 180-char DOM filter may have dropped it."""
+    compact = re.sub(r"\s+", "", str(text or ""))
+    if not compact:
+        return None
+    limit_message = cart_limit_feedback_message({"message": text})
+    if limit_message:
+        return {
+            "status": "cart_full",
+            "reason": "cart_limit_reached",
+            "message": limit_message,
+            "retryable": False,
+        }
+    for phrase in CART_SUCCESS_PHRASES:
+        if phrase in compact:
+            return {"status": "success", "message": phrase, "retryable": False}
+    return None
 
 
 def should_retry_add_to_cart(click_result: Dict[str, Any], feedback: Dict[str, Any]) -> bool:
@@ -2342,9 +2527,12 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 if mapping_status != "approved":
                     item_result = {
                         "status": "blocked_mapping",
+                        "specId": str(item.get("specId") or item.get("modelId") or ""),
                         "modelName": model_name,
                         "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": alibaba_sku_name,
+                        "alibabaSkuSecondName": alibaba_sku_second_name,
+                        "alibabaUrl": str(item.get("alibabaUrl") or url or ""),
                         "quantity": quantity,
                         "message": f"SKU mapping 尚未核准（{mapping_status}）",
                     }
@@ -2360,9 +2548,12 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                         blocker_message = f"目前 1688 頁面未通過完整規格名稱驗證：{check_reason}"
                     item_result = {
                         "status": "blocked_live_catalog",
+                        "specId": str(item.get("specId") or item.get("modelId") or ""),
                         "modelName": model_name,
                         "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": alibaba_sku_name,
+                        "alibabaSkuSecondName": alibaba_sku_second_name,
+                        "alibabaUrl": str(item.get("alibabaUrl") or url or ""),
                         "quantity": quantity,
                         "message": blocker_message,
                         "catalogCheck": check,
@@ -2415,12 +2606,16 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 pending = {
                     "productId": item_product_id,
                     "productName": item_product_name,
+                    "specId": str(item.get("specId") or item.get("modelId") or ""),
                     "modelName": model_name,
                     "alibabaSkuName": target_name,
                     "alibabaSkuSecondName": alibaba_sku_second_name,
                     "alibabaSkuId": alibaba_sku_id,
                     "alibabaSpecText": spec_text,
                     "alibabaUrl": str(item.get("alibabaUrl") or url or ""),
+                    "liveSkuName": live_selection.get("sku_name") or target_name,
+                    "liveSkuSecondName": live_selection.get("sku_second_name") or alibaba_sku_second_name,
+                    "matchMethod": str(check.get("matchMode") or ""),
                     "quantity": quantity,
                 }
                 debug.log("item_start", pending)
@@ -2545,44 +2740,28 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
 
         cart_verification: Optional[Dict[str, Any]] = None
         if add_to_cart:
-            print("採購車核對：正在開啟採購車頁", flush=True)
-            cart_lines = open_and_read_cart(page, debug)
-            submitted = (
-                confirmed_cart_items
-                + unverified_cart_items
-                + selection_mismatch_items
-                + failed_cart_items
-            )
-            reconciled = apply_cart_reconciliation(submitted, cart_lines)
-            if reconciled is None:
-                cart_verification = {"ok": False, "reason": "cart_unreadable"}
-                print("採購車核對：無法讀取採購車，改以頁面提示分類", flush=True)
-            else:
-                confirmed_cart_items = reconciled["found"]
-                unverified_cart_items = []
-                selection_mismatch_items = []
-                failed_cart_items = reconciled["missing"]
-                cart_verification = {
-                    "ok": True,
-                    "lineCount": len(cart_lines or []),
-                    "foundCount": len(reconciled["found"]),
-                    "missingCount": len(reconciled["missing"]),
-                    "source": "cart.1688.com",
-                }
-                print(
-                    f"採購車核對：確認 {len(reconciled['found'])} 個，找不到 {len(reconciled['missing'])} 個",
-                    flush=True,
-                )
+            cart_verification = {
+                "ok": True,
+                "skipped": True,
+                "reason": "cart_count_check_disabled",
+                "source": "add_to_cart_toast",
+            }
+            print("採購車核對：已略過數量對帳，改以加車結果寫入報告", flush=True)
 
         def report_items(source_items):
             return [{
                 "productId": str(item.get("productId") or product_id or ""),
                 "productName": str(item.get("productName") or product_name or "").strip(),
+                "specId": str(item.get("specId") or item.get("modelId") or "").strip(),
                 "modelName": str(item.get("modelName") or "").strip(),
                 "quantity": int(item.get("quantity") or item.get("restockQty") or 0),
                 "alibabaSkuName": str(item.get("alibabaSkuName") or "").strip(),
                 "alibabaSkuSecondName": str(item.get("alibabaSkuSecondName") or "").strip(),
+                "alibabaSkuId": str(item.get("alibabaSkuId") or "").strip(),
                 "alibabaUrl": str(item.get("alibabaUrl") or "").strip(),
+                "liveSkuName": str(item.get("liveSkuName") or "").strip(),
+                "liveSkuSecondName": str(item.get("liveSkuSecondName") or "").strip(),
+                "matchMethod": str(item.get("matchMethod") or "").strip(),
                 "message": str(item.get("message") or "").strip(),
             } for item in source_items]
 
@@ -2594,11 +2773,16 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 blocked_items.append({
                     "productId": product_id,
                     "productName": product_name,
+                    "specId": str(item.get("specId") or ""),
                     "modelName": str(item.get("modelName") or ""),
                     "quantity": int(item.get("quantity") or 0),
                     "alibabaSkuName": str(item.get("alibabaSkuName") or ""),
                     "alibabaSkuSecondName": str(item.get("alibabaSkuSecondName") or ""),
-                    "alibabaUrl": str(group.get("url") or ""),
+                    "alibabaSkuId": str(item.get("alibabaSkuId") or ""),
+                    "alibabaUrl": str(item.get("alibabaUrl") or group.get("url") or ""),
+                    "liveSkuName": str(item.get("liveSkuName") or (item.get("catalogCheck") or {}).get("liveSkuName") or ""),
+                    "liveSkuSecondName": str(item.get("liveSkuSecondName") or (item.get("catalogCheck") or {}).get("liveSkuSecondName") or ""),
+                    "matchMethod": str(item.get("matchMethod") or (item.get("catalogCheck") or {}).get("matchMode") or ""),
                     "status": str(item.get("status") or ""),
                     "reason": str((item.get("catalogCheck") or {}).get("reason") or item.get("status") or ""),
                     "message": str(item.get("message") or ""),

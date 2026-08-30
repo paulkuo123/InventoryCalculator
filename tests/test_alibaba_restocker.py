@@ -14,14 +14,23 @@ class FakePage:
 
 
 class FakeLocator:
+    def __init__(self):
+        self.value = ""
+        self.fills = []
+        self.presses = []
+
     def click(self, timeout=None):
         return None
 
     def fill(self, value, timeout=None):
-        return None
+        self.fills.append(value)
+        self.value = value
 
     def press(self, key):
-        return None
+        self.presses.append(key)
+
+    def input_value(self, timeout=None):
+        return self.value
 
 
 class RawLabelPage(FakePage):
@@ -1072,8 +1081,9 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertFalse(alibaba_restocker.selection_summary_mismatch(None, 6, 200))
 
     def test_restock_count_check_warns_when_confirmed_differs_from_expected(self):
-        mismatch = alibaba_restocker.restock_count_check(7, 6)
-        match = alibaba_restocker.restock_count_check(7, 7)
+        mismatch = alibaba_restocker.restock_count_check(7, 6, verify_cart=True)
+        match = alibaba_restocker.restock_count_check(7, 7, verify_cart=True)
+        skipped = alibaba_restocker.restock_count_check(7, 6)
 
         self.assertTrue(mismatch["mismatch"])
         self.assertEqual(mismatch["expected"], 7)
@@ -1082,6 +1092,37 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertIn("實際確認加入 6", mismatch["message"])
         self.assertFalse(match["mismatch"])
         self.assertIn("7 / 7", match["message"])
+        self.assertFalse(skipped["mismatch"])
+        self.assertEqual(skipped["expected"], 7)
+        self.assertEqual(skipped["confirmed"], 6)
+
+    def test_concatenated_quantity_is_intended_number_typed_twice(self):
+        self.assertTrue(alibaba_restocker.is_concatenated_quantity("7070", 70))
+        self.assertTrue(alibaba_restocker.is_concatenated_quantity("3030", 30))
+        self.assertTrue(alibaba_restocker.is_concatenated_quantity("1010", 10))
+        self.assertFalse(alibaba_restocker.is_concatenated_quantity("70", 70))
+        self.assertFalse(alibaba_restocker.is_concatenated_quantity("707", 70))
+        self.assertFalse(alibaba_restocker.is_concatenated_quantity("140", 70))
+
+    def test_write_quantity_input_does_not_append_when_value_already_set(self):
+        already = FakeLocator()
+        already.value = "70"
+        already.fills = []
+        alibaba_restocker.write_quantity_input(already, 70)
+        self.assertEqual(already.fills, [])
+
+        doubled = FakeLocator()
+        doubled.value = "7070"
+        doubled.fills = []
+        alibaba_restocker.write_quantity_input(doubled, 70)
+        self.assertEqual(doubled.fills, ["70"])
+
+    def test_classify_visible_cart_feedback_reads_buried_toast(self):
+        buried = "商品价格\n" + ("x" * 200) + "\n加购成功\n采购车支持自动领券结算\n去采购车"
+        self.assertEqual(alibaba_restocker.classify_visible_cart_feedback(buried)["status"], "success")
+        self.assertIsNone(alibaba_restocker.classify_visible_cart_feedback("立即下单\n加采购车\n收藏(421)"))
+        full = alibaba_restocker.classify_visible_cart_feedback("采购车商品已达上限，无法继续添加")
+        self.assertEqual(full["status"], "cart_full")
 
     def test_cart_full_count_check_is_not_a_mismatch(self):
         result = alibaba_restocker.restock_count_check(7, 3, stopped_reason="cart_limit_reached")
@@ -1091,12 +1132,11 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(result["confirmed"], 3)
         self.assertIn("採購車已達上限", result["message"])
 
-    def test_restock_result_outcome_is_partial_when_confirmed_count_misses_expected(self):
+    def test_restock_result_outcome_does_not_fail_on_count_when_cart_check_disabled(self):
         result = alibaba_restocker.restock_result_outcome("", 6, 0, 0, expected_count=7)
 
-        self.assertEqual(result["status"], "partial")
-        self.assertIn("預期補貨 7", result["message"])
-        self.assertIn("實際確認加入 6", result["message"])
+        self.assertEqual(result["status"], "success")
+        self.assertIn("已完成", result["message"])
 
     def test_progress_line_counts_cart_verification(self):
         progress = {"completed": 1, "total": 7, "message": ""}
@@ -1191,6 +1231,30 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertFalse(alibaba_restocker.cart_line_matches_item(other_offer, item))
         result = alibaba_restocker.apply_cart_reconciliation([item], [other_offer, line])
         self.assertEqual([row["modelName"] for row in result["found"]], ["可愛筆畫壓克力 - YSK0854"])
+
+    def test_truncated_cart_keeps_toast_confirmed_sku(self):
+        lines = [{
+            "offerId": "",
+            "skuName": "采购车\n现货(131)\n粉色; iPhone15\n点击加载更多",
+            "specText": "采购车\n现货(131)\n粉色; iPhone15\n点击加载更多",
+        }]
+        missing = [{"modelName": "黑色(單顆),17/17pro/17proMax", "alibabaSkuName": "鹰眼金属(石墨黑)"}]
+        found = [{"modelName": "粉色軍規,15"}]
+        confirmed = [{"modelName": "黑色(單顆),17/17pro/17proMax"}, {"modelName": "粉色軍規,15"}]
+        self.assertTrue(alibaba_restocker.cart_text_is_truncated(lines))
+        recovered, still = alibaba_restocker.recover_truncated_cart_missing(found, missing, confirmed)
+        self.assertEqual([row["modelName"] for row in recovered], ["粉色軍規,15", "黑色(單顆),17/17pro/17proMax"])
+        self.assertEqual(still, [])
+
+    def test_cart_header_count_marks_sparse_dump_truncated(self):
+        lines = [
+            {"offerId": "873110027075", "skuName": "休闲背包"},
+            {"offerId": "675910674219", "skuName": "快递袋"},
+            {"offerId": "", "skuName": "采购车\n现货(142)\n状态\n142/300\n全选"},
+        ]
+        counts = alibaba_restocker.parse_cart_page_counts(lines)
+        self.assertEqual(counts, {"skuCount": 142, "skuLimit": 300})
+        self.assertTrue(alibaba_restocker.cart_text_is_truncated(lines))
 
     def test_catalog_mapping_uses_sku_id_when_live_color_label_drifted(self):
         catalog = {

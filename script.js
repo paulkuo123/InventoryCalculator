@@ -144,6 +144,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const batchRestockToolbar = document.getElementById('batchRestockToolbar');
     const batchRestockToolbarSummary = document.getElementById('batchRestockToolbarSummary');
     const openBatchRestockButton = document.getElementById('openBatchRestockButton');
+    const restockBatchCard = document.getElementById('restockBatchCard');
+    const restockBatchTitle = document.getElementById('restockBatchTitle');
+    const restockBatchSummary = document.getElementById('restockBatchSummary');
+    const restockBatchStatusBadge = document.getElementById('restockBatchStatusBadge');
+    const restockBatchDetails = document.getElementById('restockBatchDetails');
+    const resumeRestockBatchButton = document.getElementById('resumeRestockBatchButton');
+    const openRestockBatchReportLink = document.getElementById('openRestockBatchReportLink');
     const personalWatchlistCard = document.getElementById('personalWatchlistCard');
     const personalWatchlistFile = document.getElementById('personalWatchlistFile');
     const personalWatchlistImportButton = document.getElementById('personalWatchlistImportButton');
@@ -174,6 +181,8 @@ document.addEventListener('DOMContentLoaded', function() {
     window.currentRestockAdjustment = null;
     window.currentBatchRestockSelection = null;
     window.restockInProgress = false; // 防止並發補貨操作
+    window.batchRestockEnabled = false;
+    window.currentRestockBatch = null;
     window.skuReviewState = {
         reports: [],
         currentReport: '',
@@ -389,10 +398,12 @@ document.addEventListener('DOMContentLoaded', function() {
                     ? `目前搜尋命中 ${counts.matched}、未命中 ${counts.missed}`
                     : '目前尚無搜尋結果可對照';
                 setPersonalWatchlistStatus(`已匯入 ${counts.imported} 個商品 ID；${hitText}。`, 'success');
+                window.batchRestockEnabled = personalWatchlistIds.length > 0 && Boolean(window.lastSearchResults);
                 updatePersonalWatchlistUi();
                 if (window.lastSearchResults && isPersonalWatchlistEnabled()) {
                     rerenderCurrentSearchResults();
                 }
+                updateBatchRestockToolbar();
             } catch (error) {
                 personalWatchlistIds = previousIds;
                 throw error;
@@ -817,7 +828,8 @@ document.addEventListener('DOMContentLoaded', function() {
             alibabaMinOrderQty: parseInt(stored.alibabaMinOrderQty || modelData['1688_min_order_qty'] || '1', 10) || 1,
             alibabaPackageMultiple: parseInt(stored.alibabaPackageMultiple || modelData['1688_package_multiple'] || '1', 10) || 1,
             alibabaLastPriceCny: price === null || price === '' || price === undefined ? null : Number(price),
-            alibabaBindingStatus: stored.alibabaBindingStatus || status
+            alibabaBindingStatus: stored.alibabaBindingStatus || status,
+            alibabaMappingStatus: stored.alibabaMappingStatus || ''
         };
     }
 
@@ -844,6 +856,8 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function hasCompleteAlibabaSkuSelection(binding, productName, modelName) {
+        const mappingStatus = String(binding.alibabaMappingStatus || '').trim();
+        if (mappingStatus && mappingStatus !== 'approved') return false;
         return Boolean(binding.alibabaSkuName) && !isAlibabaSkuDiscontinued(binding.alibabaSkuName) &&
             (!requiresAlibabaSecondSku(productName, modelName) || Boolean(binding.alibabaSkuSecondName));
     }
@@ -1404,11 +1418,21 @@ document.addEventListener('DOMContentLoaded', function() {
         const products = Array.isArray(window.currentRestockProducts) ? window.currentRestockProducts : [];
         const readyProducts = products.filter(entry => entry.items.length > 0);
         const skuCount = readyProducts.reduce((sum, entry) => sum + entry.items.length, 0);
-        batchRestockToolbar.hidden = readyProducts.length === 0;
-        openBatchRestockButton.disabled = readyProducts.length === 0;
-        batchRestockToolbarSummary.textContent = readyProducts.length > 0
-            ? `當前結果有 ${readyProducts.length} 個商品可補貨，共 ${skuCount} 個型號。可取消勾選後再依序處理。`
-            : '當前搜尋結果沒有已完成 1688 對應的補貨型號。';
+        const batchBusy = Boolean(window.currentRestockBatch && ['running', 'review'].includes(window.currentRestockBatch.status));
+        const bootstrapReady = Boolean(window.homeBootstrap);
+        openBatchRestockButton.disabled = !window.batchRestockEnabled || readyProducts.length === 0 || window.restockInProgress || batchBusy;
+        if (!bootstrapReady && readyProducts.length === 0) {
+            batchRestockToolbar.hidden = true;
+        } else if (!window.batchRestockEnabled) {
+            batchRestockToolbar.hidden = false;
+            batchRestockToolbarSummary.textContent = '自動載入商品或觀察清單失敗，整頁補貨已停用。請先修正資料或改用手動匯入。';
+        } else if (readyProducts.length > 0) {
+            batchRestockToolbar.hidden = false;
+            batchRestockToolbarSummary.textContent = `目前畫面有 ${readyProducts.length} 個商品可補貨，共 ${skuCount} 個型號。會先給你預覽，不會立刻加車。`;
+        } else {
+            batchRestockToolbar.hidden = !window.lastSearchResults;
+            batchRestockToolbarSummary.textContent = '目前畫面沒有已完成 1688 對應的補貨型號。';
+        }
     }
 
     function ensureBatchRestockModal() {
@@ -1421,23 +1445,24 @@ document.addEventListener('DOMContentLoaded', function() {
             <div class="alibaba-modal-backdrop" data-batch-restock-close="true"></div>
             <div class="alibaba-modal-panel batch-restock-panel" role="dialog" aria-modal="true" aria-labelledby="batchRestockTitle">
                 <div class="alibaba-modal-header">
-                    <h3 id="batchRestockTitle">選擇批次補貨商品</h3>
+                    <h3 id="batchRestockTitle">整頁 1688 補貨預覽</h3>
                     <button type="button" class="alibaba-modal-close" data-batch-restock-close="true" aria-label="關閉">×</button>
                 </div>
                 <div class="batch-restock-controls">
-                    <span>預設已勾選當前搜尋結果的所有可補貨商品</span>
+                    <span>範圍是目前畫面可見的觀察清單結果，預設全選可補貨商品</span>
                     <div>
                         <button type="button" class="btn-outline" id="selectAllBatchRestockButton">全選</button>
                         <button type="button" class="btn-outline" id="clearAllBatchRestockButton">全部取消</button>
                     </div>
                 </div>
                 <div class="batch-restock-list" id="batchRestockList"></div>
+                <div id="batchRestockReview" class="batch-restock-review"></div>
                 <div class="restock-modal-summary" id="batchRestockSummary"></div>
-                <div class="batch-restock-limit-note">注意：1688 採購車最多 200 個型號；若購物車原本已有商品，實際可用名額會更少。</div>
+                <div class="batch-restock-limit-note">只會加入採購車，不會送單或付款。採購車安全線是 195 / 200 個型號；車滿或結果不確定會暫停，不會自動重加。</div>
                 <div class="alibaba-edit-message" id="batchRestockMessage" aria-live="polite"></div>
                 <div class="alibaba-modal-actions restock-modal-actions">
                     <button type="button" class="btn-secondary" data-batch-restock-close="true">取消</button>
-                    <button type="button" class="btn-primary" id="submitBatchRestockButton">依序補貨並加採購車</button>
+                    <button type="button" class="btn-primary" id="submitBatchRestockButton">開始補貨已可執行項目</button>
                 </div>
             </div>
         `;
@@ -1528,20 +1553,76 @@ document.addEventListener('DOMContentLoaded', function() {
         updateBatchRestockSummary();
     }
 
+    function visibleRestockPayload(products) {
+        return (Array.isArray(products) ? products : []).map(entry => ({
+            productId: entry.productId,
+            productName: entry.product?.商品名稱 || entry.productName || '',
+            items: (entry.items || []).map(item => ({ ...item })),
+            gaps: (entry.gaps || []).map(item => ({ ...item })),
+            blockerCount: entry.blockerCount || 0
+        }));
+    }
+
+    function renderBatchRestockReview(preview) {
+        const modal = ensureBatchRestockModal();
+        const review = modal.querySelector('#batchRestockReview');
+        if (!review) return;
+        const totals = preview?.totals || {};
+        const gaps = (preview?.products || []).flatMap(product =>
+            (product.gaps || []).map(gap => `${product.productName || product.productId}／${gap.modelName || '未完成型號'}：${gap.reason || '未完成對應'}`)
+        );
+        const readyNames = (preview?.readyProducts || []).map((product, index) =>
+            `${index + 1}. ${product.productName || product.productId}（${(product.items || []).length} 個型號）`
+        );
+        review.innerHTML = `
+            <p>即將執行 <strong>${totals.readyProducts || 0}</strong> 個商品、
+            <strong>${totals.items || 0}</strong> 個型號、共 <strong>${totals.qty || 0}</strong> 件。
+            預先排除 <strong>${totals.gaps || 0}</strong> 個未完成 mapping。</p>
+            ${readyNames.length ? `<p>執行順序</p><ul>${readyNames.map(name => `<li>${escapeHtml(name)}</li>`).join('')}</ul>` : ''}
+            ${gaps.length ? `<p>不會執行的缺漏</p><ul>${gaps.slice(0, 12).map(item => `<li>${escapeHtml(item)}</li>`).join('')}${gaps.length > 12 ? `<li>另外還有 ${gaps.length - 12} 筆</li>` : ''}</ul>` : ''}
+        `;
+    }
+
     function openBatchRestockModal() {
+        if (!window.batchRestockEnabled) {
+            alert('商品或觀察清單尚未自動載入成功，無法整頁補貨。');
+            return;
+        }
         const source = Array.isArray(window.currentRestockProducts) ? window.currentRestockProducts : [];
         const products = source.map(entry => ({
             ...entry,
             items: entry.items.map(item => ({ ...item })),
+            gaps: (entry.gaps || []).map(item => ({ ...item })),
             selected: entry.items.length > 0
         }));
         if (!products.some(entry => entry.items.length > 0)) return;
-        window.currentBatchRestockSelection = { products };
+        window.currentBatchRestockSelection = { products, preview: null };
         const modal = ensureBatchRestockModal();
-        setRestockMessage(modal.querySelector('#batchRestockMessage'), '');
+        setRestockMessage(modal.querySelector('#batchRestockMessage'), '正在產生與畫面一致的補貨預覽…');
         renderBatchRestockProducts();
         updateBatchRestockSummary();
+        renderBatchRestockReview({ totals: {}, readyProducts: [], products: [] });
         modal.classList.remove('hidden');
+        fetch('/api/alibaba-restock/batches/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                keyword: window.currentAdvancedKeyword || '',
+                products: visibleRestockPayload(products)
+            })
+        })
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || '建立補貨預覽失敗');
+                }
+                window.currentBatchRestockSelection.preview = data.preview;
+                renderBatchRestockReview(data.preview);
+                setRestockMessage(modal.querySelector('#batchRestockMessage'), '請確認清單後再開始。只會加入採購車。', 'success');
+            })
+            .catch(error => {
+                setRestockMessage(modal.querySelector('#batchRestockMessage'), error.message || '建立補貨預覽失敗', 'error');
+            });
     }
 
     function submitBatchRestock() {
@@ -1549,34 +1630,275 @@ document.addEventListener('DOMContentLoaded', function() {
         const state = window.currentBatchRestockSelection;
         if (!state) return;
         const selected = state.products.filter(entry => entry.selected && entry.items.length > 0);
-        const items = selected.flatMap(entry => entry.items.map(item => ({
-            ...item,
-            productId: entry.productId,
-            productName: entry.product?.商品名稱 || ''
-        })));
-        const skippedCount = selected.reduce((sum, entry) => sum + entry.blockerCount, 0);
         const submitButton = modal.querySelector('#submitBatchRestockButton');
         const message = modal.querySelector('#batchRestockMessage');
+        if (!selected.length) return;
+        if (window.restockInProgress) {
+            setRestockMessage(message, '目前已有補貨流程進行中，請等待完成後再試。', 'error');
+            return;
+        }
         submitButton.disabled = true;
-        startAlibabaRestock('batch', {
-            商品名稱: `批次補貨（${selected.length} 個商品）`
-        }, items, {
-            addToCart: true,
-            skippedCount,
-            skipConfirmation: true,
-            statusTarget: message
-        }).then(started => {
-            if (started) {
+        setRestockMessage(message, '正在建立整頁補貨批次…');
+        fetch('/api/alibaba-restock/batches', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                keyword: window.currentAdvancedKeyword || '',
+                products: visibleRestockPayload(selected)
+            })
+        })
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || '啟動整頁補貨失敗');
+                }
                 modal.classList.add('hidden');
                 window.currentBatchRestockSelection = null;
-            } else {
+                window.restockInProgress = true;
+                renderRestockBatchCard(data.batch);
+                monitorRestockBatch(data.runId);
+                showRestockOperationStatus(data.message || '已開始依序補貨', 'running', {
+                    title: '1688 整頁補貨執行中',
+                    completed: 0,
+                    total: data.batch?.totals?.items || selected.length
+                });
+            })
+            .catch(error => {
+                setRestockMessage(message, error.message || '啟動整頁補貨失敗', 'error');
                 updateBatchRestockSummary();
-            }
-        });
+            });
     }
 
     if (openBatchRestockButton) {
         openBatchRestockButton.addEventListener('click', openBatchRestockModal);
+    }
+
+    const RESTOCK_BATCH_STORAGE_KEY = 'alibabaRestockActiveBatchId';
+    const restockBatchStatusLabels = {
+        review: '待確認',
+        running: '執行中',
+        paused_cart_limit: '採購車已滿',
+        paused_attention: '需要核對',
+        needs_reconciliation: '待重新對帳',
+        completed: '已完成',
+        completed_with_gaps: '完成但有缺漏'
+    };
+
+    function persistRestockBatchId(runId) {
+        try {
+            if (runId) window.sessionStorage.setItem(RESTOCK_BATCH_STORAGE_KEY, runId);
+            else window.sessionStorage.removeItem(RESTOCK_BATCH_STORAGE_KEY);
+        } catch (error) {
+            // sessionStorage 在隱私模式可能不可用。
+        }
+    }
+
+    function readPersistedRestockBatchId() {
+        try {
+            return window.sessionStorage.getItem(RESTOCK_BATCH_STORAGE_KEY) || '';
+        } catch (error) {
+            return '';
+        }
+    }
+
+    function restockBatchCardClass(status) {
+        if (status === 'running' || status === 'review') return 'is-running';
+        if (status === 'completed') return 'is-success';
+        if (status === 'completed_with_gaps') return 'is-success';
+        if (status) return 'is-paused';
+        return '';
+    }
+
+    function renderRestockBatchCard(batch) {
+        window.currentRestockBatch = batch || null;
+        if (!restockBatchCard) return;
+        if (!batch) {
+            restockBatchCard.hidden = true;
+            persistRestockBatchId('');
+            updateBatchRestockToolbar();
+            return;
+        }
+        const progress = batch.progress || {};
+        const remaining = batch.remaining || [];
+        restockBatchCard.hidden = false;
+        restockBatchCard.className = `card restock-batch-card ${restockBatchCardClass(batch.status)}`;
+        if (restockBatchTitle) restockBatchTitle.textContent = '1688 整頁補貨';
+        if (restockBatchStatusBadge) restockBatchStatusBadge.textContent = restockBatchStatusLabels[batch.status] || batch.status;
+        if (restockBatchSummary) {
+            restockBatchSummary.textContent = batch.message || '批次進行中';
+        }
+        if (restockBatchDetails) {
+            const remainingNames = remaining.slice(0, 8).map(item =>
+                `${item.productName || item.productId}（${item.itemCount || 0} 型號）`
+            );
+            restockBatchDetails.innerHTML = `
+                <p>已完成 ${progress.doneProducts || 0} / ${progress.readyProducts || 0} 個商品，
+                已確認 ${progress.confirmedItems || 0} / ${progress.expectedItems || 0} 個型號。
+                採購車約 ${batch.cart?.skuCount == null ? '未知' : batch.cart.skuCount} / ${batch.cart?.safeLimit || 195}。</p>
+                ${remainingNames.length ? `<p>尚未執行</p><ul>${remainingNames.map(name => `<li>${escapeHtml(name)}</li>`).join('')}${remaining.length > 8 ? `<li>另外還有 ${remaining.length - 8} 個商品</li>` : ''}</ul>` : ''}
+            `;
+        }
+        if (resumeRestockBatchButton) {
+            resumeRestockBatchButton.hidden = !batch.canResume;
+            resumeRestockBatchButton.disabled = window.restockInProgress && batch.status === 'running';
+        }
+        if (openRestockBatchReportLink) {
+            const hasReport = Boolean(batch.reportPath || batch.reportHtmlPath || ['completed', 'completed_with_gaps', 'paused_cart_limit', 'paused_attention', 'needs_reconciliation'].includes(batch.status));
+            openRestockBatchReportLink.hidden = !hasReport;
+            openRestockBatchReportLink.href = `/api/alibaba-restock/batches/${encodeURIComponent(batch.runId)}/report.html`;
+        }
+        persistRestockBatchId(batch.status === 'running' ? batch.runId : '');
+        updateBatchRestockToolbar();
+    }
+
+    function monitorRestockBatch(runId) {
+        if (!runId) return;
+        persistRestockBatchId(runId);
+        const poll = () => fetch(`/api/alibaba-restock/batches/${encodeURIComponent(runId)}`)
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) {
+                    throw new Error(data.message || '讀取整頁補貨進度失敗');
+                }
+                const batch = data.batch || {};
+                renderRestockBatchCard(batch);
+                if (batch.status === 'running') {
+                    window.restockInProgress = true;
+                    showRestockOperationStatus(batch.message || '整頁補貨執行中', 'running', {
+                        title: '1688 整頁補貨執行中',
+                        completed: batch.progress?.doneProducts || 0,
+                        total: batch.progress?.readyProducts || 0
+                    });
+                    window.setTimeout(poll, 2000);
+                    return;
+                }
+                window.restockInProgress = false;
+                persistRestockBatchId('');
+                const paused = ['paused_cart_limit', 'paused_attention', 'needs_reconciliation'].includes(batch.status);
+                const statusType = batch.status === 'completed' ? 'success' : 'error';
+                showRestockOperationStatus(batch.message || '整頁補貨已結束', statusType, {
+                    title: paused
+                        ? (batch.status === 'paused_cart_limit' ? '1688 採購車已達上限' : '1688 整頁補貨需要核對')
+                        : (batch.status === 'completed' ? '1688 整頁補貨已完成' : '1688 整頁補貨結束'),
+                    completed: batch.progress?.doneProducts || 0,
+                    total: batch.progress?.readyProducts || 0
+                });
+            })
+            .catch(error => {
+                console.error('讀取整頁補貨進度失敗:', error);
+                showRestockOperationStatus(
+                    `暫時無法讀取整頁補貨進度，系統會自動重試。${error.message || ''}`.trim(),
+                    'running',
+                    { title: '1688 整頁補貨仍在執行' }
+                );
+                window.setTimeout(poll, 3000);
+            });
+        poll();
+    }
+
+    function refreshRestockBatchCard() {
+        const persisted = readPersistedRestockBatchId();
+        const request = persisted
+            ? fetch(`/api/alibaba-restock/batches/${encodeURIComponent(persisted)}`)
+            : fetch('/api/alibaba-restock/batches/current');
+        return request
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok) return;
+                const batch = data.batch || null;
+                renderRestockBatchCard(batch);
+                if (batch && batch.status === 'running') {
+                    window.restockInProgress = true;
+                    monitorRestockBatch(batch.runId);
+                }
+            })
+            .catch(error => {
+                console.error('讀取整頁補貨狀態失敗:', error);
+            });
+    }
+
+    function resumeCurrentRestockBatch() {
+        const batch = window.currentRestockBatch;
+        if (!batch || !batch.runId || !batch.canResume) return;
+        if (window.restockInProgress) {
+            alert('目前已有補貨流程進行中。');
+            return;
+        }
+        if (resumeRestockBatchButton) resumeRestockBatchButton.disabled = true;
+        fetch(`/api/alibaba-restock/batches/${encodeURIComponent(batch.runId)}/resume`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                cartCleared: batch.status === 'paused_cart_limit'
+            })
+        })
+            .then(async response => {
+                const data = await response.json().catch(() => ({}));
+                if (!response.ok || data.status !== 'success') {
+                    throw new Error(data.message || '續跑失敗');
+                }
+                window.restockInProgress = true;
+                renderRestockBatchCard(data.batch);
+                monitorRestockBatch(data.runId);
+            })
+            .catch(error => {
+                alert(error.message || '續跑失敗');
+                if (resumeRestockBatchButton) resumeRestockBatchButton.disabled = false;
+            });
+    }
+
+    async function bootstrapHomePage() {
+        setShopeeProductsImportStatus('正在自動載入 shopee_products.json 與觀察清單…', 'loading');
+        try {
+            const response = await fetch('/api/home/bootstrap');
+            const data = await response.json().catch(() => ({}));
+            window.homeBootstrap = data;
+            window.batchRestockEnabled = Boolean(data.batchRestockEnabled);
+            if (!data.products || (data.status !== 'success' && data.status !== 'partial')) {
+                setShopeeProductsImportStatus(data.message || '自動載入失敗', 'error');
+                updateBatchRestockToolbar();
+                return;
+            }
+            if (data.watchlist && Array.isArray(data.watchlist.productIds) && data.watchlist.productIds.length) {
+                personalWatchlistIds = data.watchlist.productIds;
+                if (personalWatchlistOnlyToggle) {
+                    personalWatchlistOnlyToggle.checked = true;
+                }
+                persistPersonalWatchlist(true);
+            }
+            await applyCrawlerSuccessResults(data.products);
+            const autoloadKeyword = new URLSearchParams(window.location.search).get('keyword') || '';
+            if (autoloadKeyword) {
+                if (advancedSearchInput) advancedSearchInput.value = autoloadKeyword;
+                window.currentAdvancedKeyword = autoloadKeyword;
+                displayProducts(window.lastSearchResults, autoloadKeyword, window.currentSearchOption || 'product');
+            }
+            const shopee = data.shopee || {};
+            const golden = data.golden || {};
+            setShopeeProductsImportStatus(
+                `${data.message || '已自動載入'}。資料時間 ${shopee.mtime || '未知'}；` +
+                `Golden 可補 ${golden.restockableModelCount || 0}、未完成 ${golden.incompleteModelCount || 0}。`,
+                data.status === 'success' ? 'success' : 'error'
+            );
+            if (data.status === 'success') {
+                setPersonalWatchlistStatus(
+                    `已自動載入觀察清單 ${data.watchlistCounts?.matched || 0} / ${data.watchlistCounts?.imported || 0} 命中。`,
+                    'success'
+                );
+            } else if (data.watchlistInfo && !data.watchlistInfo.ok) {
+                setPersonalWatchlistStatus(data.message || '觀察清單載入失敗', 'error');
+            }
+            updateBatchRestockToolbar();
+            await refreshRestockBatchCard();
+        } catch (error) {
+            window.batchRestockEnabled = false;
+            setShopeeProductsImportStatus(error.message || '自動載入失敗', 'error');
+            updateBatchRestockToolbar();
+        }
+    }
+
+    if (resumeRestockBatchButton) {
+        resumeRestockBatchButton.addEventListener('click', resumeCurrentRestockBatch);
     }
 
     function rerenderCurrentProducts() {
@@ -3260,6 +3582,8 @@ document.addEventListener('DOMContentLoaded', function() {
                             );
                             const missingSecondSku = binding.alibabaSkuName && needsSecondSku && !binding.alibabaSkuSecondName;
                             const discontinuedSku = isAlibabaSkuDiscontinued(binding.alibabaSkuName);
+                            const mappingStatus = String(binding.alibabaMappingStatus || '').trim();
+                            const mappingBlocked = Boolean(mappingStatus) && mappingStatus !== 'approved';
                             skuMappingBtn.textContent = binding.alibabaSkuName
                                 ? (discontinuedSku
                                     ? `1688：${binding.alibabaSkuName}`
@@ -3293,11 +3617,15 @@ document.addEventListener('DOMContentLoaded', function() {
                                         modelName: String(modelData.型號名稱 || ''),
                                         reason: !alibabaLink
                                             ? '缺少 1688 URL'
-                                            : (discontinuedSku
+                                            : (mappingBlocked
+                                                ? (mappingStatus === 'discontinued'
+                                                    ? '1688 mapping 已標記停售'
+                                                    : `1688 SKU mapping 尚未核准（${mappingStatus}）`)
+                                                : (discontinuedSku
                                                 ? `1688 ${binding.alibabaSkuName}`
                                                 : (requiresAlibabaSecondSku(product.商品名稱 || '', modelData.型號名稱 || '') && !binding.alibabaSkuSecondName
                                                 ? '缺少 1688 第二規格（手機型號）'
-                                                : '缺少 1688 對應型號'))
+                                                : '缺少 1688 對應型號')))
                                     });
                                 }
                             }
@@ -3373,7 +3701,8 @@ document.addEventListener('DOMContentLoaded', function() {
                                 productId,
                                 product,
                                 items: productRestockItems.map(item => ({ ...item })),
-                                blockerCount
+                                blockerCount,
+                                gaps: productRestockBlockers.map(item => ({ ...item }))
                             });
                         }
                         nameCell.appendChild(modelsDiv);
@@ -3616,11 +3945,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 throw new Error(data.message || '匯入商品資料失敗');
             }
             await applyCrawlerSuccessResults(data.products);
+            window.batchRestockEnabled = personalWatchlistIds.length > 0;
             setShopeeProductsImportStatus(
                 `匯入成功：${data.sourceProductCount || 0} 個商品、${data.sourceModelCount || 0} 個規格；` +
                 `Golden 對應 ${data.goldenMatchedProductCount || 0} 個商品／${data.goldenMatchedModelCount || 0} 個規格。`,
                 'success'
             );
+            updateBatchRestockToolbar();
         } catch (error) {
             setShopeeProductsImportStatus(error.message || '匯入商品資料失敗', 'error');
         } finally {
@@ -3822,6 +4153,11 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     updatePersonalWatchlistUi();
     loadAlibabaBindings();
+    if (new URLSearchParams(window.location.search).get('autoload') === '1') {
+        bootstrapHomePage();
+    } else {
+        refreshRestockBatchCard();
+    }
     loadSkuReviewReports().then(() => {
         if (skuReviewReportSelect && skuReviewReportSelect.value) {
             loadSkuReview();

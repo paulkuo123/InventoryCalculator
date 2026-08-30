@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>莉莉安蝦皮庫存管理系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=20260830-close-browser">
+    <link rel="stylesheet" href="styles.css?v=20260830-restock-batch">
 </head>
 <body class="inventory-home">
     <header>
@@ -89,7 +89,7 @@
             <div class="cookie-import-header">
                 <div>
                     <h3><i class="fas fa-file-import"></i> 手動匯入 shopee_products.json</h3>
-                    <p>選擇 crawler 已成功產出的 JSON；不會重新執行 /search crawler，匯入後直接沿用主頁庫存、篩選與 1688 補貨流程。</p>
+                    <p>一般開啟 <code>main.py</code> 不會自動載入。請用 <code>scripts/run_watchlist_restock.py</code> 啟動並帶 <code>?autoload=1</code>，或在這裡手動匯入。</p>
                 </div>
             </div>
             <div class="shopee-products-import-actions">
@@ -193,7 +193,7 @@
             <div class="cookie-import-header">
                 <div>
                     <h3><i class="fas fa-bookmark"></i> 個人觀察清單</h3>
-                    <p>依商品 ID 縮小目前搜尋結果；進階搜尋、補貨篩選與儀表板都在同一範圍內。</p>
+                    <p>由正式補貨腳本啟動時會自動載入 <code>watchlists/personal_watchlist.json</code>。一般開啟則請手動匯入，或沿用瀏覽器已存的清單。</p>
                 </div>
                 <span class="cookie-import-hint" id="personalWatchlistSummary">尚未匯入</span>
             </div>
@@ -268,13 +268,32 @@
 
         <div id="batchRestockToolbar" class="card batch-restock-toolbar" hidden>
             <div>
-                <strong><i class="fas fa-cart-plus"></i> 批次 1688 補貨</strong>
-                <p id="batchRestockToolbarSummary">搜尋後可選擇多個商品依序加入採購車。</p>
+                <strong><i class="fas fa-cart-plus"></i> 觀察清單整頁 1688 補貨</strong>
+                <p id="batchRestockToolbarSummary">先預覽目前畫面可見的商品，確認後再依序加入採購車。</p>
             </div>
             <button id="openBatchRestockButton" type="button" class="btn-primary">
                 <i class="fas fa-list-check"></i>
-                選擇商品並批次補貨
+                整頁一鍵補貨
             </button>
+        </div>
+
+        <div id="restockBatchCard" class="card restock-batch-card" hidden>
+            <div class="restock-batch-header">
+                <div>
+                    <strong id="restockBatchTitle">1688 批次補貨</strong>
+                    <p id="restockBatchSummary">尚未開始整頁補貨。</p>
+                </div>
+                <span id="restockBatchStatusBadge" class="restock-batch-badge">待機</span>
+            </div>
+            <div id="restockBatchDetails" class="restock-batch-details"></div>
+            <div class="restock-batch-actions">
+                <button id="resumeRestockBatchButton" type="button" class="btn-primary" hidden>
+                    重新檢查採購車並繼續
+                </button>
+                <a id="openRestockBatchReportLink" class="btn-secondary" hidden target="_blank" rel="noopener">
+                    開啟報告
+                </a>
+            </div>
         </div>
         
         <div class="table-container">
@@ -297,6 +316,6 @@
 
     <section id="restockOperationStatus" class="restock-operation-status" aria-live="polite" hidden></section>
 
-    <script src="script.js?v=20260830-charm-wave"></script>
+    <script src="script.js?v=20260830-skip-unapproved"></script>
 </body>
 </html>

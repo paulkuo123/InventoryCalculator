@@ -1046,6 +1046,85 @@ input:checked + .toggle-slider:before {
     flex: 0 0 auto;
 }
 
+.restock-batch-card {
+    border-left: 4px solid #0f766e;
+}
+
+.restock-batch-card[hidden] {
+    display: none;
+}
+
+.restock-batch-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.restock-batch-header p {
+    margin: 4px 0 0;
+    color: var(--dark-gray);
+    font-size: 13px;
+}
+
+.restock-batch-badge {
+    flex: 0 0 auto;
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: #e0f2f1;
+    color: #0f5f59;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.restock-batch-card.is-running .restock-batch-badge {
+    background: #fff7ed;
+    color: #c2410c;
+}
+
+.restock-batch-card.is-paused .restock-batch-badge,
+.restock-batch-card.is-error .restock-batch-badge {
+    background: #fdecea;
+    color: #b42318;
+}
+
+.restock-batch-card.is-success .restock-batch-badge {
+    background: #e8f5e9;
+    color: #1b5e20;
+}
+
+.restock-batch-details {
+    margin-top: 12px;
+    font-size: 13px;
+    color: var(--dark-gray);
+}
+
+.restock-batch-details ul {
+    margin: 8px 0 0;
+    padding-left: 18px;
+}
+
+.restock-batch-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 14px;
+}
+
+.batch-restock-review {
+    margin: 12px 0;
+    padding: 12px;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    background: #f8fafc;
+    font-size: 13px;
+}
+
+.batch-restock-review ul {
+    margin: 8px 0 0;
+    padding-left: 18px;
+}
+
 .actions {
     display: flex;
     gap: 10px;

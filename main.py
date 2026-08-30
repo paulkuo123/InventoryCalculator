@@ -104,6 +104,27 @@ from sku_mapping_service import MappingConflict, SkuMappingService, mapping_cand
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 from housekeeping import remove_files, remove_stale_matching_files
 from restock_rules import resolve_restock_quantity, validate_restock_sku_count
+from home_bootstrap import load_home_bootstrap
+from restock_batch import (
+    STATUS_RUNNING,
+    begin_run,
+    build_preview,
+    build_report,
+    create_state,
+    extract_failure_records,
+    find_current_batch,
+    load_state,
+    product_items,
+    public_state,
+    recover_interrupted_batches,
+    render_report_html,
+    resume_state,
+    run_batch_loop,
+    save_state,
+    write_failure_artifacts,
+    write_job_artifact,
+    write_reports,
+)
 
 # 導入版本管理
 
@@ -248,6 +269,8 @@ def restock_pause_seconds(payload):
 
 alibaba_restock_jobs = {}
 alibaba_restock_jobs_lock = threading.Lock()
+restock_batch_lock = threading.Lock()
+restock_batch_runtime = {"runId": None, "thread": None, "stop": False}
 inbound_jobs = {}
 inbound_jobs_lock = threading.Lock()
 sku_mapping_service = None
@@ -371,6 +394,69 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             except FileNotFoundError as e:
                 self._send_json_response(404, {"status": "error", "message": str(e)})
             except Exception as e:
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/home/bootstrap':
+            try:
+                self._send_json_response(200, self._home_bootstrap())
+            except Exception as e:
+                logger.exception("載入首頁資料失敗: %s", e)
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": "載入首頁資料失敗，請檢查 shopee_products.json 與觀察清單",
+                    "batchRestockEnabled": False,
+                    "products": None,
+                })
+            return
+
+        if request_path == '/api/alibaba-restock/batches/current':
+            try:
+                self._send_json_response(200, self._current_restock_batch())
+            except Exception as e:
+                logger.exception("讀取目前批次補貨失敗: %s", e)
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        restock_report_html_match = re.match(
+            r'^/api/alibaba-restock/batches/([^/]+)/report\.html$',
+            request_path,
+        )
+        if restock_report_html_match:
+            try:
+                self._send_html_response(200, self._restock_batch_report_html(restock_report_html_match.group(1)))
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception("讀取批次補貨 HTML 報告失敗: %s", e)
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        restock_report_match = re.match(
+            r'^/api/alibaba-restock/batches/([^/]+)/report$',
+            request_path,
+        )
+        if restock_report_match:
+            try:
+                self._send_json_response(200, self._restock_batch_report(restock_report_match.group(1)))
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception("讀取批次補貨報告失敗: %s", e)
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        restock_batch_match = re.match(r'^/api/alibaba-restock/batches/([^/]+)$', request_path)
+        if restock_batch_match:
+            try:
+                self._send_json_response(200, {
+                    "status": "success",
+                    "batch": public_state(self._load_restock_batch(restock_batch_match.group(1))),
+                })
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception("讀取批次補貨失敗: %s", e)
                 self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
@@ -1332,6 +1418,50 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 })
             return
 
+        if request_path == '/api/alibaba-restock/batches/preview':
+            try:
+                data = self._read_json_body()
+                snapshot = build_preview(
+                    data.get("products") if isinstance(data, dict) else None,
+                    keyword=str((data or {}).get("keyword") or ""),
+                    cart_sku_count=(data or {}).get("cartSkuCount"),
+                )
+                self._send_json_response(200, {"status": "success", "preview": snapshot})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception("建立批次補貨預覽失敗: %s", e)
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        if request_path == '/api/alibaba-restock/batches':
+            try:
+                data = self._read_json_body()
+                self._send_json_response(200, self._start_restock_batch(data if isinstance(data, dict) else {}))
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception("啟動批次補貨失敗: %s", e)
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
+        restock_resume_match = re.match(r'^/api/alibaba-restock/batches/([^/]+)/resume$', request_path)
+        if restock_resume_match:
+            try:
+                data = self._read_json_body() if int(self.headers.get('Content-Length', 0) or 0) else {}
+                self._send_json_response(200, self._resume_restock_batch(
+                    restock_resume_match.group(1),
+                    data if isinstance(data, dict) else {},
+                ))
+            except FileNotFoundError as e:
+                self._send_json_response(404, {"status": "error", "message": str(e)})
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception("續跑批次補貨失敗: %s", e)
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
         if self.path == '/api/alibaba-restock':
             try:
                 data = self._read_json_body()
@@ -1387,11 +1517,26 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     }, ensure_ascii=False).encode('utf-8'))
             return
 
+    def log_message(self, format, *args):
+        try:
+            super().log_message(format, *args)
+        except BrokenPipeError:
+            pass
+
     def _send_json_response(self, status_code, payload):
+        try:
+            self.send_response(status_code)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+        except BrokenPipeError:
+            logger.warning("回應寫入時連線已關閉")
+
+    def _send_html_response(self, status_code, body):
         self.send_response(status_code)
-        self.send_header('Content-type', 'application/json; charset=utf-8')
+        self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
-        self.wfile.write(json.dumps(payload, ensure_ascii=False).encode('utf-8'))
+        self.wfile.write(body.encode('utf-8') if isinstance(body, str) else body)
 
     def _read_json_body(self, max_bytes=None):
         try:
@@ -1727,6 +1872,84 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
     def _shopee_products_path(self):
         return Path(os.path.dirname(os.path.abspath(__file__))) / "shopee_products.json"
+
+    def _watchlist_path(self):
+        return Path(os.path.dirname(os.path.abspath(__file__))) / "watchlists" / "personal_watchlist.json"
+
+    def _restock_batches_root(self):
+        return self._debug_snapshots_dir() / "restock_batches"
+
+    def _home_bootstrap(self):
+        return load_home_bootstrap(
+            self._shopee_products_path(),
+            self._watchlist_path(),
+            self._golden_table_path(),
+        )
+
+    def _load_restock_batch(self, run_id):
+        safe_id = str(run_id or "").strip()
+        if not safe_id or "/" in safe_id or "\\" in safe_id or safe_id in {".", ".."}:
+            raise FileNotFoundError("找不到批次補貨工作")
+        return load_state(self._restock_batches_root() / safe_id)
+
+    def _current_restock_batch(self):
+        with restock_batch_lock:
+            live_id = restock_batch_runtime.get("runId")
+        if live_id:
+            try:
+                return {"status": "success", "batch": public_state(self._load_restock_batch(live_id))}
+            except FileNotFoundError:
+                pass
+        state = find_current_batch(self._restock_batches_root())
+        return {"status": "success", "batch": public_state(state) if state else None}
+
+    def _restock_batch_report(self, run_id):
+        state = self._load_restock_batch(run_id)
+        report_path = Path(state.get("reportPath") or "")
+        if report_path.exists():
+            payload = json.loads(report_path.read_text(encoding="utf-8"))
+            payload.setdefault("status", state.get("status"))
+            return payload
+        return build_report(state)
+
+    def _restock_batch_report_html(self, run_id):
+        state = self._load_restock_batch(run_id)
+        html_path = Path(state.get("reportHtmlPath") or "")
+        if html_path.exists():
+            return html_path.read_text(encoding="utf-8")
+        return render_report_html(build_report(state))
+
+    def _start_restock_batch(self, payload):
+        if _restock_batch_is_running():
+            raise ValueError("已有批次補貨在執行，請等待完成或先處理暫停中的批次")
+        snapshot = payload.get("preview") if isinstance(payload.get("preview"), dict) else build_preview(
+            payload.get("products"),
+            keyword=str(payload.get("keyword") or ""),
+            cart_sku_count=payload.get("cartSkuCount"),
+        )
+        if not snapshot.get("readyProducts"):
+            raise ValueError("目前畫面沒有可執行的補貨型號")
+        state = create_state(snapshot)
+        launched = launch_restock_batch(state)
+        return {
+            "status": "success",
+            "message": launched.get("message") or "已開始依序補貨",
+            "runId": launched.get("runId"),
+            "batch": public_state(launched),
+        }
+
+    def _resume_restock_batch(self, run_id, payload):
+        if _restock_batch_is_running():
+            raise ValueError("已有批次補貨在執行")
+        state = self._load_restock_batch(run_id)
+        state = resume_state(state, cart_cleared=bool((payload or {}).get("cartCleared")))
+        launched = launch_restock_batch(state)
+        return {
+            "status": "success",
+            "message": launched.get("message") or "已繼續剩餘商品",
+            "runId": launched.get("runId"),
+            "batch": public_state(launched),
+        }
 
     def _load_json_file(self, path):
         with open(path, "r", encoding="utf-8") as f:
@@ -2109,8 +2332,23 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
         restock_payload = self._build_alibaba_restock_payload(payload)
         items = restock_payload["items"]
+        skipped = restock_payload.get("skipped") or []
         if not items:
-            raise ValueError("沒有可啟動 1688 採購車流程的有效型號")
+            details = "；".join(
+                f"{item.get('modelName') or item.get('specId') or '未命名'}：{item.get('reason')}"
+                for item in skipped
+                if isinstance(item, dict)
+            )
+            message = "沒有可啟動 1688 採購車流程的有效型號"
+            if details:
+                message = f"{message}：{details}"
+            return {
+                "status": "skipped",
+                "message": message,
+                "skipped": skipped,
+                "itemCount": 0,
+                "totalQty": 0,
+            }
         validate_restock_sku_count(len(items))
 
         script_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "alibaba_restocker.py")
@@ -2266,6 +2504,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "productId": restock_payload.get("productId", ""),
             "itemCount": len(items),
             "totalQty": sum(item["restockQty"] for item in items),
+            "skipped": restock_payload.get("skipped") or [],
         }
 
     def _build_alibaba_restock_payload(self, payload):
@@ -2295,6 +2534,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 first_url_by_product[line_product_id] = line_url
 
         items = []
+        skipped = []
         for line in raw_lines:
             if not isinstance(line, dict):
                 continue
@@ -2348,14 +2588,25 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 continue
             if not re.match(r'^https?://', line_url, re.IGNORECASE):
                 continue
+            skip_target = {
+                "specId": line_model_id,
+                "modelName": line_model_name,
+            }
             if not golden_mapping:
-                raise ValueError(f"{line_model_name or line_model_id} 沒有 golden table SKU mapping，請先到 SKU Mapping 工作台處理")
+                skipped.append({**skip_target, "reason": "沒有 golden table SKU mapping"})
+                continue
             if mapping_status != "approved":
-                raise ValueError(f"{line_model_name or line_model_id} 的 1688 SKU mapping 尚未核准（{mapping_status}），請先到 SKU Mapping 工作台處理")
+                skipped.append({
+                    **skip_target,
+                    "reason": f"1688 SKU mapping 尚未核准（{mapping_status}）",
+                })
+                continue
             if not line_sku_name:
-                raise ValueError(f"{line_model_name or line_model_id} 缺少 1688 SKU 名稱，請先到 SKU Mapping 工作台處理")
+                skipped.append({**skip_target, "reason": "缺少 1688 SKU 名稱"})
+                continue
 
             if is_alibaba_sku_discontinued(line_sku_name):
+                skipped.append({**skip_target, "reason": f"1688 {line_sku_name}"})
                 continue
 
             line_product_name = str(line.get("shopee_product_name") or line.get("productName") or product_name).strip()
@@ -2364,9 +2615,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             except (TypeError, ValueError):
                 dimension_count = 2 if line_sku_second_name else 1
             if dimension_count > 2:
-                raise ValueError(f"{line_model_name} 的 1688 商品超過兩層規格，請先擴充 mapping")
+                skipped.append({**skip_target, "reason": "1688 商品超過兩層規格"})
+                continue
             if (dimension_count >= 2 or requires_alibaba_second_sku(line_product_name, line_model_name)) and not line_sku_second_name:
-                raise ValueError(f"{line_model_name} 缺少 1688 第二規格")
+                skipped.append({**skip_target, "reason": "缺少 1688 第二規格"})
+                continue
 
             items.append({
                 "productId": line_product_id,
@@ -2391,6 +2644,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "productName": product_name,
             "addToCart": add_to_cart,
             "items": items,
+            "skipped": skipped,
         }
 
     def _golden_mapping_for_model(self, product_id, model_id, model_name):
@@ -3183,6 +3437,103 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             return {"status": "error", "message": f"執行{task_name}時出錯: {e}"}
 
 
+class RestockBatchPersister:
+    def __init__(self, directory):
+        self.directory = Path(directory)
+
+    def __call__(self, state):
+        saved = save_state(self.directory, state)
+        if saved.get("status") != STATUS_RUNNING:
+            paths = write_reports(self.directory, saved)
+            saved["reportPath"] = str(paths["json"])
+            saved["reportHtmlPath"] = str(paths["html"])
+            save_state(self.directory, saved)
+
+    def write_artifacts(self, product, job, row, result):
+        write_job_artifact(self.directory, str(product.get("productId") or "unknown"), job)
+        write_failure_artifacts(
+            self.directory,
+            extract_failure_records(product, row, result),
+        )
+
+
+def _restock_batches_root():
+    return Path(os.path.dirname(os.path.abspath(__file__))) / "debug_snapshots" / "restock_batches"
+
+
+def _restock_batch_is_running():
+    with restock_batch_lock:
+        thread = restock_batch_runtime.get("thread")
+        return bool(thread and thread.is_alive())
+
+
+def _restock_job_host():
+    return CustomHandler.__new__(CustomHandler)
+
+
+def start_single_product_from_batch(product):
+    host = _restock_job_host()
+    try:
+        return host.start_alibaba_restock({
+            "productId": product.get("productId"),
+            "productName": product.get("productName"),
+            "addToCart": True,
+            "pauseSeconds": 0,
+            "items": product_items(product),
+        })
+    except Exception as error:
+        return {"status": "error", "message": str(error)}
+
+
+def read_single_restock_job(job_id):
+    return CustomHandler._read_alibaba_restock_job(job_id)
+
+
+def run_restock_batch_thread(run_id):
+    directory = _restock_batches_root() / run_id
+    persister = RestockBatchPersister(directory)
+    try:
+        state = load_state(directory)
+        run_batch_loop(
+            state,
+            start_single_product_from_batch,
+            read_single_restock_job,
+            persister,
+            should_stop=lambda: restock_batch_runtime.get("stop"),
+        )
+    except Exception:
+        logger.exception("批次補貨執行失敗")
+        try:
+            state = load_state(directory)
+            state["status"] = "paused_attention"
+            state["message"] = "批次控制器異常停止，請核對採購車後再繼續"
+            persister(state)
+        except Exception:
+            logger.exception("寫入批次失敗狀態失敗")
+    finally:
+        with restock_batch_lock:
+            if restock_batch_runtime.get("runId") == run_id:
+                restock_batch_runtime["runId"] = None
+                restock_batch_runtime["thread"] = None
+                restock_batch_runtime["stop"] = False
+
+
+def launch_restock_batch(state):
+    with restock_batch_lock:
+        thread = restock_batch_runtime.get("thread")
+        if thread and thread.is_alive():
+            raise ValueError("已有批次補貨在執行")
+        run_id = str(state.get("runId") or "")
+        directory = _restock_batches_root() / run_id
+        save_state(directory, begin_run(state) if state.get("status") != STATUS_RUNNING else state)
+        restock_batch_runtime["runId"] = run_id
+        restock_batch_runtime["stop"] = False
+        worker = threading.Thread(target=run_restock_batch_thread, args=(run_id,), daemon=True)
+        restock_batch_runtime["thread"] = worker
+        worker.start()
+    return load_state(directory)
+
+
 def kill_process_on_port(port):
     """終止佔用指定端口的進程"""
     try:
@@ -3270,6 +3621,13 @@ except Exception as e:
     logger.warning(f"版本檢查失敗：{e}")
 # ============================
 
+try:
+    recovered_restock_batches = recover_interrupted_batches(_restock_batches_root())
+    if recovered_restock_batches:
+        logger.info("已將中斷的批次補貨標記為待核對：%s", ", ".join(recovered_restock_batches))
+except Exception as e:
+    logger.warning("還原批次補貨狀態失敗：%s", e)
+
 # 先啟動伺服器
 server_thread = threading.Thread(target=start_server, daemon=True)
 server_thread.start()
@@ -3277,9 +3635,12 @@ server_thread.start()
 # 等待 2 秒，確保伺服器已啟動
 time.sleep(2)
 
-# 嘗試開啟瀏覽器
-webbrowser.open(f"http://localhost:{PORT}")
-logger.info(f"已嘗試在瀏覽器中打開 http://localhost:{PORT}")
+# 正式補貨腳本會自己開 review 頁，避免再彈一個沒載入資料的分頁。
+if os.environ.get("INVENTORY_SKIP_BROWSER") != "1":
+    webbrowser.open(f"http://localhost:{PORT}")
+    logger.info(f"已嘗試在瀏覽器中打開 http://localhost:{PORT}")
+else:
+    logger.info("INVENTORY_SKIP_BROWSER=1，改由啟動腳本開啟瀏覽器")
 
 # 主線程等待
 try:
