@@ -1,0 +1,132 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-30T23:05:32+08:00",
+  "shopId": "168917920",
+  "purpose": "Permanent productId denylist when rebuilding personal_watchlist from seller-center collections.",
+  "note": "Apply after collecting shop collection product IDs: keep only IDs not in productIds. Do not re-add these unless explicitly cleared.",
+  "count": 15,
+  "productIds": [
+    "16790492139",
+    "25083569908",
+    "24077547688",
+    "26468468682",
+    "26468539187",
+    "28768482000",
+    "29954089279",
+    "29968482561",
+    "18344672033",
+    "19651077286",
+    "22561129943",
+    "18644662056",
+    "24514999862",
+    "25811193291",
+    "24211192888"
+  ],
+  "entries": [
+    {
+      "productId": "16790492139",
+      "category": "socks",
+      "reason": "襪子",
+      "productName": "隔日到貨🔥 純色棉襪 3雙110 女襪S6 長襪 棉襪 白長襪 中筒襪 襪子 白色襪子 女生襪子 女長襪 襪子女",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "25083569908",
+      "category": "socks",
+      "reason": "襪子",
+      "productName": "隔日到貨🔥 韓國 冰冰襪 S26 襪子 長襪 素色襪子 涼感襪 中筒襪 短襪 素色長襪 堆堆襪 女襪 女生襪子 襪子女",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "24077547688",
+      "category": "underwear",
+      "reason": "內褲／安全褲",
+      "productName": "隔日到貨🔥 冰絲無痕波浪安全褲 睡褲 平口褲 打底褲 寬鬆防走光不捲邊 內搭褲 短褲 內褲 夏日冰感舒適",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "26468468682",
+      "category": "underwear",
+      "reason": "內褲",
+      "productName": "隔日到貨🔥 韓系內褲 女生內褲 純棉內褲 女生無痕內褲 粉嫩純色 舒適內褲 內褲 緊身 女內褲 無痕內褲",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "26468539187",
+      "category": "underwear",
+      "reason": "內褲",
+      "productName": "隔日到貨🔥 日系莫蘭迪素色內褲 女生內褲 純棉 女生無痕內褲 粉嫩純色 舒適內褲 內褲 緊身 女內褲 無痕內褲",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "28768482000",
+      "category": "underwear",
+      "reason": "內褲",
+      "productName": "隔日到貨🔥 韓系內褲 女生內褲 純棉內褲 女生無痕內褲 粉嫩純色 舒適內褲 內褲 緊身 女內褲 無痕內褲",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "29954089279",
+      "category": "underwear",
+      "reason": "內褲",
+      "productName": "隔日到貨🔥 冰絲無痕內褲 女生無痕內褲 舒適內褲 冰絲 內褲 冰絲涼感 緊身 運動 女內褲 無痕內褲 暑假",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "29968482561",
+      "category": "underwear",
+      "reason": "內褲",
+      "productName": "隔日到貨🔥 法式蕾絲 蝴蝶結 性感內褲 女生內褲 內褲 女內褲 無痕內褲 冰絲內褲 透氣內褲 流行內褲 性感底褲",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "18344672033",
+      "category": "charging_cable",
+      "reason": "充電線",
+      "productName": "隔日到貨🔥 iPhone 充電線 14 13 12 11 Lightning 蘋果充電線 Type-C 充電線 快充線",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "19651077286",
+      "category": "charging_cable",
+      "reason": "充電線",
+      "productName": "隔日到貨🔥 iPhone 17 16 15 充電線 Type-C 充電傳輸線 快充線 android 蘋果ipad 安卓",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "22561129943",
+      "category": "charging_cable",
+      "reason": "充電線",
+      "productName": "隔日到貨🔥 iPhone 17 16 15 充電線 USB3.1 Type-C 支援carplay 快充線 傳輸線 安卓",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "18644662056",
+      "category": "charger",
+      "reason": "快充頭／充電器",
+      "productName": "隔日到貨🔥 雙孔快充頭 20W 30W Type-C充電頭 POLYWELL PD 充電器 豆腐頭 蘋果安卓 充電線",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "24514999862",
+      "category": "charger",
+      "reason": "旅行充電器",
+      "productName": "隔日到貨🔥 多國旅行充電器 轉接頭 二合一 Type-C+雙USB-A充電器 萬國充 BSMI認證 充電頭 充電線",
+      "removedAt": "2026-08-30T22:56:48+08:00"
+    },
+    {
+      "productId": "25811193291",
+      "category": "adapter",
+      "reason": "Type-C→Lightning 轉接器",
+      "productName": "隔日到貨🔥 Type-C To Lightning母 蘋果充電線轉接器 可充電 可傳輸 寶利威爾 POLYWELL",
+      "removedAt": "2026-08-30T23:05:32+08:00"
+    },
+    {
+      "productId": "24211192888",
+      "category": "video_cable",
+      "reason": "HDMI 線",
+      "productName": "隔日到貨🔥 HDMI線 2.0版 1米~8米 4K 60Hz UHD HDMI 傳輸線 寶利威爾 POLYWELL",
+      "removedAt": "2026-08-30T23:05:32+08:00"
+    }
+  ]
+}
