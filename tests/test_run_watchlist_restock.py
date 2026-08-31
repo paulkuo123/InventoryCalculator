@@ -13,6 +13,7 @@ from run_watchlist_restock import (
     round_restock_qty,
     server_url,
     start_main_if_needed,
+    suggested_restock_qty,
     wait_for_batch,
     wait_for_homepage_data,
     wait_for_server,
@@ -101,16 +102,39 @@ class RunWatchlistRestockTests(unittest.TestCase):
         self.assertTrue(bootstrap_is_ready(result))
 
     def test_round_restock_qty_matches_js_math_round(self):
-        self.assertEqual(round_restock_qty(0), 0)
-        self.assertEqual(round_restock_qty(5), 10)
-        self.assertEqual(round_restock_qty(14), 10)
-        self.assertEqual(round_restock_qty(15), 20)
+        self.assertEqual(round_restock_qty(0, 0), 0)
+        self.assertEqual(round_restock_qty(1, 0), 5)
+        self.assertEqual(round_restock_qty(4, 0), 5)
+        self.assertEqual(round_restock_qty(5, 0), 5)
+        self.assertEqual(round_restock_qty(4, 1), 0)
+        self.assertEqual(round_restock_qty(5, 1), 10)
+        self.assertEqual(round_restock_qty(14, 1), 10)
+        self.assertEqual(round_restock_qty(15, 1), 20)
+
+    def test_zero_stock_uses_higher_monthly_rate_and_minimum_five(self):
+        product = {"總月銷量": "186", "已售出總數量": "5300"}
+        model = {"商品庫存": "0", "月銷量": "1", "已售出數量": "24"}
+
+        self.assertEqual(suggested_restock_qty(product, model, 4), 5)
+
+    def test_zero_demand_without_history_stays_zero(self):
+        product = {"總月銷量": "0", "已售出總數量": "0"}
+        model = {"商品庫存": "0", "月銷量": "0", "已售出數量": "0"}
+
+        self.assertEqual(suggested_restock_qty(product, model, 4), 0)
 
     def test_build_visible_style_products_from_real_files(self):
         payload = build_visible_style_products(Path("."), keyword="吊飾", months=4)
         self.assertEqual(payload["keyword"], "吊飾")
         self.assertTrue(payload["products"])
         self.assertTrue(any(product.get("items") for product in payload["products"]))
+
+    def test_visible_list_excludes_sock_product_names(self):
+        payload = build_visible_style_products(Path("."), keyword="", months=4)
+        self.assertTrue(payload["products"])
+        for product in payload["products"]:
+            name = str(product.get("productName") or "")
+            self.assertFalse("襪" in name or "袜" in name, name)
 
 
 if __name__ == "__main__":

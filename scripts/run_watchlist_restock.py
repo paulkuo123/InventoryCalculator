@@ -28,6 +28,14 @@ from typing import Any, Callable, Dict, Optional
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PORT = 8080
 EXIT_OK = 0
+
+sys.path.insert(0, str(ROOT))
+from home_bootstrap import (
+    load_watchlist_exclusion_ids,
+    merged_watchlist_exclusion_ids,
+    without_watchlist_exclusions,
+)
+
 EXIT_ERROR = 1
 EXIT_PAUSED = 2
 
@@ -154,9 +162,11 @@ def _int(value: Any) -> int:
         return 0
 
 
-def round_restock_qty(quantity: int) -> int:
+def round_restock_qty(quantity: int, current_stock: int) -> int:
     if quantity <= 0:
         return 0
+    if current_stock == 0 and quantity <= 5:
+        return 5
     return ((int(quantity) + 5) // 10) * 10
 
 
@@ -172,16 +182,17 @@ def requires_second_sku(product_name: str, model_name: str) -> bool:
 def suggested_restock_qty(product: Dict[str, Any], model: Dict[str, Any], months: int) -> int:
     current_stock = _int(model.get("商品庫存"))
     monthly_rate = float(model.get("月銷量") or 0)
-    if current_stock == 0 and monthly_rate == 0:
+    if current_stock == 0:
         model_sales = _int(model.get("已售出數量"))
         product_sales = _int(product.get("已售出總數量"))
         product_monthly = _int(product.get("總月銷量"))
         if model_sales > 0 and product_sales > 0 and product_monthly > 0:
-            monthly_rate = round(product_monthly * (model_sales / product_sales) * 10) / 10
+            historical_rate = int(product_monthly * (model_sales / product_sales) * 10 + 0.5) / 10
+            monthly_rate = max(monthly_rate, historical_rate)
     if monthly_rate <= 0 and not model.get("月銷量"):
         return 0
-    expected = int(round(monthly_rate * months))
-    return round_restock_qty(max(expected - current_stock, 0))
+    expected = int(monthly_rate * months + 0.5)
+    return round_restock_qty(max(expected - current_stock, 0), current_stock)
 
 
 def golden_model(golden: Dict[str, Any], product_id: str, spec_id: str, model_name: str) -> Dict[str, Any]:
@@ -203,8 +214,18 @@ def build_list_from_files(
 ) -> Dict[str, Any]:
     products = json.loads(products_path.read_text(encoding="utf-8"))
     watchlist = json.loads(watchlist_path.read_text(encoding="utf-8"))
+    exclusion_ids = merged_watchlist_exclusion_ids(
+        load_watchlist_exclusion_ids(watchlist_path.parent / "personal_watchlist_exclusions.json"),
+        products,
+    )
+    watch_ids = {
+        str(value)
+        for value in without_watchlist_exclusions(
+            [str(value) for value in (watchlist.get("productIds") or [])],
+            exclusion_ids,
+        )["productIds"]
+    }
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
-    watch_ids = {str(value) for value in (watchlist.get("productIds") or [])}
     rows = []
     for product_id, product in products.items():
         if watch_ids and str(product_id) not in watch_ids:

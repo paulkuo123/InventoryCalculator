@@ -41,8 +41,8 @@
 
     function applyWatchlistScope(products, productIds, enabled) {
         if (!products || typeof products !== 'object' || Array.isArray(products)) return products;
+        if (!enabled) return products;
         const ids = uniqueProductIds(productIds);
-        if (!enabled || ids.length === 0) return products;
         const allowed = new Set(ids);
         const scoped = {};
         Object.entries(products).forEach(([productId, product]) => {
@@ -51,6 +51,26 @@
             }
         });
         return scoped;
+    }
+
+    function watchlistNameExclusionIds(products) {
+        const ids = [];
+        if (!products || typeof products !== 'object' || Array.isArray(products)) return ids;
+        Object.entries(products).forEach(([productId, product]) => {
+            const name = String(product && product.商品名稱 || '');
+            if (name.includes('襪') || name.includes('袜')) ids.push(productId);
+        });
+        return uniqueProductIds(ids);
+    }
+
+    function withoutWatchlistExclusions(productIds, exclusionIds) {
+        const blocked = new Set(uniqueProductIds(exclusionIds));
+        const ids = uniqueProductIds(productIds);
+        if (!blocked.size) {
+            return { productIds: ids, excluded: 0 };
+        }
+        const filtered = ids.filter(id => !blocked.has(id));
+        return { productIds: filtered, excluded: Math.max(ids.length - filtered.length, 0) };
     }
 
     function watchlistMatchCounts(products, productIds) {
@@ -102,6 +122,8 @@
         uniqueProductIds,
         parseWatchlistPayload,
         applyWatchlistScope,
+        watchlistNameExclusionIds,
+        withoutWatchlistExclusions,
         watchlistMatchCounts,
         readStoredWatchlist,
         writeStoredWatchlist
@@ -164,6 +186,8 @@ document.addEventListener('DOMContentLoaded', function() {
         ? PersonalWatchlist.readStoredWatchlist(window.localStorage)
         : { productIds: [], enabled: false };
     let personalWatchlistIds = storedWatchlist.productIds || [];
+    let personalWatchlistExclusionIds = [];
+    let personalWatchlistExclusionsReady = null;
     
     const progressBar = document.getElementById('progressBar');
     const progressText = document.getElementById('progressText');
@@ -296,6 +320,44 @@ document.addEventListener('DOMContentLoaded', function() {
         setShopeeProductsImportStatus(`已選擇 ${file.name}（${formatImportFileSize(file.size)}），可開始匯入。`);
     }
 
+    function applyWatchlistExclusions(productIds) {
+        const extra = PersonalWatchlist.watchlistNameExclusionIds
+            ? PersonalWatchlist.watchlistNameExclusionIds(window.lastSearchResults)
+            : [];
+        const blocked = personalWatchlistExclusionIds.concat(extra);
+        if (!PersonalWatchlist.withoutWatchlistExclusions) {
+            return { productIds: PersonalWatchlist.uniqueProductIds(productIds), excluded: 0 };
+        }
+        return PersonalWatchlist.withoutWatchlistExclusions(productIds, blocked);
+    }
+
+    function setPersonalWatchlistExclusionIds(productIds) {
+        personalWatchlistExclusionIds = PersonalWatchlist.uniqueProductIds
+            ? PersonalWatchlist.uniqueProductIds(productIds)
+            : [];
+    }
+
+    async function ensurePersonalWatchlistExclusions() {
+        if (personalWatchlistExclusionsReady) {
+            return personalWatchlistExclusionsReady;
+        }
+        personalWatchlistExclusionsReady = fetch('/api/watchlist/exclusions')
+            .then(response => response.json().catch(() => ({})))
+            .then(data => {
+                if (data && data.status === 'success' && Array.isArray(data.productIds)) {
+                    setPersonalWatchlistExclusionIds(data.productIds);
+                }
+                return personalWatchlistExclusionIds;
+            })
+            .catch(() => personalWatchlistExclusionIds);
+        return personalWatchlistExclusionsReady;
+    }
+
+    function sanitizePersonalWatchlistIds(productIds) {
+        const sanitized = applyWatchlistExclusions(productIds);
+        return sanitized;
+    }
+
     function persistPersonalWatchlist(enabled) {
         if (PersonalWatchlist.writeStoredWatchlist) {
             PersonalWatchlist.writeStoredWatchlist(window.localStorage, personalWatchlistIds, enabled);
@@ -306,9 +368,39 @@ document.addEventListener('DOMContentLoaded', function() {
         return Boolean(personalWatchlistOnlyToggle && personalWatchlistOnlyToggle.checked && personalWatchlistIds.length > 0);
     }
 
+    function getEffectiveWatchlistIds() {
+        return applyWatchlistExclusions(personalWatchlistIds).productIds;
+    }
+
     function applyCurrentWatchlistScope(products) {
         if (!PersonalWatchlist.applyWatchlistScope) return products;
-        return PersonalWatchlist.applyWatchlistScope(products, personalWatchlistIds, isPersonalWatchlistEnabled());
+        return PersonalWatchlist.applyWatchlistScope(
+            products,
+            getEffectiveWatchlistIds(),
+            isPersonalWatchlistEnabled()
+        );
+    }
+
+    function enablePersonalWatchlistFilterIfReady() {
+        if (!personalWatchlistIds.length || !personalWatchlistOnlyToggle) return false;
+        if (!personalWatchlistOnlyToggle.checked) {
+            personalWatchlistOnlyToggle.checked = true;
+            persistPersonalWatchlist(true);
+            updatePersonalWatchlistUi();
+            return true;
+        }
+        return false;
+    }
+
+    async function preparePersonalWatchlistForResults() {
+        await ensurePersonalWatchlistExclusions();
+        const sanitized = sanitizePersonalWatchlistIds(personalWatchlistIds);
+        if (sanitized.excluded > 0) {
+            personalWatchlistIds = sanitized.productIds;
+            persistPersonalWatchlist(isPersonalWatchlistEnabled());
+            updatePersonalWatchlistUi();
+        }
+        return enablePersonalWatchlistFilterIfReady();
     }
 
     function setPersonalWatchlistStatus(text, type = '') {
@@ -324,7 +416,7 @@ document.addEventListener('DOMContentLoaded', function() {
             if (!hasIds) personalWatchlistOnlyToggle.checked = false;
         }
         const counts = PersonalWatchlist.watchlistMatchCounts
-            ? PersonalWatchlist.watchlistMatchCounts(window.lastSearchResults, personalWatchlistIds)
+            ? PersonalWatchlist.watchlistMatchCounts(window.lastSearchResults, getEffectiveWatchlistIds())
             : { imported: personalWatchlistIds.length, matched: 0, missed: personalWatchlistIds.length };
         if (personalWatchlistSummary) {
             if (!hasIds) {
@@ -380,6 +472,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         personalWatchlistImportButton.disabled = true;
         try {
+            await ensurePersonalWatchlistExclusions();
             const rawText = await file.text();
             let parsed;
             try {
@@ -390,17 +483,30 @@ document.addEventListener('DOMContentLoaded', function() {
             const payload = PersonalWatchlist.parseWatchlistPayload(parsed);
             const previousIds = personalWatchlistIds.slice();
             try {
-                personalWatchlistIds = payload.productIds;
+                const sanitized = sanitizePersonalWatchlistIds(payload.productIds);
+                personalWatchlistIds = sanitized.productIds;
+                if (!personalWatchlistIds.length) {
+                    throw new Error('匯入的觀察清單在套用永久排除後沒有有效商品');
+                }
+                if (personalWatchlistOnlyToggle) {
+                    personalWatchlistOnlyToggle.checked = true;
+                }
                 const counts = PersonalWatchlist.watchlistMatchCounts
                     ? PersonalWatchlist.watchlistMatchCounts(window.lastSearchResults, personalWatchlistIds)
                     : { imported: personalWatchlistIds.length, matched: 0, missed: 0 };
                 const hitText = window.lastSearchResults
                     ? `目前搜尋命中 ${counts.matched}、未命中 ${counts.missed}`
                     : '目前尚無搜尋結果可對照';
-                setPersonalWatchlistStatus(`已匯入 ${counts.imported} 個商品 ID；${hitText}。`, 'success');
+                const exclusionText = sanitized.excluded > 0
+                    ? `；已永久排除 ${sanitized.excluded} 個商品（襪子／內褲／充電線等）`
+                    : '';
+                setPersonalWatchlistStatus(
+                    `已匯入 ${counts.imported} 個商品 ID；${hitText}${exclusionText}。`,
+                    'success'
+                );
                 window.batchRestockEnabled = personalWatchlistIds.length > 0 && Boolean(window.lastSearchResults);
                 updatePersonalWatchlistUi();
-                if (window.lastSearchResults && isPersonalWatchlistEnabled()) {
+                if (window.lastSearchResults) {
                     rerenderCurrentSearchResults();
                 }
                 updateBatchRestockToolbar();
@@ -862,10 +968,33 @@ document.addEventListener('DOMContentLoaded', function() {
             (!requiresAlibabaSecondSku(productName, modelName) || Boolean(binding.alibabaSkuSecondName));
     }
 
-    function roundRestockQty(quantity) {
+    function roundRestockQty(quantity, currentStock) {
         const parsed = Number(quantity) || 0;
         if (parsed <= 0) return 0;
+        if (Number(currentStock) === 0 && parsed <= 5) return 5;
         return Math.round(parsed / 10) * 10;
+    }
+
+    function getEffectiveMonthlyRate(product, modelData, currentStock) {
+        const monthlyRate = parseInt(modelData.月銷量, 10) || 0;
+        if (currentStock !== 0) {
+            return { monthlyRate, usesHistoricalShare: false };
+        }
+
+        const modelHistoricalSales = parseInt(modelData.已售出數量, 10) || 0;
+        const productTotalHistoricalSales = parseInt(product.已售出總數量, 10) || 0;
+        const productTotalMonthlySales = parseInt(product.總月銷量, 10) || 0;
+        if (modelHistoricalSales <= 0 || productTotalHistoricalSales <= 0 || productTotalMonthlySales <= 0) {
+            return { monthlyRate, usesHistoricalShare: false };
+        }
+
+        const historicalMonthlyRate = Math.round(
+            productTotalMonthlySales * (modelHistoricalSales / productTotalHistoricalSales) * 10
+        ) / 10;
+        if (historicalMonthlyRate <= monthlyRate) {
+            return { monthlyRate, usesHistoricalShare: false };
+        }
+        return { monthlyRate: historicalMonthlyRate, usesHistoricalShare: true };
     }
 
     const MAX_ALIBABA_CART_SKUS = 200;
@@ -1861,6 +1990,9 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             if (data.watchlist && Array.isArray(data.watchlist.productIds) && data.watchlist.productIds.length) {
                 personalWatchlistIds = data.watchlist.productIds;
+                if (data.watchlistExclusions && Array.isArray(data.watchlistExclusions.productIds)) {
+                    setPersonalWatchlistExclusionIds(data.watchlistExclusions.productIds);
+                }
                 if (personalWatchlistOnlyToggle) {
                     personalWatchlistOnlyToggle.checked = true;
                 }
@@ -2428,31 +2560,20 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     function calculateModelRestock(product, modelData, months) {
-        const monthlyRate = parseInt(modelData.月銷量, 10) || 0;
         const currentStock = parseInt(modelData.商品庫存, 10) || 0;
-        let effectiveMonthlyRate = monthlyRate;
-        let isEstimated = false;
-
-        if (currentStock === 0 && monthlyRate === 0) {
-            const modelHistoricalSales = parseInt(modelData.已售出數量, 10) || 0;
-            const productTotalHistoricalSales = parseInt(product.已售出總數量, 10) || 0;
-            const productTotalMonthlySales = parseInt(product.總月銷量, 10) || 0;
-            if (modelHistoricalSales > 0 && productTotalHistoricalSales > 0 && productTotalMonthlySales > 0) {
-                effectiveMonthlyRate = Math.round((productTotalMonthlySales * (modelHistoricalSales / productTotalHistoricalSales)) * 10) / 10;
-                isEstimated = true;
-            }
-        }
+        const effectiveRate = getEffectiveMonthlyRate(product, modelData, currentStock);
+        const effectiveMonthlyRate = effectiveRate.monthlyRate;
 
         const targetStock = Math.round(effectiveMonthlyRate * months);
         const rawSuggestedQty = Math.max(0, targetStock - currentStock);
-        const suggestedQty = roundRestockQty(rawSuggestedQty);
+        const suggestedQty = roundRestockQty(rawSuggestedQty, currentStock);
         return {
             monthlySales: Math.round(effectiveMonthlyRate),
             currentStock,
             targetStock,
             rawSuggestedQty,
             suggestedQty,
-            isEstimated
+            isEstimated: effectiveRate.usesHistoricalShare
         };
     }
 
@@ -2791,21 +2912,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 let productHasVisibleModels = false;
                 
                 product.型號.forEach((modelData) => {
-                    let monthlyRate = parseInt(modelData.月銷量, 10) || 0;
                     const months = parseInt(inventoryMonth, 10) || 0;
                     const currentStock = parseInt(modelData.商品庫存, 10) || 0;
-                    
-                    // 歷史佔比法預估月銷量
-                    if (currentStock === 0 && monthlyRate === 0) {
-                        const modelHistoricalSales = parseInt(modelData.已售出數量, 10) || 0;
-                        const productTotalHistoricalSales = parseInt(product.已售出總數量, 10) || 0;
-                        const productTotalMonthlySales = parseInt(product.總月銷量, 10) || 0;
-                        
-                        if (modelHistoricalSales > 0 && productTotalHistoricalSales > 0 && productTotalMonthlySales > 0) {
-                            const historicalRatio = modelHistoricalSales / productTotalHistoricalSales;
-                            monthlyRate = Math.round(productTotalMonthlySales * historicalRatio * 10) / 10;
-                        }
-                    }
+                    const monthlyRate = getEffectiveMonthlyRate(product, modelData, currentStock).monthlyRate;
                     
                     const expectedStock = Math.round(monthlyRate * months);
                     
@@ -3465,28 +3574,10 @@ document.addEventListener('DOMContentLoaded', function() {
                             let suggestedRestockForAction = 0;
 
                             // 顯示預期庫存和建議補貨
-                            // 特殊處理:當庫存為0且月銷量也為0時,使用歷史佔比法估算
-                            let effectiveMonthlyRate = monthlyRate;
-                            let isEstimated = false;
-                            
-                            if (currentStock === 0 && monthlyRate === 0) {
-                                // 計算歷史佔比法的預估月銷量
-                                const modelHistoricalSales = parseInt(modelData.已售出數量, 10) || 0;
-                                const productTotalHistoricalSales = parseInt(product.已售出總數量, 10) || 0;
-                                const productTotalMonthlySales = parseInt(product.總月銷量, 10) || 0;
-                                
-                                // 只有當有歷史銷售數據時才計算
-                                if (modelHistoricalSales > 0 && productTotalHistoricalSales > 0 && productTotalMonthlySales > 0) {
-                                    // 計算歷史佔比 = 該型號歷史總銷量 / 商品全部型號歷史總銷量
-                                    const historicalRatio = modelHistoricalSales / productTotalHistoricalSales;
-                                    
-                                    // 預估月銷量 = 該商品總月銷量 × 歷史佔比
-                                    effectiveMonthlyRate = Math.round(productTotalMonthlySales * historicalRatio * 10) / 10;
-                                    isEstimated = true;
-                                    
-        // console.log removed
-                                }
-                            }
+                            // 庫存為 0 時，以實際月銷與歷史佔比推估取較大值。
+                            const effectiveRate = getEffectiveMonthlyRate(product, modelData, currentStock);
+                            const effectiveMonthlyRate = effectiveRate.monthlyRate;
+                            const isEstimated = effectiveRate.usesHistoricalShare;
                             
                             // 如果有有效的月銷量(實際或預估),則顯示預期庫存和建議補貨
                             if (effectiveMonthlyRate > 0 || modelData.月銷量) {
@@ -3505,9 +3596,9 @@ document.addEventListener('DOMContentLoaded', function() {
                                 }
                                 modelText.appendChild(expectedStockBadge);
                                 
-                                // 計算建議補貨並以 10 為單位四捨五入，和送到 1688 的數量保持一致。
+                                // 正缺口最低補 5；其餘以 10 為單位四捨五入，和送到 1688 的數量保持一致。
                                 const rawSuggestedRestock = Math.max(effectiveExpectedStock - currentStock, 0);
-                                const suggestedRestock = roundRestockQty(rawSuggestedRestock);
+                                const suggestedRestock = roundRestockQty(rawSuggestedRestock, currentStock);
                                 suggestedRestockForAction = suggestedRestock;
                                 
                                 // 只有當建議補貨為正數時才顯示
@@ -3520,7 +3611,9 @@ document.addEventListener('DOMContentLoaded', function() {
                                     restockBadge.className = 'badge badge-danger';
                                     restockBadge.textContent = `建議補貨: ${suggestedRestock}`;
                                     if (rawSuggestedRestock !== suggestedRestock) {
-                                        restockBadge.title = `原始建議 ${rawSuggestedRestock}，已依 10 件單位四捨五入`;
+                                        restockBadge.title = rawSuggestedRestock < 5
+                                            ? `原始建議 ${rawSuggestedRestock}，已套用最低補貨量 5`
+                                            : `原始建議 ${rawSuggestedRestock}，已依 10 件單位四捨五入`;
                                     }
                                     if (isEstimated) {
                                         restockBadge.textContent += ' (預估)';
@@ -3906,14 +3999,16 @@ document.addEventListener('DOMContentLoaded', function() {
         window.lastSearchResults = products;
         window.currentSearchResults = products;
         loadAlibabaLinks();
-        return loadAlibabaBindings(true).then(() => {
-            displayProducts(products, '', 'product');
-            if (advancedSearchCard) {
-                advancedSearchCard.style.display = Object.keys(products).length > 0 ? 'block' : 'none';
-            }
-            showPersonalWatchlistCard(true);
-            return products;
-        });
+        return loadAlibabaBindings(true)
+            .then(() => preparePersonalWatchlistForResults())
+            .then(() => {
+                displayProducts(window.lastSearchResults, '', 'product');
+                if (advancedSearchCard) {
+                    advancedSearchCard.style.display = Object.keys(window.lastSearchResults || {}).length > 0 ? 'block' : 'none';
+                }
+                showPersonalWatchlistCard(true);
+                return window.lastSearchResults;
+            });
     }
 
     async function importShopeeProducts() {
@@ -4151,7 +4246,20 @@ document.addEventListener('DOMContentLoaded', function() {
             rerenderCurrentSearchResults();
         });
     }
-    updatePersonalWatchlistUi();
+    ensurePersonalWatchlistExclusions().then(() => {
+        const sanitized = sanitizePersonalWatchlistIds(personalWatchlistIds);
+        if (sanitized.excluded > 0) {
+            personalWatchlistIds = sanitized.productIds;
+            updatePersonalWatchlistUi();
+            if (window.lastSearchResults && isPersonalWatchlistEnabled()) {
+                rerenderCurrentSearchResults();
+            }
+        } else {
+            updatePersonalWatchlistUi();
+        }
+    }).catch(() => {
+        updatePersonalWatchlistUi();
+    });
     loadAlibabaBindings();
     if (new URLSearchParams(window.location.search).get('autoload') === '1') {
         bootstrapHomePage();

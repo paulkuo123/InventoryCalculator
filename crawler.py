@@ -437,14 +437,23 @@ class ShopeeCrawler:
         except Exception as e:
             print(f"載入 Cookies 時發生錯誤: {e}")
 
-    def calculate_restock_quantity(self, product_sold, total_sold, monthly_sales, current_inventory, expected_months=4):
+    def calculate_restock_quantity(
+        self,
+        product_sold,
+        total_sold,
+        monthly_sales,
+        current_inventory,
+        expected_months=4,
+        total_monthly_sales=0,
+    ):
         """
         計算建議補貨數量
         
         根據 restock_rules.py 文件化的規則：
         - 計算預期庫存 = 月銷量 × 期望月數
         - 建議補貨 = 預期庫存 - 當前庫存
-        - 以 10 為單位四捨五入（與 GUI 一致）
+        - 庫存為 0 時，以實際月銷與歷史佔比推估取較大值
+        - 庫存為 0 時正缺口最低補 5；有庫存時維持十位四捨五入（與 GUI 一致）
         
         Args:
             product_sold (int): 型號已售出數量
@@ -461,13 +470,24 @@ class ShopeeCrawler:
             if total_sold == 0:
                 return 0
 
-            # 如果月銷量為 0 且庫存為 0，需要特殊處理
-            if monthly_sales == 0 and current_inventory == 0:
+            effective_monthly_sales = monthly_sales
+            if (
+                current_inventory == 0
+                and product_sold > 0
+                and total_sold > 0
+                and total_monthly_sales > 0
+            ):
+                historical_monthly_sales = int(
+                    total_monthly_sales * (product_sold / total_sold) * 10 + 0.5
+                ) / 10
+                effective_monthly_sales = max(monthly_sales, historical_monthly_sales)
+
+            if effective_monthly_sales <= 0:
                 return 0
 
             # 計算預期庫存 = 月銷量 × 期望月數
             # 注意：monthly_sales 已經是該型號的月銷量，不需要再乘以 (product_sold / total_sold) 比例
-            expected_inventory = monthly_sales * expected_months
+            expected_inventory = int(effective_monthly_sales * expected_months + 0.5)
 
             # 建議補貨 = 預期庫存 - 當前庫存
             restock = expected_inventory - current_inventory
@@ -475,8 +495,12 @@ class ShopeeCrawler:
             # 如果補貨數量為負數或零，表示不需要補貨
             raw_restock = max(0, restock)
             
-            # 以 10 為單位四捨五入（與 GUI script.js roundRestockQty 一致）
+            # 庫存為 0 時正缺口最低補 5；有庫存時維持原本十位四捨五入。
             # 使用 int() 加 0.5 來確保正確的四捨五入，避免 Python banker's rounding
+            if raw_restock <= 0:
+                return 0
+            if current_inventory == 0 and raw_restock <= 5:
+                return 5
             return int((raw_restock + 5) / 10) * 10
             
         except Exception as e:
@@ -548,7 +572,12 @@ class ShopeeCrawler:
                     
                     # 計算建議補貨數量
                     restock_qty = self.calculate_restock_quantity(
-                        model_sold, total_sold, monthly_sales, current_inventory, expected_months
+                        model_sold,
+                        total_sold,
+                        monthly_sales,
+                        current_inventory,
+                        expected_months,
+                        total_monthly_sales,
                     )
                     model["建議補貨數量"] = restock_qty
                     

@@ -410,6 +410,18 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 })
             return
 
+        if request_path == '/api/watchlist/exclusions':
+            try:
+                self._send_json_response(200, self._watchlist_exclusions_payload())
+            except Exception as e:
+                logger.exception("載入觀察清單排除名單失敗: %s", e)
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": "無法載入觀察清單排除名單",
+                    "productIds": [],
+                })
+            return
+
         if request_path == '/api/alibaba-restock/batches/current':
             try:
                 self._send_json_response(200, self._current_restock_batch())
@@ -1876,6 +1888,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def _watchlist_path(self):
         return Path(os.path.dirname(os.path.abspath(__file__))) / "watchlists" / "personal_watchlist.json"
 
+    def _watchlist_exclusions_path(self):
+        return Path(os.path.dirname(os.path.abspath(__file__))) / "watchlists" / "personal_watchlist_exclusions.json"
+
     def _restock_batches_root(self):
         return self._debug_snapshots_dir() / "restock_batches"
 
@@ -1884,7 +1899,18 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             self._shopee_products_path(),
             self._watchlist_path(),
             self._golden_table_path(),
+            self._watchlist_exclusions_path(),
         )
+
+    def _watchlist_exclusions_payload(self):
+        from home_bootstrap import load_watchlist_exclusion_ids
+
+        exclusion_ids = load_watchlist_exclusion_ids(self._watchlist_exclusions_path())
+        return {
+            "status": "success",
+            "count": len(exclusion_ids),
+            "productIds": exclusion_ids,
+        }
 
     def _load_restock_batch(self, run_id):
         safe_id = str(run_id or "").strip()
@@ -2695,6 +2721,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         qty = int(quantity or 0)
         if qty <= 0:
             return 0
+        # 5 是前端／爬蟲已完成判斷的零庫存最低補貨量，不可再次放大成 10。
+        if qty <= 5:
+            return 5
         return ((qty + 5) // 10) * 10
 
     def _fallback_sku_selection(self, product_id, model_name):

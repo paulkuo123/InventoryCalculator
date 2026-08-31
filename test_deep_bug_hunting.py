@@ -39,9 +39,9 @@ def test_boundary_values():
         (0, 0, "零值"),
         (-5, 0, "負數應該變為 0"),
         (999999, 1000000, "極大值"),
-        (0.5, 0, "小數點（應該先轉為整數 0）"),
-        (4.9, 0, "4.9 應該先轉為整數 4，然後 round 到 0"),
-        (5.1, 10, "5.1 應該先轉為整數 5，然後 round 到 10"),
+        (0.5, 0, "有庫存時維持原本四捨五入"),
+        (4.9, 0, "有庫存時維持原本四捨五入"),
+        (5.1, 10, "超過最低量後依 10 件單位四捨五入"),
     ]
     
     with sync_playwright() as p:
@@ -55,12 +55,13 @@ def test_boundary_values():
         for input_val, expected, desc in boundary_cases:
             result = page.evaluate(f'''
                 (function() {{
-                    function roundRestockQty(quantity) {{
+                    function roundRestockQty(quantity, currentStock) {{
                         const parsed = Number(quantity) || 0;
                         if (parsed <= 0) return 0;
+                        if (Number(currentStock) === 0 && parsed <= 5) return 5;
                         return Math.round(parsed / 10) * 10;
                     }}
-                    return roundRestockQty({input_val});
+                    return roundRestockQty({input_val}, 1);
                 }})()
             ''')
             

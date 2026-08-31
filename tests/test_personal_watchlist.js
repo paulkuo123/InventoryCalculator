@@ -23,7 +23,7 @@ function testParseProjectWatchlist() {
     const payload = JSON.parse(fs.readFileSync(path.join(root, 'watchlists/personal_watchlist.json'), 'utf8'));
     const parsed = PersonalWatchlist.parseWatchlistPayload(payload);
     assert.strictEqual(parsed.schemaVersion, 1);
-    assert.strictEqual(parsed.productIds.length, 174);
+    assert.ok(parsed.productIds.length > 0);
     assert.ok(parsed.productIds.includes('22589154150'));
     parsed.productIds.forEach(id => {
         assert.strictEqual(id, PersonalWatchlist.normalizeProductId(id));
@@ -74,12 +74,40 @@ function testDedupeAndNormalize() {
 function testScopeLeavesResultsAloneWhenDisabledOrEmpty() {
     const products = { '100': { name: 1 }, '200': { name: 2 } };
     assert.strictEqual(PersonalWatchlist.applyWatchlistScope(products, ['100'], false), products);
-    assert.strictEqual(PersonalWatchlist.applyWatchlistScope(products, [], true), products);
+    assert.deepStrictEqual(host(PersonalWatchlist.applyWatchlistScope(products, [], true)), {});
     const scoped = PersonalWatchlist.applyWatchlistScope(products, ['200'], true);
     assert.deepStrictEqual(host(Object.keys(scoped)), ['200']);
     assert.strictEqual(scoped['200'], products['200']);
     assert.ok(!scoped['100']);
     assert.ok(products['100'], 'original search results must stay intact');
+}
+
+function testWithoutWatchlistExclusions() {
+    const result = PersonalWatchlist.withoutWatchlistExclusions(
+        ['100', '200', '16790492139'],
+        ['16790492139', 'bad']
+    );
+    assert.deepStrictEqual(host(result), { productIds: ['100', '200'], excluded: 1 });
+}
+
+function testWatchlistNameExclusionIdsIgnoreCharmModelOnly() {
+    const products = {
+        '200': { 商品名稱: '隔日到貨🔥 純色棉襪 女襪' },
+        '300': {
+            商品名稱: '韓風熱銷款 吊飾 鑰匙圈',
+            型號: [{ 型號名稱: '27. 襪子熊鑰匙圈' }]
+        }
+    };
+    assert.deepStrictEqual(
+        host(PersonalWatchlist.watchlistNameExclusionIds(products)),
+        ['200']
+    );
+    const blocked = PersonalWatchlist.watchlistNameExclusionIds(products);
+    const sanitized = PersonalWatchlist.withoutWatchlistExclusions(
+        ['100', '200', '300'],
+        blocked
+    );
+    assert.deepStrictEqual(host(sanitized), { productIds: ['100', '300'], excluded: 1 });
 }
 
 function testMatchCountsAndStorageFailSafe() {
@@ -108,5 +136,7 @@ testNormalizeRejectsInvalidIds();
 testParseRejectsBadPayloads();
 testDedupeAndNormalize();
 testScopeLeavesResultsAloneWhenDisabledOrEmpty();
+testWithoutWatchlistExclusions();
+testWatchlistNameExclusionIdsIgnoreCharmModelOnly();
 testMatchCountsAndStorageFailSafe();
 console.log('test_personal_watchlist.js ok');

@@ -17,29 +17,58 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from restock_rules import resolve_restock_quantity
+from crawler import ShopeeCrawler
 
 
 class RestockQuantityConsistencyTests(unittest.TestCase):
     """測試補貨數量計算在所有程式碼路徑中保持一致。"""
     
-    def test_documented_rounding_rule_is_round_to_nearest_10(self):
-        """文件化的規則是四捨五入到最接近的 10，不是截斷。"""
+    def test_documented_rounding_rule_has_minimum_five(self):
+        """正缺口最低補 5，其餘四捨五入到最接近的 10。"""
         # 修正的四捨五入函數，可正確處理邊界情況
         # 使用 int((value + 5) / 10) * 10 確保正確四捨五入
-        def round_func(value):
+        def round_func(value, current_stock):
             if value <= 0:
                 return 0
+            if current_stock == 0 and value <= 5:
+                return 5
             return int((value + 5) / 10) * 10
         
         # 來自 restock_rules.py 測試的測試案例
-        self.assertEqual(round_func(17), 20)
-        self.assertEqual(round_func(15), 20)  # 15 四捨五入
-        self.assertEqual(round_func(14), 10)  # 14 四捨五入
-        self.assertEqual(round_func(5), 10)   # 5 四捨五入
-        self.assertEqual(round_func(4), 0)    # 4 四捨五入
-        self.assertEqual(round_func(6), 10)   # 6 四捨五入
-        self.assertEqual(round_func(23), 20)  # 23 四捨五入
-        self.assertEqual(round_func(25), 30)  # 25 四捨五入
+        self.assertEqual(round_func(17, 1), 20)
+        self.assertEqual(round_func(15, 1), 20)
+        self.assertEqual(round_func(14, 1), 10)
+        self.assertEqual(round_func(5, 0), 5)
+        self.assertEqual(round_func(4, 0), 5)
+        self.assertEqual(round_func(1, 0), 5)
+        self.assertEqual(round_func(4, 1), 0)
+        self.assertEqual(round_func(5, 1), 10)
+        self.assertEqual(round_func(6, 1), 10)
+        self.assertEqual(round_func(23, 1), 20)
+        self.assertEqual(round_func(25, 1), 30)
+
+    def test_crawler_uses_history_guard_and_minimum_five(self):
+        quantity = ShopeeCrawler.calculate_restock_quantity(
+            None,
+            product_sold=24,
+            total_sold=5300,
+            monthly_sales=1,
+            current_inventory=0,
+            expected_months=4,
+            total_monthly_sales=186,
+        )
+
+        self.assertEqual(quantity, 5)
+
+    def test_crawler_keeps_original_rounding_when_stock_is_positive(self):
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 24, 5300, 1, 1, 5, 186),
+            0,
+        )
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 24, 5300, 1, 1, 6, 186),
+            10,
+        )
     
     def test_gui_calculation_matches_documented_rule(self):
         """
@@ -56,6 +85,10 @@ class RestockQuantityConsistencyTests(unittest.TestCase):
             target_stock = round(monthly_rate * months)
             raw_suggested = max(0, target_stock - current_stock)
             # GUI 使用 roundRestockQty: Math.round(parsed / 10) * 10
+            if raw_suggested <= 0:
+                return 0
+            if current_stock == 0 and raw_suggested <= 5:
+                return 5
             return round(raw_suggested / 10) * 10
         
         # 測試案例：月銷量 5，庫存月份 4，當前庫存 3
@@ -93,7 +126,11 @@ class RestockQuantityConsistencyTests(unittest.TestCase):
             expected_inventory = monthly_sales * expected_months
             restock = expected_inventory - current_inventory
             raw_restock = max(0, restock)
-            return round(raw_restock / 10) * 10  # 應四捨五入到 10
+            if raw_restock <= 0:
+                return 0
+            if current_inventory == 0 and raw_restock <= 5:
+                return 5
+            return round(raw_restock / 10) * 10
         
         # 測試不一致性
         monthly_sales, months, stock = 5, 4, 3

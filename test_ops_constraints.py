@@ -2,7 +2,7 @@
 針對性測試：驗證營運約束
 
 測試重點：
-1. Restock rounding 規則：4→0, 5→10, 14→10, 15→20
+1. Restock rounding 規則：正缺口最低 5，其餘四捨五入到 10
 2. 手動編輯的數量不被 round
 3. inbound.html 不碰退貨功能
 4. Shopee 庫存寫入開關預設 OFF
@@ -19,14 +19,16 @@ def test_rounding_rules():
     from playwright.sync_api import sync_playwright
     
     test_cases = [
-        (4, 0, "需要 4 單位 → 跳過（0）"),
-        (5, 10, "需要 5 單位 → 補貨 10"),
-        (14, 10, "需要 14 單位 → 補貨 10"),
-        (15, 20, "需要 15 單位 → 補貨 20"),
-        (24, 20, "需要 24 單位 → 補貨 20"),
-        (25, 30, "需要 25 單位 → 補貨 30"),
-        (1, 0, "需要 1 單位 → 跳過（0）"),
-        (9, 10, "需要 9 單位 → 補貨 10"),
+        (4, 0, 5, "零庫存需要 4 單位 → 最低補貨 5"),
+        (5, 0, 5, "零庫存需要 5 單位 → 補貨 5"),
+        (4, 1, 0, "有庫存需要 4 單位 → 四捨五入為 0"),
+        (5, 1, 10, "有庫存需要 5 單位 → 四捨五入為 10"),
+        (14, 1, 10, "需要 14 單位 → 補貨 10"),
+        (15, 1, 20, "需要 15 單位 → 補貨 20"),
+        (24, 1, 20, "需要 24 單位 → 補貨 20"),
+        (25, 1, 30, "需要 25 單位 → 補貨 30"),
+        (1, 0, 5, "零庫存需要 1 單位 → 最低補貨 5"),
+        (9, 1, 10, "需要 9 單位 → 補貨 10"),
     ]
     
     bugs = []
@@ -40,17 +42,18 @@ def test_rounding_rules():
         page.wait_for_timeout(2000)
         
         print("\nJavaScript roundRestockQty 函數測試：")
-        for input_val, expected, desc in test_cases:
+        for input_val, current_stock, expected, desc in test_cases:
             # 調用 JavaScript 函數
             result = page.evaluate(f'''
                 (function() {{
                     // 模擬 roundRestockQty 邏輯
-                    function roundRestockQty(quantity) {{
+                    function roundRestockQty(quantity, currentStock) {{
                         const parsed = Number(quantity) || 0;
                         if (parsed <= 0) return 0;
+                        if (Number(currentStock) === 0 && parsed <= 5) return 5;
                         return Math.round(parsed / 10) * 10;
                     }}
-                    return roundRestockQty({input_val});
+                    return roundRestockQty({input_val}, {current_stock});
                 }})()
             ''')
             
@@ -77,20 +80,22 @@ def test_python_rounding():
     print("="*80)
     
     test_cases = [
-        (4, 0),
-        (5, 10),
-        (14, 10),
-        (15, 20),
-        (24, 20),
-        (25, 30),
+        (4, 0, 5),
+        (5, 0, 5),
+        (4, 1, 0),
+        (5, 1, 10),
+        (14, 1, 10),
+        (15, 1, 20),
+        (24, 1, 20),
+        (25, 1, 30),
     ]
     
     bugs = []
     
     print("\nPython crawler rounding（模擬）：")
-    for input_val, expected in test_cases:
+    for input_val, current_stock, expected in test_cases:
         # 模擬 crawler.py 的邏輯
-        result = int((input_val + 5) / 10) * 10
+        result = 5 if current_stock == 0 and input_val <= 5 else int((input_val + 5) / 10) * 10
         
         status = "✓" if result == expected else "✗"
         print(f"  {status} 輸入 {input_val} → 輸出 {result} (預期 {expected})")

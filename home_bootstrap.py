@@ -62,6 +62,66 @@ def parse_watchlist_payload(raw: Any) -> Dict[str, Any]:
     }
 
 
+def parse_exclusions_payload(raw: Any) -> Dict[str, Any]:
+    if raw is None or not isinstance(raw, dict) or isinstance(raw, list):
+        raise ValueError("排除清單 JSON 必須是物件，且含 productIds 陣列")
+    if int(raw.get("schemaVersion") or 0) != 1:
+        raise ValueError("排除清單 schemaVersion 必須為 1")
+    if not isinstance(raw.get("productIds"), list):
+        raise ValueError("排除清單缺少 productIds 字串陣列")
+    product_ids = unique_watchlist_ids(raw.get("productIds"))
+    return {
+        "schemaVersion": 1,
+        "productIds": product_ids,
+        "count": len(product_ids),
+    }
+
+
+def load_watchlist_exclusion_ids(exclusions_path: Path) -> List[str]:
+    if not exclusions_path.exists():
+        return []
+    try:
+        return parse_exclusions_payload(_load_json(exclusions_path))["productIds"]
+    except (OSError, json.JSONDecodeError, ValueError, TypeError):
+        return []
+
+
+def is_watchlist_excluded_product_name(name: Any) -> bool:
+    text = str(name or "")
+    return "襪" in text or "袜" in text
+
+
+def watchlist_name_exclusion_ids(products: Dict[str, Any] | None) -> List[str]:
+    ids: List[str] = []
+    for product_id, product in (products or {}).items():
+        if not isinstance(product, dict):
+            continue
+        if not is_watchlist_excluded_product_name(product.get("商品名稱")):
+            continue
+        normalized = normalize_watchlist_product_id(product_id)
+        if normalized:
+            ids.append(normalized)
+    return unique_watchlist_ids(ids)
+
+
+def merged_watchlist_exclusion_ids(
+    file_ids: List[str],
+    products: Dict[str, Any] | None = None,
+) -> List[str]:
+    return unique_watchlist_ids(list(file_ids or []) + watchlist_name_exclusion_ids(products))
+
+
+def without_watchlist_exclusions(product_ids: List[str], exclusion_ids: List[str]) -> Dict[str, Any]:
+    blocked = set(unique_watchlist_ids(exclusion_ids))
+    if not blocked:
+        return {"productIds": list(product_ids), "excluded": 0}
+    filtered = [product_id for product_id in product_ids if product_id not in blocked]
+    return {
+        "productIds": filtered,
+        "excluded": max(len(product_ids) - len(filtered), 0),
+    }
+
+
 def file_mtime_iso(path: Path) -> str:
     return datetime.fromtimestamp(path.stat().st_mtime).isoformat(timespec="seconds")
 
@@ -114,6 +174,7 @@ def load_home_bootstrap(
     products_path: Path,
     watchlist_path: Path,
     golden_path: Path,
+    exclusions_path: Path | None = None,
 ) -> Dict[str, Any]:
     """Return homepage data or a structured error. Never writes product files."""
     result: Dict[str, Any] = {
@@ -211,6 +272,27 @@ def load_home_bootstrap(
         result["watchlistInfo"]["error"] = "unreadable"
         return result
 
+    resolved_exclusions_path = exclusions_path
+    if resolved_exclusions_path is None:
+        resolved_exclusions_path = watchlist_path.parent / "personal_watchlist_exclusions.json"
+    exclusion_ids = merged_watchlist_exclusion_ids(
+        load_watchlist_exclusion_ids(resolved_exclusions_path),
+        products,
+    )
+    exclusion_result = without_watchlist_exclusions(watchlist["productIds"], exclusion_ids)
+    watchlist["productIds"] = exclusion_result["productIds"]
+    if not watchlist["productIds"]:
+        result["status"] = "partial"
+        result["message"] = "觀察清單在套用永久排除後沒有有效商品，批次補貨已停用"
+        result["watchlistInfo"]["error"] = "empty_after_exclusions"
+        result["watchlistExclusions"] = {
+            "ok": bool(exclusion_ids),
+            "count": len(exclusion_ids),
+            "productIds": exclusion_ids,
+            "removedFromWatchlist": exclusion_result["excluded"],
+        }
+        return result
+
     counts = watchlist_match_counts(products, watchlist["productIds"])
     result["status"] = "success"
     result["message"] = (
@@ -220,6 +302,12 @@ def load_home_bootstrap(
     result["batchRestockEnabled"] = True
     result["watchlist"] = watchlist
     result["watchlistCounts"] = counts
+    result["watchlistExclusions"] = {
+        "ok": bool(exclusion_ids),
+        "count": len(exclusion_ids),
+        "productIds": exclusion_ids,
+        "removedFromWatchlist": exclusion_result["excluded"],
+    }
     result["watchlistInfo"] = {
         "ok": True,
         "path": str(watchlist_path),
