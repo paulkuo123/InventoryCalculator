@@ -977,7 +977,7 @@ class AlibabaRestockerTests(unittest.TestCase):
             alibaba_restocker,
             "wait_for_cart_feedback",
             return_value={"status": "success", "message": "已加入采购车"},
-        ):
+        ), patch.object(alibaba_restocker, "recover_offer_page_before_submit", return_value=None):
             result = alibaba_restocker.add_to_cart_with_retry(page, cart_items(), debug)
 
         self.assertEqual(click.call_count, 1)
@@ -985,6 +985,35 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(result["mode"], "single_submit_for_product_page")
         self.assertEqual(result["itemCount"], 2)
         self.assertEqual(result["quantityTotal"], 50)
+
+    def test_selected_count_mismatch_stops_before_cart_click(self):
+        page = FakePage()
+        debug = FakeDebug()
+        with patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            return_value={"skuCount": 1, "quantity": 30},
+        ), patch.object(
+            alibaba_restocker,
+            "click_add_to_cart",
+            return_value={"ok": True},
+        ) as click, patch.object(
+            alibaba_restocker,
+            "wait_for_cart_feedback",
+        ) as feedback, patch.object(
+            alibaba_restocker,
+            "recover_offer_page_before_submit",
+            return_value=None,
+        ):
+            result = alibaba_restocker.add_to_cart_with_retry(
+                page, cart_items(), debug
+            )
+
+        click.assert_not_called()
+        feedback.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "selection_mismatch")
+        self.assertIn("未按加採購車", result["message"])
 
     def test_retry_refills_the_whole_batch_before_second_click(self):
         page = FakePage()
@@ -1006,7 +1035,7 @@ class AlibabaRestockerTests(unittest.TestCase):
             ],
         ), patch.object(alibaba_restocker, "refill_cart_items", return_value=refill_result) as refill, patch.object(
             alibaba_restocker, "dismiss_cart_feedback", return_value={"ok": True}
-        ):
+        ), patch.object(alibaba_restocker, "recover_offer_page_before_submit", return_value=None):
             result = alibaba_restocker.add_to_cart_with_retry(page, cart_items(), debug)
 
         self.assertEqual(click.call_count, 2)
@@ -1024,7 +1053,9 @@ class AlibabaRestockerTests(unittest.TestCase):
                 "reason": "cart_limit_reached",
                 "message": "采购车中的商品种类已达上限",
             },
-        ), patch.object(alibaba_restocker, "refill_cart_items") as refill:
+        ), patch.object(alibaba_restocker, "refill_cart_items") as refill, patch.object(
+            alibaba_restocker, "recover_offer_page_before_submit", return_value=None
+        ):
             result = alibaba_restocker.add_to_cart_with_retry(page, cart_items(), debug)
 
         self.assertEqual(click.call_count, 1)
@@ -1379,7 +1410,11 @@ class AlibabaRestockerTests(unittest.TestCase):
             alibaba_restocker,
             "fill_sku_quantities_on_page",
             return_value=[{"status": "filled"}],
-        ) as row_fill:
+        ) as row_fill, patch.object(
+            alibaba_restocker,
+            "recover_offer_page_before_submit",
+            return_value=None,
+        ):
             result = alibaba_restocker.add_to_cart_with_retry(page, items, debug)
 
         self.assertEqual(result["status"], "success")
