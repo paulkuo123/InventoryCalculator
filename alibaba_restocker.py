@@ -2030,6 +2030,14 @@ def refill_cart_items(
     return refill_results
 
 
+def group_submission_failures(item_results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """A product page is safe to submit only when every requested SKU was filled."""
+    return [
+        item for item in item_results
+        if str(item.get("status") or "") != "filled"
+    ]
+
+
 def add_to_cart_with_retry(
     page,
     cart_items: List[Dict[str, Any]],
@@ -2072,6 +2080,30 @@ def add_to_cart_with_retry(
                 })
                 break
             page.wait_for_timeout(AFTER_FILL_WAIT_MS)
+
+        selected_summary = read_page_selection_summary(page)
+        debug.log("pre_submit_selected_summary", {
+            "modelNames": model_names,
+            "expectedItemCount": len(cart_items),
+            "expectedQuantityTotal": quantity_total,
+            "attempt": attempt,
+            "selectedSummary": selected_summary,
+        })
+        if selection_summary_mismatch(
+            selected_summary,
+            len(cart_items),
+            quantity_total,
+        ):
+            attempts.append({
+                "attempt": attempt,
+                "selectionSummary": selected_summary,
+                "feedback": {
+                    "status": "selection_mismatch",
+                    "message": "1688 頁面顯示的已選型號／數量與本次補貨不一致，未按加採購車",
+                },
+            })
+            final_status = "selection_mismatch"
+            break
 
         click_result = click_add_to_cart(page)
         debug.log("clicked_add_to_cart", {
@@ -2138,6 +2170,10 @@ def add_to_cart_with_retry(
     return {
         "ok": final_status in ("success", "clicked_unverified"),
         "status": final_status,
+        "message": (
+            "1688 頁面顯示的已選型號／數量與本次補貨不一致，未按加採購車"
+            if final_status == "selection_mismatch" else ""
+        ),
         "mode": "single_submit_for_product_page",
         "itemCount": len(cart_items),
         "modelNames": model_names,
@@ -2471,7 +2507,25 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                         })
                     group_result["items"].append(item_result)
 
-            if add_to_cart and cart_items:
+            group_failures = group_submission_failures(group_result["items"])
+            if add_to_cart and group_failures:
+                failed_names = [
+                    str(item.get("modelName") or "未命名型號")
+                    for item in group_failures
+                ]
+                debug.log("group_cart_submit_blocked_incomplete", {
+                    "url": url,
+                    "requestedItemCount": len(pending_fills),
+                    "filledItemCount": len(cart_items),
+                    "failedModelNames": failed_names,
+                    "reason": "同一商品頁必須全部型號填入成功才會按加採購車",
+                })
+                print(
+                    f"未按加采购车：{len(group_failures)} 個型號未成功（{'、'.join(failed_names)}）；"
+                    "為避免漏補，該商品整組未送出。",
+                    flush=True,
+                )
+            elif add_to_cart and cart_items:
                 debug.log("wait_after_all_skus_before_single_cart_submit", {
                     "url": url,
                     "modelNames": [entry["modelName"] for entry in cart_items],
@@ -2511,6 +2565,12 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 elif add_status == "clicked_unverified":
                     unverified_cart_items.extend(cart_items)
                     print(f"已按一次加采购车：{len(cart_items)} 個規格", flush=True)
+                elif add_status == "selection_mismatch":
+                    selection_mismatch_items.extend(cart_items)
+                    print(
+                        f"未按加采购车：1688 頁面顯示的已選型號／數量與本次 {len(cart_items)} 個規格不一致。",
+                        flush=True,
+                    )
                 elif add_status == "cart_full":
                     stopped_reason = "cart_limit_reached"
                     cart_limit_items.extend(cart_items)

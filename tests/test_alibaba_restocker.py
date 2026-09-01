@@ -977,6 +977,40 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(result["itemCount"], 2)
         self.assertEqual(result["quantityTotal"], 50)
 
+    def test_selected_count_mismatch_stops_before_cart_click(self):
+        page = FakePage()
+        debug = FakeDebug()
+        with patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            return_value={"skuCount": 1, "quantity": 30},
+        ), patch.object(
+            alibaba_restocker,
+            "click_add_to_cart",
+            return_value={"ok": True},
+        ) as click, patch.object(
+            alibaba_restocker,
+            "wait_for_cart_feedback",
+        ) as feedback:
+            result = alibaba_restocker.add_to_cart_with_retry(
+                page, cart_items(), debug
+            )
+
+        click.assert_not_called()
+        feedback.assert_not_called()
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "selection_mismatch")
+        self.assertIn("未按加採購車", result["message"])
+
+    def test_group_submission_requires_every_requested_sku_to_be_filled(self):
+        failures = alibaba_restocker.group_submission_failures([
+            {"status": "filled", "modelName": "黑色"},
+            {"status": "not_found", "modelName": "白色"},
+        ])
+
+        self.assertEqual(len(failures), 1)
+        self.assertEqual(failures[0]["modelName"], "白色")
+
     def test_retry_refills_the_whole_batch_before_second_click(self):
         page = FakePage()
         debug = FakeDebug()
