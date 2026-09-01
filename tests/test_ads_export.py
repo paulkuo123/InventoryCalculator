@@ -1,7 +1,7 @@
 import unittest
 from datetime import date
 from tempfile import TemporaryDirectory
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
 
 from ads_analysis import AdsAnalyzer
@@ -141,6 +141,30 @@ class AdsExportTests(unittest.TestCase):
             results = self.crawler._export_ads_ranges(configs, ["one", "two", "three"])
 
         self.assertEqual([item["status"] for item in results], ["error", "error", "skipped"])
+
+    def test_latest_reports_panel_accepts_visible_report_rows(self):
+        self.crawler.page = MagicMock()
+        self.crawler._locator_is_visible = MagicMock(side_effect=[False, False, True])
+
+        self.assertTrue(self.crawler._ads_latest_reports_panel_is_visible())
+        self.assertEqual(self.crawler._locator_is_visible.call_count, 3)
+
+    def test_latest_reports_panel_retries_after_blocking_popup(self):
+        self.crawler.page = MagicMock()
+        self.crawler._ads_log = MagicMock()
+        self.crawler._dismiss_ads_blocking_modals = MagicMock(return_value=1)
+        self.crawler._ads_latest_reports_panel_is_visible = MagicMock(
+            side_effect=[False, False, False]
+        )
+        self.crawler._click_first_visible_locator = MagicMock(side_effect=[True, True])
+        self.crawler._wait_for_ads_latest_reports_panel = MagicMock(side_effect=[False, True])
+        self.crawler._capture_debug_snapshot = MagicMock()
+        self.crawler._capture_debug_html = MagicMock()
+
+        self.assertTrue(self.crawler._open_ads_latest_reports_panel())
+        self.assertEqual(self.crawler._click_first_visible_locator.call_count, 2)
+        self.assertGreaterEqual(self.crawler._dismiss_ads_blocking_modals.call_count, 3)
+        self.crawler._capture_debug_snapshot.assert_not_called()
 
 
 if __name__ == "__main__":

@@ -440,7 +440,7 @@ class ShopeeCrawler:
     def calculate_restock_quantity(self, product_sold, total_sold, monthly_sales, current_inventory, expected_months=4):
         """
         計算建議補貨數量
-        
+
         根據 restock_rules.py 文件化的規則：
         - 計算預期庫存 = 月銷量 × 期望月數
         - 建議補貨 = 預期庫存 - 當前庫存
@@ -474,7 +474,7 @@ class ShopeeCrawler:
 
             # 如果補貨數量為負數或零，表示不需要補貨
             raw_restock = max(0, restock)
-            
+
             # 以 10 為單位四捨五入（與 GUI script.js roundRestockQty 一致）
             # 使用 int() 加 0.5 來確保正確的四捨五入，避免 Python banker's rounding
             return int((raw_restock + 5) / 10) * 10
@@ -1014,6 +1014,63 @@ class ShopeeCrawler:
             self.page.get_by_text(re.compile(r"^\s*匯出數據\s*$")),
         ]
 
+    def _dismiss_ads_blocking_modals(self, max_rounds=3):
+        """關閉廣告頁會擋住匯出按鈕的蝦皮行銷彈窗。"""
+        closed_count = 0
+        for _ in range(max_rounds):
+            closed_this_round = False
+            masks = self.page.locator(".eds-modal__mask")
+            try:
+                mask_count = masks.count()
+            except Exception:
+                mask_count = 0
+
+            for index in range(mask_count):
+                mask = masks.nth(index)
+                try:
+                    if not mask.is_visible():
+                        continue
+                except Exception:
+                    continue
+
+                close_locators = [
+                    mask.locator(".eds-modal__close"),
+                    mask.get_by_role("button", name=re.compile(r"^(稍後再試|稍後再說|關閉|取消)$")),
+                    mask.get_by_text(re.compile(r"^(稍後再試|稍後再說|關閉|取消)$")),
+                ]
+                if self._click_first_visible_locator(
+                    close_locators,
+                    "廣告頁彈窗關閉按鈕",
+                    timeout=2500,
+                ):
+                    closed_count += 1
+                    closed_this_round = True
+                    time.sleep(0.5)
+                    break
+
+            if not closed_this_round:
+                break
+
+        if closed_count:
+            self._ads_log("POPUP", f"已關閉 {closed_count} 個擋住廣告匯出的彈窗")
+        return closed_count
+
+    def _ads_latest_reports_panel_is_visible(self):
+        panel_locators = [
+            self.page.get_by_text(re.compile(r"^\s*最新報表\s*$")),
+            self.page.locator(".export-button-popover .export-container"),
+            self.page.locator('[data-testid="export-data-result-item"]'),
+        ]
+        return any(self._locator_is_visible(locator) for locator in panel_locators)
+
+    def _wait_for_ads_latest_reports_panel(self, timeout=5):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self._ads_latest_reports_panel_is_visible():
+                return True
+            time.sleep(0.25)
+        return self._ads_latest_reports_panel_is_visible()
+
     def _navigate_to_ads_range_page(self, range_config):
         target_url = self._build_ads_range_url(range_config)
         self._ads_log("RANGE", f"正在直接進入 {range_config['label']} 報表頁：{target_url}", range_config["label"])
@@ -1052,6 +1109,7 @@ class ShopeeCrawler:
 
             if ready:
                 time.sleep(2)
+                self._dismiss_ads_blocking_modals()
                 self._ads_log("RANGE", f"已透過 URL 進入 {range_config['label']} 報表頁", range_config["label"])
                 return True
 
@@ -1406,6 +1464,7 @@ class ShopeeCrawler:
         raise RuntimeError(f"ADS_DATE_OPTION_NOT_FOUND: 找不到「{range_label}」選項")
 
     def _open_ads_export_dropdown(self):
+        self._dismiss_ads_blocking_modals()
         if self._click_first_visible_locator(self._ads_export_trigger_locators(), "匯出數據按鈕", timeout=8000):
             time.sleep(1)
             return True
@@ -1422,22 +1481,27 @@ class ShopeeCrawler:
         return False
 
     def _open_ads_latest_reports_panel(self):
-        panel_heading = self.page.get_by_text(re.compile(r"最新報表"))
-        if self._locator_is_visible(panel_heading):
+        if self._ads_latest_reports_panel_is_visible():
             return True
 
         self._ads_log("PANEL", "正在打開最新報表面板")
-        trigger = self.page.locator('[data-testid="export-data-result-trigger"]')
-        opened = self._click_first_visible_locator([trigger], "最新報表按鈕", timeout=8000)
-        if not opened:
-            return False
+        for attempt in range(1, 3):
+            self._dismiss_ads_blocking_modals()
+            if self._ads_latest_reports_panel_is_visible():
+                return True
 
-        try:
-            panel_heading.first.wait_for(state="visible", timeout=8000)
-        except Exception:
-            pass
-        time.sleep(1)
-        return self._locator_is_visible(panel_heading)
+            trigger = self.page.locator('[data-testid="export-data-result-trigger"]')
+            opened = self._click_first_visible_locator([trigger], "最新報表按鈕", timeout=8000)
+            if opened and self._wait_for_ads_latest_reports_panel(timeout=5):
+                return True
+
+            if attempt == 1:
+                self._ads_log("PANEL", "最新報表未展開，關閉可能延遲出現的彈窗後重試")
+                self._dismiss_ads_blocking_modals()
+
+        self._capture_debug_snapshot("ads_latest_reports_panel_not_found")
+        self._capture_debug_html("ads_latest_reports_panel_not_found")
+        return False
 
     def _escape_js(self, text):
         return json.dumps(text, ensure_ascii=False)

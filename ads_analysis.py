@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from io import BytesIO
 from dataclasses import dataclass
 from datetime import datetime
@@ -39,6 +40,8 @@ OPENAI_MODEL_IDS = {item["id"] for item in OPENAI_MODEL_OPTIONS}
 OPENAI_REASONING_EFFORTS = ["medium", "high", "xhigh", "max"]
 DEFAULT_OPENAI_MODEL = "gpt-5.6-sol"
 DEFAULT_OPENAI_REASONING_EFFORT = "xhigh"
+OPENAI_BACKGROUND_POLL_INTERVAL_SECONDS = 5
+OPENAI_BACKGROUND_MAX_WAIT_SECONDS = 5000
 
 
 OPENAI_ANALYSIS_SCHEMA = {
@@ -377,6 +380,10 @@ class AdsAnalyzer:
         )
         self.openai_model = validate_openai_model(openai_model or configured_model)
         self.reasoning_effort = validate_reasoning_effort(reasoning_effort or configured_effort)
+        self.openai_response_cache_path = os.path.join(
+            os.path.dirname(os.path.abspath(self.output_path)),
+            ".ads_openai_response_cache.json",
+        )
         self.openai_runtime: Dict[str, Any] = {
             "enabled": self.include_ai,
             "source": "pending" if self.include_ai else "rules",
@@ -384,6 +391,8 @@ class AdsAnalyzer:
             "reasoning_effort": self.reasoning_effort if self.include_ai else "",
             "api_latency_seconds": 0.0,
             "request_id": "",
+            "client_request_id": "",
+            "response_id": "",
             "response_model": "",
             "usage": {},
             "attempts": 0,
@@ -1527,7 +1536,8 @@ class AdsAnalyzer:
                 },
             },
             "max_output_tokens": 30000,
-            "store": False,
+            "background": True,
+            "store": True,
         }
         store_id = str(payload.get("store", {}).get("store_id", "")).strip()
         if store_id:
@@ -1616,6 +1626,214 @@ class AdsAnalyzer:
             )
         return errors
 
+    def _openai_request_hash(self, request_payload: Dict[str, Any]) -> str:
+        canonical = json.dumps(
+            request_payload,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    def _load_openai_response_cache(self) -> Dict[str, Any]:
+        if not os.path.exists(self.openai_response_cache_path):
+            return {"version": 1, "jobs": {}}
+        try:
+            with open(self.openai_response_cache_path, "r", encoding="utf-8") as f:
+                cache = json.load(f)
+        except Exception as e:
+            raise RuntimeError(
+                "OPENAI_RESPONSE_CACHE_INVALID: AI 任務快取無法讀取；"
+                "為避免重複送出並再次計費，已停止建立新任務。"
+            ) from e
+        if not isinstance(cache, dict) or not isinstance(cache.get("jobs", {}), dict):
+            raise RuntimeError(
+                "OPENAI_RESPONSE_CACHE_INVALID: AI 任務快取格式錯誤；"
+                "為避免重複計費，已停止建立新任務。"
+            )
+        cache.setdefault("version", 1)
+        cache.setdefault("jobs", {})
+        return cache
+
+    def _write_openai_response_cache(self, cache: Dict[str, Any]) -> None:
+        target_dir = os.path.dirname(self.openai_response_cache_path)
+        os.makedirs(target_dir, exist_ok=True)
+        temp_path = f"{self.openai_response_cache_path}.tmp-{os.getpid()}"
+        with open(temp_path, "w", encoding="utf-8") as f:
+            json.dump(cache, f, ensure_ascii=False, indent=2)
+        os.replace(temp_path, self.openai_response_cache_path)
+
+    def _save_openai_job(
+        self,
+        cache: Dict[str, Any],
+        request_hash: str,
+        job: Dict[str, Any],
+    ) -> None:
+        job["updated_at"] = datetime.now().isoformat(timespec="seconds")
+        cache.setdefault("jobs", {})[request_hash] = job
+        self._write_openai_response_cache(cache)
+
+    def _apply_openai_job_runtime(self, job: Dict[str, Any]) -> None:
+        self.openai_runtime["client_request_id"] = str(job.get("client_request_id", ""))
+        self.openai_runtime["response_id"] = str(job.get("response_id", ""))
+        if job.get("http_request_id"):
+            self.openai_runtime["request_id"] = str(job["http_request_id"])
+
+    def _execute_openai_background_request(
+        self,
+        request_payload: Dict[str, Any],
+        api_key: str,
+        deadline: float,
+    ) -> Dict[str, Any]:
+        """建立一次背景 Response，或從本機 Response ID 接續同一筆任務。"""
+        request_hash = self._openai_request_hash(request_payload)
+        cache = self._load_openai_response_cache()
+        job = cache["jobs"].get(request_hash)
+        data: Dict[str, Any]
+
+        if isinstance(job, dict):
+            self._apply_openai_job_runtime(job)
+            cached_data = job.get("response_data")
+            if isinstance(cached_data, dict) and cached_data.get("status") not in {"queued", "in_progress"}:
+                self._log(
+                    "AI",
+                    f"重用已保存的 OpenAI 結果：{job.get('response_id') or job.get('client_request_id')}",
+                )
+                return cached_data
+            response_id = str(job.get("response_id", "")).strip()
+            if not response_id:
+                raise RuntimeError(
+                    "OPENAI_SUBMISSION_UNCERTAIN: 先前送出 AI 任務時連線中斷，"
+                    f"追蹤碼為 {job.get('client_request_id', '未知')}。"
+                    "為避免再次計費，程式不會自動重送。"
+                )
+            self._log("AI", f"接續等待既有 OpenAI 任務：{response_id}")
+            data = cached_data if isinstance(cached_data, dict) else {
+                "id": response_id,
+                "status": job.get("status", "in_progress"),
+            }
+        else:
+            client_request_id = str(uuid.uuid4())
+            job = {
+                "request_hash": request_hash,
+                "client_request_id": client_request_id,
+                "response_id": "",
+                "http_request_id": "",
+                "status": "submitting",
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "response_data": None,
+            }
+            self._save_openai_job(cache, request_hash, job)
+            self._apply_openai_job_runtime(job)
+            self._log("AI", f"已建立背景分析追蹤碼：{client_request_id}")
+            try:
+                response = requests.post(
+                    "https://api.openai.com/v1/responses",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                        "X-Client-Request-Id": client_request_id,
+                    },
+                    json=request_payload,
+                    timeout=(15, 120),
+                )
+                response.raise_for_status()
+                data = response.json()
+            except requests.HTTPError as e:
+                status_code = getattr(getattr(e, "response", None), "status_code", 0) or 0
+                if 400 <= status_code < 500:
+                    cache["jobs"].pop(request_hash, None)
+                    self._write_openai_response_cache(cache)
+                    raise RuntimeError(f"OPENAI_REQUEST_REJECTED: OpenAI 拒絕請求（HTTP {status_code}）") from e
+                job["status"] = "submission_uncertain"
+                job["last_error"] = str(e)
+                self._save_openai_job(cache, request_hash, job)
+                raise RuntimeError(
+                    "OPENAI_SUBMISSION_UNCERTAIN: 建立背景 AI 任務時伺服器回應不確定；"
+                    f"追蹤碼為 {client_request_id}。為避免重複計費，程式不會自動重送。"
+                ) from e
+            except requests.RequestException as e:
+                job["status"] = "submission_uncertain"
+                job["last_error"] = str(e)
+                self._save_openai_job(cache, request_hash, job)
+                raise RuntimeError(
+                    "OPENAI_SUBMISSION_UNCERTAIN: 建立背景 AI 任務時連線中斷；"
+                    f"追蹤碼為 {client_request_id}。為避免重複計費，程式不會自動重送。"
+                ) from e
+
+            response_id = str(data.get("id", "")).strip()
+            status = str(data.get("status", "")).strip()
+            job.update({
+                "response_id": response_id,
+                "http_request_id": response.headers.get("x-request-id", ""),
+                "status": status or "unknown",
+                "response_data": data,
+            })
+            self._save_openai_job(cache, request_hash, job)
+            self._apply_openai_job_runtime(job)
+            if not response_id and status in {"queued", "in_progress"}:
+                raise RuntimeError(
+                    "OPENAI_RESPONSE_ID_MISSING: 背景任務已開始但沒有 Response ID；"
+                    f"追蹤碼為 {client_request_id}，程式不會自動重送。"
+                )
+            if response_id:
+                self._log("AI", f"OpenAI 背景任務已接受：{response_id}")
+
+        response_id = str(data.get("id") or job.get("response_id", "")).strip()
+        if response_id and not re.fullmatch(r"resp_[A-Za-z0-9_-]+", response_id):
+            raise RuntimeError("OPENAI_RESPONSE_ID_INVALID: OpenAI 回傳的 Response ID 格式不正確")
+
+        poll_count = 0
+        last_status = ""
+        while str(data.get("status", "")) in {"queued", "in_progress"}:
+            status = str(data.get("status", ""))
+            poll_count += 1
+            if status != last_status or poll_count % 6 == 0:
+                self._log("AI", f"背景分析狀態：{status}（{response_id}）")
+                last_status = status
+            if time.monotonic() >= deadline:
+                raise RuntimeError(
+                    "OPENAI_BACKGROUND_PENDING: AI 仍在背景執行，"
+                    f"Response ID 為 {response_id}。下次執行會接續此任務，不會重新計費。"
+                )
+            time.sleep(OPENAI_BACKGROUND_POLL_INTERVAL_SECONDS)
+            try:
+                poll_response = requests.get(
+                    f"https://api.openai.com/v1/responses/{response_id}",
+                    headers={
+                        "Authorization": f"Bearer {api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    timeout=(15, 60),
+                )
+                poll_response.raise_for_status()
+                data = poll_response.json()
+                if poll_response.headers.get("x-request-id"):
+                    job["http_request_id"] = poll_response.headers["x-request-id"]
+            except requests.RequestException as e:
+                job["last_error"] = str(e)
+                self._save_openai_job(cache, request_hash, job)
+                if poll_count % 6 == 0:
+                    self._log("AI", f"輪詢暫時失敗，將繼續查詢同一筆任務：{e}")
+                continue
+
+            job.update({
+                "response_id": str(data.get("id") or response_id),
+                "status": str(data.get("status", "unknown")),
+                "response_data": data,
+            })
+            self._save_openai_job(cache, request_hash, job)
+            self._apply_openai_job_runtime(job)
+
+        job.update({
+            "response_id": str(data.get("id") or response_id),
+            "status": str(data.get("status", "unknown")),
+            "response_data": data,
+        })
+        self._save_openai_job(cache, request_hash, job)
+        self._apply_openai_job_runtime(job)
+        return data
+
     def _call_openai(self, payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not self.include_ai:
             self.openai_runtime["source"] = "rules"
@@ -1638,26 +1856,20 @@ class AdsAnalyzer:
 
         response_payload = self._build_openai_request(payload)
         started_at = time.monotonic()
+        deadline = started_at + OPENAI_BACKGROUND_MAX_WAIT_SECONDS
         try:
             attempt_usage: List[Dict[str, Any]] = []
             for attempt in (1, 2):
-                response = requests.post(
-                    "https://api.openai.com/v1/responses",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json=response_payload,
-                    timeout=300,
+                data = self._execute_openai_background_request(
+                    response_payload,
+                    api_key,
+                    deadline,
                 )
-                response.raise_for_status()
-                data = response.json()
                 usage = data.get("usage", {}) if isinstance(data.get("usage"), dict) else {}
                 attempt_usage.append(usage)
                 self.openai_runtime.update({
                     "source": "openai",
                     "api_latency_seconds": round(time.monotonic() - started_at, 2),
-                    "request_id": response.headers.get("x-request-id", ""),
                     "response_model": str(data.get("model", "")),
                     "usage": usage,
                     "attempt_usage": attempt_usage,
@@ -1666,6 +1878,13 @@ class AdsAnalyzer:
                 if data.get("status") == "incomplete":
                     reason = data.get("incomplete_details", {}).get("reason", "unknown")
                     raise RuntimeError(f"OPENAI_INCOMPLETE_RESPONSE: {reason}")
+                if data.get("status") != "completed":
+                    response_error = data.get("error") or {}
+                    raise RuntimeError(
+                        f"OPENAI_BACKGROUND_{str(data.get('status', 'unknown')).upper()}: "
+                        f"{response_error or '背景分析未成功完成'}；"
+                        f"Response ID: {data.get('id') or self.openai_runtime.get('response_id')}"
+                    )
                 output_text = self._extract_openai_output_text(data)
                 if not output_text:
                     raise RuntimeError("OPENAI_EMPTY_RESPONSE: API 沒有回傳分析內容")

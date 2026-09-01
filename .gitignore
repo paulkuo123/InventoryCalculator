@@ -48,3 +48,4 @@ shopee_chrome_profile/
 golden_table.json.bak
 golden_table.json.backup*
 CODEX_HANDOFF.md
+.ads_openai_response_cache.json
