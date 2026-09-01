@@ -3,6 +3,8 @@ import unittest
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+import requests
+
 from ads_analysis import (
     AdsAnalyzer,
     DEFAULT_OPENAI_MODEL,
@@ -100,7 +102,8 @@ class AdsOpenAITests(unittest.TestCase):
         self.assertEqual(request["reasoning"], {"effort": "xhigh"})
         self.assertEqual(request["text"]["format"]["type"], "json_schema")
         self.assertTrue(request["text"]["format"]["strict"])
-        self.assertFalse(request["store"])
+        self.assertTrue(request["background"])
+        self.assertTrue(request["store"])
         self.assertNotEqual(request["safety_identifier"], "shop-123")
 
     def test_missing_api_key_does_not_silently_fall_back(self):
@@ -129,6 +132,7 @@ class AdsOpenAITests(unittest.TestCase):
             "must_review_products": [{"product_id": "p1"}],
         }
         response_body = {
+            "id": "resp_completed_1",
             "status": "completed",
             "model": "gpt-5.6-sol-2026-07-01",
             "output_text": json.dumps(valid_analysis(), ensure_ascii=False),
@@ -145,9 +149,12 @@ class AdsOpenAITests(unittest.TestCase):
         self.assertEqual(analyzer.openai_runtime["source"], "openai")
         self.assertEqual(analyzer.openai_runtime["response_model"], "gpt-5.6-sol-2026-07-01")
         self.assertEqual(analyzer.openai_runtime["request_id"], "req_test")
+        self.assertEqual(analyzer.openai_runtime["response_id"], "resp_completed_1")
         self.assertEqual(analyzer.openai_runtime["attempts"], 1)
         sent_request = post.call_args.kwargs["json"]
         self.assertEqual(sent_request["model"], "gpt-5.6-sol")
+        self.assertTrue(sent_request["background"])
+        self.assertIn("X-Client-Request-Id", post.call_args.kwargs["headers"])
 
     def test_logical_validation_retries_once(self):
         payload = {
@@ -156,11 +163,13 @@ class AdsOpenAITests(unittest.TestCase):
             "must_review_products": [{"product_id": "p1"}],
         }
         invalid = {
+            "id": "resp_invalid_1",
             "status": "completed",
             "model": "gpt-5.6-sol",
             "output_text": json.dumps(valid_analysis(reviewed_product_count=0), ensure_ascii=False),
         }
         corrected = {
+            "id": "resp_corrected_1",
             "status": "completed",
             "model": "gpt-5.6-sol",
             "output_text": json.dumps(valid_analysis(), ensure_ascii=False),
@@ -178,6 +187,101 @@ class AdsOpenAITests(unittest.TestCase):
         self.assertEqual(analyzer.openai_runtime["attempts"], 2)
         second_request = post.call_args_list[1].kwargs["json"]
         self.assertIn("validation_errors", second_request["input"][-1]["content"])
+
+    def test_background_response_polls_same_response_until_completed(self):
+        payload = {
+            "store": {},
+            "candidate_products": [{"product_id": "p1"}],
+            "must_review_products": [{"product_id": "p1"}],
+        }
+        queued = {
+            "id": "resp_background_1",
+            "status": "queued",
+            "model": "gpt-5.6-sol",
+        }
+        in_progress = {
+            "id": "resp_background_1",
+            "status": "in_progress",
+            "model": "gpt-5.6-sol",
+        }
+        completed = {
+            "id": "resp_background_1",
+            "status": "completed",
+            "model": "gpt-5.6-sol",
+            "output_text": json.dumps(valid_analysis(), ensure_ascii=False),
+            "usage": {"input_tokens": 1200, "output_tokens": 800},
+        }
+        with TemporaryDirectory() as temp_dir:
+            analyzer = self.build_analyzer(temp_dir)
+            with patch("ads_analysis.load_openai_api_key", return_value=("sk-test", "env")), patch(
+                "ads_analysis.requests.post", return_value=FakeResponse(queued)
+            ) as post, patch(
+                "ads_analysis.requests.get",
+                side_effect=[
+                    requests.ReadTimeout("temporary poll timeout"),
+                    FakeResponse(in_progress),
+                    FakeResponse(completed),
+                ],
+            ) as get, patch("ads_analysis.time.sleep", return_value=None):
+                result = analyzer._call_openai(payload)
+
+        self.assertEqual(result["reviewed_product_count"], 1)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(get.call_count, 3)
+        for call in get.call_args_list:
+            self.assertTrue(call.args[0].endswith("/responses/resp_background_1"))
+
+    def test_completed_response_cache_prevents_second_paid_request(self):
+        payload = {
+            "store": {},
+            "candidate_products": [{"product_id": "p1"}],
+            "must_review_products": [{"product_id": "p1"}],
+        }
+        completed = {
+            "id": "resp_cached_1",
+            "status": "completed",
+            "model": "gpt-5.6-sol",
+            "output_text": json.dumps(valid_analysis(), ensure_ascii=False),
+            "usage": {"input_tokens": 1200, "output_tokens": 800},
+        }
+        with TemporaryDirectory() as temp_dir:
+            first = self.build_analyzer(temp_dir)
+            with patch("ads_analysis.load_openai_api_key", return_value=("sk-test", "env")), patch(
+                "ads_analysis.requests.post", return_value=FakeResponse(completed)
+            ) as first_post:
+                first_result = first._call_openai(payload)
+
+            second = self.build_analyzer(temp_dir)
+            with patch("ads_analysis.load_openai_api_key", return_value=("sk-test", "env")), patch(
+                "ads_analysis.requests.post"
+            ) as second_post, patch("ads_analysis.requests.get") as second_get:
+                second_result = second._call_openai(payload)
+
+        self.assertEqual(first_result, second_result)
+        self.assertEqual(first_post.call_count, 1)
+        second_post.assert_not_called()
+        second_get.assert_not_called()
+
+    def test_uncertain_submission_is_not_automatically_resent(self):
+        payload = {"store": {}, "candidate_products": [], "must_review_products": []}
+        with TemporaryDirectory() as temp_dir:
+            first = self.build_analyzer(temp_dir)
+            with patch("ads_analysis.load_openai_api_key", return_value=("sk-test", "env")), patch(
+                "ads_analysis.requests.post",
+                side_effect=requests.ReadTimeout("create timed out"),
+            ) as first_post:
+                with self.assertRaisesRegex(RuntimeError, "OPENAI_SUBMISSION_UNCERTAIN"):
+                    first._call_openai(payload)
+
+            second = self.build_analyzer(temp_dir)
+            with patch("ads_analysis.load_openai_api_key", return_value=("sk-test", "env")), patch(
+                "ads_analysis.requests.post"
+            ) as second_post:
+                with self.assertRaisesRegex(RuntimeError, "OPENAI_SUBMISSION_UNCERTAIN"):
+                    second._call_openai(payload)
+
+        self.assertEqual(first_post.call_count, 1)
+        second_post.assert_not_called()
 
 
 if __name__ == "__main__":
