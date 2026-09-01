@@ -2662,6 +2662,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "alibabaOfferFingerprint": offer_fingerprint,
                 "restockQty": restock_qty,
                 "alibabaUrl": line_url,
+                "preferOptionFill": bool(line.get("preferOptionFill")),
             })
 
         return {
@@ -2721,7 +2722,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         qty = int(quantity or 0)
         if qty <= 0:
             return 0
-        # 5 是前端／爬蟲已完成判斷的零庫存最低補貨量，不可再次放大成 10。
+        # 5 是前端／爬蟲已完成判斷的建議量（零庫存最低或低水位 raw 4），不可再次放大成 10。
         if qty <= 5:
             return 5
         return ((qty + 5) // 10) * 10

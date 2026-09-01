@@ -1083,7 +1083,7 @@ class AlibabaRestockerTests(unittest.TestCase):
     def test_restock_count_check_warns_when_confirmed_differs_from_expected(self):
         mismatch = alibaba_restocker.restock_count_check(7, 6, verify_cart=True)
         match = alibaba_restocker.restock_count_check(7, 7, verify_cart=True)
-        skipped = alibaba_restocker.restock_count_check(7, 6)
+        skipped = alibaba_restocker.restock_count_check(7, 6, verify_cart=False)
 
         self.assertTrue(mismatch["mismatch"])
         self.assertEqual(mismatch["expected"], 7)
@@ -1095,6 +1095,8 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertFalse(skipped["mismatch"])
         self.assertEqual(skipped["expected"], 7)
         self.assertEqual(skipped["confirmed"], 6)
+        default_mismatch = alibaba_restocker.restock_count_check(7, 6)
+        self.assertTrue(default_mismatch["mismatch"])
 
     def test_concatenated_quantity_is_intended_number_typed_twice(self):
         self.assertTrue(alibaba_restocker.is_concatenated_quantity("7070", 70))
@@ -1132,11 +1134,11 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(result["confirmed"], 3)
         self.assertIn("採購車已達上限", result["message"])
 
-    def test_restock_result_outcome_does_not_fail_on_count_when_cart_check_disabled(self):
+    def test_restock_result_outcome_flags_count_mismatch(self):
         result = alibaba_restocker.restock_result_outcome("", 6, 0, 0, expected_count=7)
 
-        self.assertEqual(result["status"], "success")
-        self.assertIn("已完成", result["message"])
+        self.assertEqual(result["status"], "partial")
+        self.assertIn("預期補貨 7", result["message"])
 
     def test_progress_line_counts_cart_verification(self):
         progress = {"completed": 1, "total": 7, "message": ""}
@@ -1291,6 +1293,21 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual([row["skuName"] for row in lines], ["紫花蝴蝶绳", "爱心熊黑绳"])
         self.assertEqual(lines[0]["offerId"], "752797767076")
 
+    def test_cart_dom_parser_includes_quantity_input_rows(self):
+        source = alibaba_restocker.read_cart_lines.__code__.co_consts
+        script = next(value for value in source if isinstance(value, str) and "const lines" in value)
+
+        self.assertIn("input[aria-valuemin]", script)
+        self.assertIn("input.closest('tr')", script)
+        self.assertIn("Number(input.value)", script)
+
+    def test_cart_load_more_uses_exact_clickable_marker(self):
+        source = alibaba_restocker.expand_cart_page.__code__.co_consts
+        script = next(value for value in source if isinstance(value, str) and "loadMoreIndicator" in value)
+
+        self.assertIn("data-alibaba-restock-load-more", script)
+        self.assertIn("^(?:点击|點擊)?", script)
+
     def test_unread_cart_is_not_treated_as_empty(self):
         page = CartReadPage(lines=[], body="采购车\n去结算\n商品价格")
         debug = FakeDebug()
@@ -1311,6 +1328,28 @@ class AlibabaRestockerTests(unittest.TestCase):
             result = alibaba_restocker.open_and_read_cart(page, FakeDebug())
 
         self.assertEqual(result, [])
+
+    def test_truncated_cart_is_usable_when_required_offer_is_visible(self):
+        lines = [{
+            "offerId": "671849726029",
+            "skuName": "圆形【镜子】",
+            "specText": "圆形【镜子】",
+            "quantity": 5,
+        }]
+        page = CartReadPage(lines=lines, body="采购车\n状态 70/300\n加载更多")
+
+        with patch.object(alibaba_restocker, "CART_READ_WAIT_MS", 0), patch.object(
+            alibaba_restocker, "CART_READ_ATTEMPTS", 1
+        ):
+            result = alibaba_restocker.open_and_read_cart(
+                page,
+                FakeDebug(),
+                required_offer_ids={"671849726029"},
+            )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["offerId"], "671849726029")
+        self.assertEqual(result[0]["quantity"], 5)
 
     def test_quantity_missing_retry_uses_option_fill(self):
         page = FakePage()
@@ -1346,6 +1385,114 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(result["status"], "success")
         option_fill.assert_called_once()
         row_fill.assert_not_called()
+
+    def test_toast_success_does_not_confirm_when_page_selection_mismatches(self):
+        items = [
+            {"modelName": str(index), "quantity": qty, "alibabaSkuName": str(index)}
+            for index, qty in enumerate((40, 40, 40, 40, 20, 20))
+        ]
+        observed = {"skuCount": 5, "quantity": 190}
+
+        bucket = alibaba_restocker.classify_group_submit(items, "success", observed)
+
+        self.assertEqual(bucket, "selection_mismatch")
+        self.assertTrue(alibaba_restocker.selection_summary_mismatch(observed, 6, 200))
+        self.assertEqual(alibaba_restocker.classify_group_submit(items, "clicked_unverified", observed), "selection_mismatch")
+        self.assertEqual(alibaba_restocker.classify_group_submit(items, "success", {"skuCount": 6, "quantity": 200}), "unverified")
+        self.assertEqual(alibaba_restocker.classify_group_submit(items, "success", None), "unverified")
+
+    def test_cart_verification_does_not_confirm_unreadable_or_truncated_cart(self):
+        submitted = [
+            {"modelName": "紫花蝴蝶", "alibabaSkuName": "紫花蝴蝶绳", "alibabaUrl": "https://detail.1688.com/offer/752797767076.html"},
+            {"modelName": "愛心熊黑繩", "alibabaSkuName": "爱心熊黑绳", "alibabaUrl": "https://detail.1688.com/offer/676841046990.html"},
+        ]
+        confirmed, unverified, mismatch, failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
+            submitted, [], [], [], None, []
+        )
+        self.assertEqual(confirmed, [])
+        self.assertEqual([item["modelName"] for item in unverified], ["紫花蝴蝶", "愛心熊黑繩"])
+        self.assertEqual(verification["reason"], "cart_unreadable")
+        self.assertFalse(verification["ok"])
+
+        truncated = [{
+            "offerId": "",
+            "skuName": "采购车\n现货(131)\n粉色; iPhone15\n点击加载更多",
+            "specText": "采购车\n现货(131)\n粉色; iPhone15\n点击加载更多",
+        }]
+        confirmed, unverified, mismatch, failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
+            [], submitted, [], [], truncated, []
+        )
+        self.assertEqual(confirmed, [])
+        self.assertEqual(len(unverified), 2)
+        self.assertEqual(verification["reason"], "cart_partial")
+        self.assertTrue(verification.get("truncated"))
+
+    def test_readable_cart_confirms_found_skus_and_keeps_selection_mismatch(self):
+        offer = "https://detail.1688.com/offer/752797767076.html"
+        found_item = {"modelName": "紫花蝴蝶", "alibabaSkuName": "紫花蝴蝶绳", "alibabaUrl": offer, "quantity": 40}
+        missing_item = {"modelName": "愛心熊黑繩", "alibabaSkuName": "爱心熊黑绳", "alibabaUrl": "https://detail.1688.com/offer/676841046990.html", "quantity": 20}
+        baseline = [
+            {"offerId": "752797767076", "skuName": "紫花蝴蝶绳", "skuSecondName": "", "specText": "紫花蝴蝶绳", "quantity": 10},
+        ]
+        cart_lines = [
+            {"offerId": "752797767076", "skuName": "紫花蝴蝶绳", "skuSecondName": "", "specText": "紫花蝴蝶绳", "quantity": 50},
+        ]
+        confirmed, unverified, mismatch, failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
+            [], [found_item], [missing_item], [], cart_lines, baseline
+        )
+        self.assertEqual([item["modelName"] for item in confirmed], ["紫花蝴蝶"])
+        self.assertEqual(unverified, [])
+        self.assertEqual([item["modelName"] for item in mismatch], ["愛心熊黑繩"])
+        self.assertEqual(failed, [])
+        self.assertFalse(verification["ok"])
+        self.assertEqual(verification["foundCount"], 1)
+        self.assertEqual(verification["missingCount"], 1)
+        self.assertEqual(verification["confirmedAddedQty"], 40)
+
+    def test_preexisting_cart_sku_without_quantity_delta_is_not_confirmed(self):
+        item = {
+            "modelName": "紫花蝴蝶",
+            "alibabaSkuName": "紫花蝴蝶绳",
+            "alibabaUrl": "https://detail.1688.com/offer/752797767076.html",
+            "quantity": 40,
+        }
+        baseline = [{"offerId": "752797767076", "skuName": "紫花蝴蝶绳", "quantity": 40}]
+        after = [{"offerId": "752797767076", "skuName": "紫花蝴蝶绳", "quantity": 40}]
+
+        confirmed, unverified, mismatch, failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
+            [], [item], [], [], after, baseline
+        )
+
+        self.assertEqual(confirmed, [])
+        self.assertEqual(unverified, [])
+        self.assertEqual(mismatch, [])
+        self.assertEqual(len(failed), 1)
+        self.assertIn("增量 0", failed[0]["message"])
+        self.assertEqual(verification["confirmedAddedQty"], 0)
+
+    def test_partial_after_cart_can_confirm_visible_target_delta(self):
+        item = {
+            "modelName": "石墨黑",
+            "alibabaSkuName": "鹰眼金属(石墨黑)",
+            "alibabaSkuSecondName": "新款iPhone17pro单个",
+            "alibabaUrl": "https://detail.1688.com/offer/554089430523.html",
+            "quantity": 10,
+        }
+        after = [
+            {"offerId": "554089430523", "skuName": "鹰眼金属(石墨黑); 新款iPhone17pro单个", "quantity": 10},
+            {"offerId": "", "skuName": "现货(62) 点击加载更多", "quantity": 0},
+        ]
+
+        confirmed, unverified, mismatch, failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
+            [], [item], [], [], after, []
+        )
+
+        self.assertEqual(len(confirmed), 1)
+        self.assertEqual(unverified, [])
+        self.assertEqual(mismatch, [])
+        self.assertEqual(failed, [])
+        self.assertEqual(verification["reason"], "cart_partial")
+        self.assertTrue(verification["truncated"])
 
 
 if __name__ == "__main__":

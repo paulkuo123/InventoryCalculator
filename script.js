@@ -968,11 +968,19 @@ document.addEventListener('DOMContentLoaded', function() {
             (!requiresAlibabaSecondSku(productName, modelName) || Boolean(binding.alibabaSkuSecondName));
     }
 
-    function roundRestockQty(quantity, currentStock) {
+    function roundRestockQty(quantity, currentStock, monthlyRate) {
         const parsed = Number(quantity) || 0;
+        const stock = Number(currentStock) || 0;
+        const monthly = Number(monthlyRate) || 0;
         if (parsed <= 0) return 0;
-        if (Number(currentStock) === 0 && parsed <= 5) return 5;
-        return Math.round(parsed / 10) * 10;
+        if (stock === 0) {
+            if (parsed <= 5) return 5;
+            return Math.round(parsed / 10) * 10;
+        }
+        const nearestTen = Math.round(parsed / 10) * 10;
+        if (nearestTen > 0) return nearestTen;
+        if (monthly > 0 && (stock / monthly) < 1.5 && parsed > 3) return 5;
+        return 0;
     }
 
     function getEffectiveMonthlyRate(product, modelData, currentStock) {
@@ -2566,7 +2574,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
         const targetStock = Math.round(effectiveMonthlyRate * months);
         const rawSuggestedQty = Math.max(0, targetStock - currentStock);
-        const suggestedQty = roundRestockQty(rawSuggestedQty, currentStock);
+        const suggestedQty = roundRestockQty(rawSuggestedQty, currentStock, effectiveMonthlyRate);
         return {
             monthlySales: Math.round(effectiveMonthlyRate),
             currentStock,
@@ -3598,7 +3606,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                 
                                 // 正缺口最低補 5；其餘以 10 為單位四捨五入，和送到 1688 的數量保持一致。
                                 const rawSuggestedRestock = Math.max(effectiveExpectedStock - currentStock, 0);
-                                const suggestedRestock = roundRestockQty(rawSuggestedRestock, currentStock);
+                                const suggestedRestock = roundRestockQty(rawSuggestedRestock, currentStock, effectiveMonthlyRate);
                                 suggestedRestockForAction = suggestedRestock;
                                 
                                 // 只有當建議補貨為正數時才顯示

@@ -3,6 +3,7 @@ import unittest
 from restock_rules import (
     MAX_ALIBABA_RESTOCK_SKUS,
     resolve_restock_quantity,
+    round_calculated_restock_qty,
     validate_restock_sku_count,
 )
 
@@ -33,6 +34,22 @@ class RestockRulesTests(unittest.TestCase):
 
     def test_cart_sku_limit_accepts_200_items(self):
         self.assertEqual(validate_restock_sku_count(200), 200)
+
+    def test_low_coverage_raw_four_rounds_to_five(self):
+        self.assertEqual(round_calculated_restock_qty(4, 2, 2), 5)
+        self.assertEqual(round_calculated_restock_qty(2, 1, 1), 0)
+        self.assertEqual(round_calculated_restock_qty(5, 4, 3), 10)
+        self.assertEqual(round_calculated_restock_qty(4, 4, 2), 0)
+
+    def test_zero_stock_and_manual_adjustment_keep_existing_rules(self):
+        self.assertEqual(round_calculated_restock_qty(1, 0, 2), 5)
+        self.assertEqual(round_calculated_restock_qty(4, 0, 2), 5)
+        self.assertEqual(round_calculated_restock_qty(5, 0, 2), 5)
+        self.assertEqual(round_calculated_restock_qty(6, 0, 2), 10)
+        self.assertEqual(
+            resolve_restock_quantity({"adjusted_qty": 4, "restockQty": 20}, lambda value: 5),
+            4,
+        )
 
 
 if __name__ == "__main__":

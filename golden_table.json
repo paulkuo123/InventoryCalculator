@@ -5797,9 +5797,14 @@
                 "1688_offer_id": "661385649783",
                 "1688_sku_name": "粉色",
                 "1688_sku_second_name": "iPhone13/14通用",
-                "1688_mapping_status": "discontinued",
+                "1688_mapping_status": "approved",
                 "1688_mapping_source": "manual",
-                "1688_verified_at": "2026-08-08T05:46:03Z"
+                "1688_verified_at": "2026-09-01T13:52:31Z",
+                "1688_sku_id": "5996998447259",
+                "1688_spec_text": "粉色,iPhone13/14通用",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "b6d078edde3839b206d3bb96",
+                "1688_offer_fingerprint": "f34e5826bbebf800c83ae610b4e17137dff389adc6c8ff2859d77cf5ef08adc0"
             },
             {
                 "型號名稱": "粉色軍規,13 pro",
@@ -7635,7 +7640,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 7",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "6caf8bd5e112977b1d101983"
             },
             {
                 "型號名稱": "鏡面愛心,XS Max",
@@ -7653,7 +7660,7 @@
                 "1688_dimension_count": 2,
                 "1688_mapping_fingerprint": "52769239cac6a11a0ba1d0a0",
                 "1688_verified_at": "2026-08-08T19:20:04Z",
-                "1688_offer_fingerprint": "4e945cf88dde93c22a173009c99149e482b3b623321dd4f569e61149b4490c5d"
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,13 mini",
@@ -7671,7 +7678,7 @@
                 "1688_dimension_count": 2,
                 "1688_mapping_fingerprint": "c4f3062993d83544cb216848",
                 "1688_verified_at": "2026-08-08T19:20:08Z",
-                "1688_offer_fingerprint": "4e945cf88dde93c22a173009c99149e482b3b623321dd4f569e61149b4490c5d"
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,15 Plus",
@@ -7683,7 +7690,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 15 Plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "18c9901caf4d4cbf9428d6e8"
             },
             {
                 "型號名稱": "鏡面愛心,7 Plus/8 Plus",
@@ -7695,7 +7704,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 7 Plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "f00d67bb5ea1e55eba008d06"
             },
             {
                 "型號名稱": "鏡面愛心,X/XS",
@@ -7705,7 +7716,7 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
-                "1688_mapping_status": "approved",
+                "1688_mapping_status": "stale",
                 "1688_mapping_source": "legacy_user_approved"
             },
             {
@@ -7724,7 +7735,7 @@
                 "1688_dimension_count": 2,
                 "1688_mapping_fingerprint": "7f8979ae62e28e2f861014e3",
                 "1688_verified_at": "2026-08-08T19:14:33Z",
-                "1688_offer_fingerprint": "4e945cf88dde93c22a173009c99149e482b3b623321dd4f569e61149b4490c5d"
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,11",
@@ -7733,9 +7744,16 @@
                 "阿里巴巴商品名稱": "适用苹果15手机壳iphone14涂鸦彩色爱心13镜面12pro透明软边xs/xr",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
-                "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
+                "1688_sku_name": "鏡面奶油殼-透明-涂鸦愛心",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5771675662983",
+                "1688_spec_text": "镜面奶油壳-透明-涂鸦爱心>苹果 11",
+                "1688_sku_second_name": "苹果11",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "09bfb894852bfbb3f6492824",
+                "1688_verified_at": "2026-09-01T14:22:54Z",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,11 Pro",
@@ -7744,9 +7762,16 @@
                 "阿里巴巴商品名稱": "适用苹果15手机壳iphone14涂鸦彩色爱心13镜面12pro透明软边xs/xr",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
-                "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
+                "1688_sku_name": "鏡面奶油殼-透明-涂鸦愛心",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5773533371105",
+                "1688_spec_text": "镜面奶油壳-透明-涂鸦爱心>苹果 11 Pro",
+                "1688_sku_second_name": "苹果11pro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "f9eb59f257dd246d8a0b25a6",
+                "1688_verified_at": "2026-09-01T14:22:54Z",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,11 Pro Max",
@@ -7758,7 +7783,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 11 Pro Max",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "3052363863fd9675d8d488a2"
             },
             {
                 "型號名稱": "鏡面愛心,12",
@@ -7767,9 +7794,16 @@
                 "阿里巴巴商品名稱": "适用苹果15手机壳iphone14涂鸦彩色爱心13镜面12pro透明软边xs/xr",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
-                "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
+                "1688_sku_name": "鏡面奶油殼-透明-涂鸦愛心",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5773533371001",
+                "1688_spec_text": "镜面奶油壳-透明-涂鸦爱心>苹果 12",
+                "1688_sku_second_name": "苹果12",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "443cd11f13015e6fe8e62e73",
+                "1688_verified_at": "2026-09-01T14:22:55Z",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,12 Pro",
@@ -7778,9 +7812,16 @@
                 "阿里巴巴商品名稱": "适用苹果15手机壳iphone14涂鸦彩色爱心13镜面12pro透明软边xs/xr",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
-                "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
+                "1688_sku_name": "鏡面奶油殼-透明-涂鸦愛心",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5773533371116",
+                "1688_spec_text": "镜面奶油壳-透明-涂鸦爱心>苹果 12 Pro",
+                "1688_sku_second_name": "苹果12pro",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "a5f9174f5e7b63dfb7a4a9bd",
+                "1688_verified_at": "2026-09-01T14:22:55Z",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,12 Pro Max",
@@ -7792,7 +7833,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果12 Pro Max",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "0002281386c062593240cc81"
             },
             {
                 "型號名稱": "鏡面愛心,13",
@@ -7801,9 +7844,16 @@
                 "阿里巴巴商品名稱": "适用苹果15手机壳iphone14涂鸦彩色爱心13镜面12pro透明软边xs/xr",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
-                "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
+                "1688_sku_name": "鏡面奶油殼-透明-涂鸦愛心",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5773533371003",
+                "1688_spec_text": "镜面奶油壳-透明-涂鸦爱心>苹果 13",
+                "1688_sku_second_name": "苹果13",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "673197a3ae02a1e67a3c958a",
+                "1688_verified_at": "2026-09-01T14:22:55Z",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,13 Pro",
@@ -7821,7 +7871,7 @@
                 "1688_dimension_count": 2,
                 "1688_mapping_fingerprint": "b549c3b9f38aa7a550610d63",
                 "1688_verified_at": "2026-08-08T19:20:16Z",
-                "1688_offer_fingerprint": "4e945cf88dde93c22a173009c99149e482b3b623321dd4f569e61149b4490c5d"
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,13 Pro Max",
@@ -7833,7 +7883,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果13 Pro Max",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "f96f7b55cc4c5b117abadd53"
             },
             {
                 "型號名稱": "鏡面愛心,14",
@@ -7842,9 +7894,16 @@
                 "阿里巴巴商品名稱": "适用苹果15手机壳iphone14涂鸦彩色爱心13镜面12pro透明软边xs/xr",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
-                "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
+                "1688_sku_name": "鏡面奶油殼-透明-涂鸦愛心",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "5771675662996",
+                "1688_spec_text": "镜面奶油壳-透明-涂鸦爱心>苹果 14",
+                "1688_sku_second_name": "苹果14",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "31d0f78049efaf32a4febd58",
+                "1688_verified_at": "2026-09-01T14:22:55Z",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,14 Plus",
@@ -7856,7 +7915,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 14 Plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "ef7b85cf49d981815b67ea60"
             },
             {
                 "型號名稱": "鏡面愛心,14 Pro",
@@ -7866,7 +7927,7 @@
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/838528968671.html",
                 "1688_offer_id": "838528968671",
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
-                "1688_mapping_status": "approved",
+                "1688_mapping_status": "stale",
                 "1688_mapping_source": "legacy_user_approved"
             },
             {
@@ -7879,7 +7940,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 14 Pro Max",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "3b9685d0605f2096352f1582"
             },
             {
                 "型號名稱": "鏡面愛心,15",
@@ -7891,7 +7954,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 15",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "14a38ba44581420697d1006a"
             },
             {
                 "型號名稱": "鏡面愛心,15 Pro",
@@ -7903,7 +7968,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 15 Pro",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "50ed2afa9ed6e7b58ec9b9ea"
             },
             {
                 "型號名稱": "鏡面愛心,15 Pro Max",
@@ -7921,7 +7988,7 @@
                 "1688_dimension_count": 2,
                 "1688_mapping_fingerprint": "e44785e8b12c30bf6434c3e9",
                 "1688_verified_at": "2026-08-08T19:20:00Z",
-                "1688_offer_fingerprint": "4e945cf88dde93c22a173009c99149e482b3b623321dd4f569e61149b4490c5d"
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,16",
@@ -7939,7 +8006,7 @@
                 "1688_dimension_count": 2,
                 "1688_mapping_fingerprint": "7a349bd4f6c05fe5e0edb63f",
                 "1688_verified_at": "2026-08-08T19:19:54Z",
-                "1688_offer_fingerprint": "4e945cf88dde93c22a173009c99149e482b3b623321dd4f569e61149b4490c5d"
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662"
             },
             {
                 "型號名稱": "鏡面愛心,16 Plus",
@@ -7951,7 +8018,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 16Plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "3940450756bdccb282fb1bec"
             },
             {
                 "型號名稱": "鏡面愛心,16 Pro",
@@ -7963,7 +8032,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 16Pro",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "d0d0db5d680ce673abf53b5e"
             },
             {
                 "型號名稱": "鏡面愛心,16 Pro Max",
@@ -7975,7 +8046,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 16Pro Max",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "1c6baa21114402dc0c63d64e"
             },
             {
                 "型號名稱": "鏡面愛心,17",
@@ -7987,7 +8060,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 17",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "7af58595aae81d70b596b50f"
             },
             {
                 "型號名稱": "鏡面愛心,17 Pro",
@@ -7999,7 +8074,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 17PRO",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "5ca027ac5dd3ac53347b2ca1"
             },
             {
                 "型號名稱": "鏡面愛心,17 Pro Max",
@@ -8011,7 +8088,9 @@
                 "1688_sku_name": "镜面奶油壳-透明-涂鸦爱心",
                 "1688_sku_second_name": "苹果 17PROMAX",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "d8ae5227d9705fe6f4878b88a098d868f6dcbf16d92569154b24893738f7b662",
+                "1688_mapping_fingerprint": "1dced36bb5b2641235787da6"
             }
         ]
     },
@@ -12119,7 +12198,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "12mini",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "1bfdbc3629389e1b65ca76d8"
             },
             {
                 "型號名稱": "草莓藍花,7 / 8 / SE2 / SE3",
@@ -12128,9 +12209,16 @@
                 "阿里巴巴商品名稱": "草莓花朵16适用iphone15pro max苹果11手机壳14女xr保护13套X代发",
                 "阿里巴巴商品URL": "https://detail.1688.com/offer/671822163773.html",
                 "1688_offer_id": "671822163773",
-                "1688_sku_name": "透白 粉莓蓝花",
+                "1688_sku_name": "透白粉莓藍花",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "manual",
+                "1688_sku_id": "4828050964824",
+                "1688_spec_text": "透白 粉莓蓝花>7/8/SE 2020",
+                "1688_sku_second_name": "7/8/se2020",
+                "1688_dimension_count": 2,
+                "1688_mapping_fingerprint": "a14779c9aa58248924c77dad",
+                "1688_verified_at": "2026-09-01T14:31:04Z",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef"
             },
             {
                 "型號名稱": "草莓藍花,7Plus / 8Plus",
@@ -12142,7 +12230,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "7p/8plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "b8954a7333284d00d701b618"
             },
             {
                 "型號名稱": "草莓藍花,X / XS",
@@ -12154,7 +12244,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "X/Xs",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "83fed587b52d1c84921a915a"
             },
             {
                 "型號名稱": "草莓藍花,XR",
@@ -12166,7 +12258,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "XR",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "2e1ebe8f662b2eb9a12b9f1f"
             },
             {
                 "型號名稱": "草莓藍花,XS Max",
@@ -12178,7 +12272,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "Xs max",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "bfb9c1dbea24972dce8ebe71"
             },
             {
                 "型號名稱": "草莓藍花,11",
@@ -12190,7 +12286,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "11 6.1",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "5a860f42e7609c78853f27fa"
             },
             {
                 "型號名稱": "草莓藍花,11 pro",
@@ -12202,7 +12300,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "11pro 5.8",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "96d1de0754acd11c50b6e5dc"
             },
             {
                 "型號名稱": "草莓藍花,11 proMax",
@@ -12214,7 +12314,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "11pro max 6.5",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "666601130c8837090b83d001"
             },
             {
                 "型號名稱": "草莓藍花,12",
@@ -12226,7 +12328,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "12 (6.1)",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "72a5e2306e7c57f097fd7bee"
             },
             {
                 "型號名稱": "草莓藍花,12 pro",
@@ -12238,7 +12342,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "12pro (6.1)",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "7401f983bf2f7bfa601989a3"
             },
             {
                 "型號名稱": "草莓藍花,12 proMax",
@@ -12250,7 +12356,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "12pro max (6.7)",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "6607d044f4015d1d4d260fc6"
             },
             {
                 "型號名稱": "草莓藍花,13",
@@ -12262,7 +12370,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "13",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "74ae4ab8cc3d50310a91cbe7"
             },
             {
                 "型號名稱": "草莓藍花,13 pro",
@@ -12274,7 +12384,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "13pro",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "77418f808c4ce3019920ee75"
             },
             {
                 "型號名稱": "草莓藍花,13 proMax",
@@ -12286,7 +12398,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "13pro max",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "8fdb0147699d47569f277e77"
             },
             {
                 "型號名稱": "草莓藍花,13 mini",
@@ -12298,7 +12412,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "13mini",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "520ea5115a96ace66e6a11e5"
             },
             {
                 "型號名稱": "草莓藍花,14",
@@ -12310,7 +12426,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "14",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "a2a8f44d4a61fb338de90c32"
             },
             {
                 "型號名稱": "草莓藍花,14 pro",
@@ -12322,7 +12440,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "14pro",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "e5efd83edb5c8c41c8d6b436"
             },
             {
                 "型號名稱": "草莓藍花,14 proMax",
@@ -12334,7 +12454,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "14promax",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "ebb82673d8bdbc3d114bc880"
             },
             {
                 "型號名稱": "草莓藍花,14 Plus",
@@ -12346,7 +12468,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "14plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "911c2da4ebff86766449049f"
             },
             {
                 "型號名稱": "草莓藍花,15",
@@ -12358,7 +12482,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "15",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "42df470182486a19b5970ef6"
             },
             {
                 "型號名稱": "草莓藍花,15 pro",
@@ -12370,7 +12496,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "15pro",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "416c6e3a2eb1f9eab4ed28bb"
             },
             {
                 "型號名稱": "草莓藍花,15 proMax",
@@ -12382,7 +12510,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "15promax",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "07cefe9a719f296a28490a5d"
             },
             {
                 "型號名稱": "草莓藍花,15 Plus",
@@ -12394,7 +12524,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "15plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "eae5b342cedf37f420ee18c3"
             },
             {
                 "型號名稱": "草莓藍花,16",
@@ -12406,7 +12538,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "16",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "94a66a4f25bc9b24490d20d9"
             },
             {
                 "型號名稱": "草莓藍花,16 pro",
@@ -12418,7 +12552,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "16pro",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "dee6c3729b816c46aec62951"
             },
             {
                 "型號名稱": "草莓藍花,16 pro Max",
@@ -12430,7 +12566,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "16promax",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "b01586bd3810549f5f97bbad"
             },
             {
                 "型號名稱": "草莓藍花,16 Plus",
@@ -12442,7 +12580,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "16plus",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "6a48d72435ecc6f5be6fe648"
             },
             {
                 "型號名稱": "草莓藍花,17",
@@ -12454,7 +12594,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "17",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "db89cd9d9bea048c5356611b"
             },
             {
                 "型號名稱": "草莓藍花,17 pro",
@@ -12466,7 +12608,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "17pro",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "e9680974db3682f70e951e0e"
             },
             {
                 "型號名稱": "草莓藍花,17 pro Max",
@@ -12478,7 +12622,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "17promax",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "3fd2ce6a29b3a24b84621c5e"
             },
             {
                 "型號名稱": "草莓藍花,17 Air",
@@ -12490,7 +12636,9 @@
                 "1688_sku_name": "透白 粉莓蓝花",
                 "1688_sku_second_name": "17Air",
                 "1688_mapping_status": "approved",
-                "1688_mapping_source": "legacy_user_approved"
+                "1688_mapping_source": "legacy_user_approved",
+                "1688_offer_fingerprint": "1f45a6a8b5a68f433dc3d9ccedc07b1a4028485402053e479c2aba5505c5e9ef",
+                "1688_mapping_fingerprint": "5f1321000eeb767e3bcc412b"
             }
         ]
     },
@@ -15230,10 +15378,19 @@
                 "型號名稱": "E08",
                 "規格ID": "92291528084",
                 "型號圖片網址": "https://cf.shopee.tw/file/0aef0cbb88a9745fda274fbca2ae1a33_tn",
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "气囊支架 ins多功能创意卡通滴胶懒人桌面手机指环扣礼品logo批发 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/617227382511.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "617227382511",
+                "1688_offer_fingerprint": "873f7f7cd2d93185e1b3372fa078183ae32f3d60dcd0e371747154a4199805f0",
+                "1688_sku_id": "4521892238236",
+                "1688_sku_name": "无脸男e08",
+                "1688_sku_second_name": "",
+                "1688_spec_text": "无脸男E08",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "2e8eb0915e2d3f447c4e7671",
+                "1688_verified_at": "2026-09-01T14:32:43Z"
             },
             {
                 "型號名稱": "E09",
@@ -15276,48 +15433,91 @@
                 "型號名稱": "E11",
                 "規格ID": "92291528089",
                 "型號圖片網址": "https://cf.shopee.tw/file/01259490c41e13719866d061b0fb4bee_tn",
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "",
-                "1688_sku_name": "白熊E11",
-                "1688_mapping_status": "pending",
-                "1688_mapping_source": "manual_deferred"
+                "阿里巴巴商品名稱": "气囊支架 ins多功能创意卡通滴胶懒人桌面手机指环扣礼品logo批发 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/617227382511.html",
+                "1688_sku_name": "白熊e11",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "617227382511",
+                "1688_offer_fingerprint": "873f7f7cd2d93185e1b3372fa078183ae32f3d60dcd0e371747154a4199805f0",
+                "1688_sku_id": "4521892238239",
+                "1688_sku_second_name": "",
+                "1688_spec_text": "白熊E11",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "8078ec3a5beb8dc8cd429484",
+                "1688_verified_at": "2026-09-01T14:32:43Z"
             },
             {
                 "型號名稱": "E12",
                 "規格ID": "92291528085",
                 "型號圖片網址": "https://cf.shopee.tw/file/e481d6c02bba7ce4eccf43ed8f38c573_tn",
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "气囊支架 ins多功能创意卡通滴胶懒人桌面手机指环扣礼品logo批发 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/617227382511.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "617227382511",
+                "1688_offer_fingerprint": "873f7f7cd2d93185e1b3372fa078183ae32f3d60dcd0e371747154a4199805f0",
+                "1688_sku_id": "4521892238240",
+                "1688_sku_name": "胖熊e12",
+                "1688_sku_second_name": "",
+                "1688_spec_text": "胖熊E12",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "969333b23df056a52088770f",
+                "1688_verified_at": "2026-09-01T14:32:43Z"
             },
             {
                 "型號名稱": "E13",
                 "規格ID": "92291528078",
                 "型號圖片網址": "https://cf.shopee.tw/file/b5c5903ee37f7e3c96cd191a9b484aba_tn",
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "气囊支架 ins多功能创意卡通滴胶懒人桌面手机指环扣礼品logo批发 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/617227382511.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "617227382511",
+                "1688_offer_fingerprint": "873f7f7cd2d93185e1b3372fa078183ae32f3d60dcd0e371747154a4199805f0",
+                "1688_sku_id": "4521892238241",
+                "1688_sku_name": "星星e13",
+                "1688_sku_second_name": "",
+                "1688_spec_text": "星星E13",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "fe7a1f405a1b3ef9e7c1b562",
+                "1688_verified_at": "2026-09-01T14:32:43Z"
             },
             {
                 "型號名稱": "E14",
                 "規格ID": "92291528083",
                 "型號圖片網址": "https://cf.shopee.tw/file/a81a4cc4184ea69458ec814f602dab1d_tn",
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "",
-                "1688_mapping_status": "missing",
-                "1688_mapping_source": "legacy_import"
+                "阿里巴巴商品名稱": "气囊支架 ins多功能创意卡通滴胶懒人桌面手机指环扣礼品logo批发 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/617227382511.html",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "617227382511",
+                "1688_offer_fingerprint": "873f7f7cd2d93185e1b3372fa078183ae32f3d60dcd0e371747154a4199805f0",
+                "1688_sku_id": "4521892238242",
+                "1688_sku_name": "章鱼e14",
+                "1688_sku_second_name": "",
+                "1688_spec_text": "章鱼E14",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "9d365cd000e1cedd2623d6a0",
+                "1688_verified_at": "2026-09-01T14:32:43Z"
             },
             {
                 "型號名稱": "E16",
                 "規格ID": "92291528090",
                 "型號圖片網址": "https://cf.shopee.tw/file/2b4cb1e771edecf42e909c42e000f94d_tn",
-                "阿里巴巴商品名稱": "",
-                "阿里巴巴商品URL": "",
-                "1688_sku_name": "胖白熊E16",
-                "1688_mapping_status": "pending",
-                "1688_mapping_source": "manual_deferred"
+                "阿里巴巴商品名稱": "气囊支架 ins多功能创意卡通滴胶懒人桌面手机指环扣礼品logo批发 - 阿里巴巴",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/617227382511.html",
+                "1688_sku_name": "胖白熊e16",
+                "1688_mapping_status": "approved",
+                "1688_mapping_source": "manual_url_change",
+                "1688_offer_id": "617227382511",
+                "1688_offer_fingerprint": "873f7f7cd2d93185e1b3372fa078183ae32f3d60dcd0e371747154a4199805f0",
+                "1688_sku_id": "4521892238244",
+                "1688_sku_second_name": "",
+                "1688_spec_text": "胖白熊E16",
+                "1688_dimension_count": 1,
+                "1688_mapping_fingerprint": "3a90d420d1def64905881aec",
+                "1688_verified_at": "2026-09-01T14:32:43Z"
             },
             {
                 "型號名稱": "F1",

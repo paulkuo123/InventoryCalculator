@@ -8,16 +8,75 @@
 
 已知要檢查的 bug：GUI、Web UI 和 Crawler 之間的四捨五入/無條件進位規則不一致。
 """
+import json
+import subprocess
 import unittest
 import sys
 import os
 from pathlib import Path
 
 # 將父目錄加入路徑
-sys.path.insert(0, str(Path(__file__).parent.parent))
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
 
 from restock_rules import resolve_restock_quantity
 from crawler import ShopeeCrawler
+from run_watchlist_restock import suggested_restock_qty
+
+
+def _extract_js_function(source, name):
+    token = f"function {name}("
+    start = source.index(token)
+    brace = source.index("{", start)
+    depth = 0
+    in_string = None
+    escape = False
+    for index in range(brace, len(source)):
+        char = source[index]
+        if in_string:
+            if escape:
+                escape = False
+            elif char == "\\":
+                escape = True
+            elif char == in_string:
+                in_string = None
+            continue
+        if char in ('"', "'", "`"):
+            in_string = char
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return source[start:index + 1]
+    raise AssertionError(f"could not extract {name}")
+
+
+def _js_calculate_model_restock(product, model, months):
+    script_js = (ROOT / "script.js").read_text(encoding="utf-8")
+    functions = "\n".join([
+        _extract_js_function(script_js, "roundRestockQty"),
+        _extract_js_function(script_js, "getEffectiveMonthlyRate"),
+        _extract_js_function(script_js, "calculateModelRestock"),
+    ])
+    program = functions + """
+const fs = require('fs');
+const input = JSON.parse(fs.readFileSync(0, 'utf8'));
+const result = calculateModelRestock(input.product, input.model, input.months);
+process.stdout.write(JSON.stringify(result));
+"""
+    completed = subprocess.run(
+        ["node", "-e", program],
+        input=json.dumps({"product": product, "model": model, "months": months}, ensure_ascii=False),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise AssertionError(completed.stderr or completed.stdout or "node failed")
+    return json.loads(completed.stdout)
 
 
 class RestockQuantityConsistencyTests(unittest.TestCase):
@@ -63,11 +122,155 @@ class RestockQuantityConsistencyTests(unittest.TestCase):
     def test_crawler_keeps_original_rounding_when_stock_is_positive(self):
         self.assertEqual(
             ShopeeCrawler.calculate_restock_quantity(None, 24, 5300, 1, 1, 5, 186),
-            0,
+            5,
         )
         self.assertEqual(
             ShopeeCrawler.calculate_restock_quantity(None, 24, 5300, 1, 1, 6, 186),
             10,
+        )
+
+    def test_zero_stock_zero_monthly_with_valid_history_is_nonzero(self):
+        product = {"總月銷量": "100", "已售出總數量": "100"}
+        model = {"商品庫存": "0", "月銷量": "0", "已售出數量": "10"}
+        crawler_qty = ShopeeCrawler.calculate_restock_quantity(
+            None, 10, 100, 0, 0, 4, 100
+        )
+        watchlist_qty = suggested_restock_qty(product, model, 4)
+        js_qty = _js_calculate_model_restock(product, model, 4)["suggestedQty"]
+
+        self.assertEqual(crawler_qty, 40)
+        self.assertEqual(watchlist_qty, 40)
+        self.assertEqual(js_qty, 40)
+
+        low_product = {"總月銷量": "186", "已售出總數量": "5300"}
+        low_model = {"商品庫存": "0", "月銷量": "0", "已售出數量": "24"}
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 24, 5300, 0, 0, 4, 186),
+            5,
+        )
+        self.assertEqual(suggested_restock_qty(low_product, low_model, 4), 5)
+        self.assertEqual(_js_calculate_model_restock(low_product, low_model, 4)["suggestedQty"], 5)
+
+    def test_zero_stock_zero_monthly_without_valid_history_stays_zero(self):
+        cases = [
+            (0, 100, 0, 0, 4, 100),
+            (10, 0, 0, 0, 4, 100),
+            (10, 100, 0, 0, 4, 0),
+        ]
+        for product_sold, total_sold, monthly, stock, months, total_monthly in cases:
+            self.assertEqual(
+                ShopeeCrawler.calculate_restock_quantity(
+                    None, product_sold, total_sold, monthly, stock, months, total_monthly
+                ),
+                0,
+                (product_sold, total_sold, total_monthly),
+            )
+        self.assertEqual(
+            suggested_restock_qty(
+                {"總月銷量": "100", "已售出總數量": "100"},
+                {"商品庫存": "0", "月銷量": "0", "已售出數量": "0"},
+                4,
+            ),
+            0,
+        )
+        self.assertEqual(
+            _js_calculate_model_restock(
+                {"總月銷量": "0", "已售出總數量": "100"},
+                {"商品庫存": "0", "月銷量": "0", "已售出數量": "10"},
+                4,
+            )["suggestedQty"],
+            0,
+        )
+
+    def test_zero_stock_positive_monthly_and_positive_stock_rounding_do_not_regress(self):
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 24, 5300, 1, 0, 4, 186),
+            5,
+        )
+        self.assertEqual(
+            suggested_restock_qty(
+                {"總月銷量": "186", "已售出總數量": "5300"},
+                {"商品庫存": "0", "月銷量": "1", "已售出數量": "24"},
+                4,
+            ),
+            5,
+        )
+        self.assertEqual(
+            _js_calculate_model_restock(
+                {"總月銷量": "186", "已售出總數量": "5300"},
+                {"商品庫存": "0", "月銷量": "1", "已售出數量": "24"},
+                4,
+            )["suggestedQty"],
+            5,
+        )
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 24, 5300, 1, 1, 6, 186),
+            10,
+        )
+        self.assertEqual(
+            resolve_restock_quantity({"adjustedQty": 7, "restockQty": 20}, lambda value: round(value / 10) * 10),
+            7,
+        )
+
+    def test_low_coverage_raw_four_is_five_across_crawler_watchlist_and_js(self):
+        product = {"商品名稱": "iPhone 軍規 防摔殼 手機殼", "總月銷量": "186", "已售出總數量": "5300"}
+        model = {
+            "規格ID": "156212462935",
+            "型號名稱": "粉色軍規,12 proMax",
+            "商品庫存": "2",
+            "月銷量": "2",
+            "已售出數量": "38",
+        }
+        crawler_qty = ShopeeCrawler.calculate_restock_quantity(None, 38, 5300, 2, 2, 3, 186)
+        watchlist_qty = suggested_restock_qty(product, model, 3)
+        js_qty = _js_calculate_model_restock(product, model, 3)["suggestedQty"]
+        self.assertEqual(crawler_qty, 5)
+        self.assertEqual(watchlist_qty, 5)
+        self.assertEqual(js_qty, 5)
+
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 10, 100, 1, 1, 3, 100),
+            0,
+        )
+        self.assertEqual(
+            suggested_restock_qty(
+                {"總月銷量": "100", "已售出總數量": "100"},
+                {"商品庫存": "1", "月銷量": "1", "已售出數量": "10"},
+                3,
+            ),
+            0,
+        )
+        self.assertEqual(
+            _js_calculate_model_restock(
+                {"總月銷量": "100", "已售出總數量": "100"},
+                {"商品庫存": "1", "月銷量": "1", "已售出數量": "10"},
+                3,
+            )["suggestedQty"],
+            0,
+        )
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 10, 100, 3, 4, 3, 100),
+            10,
+        )
+        self.assertEqual(
+            _js_calculate_model_restock(
+                {"總月銷量": "100", "已售出總數量": "100"},
+                {"商品庫存": "4", "月銷量": "3", "已售出數量": "10"},
+                3,
+            )["suggestedQty"],
+            10,
+        )
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 10, 100, 2, 4, 4, 100),
+            0,
+        )
+        self.assertEqual(
+            _js_calculate_model_restock(
+                {"總月銷量": "100", "已售出總數量": "100"},
+                {"商品庫存": "4", "月銷量": "2", "已售出數量": "10"},
+                4,
+            )["suggestedQty"],
+            0,
         )
     
     def test_gui_calculation_matches_documented_rule(self):

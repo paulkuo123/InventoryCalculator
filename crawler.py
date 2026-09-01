@@ -12,6 +12,7 @@ import random
 import shutil
 
 from housekeeping import prune_generated_files
+from restock_rules import round_calculated_restock_qty
 
 # Playwright 兼容層：取代 Selenium imports
 from pw_adapter import (By, WebDriverWait, EC, Keys,
@@ -453,7 +454,7 @@ class ShopeeCrawler:
         - 計算預期庫存 = 月銷量 × 期望月數
         - 建議補貨 = 預期庫存 - 當前庫存
         - 庫存為 0 時，以實際月銷與歷史佔比推估取較大值
-        - 庫存為 0 時正缺口最低補 5；有庫存時維持十位四捨五入（與 GUI 一致）
+        - 庫存為 0 時正缺口最低補 5；有庫存且水位 < 1.5 個月時 raw 4 補 5；其餘十位四捨五入
         
         Args:
             product_sold (int): 型號已售出數量
@@ -495,13 +496,9 @@ class ShopeeCrawler:
             # 如果補貨數量為負數或零，表示不需要補貨
             raw_restock = max(0, restock)
             
-            # 庫存為 0 時正缺口最低補 5；有庫存時維持原本十位四捨五入。
-            # 使用 int() 加 0.5 來確保正確的四捨五入，避免 Python banker's rounding
-            if raw_restock <= 0:
-                return 0
-            if current_inventory == 0 and raw_restock <= 5:
-                return 5
-            return int((raw_restock + 5) / 10) * 10
+            return round_calculated_restock_qty(
+                raw_restock, current_inventory, effective_monthly_sales
+            )
             
         except Exception as e:
             print(f"計算補貨數量時出錯: {e}")

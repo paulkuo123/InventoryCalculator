@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from shopee_products_import import atomic_write_json
+from restock_rules import target_months_for_product
 
 
 CART_SKU_LIMIT = 200
@@ -45,6 +46,7 @@ RESUMABLE_STATUSES = {
 }
 CART_FULL_STATUSES = {"cart_full", "cart_limit_reached"}
 OK_CLASSIFICATIONS = {"ok"}
+PAUSE_CLASSIFICATIONS = {"mismatch", "uncertain", "unavailable", "failed"}
 START_RETRY_MARKERS = ("已有其他流程", "暫時無法", "Connection", "RemoteDisconnected", "timed out")
 SKIPPABLE_START_MARKERS = (
     "尚未核准",
@@ -84,9 +86,12 @@ def product_items(product: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [item for item in (product.get("items") or []) if isinstance(item, dict) and _int(item.get("restockQty") or item.get("adjustedQty")) > 0]
 
 
-def _normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
+def _normalize_item(raw: Dict[str, Any], default_months: Any = None) -> Dict[str, Any]:
     qty = _int(raw.get("adjustedQty") if raw.get("adjustedQty") not in (None, "") else raw.get("restockQty"))
-    return {
+    months = raw.get("targetMonths")
+    if months in (None, "") and default_months not in (None, ""):
+        months = default_months
+    item = {
         "specId": str(raw.get("specId") or raw.get("modelId") or "").strip(),
         "modelName": str(raw.get("modelName") or "").strip(),
         "alibabaSkuName": str(raw.get("alibabaSkuName") or "").strip(),
@@ -95,6 +100,11 @@ def _normalize_item(raw: Dict[str, Any]) -> Dict[str, Any]:
         "restockQty": qty,
         "alibabaUrl": str(raw.get("alibabaUrl") or raw.get("alibabaProductUrl") or "").strip(),
     }
+    if months not in (None, ""):
+        item["targetMonths"] = _int(months)
+    if raw.get("preferOptionFill"):
+        item["preferOptionFill"] = True
+    return item
 
 
 def _normalize_gap(raw: Dict[str, Any]) -> Dict[str, Any]:
@@ -118,7 +128,12 @@ def build_preview(raw_products: Any, *, keyword: str = "", cart_sku_count: Any =
         if not product_id:
             continue
         source_product = raw.get("product") if isinstance(raw.get("product"), dict) else {}
-        items = [_normalize_item(item) for item in (raw.get("items") or []) if isinstance(item, dict)]
+        product_name = str(raw.get("productName") or source_product.get("商品名稱") or "").strip()
+        if raw.get("targetMonths") not in (None, ""):
+            product_months = _int(raw.get("targetMonths"))
+        else:
+            product_months = target_months_for_product(product_name)
+        items = [_normalize_item(item, product_months) for item in (raw.get("items") or []) if isinstance(item, dict)]
         items = [item for item in items if item["restockQty"] > 0 and item["alibabaUrl"].startswith("http")]
         gaps = [_normalize_gap(gap) for gap in (raw.get("gaps") or raw.get("blockers") or []) if isinstance(gap, dict)]
         if not items and not gaps and not _int(raw.get("blockerCount")):
@@ -131,7 +146,8 @@ def build_preview(raw_products: Any, *, keyword: str = "", cart_sku_count: Any =
             }]
         products.append({
             "productId": product_id,
-            "productName": str(raw.get("productName") or source_product.get("商品名稱") or "").strip(),
+            "productName": product_name,
+            "targetMonths": product_months,
             "items": items,
             "gaps": gaps,
             "blockerCount": len(gaps) if gaps else _int(raw.get("blockerCount")),
@@ -242,6 +258,7 @@ def public_state(state: Dict[str, Any]) -> Dict[str, Any]:
         remaining.append({
             "productId": product.get("productId"),
             "productName": product.get("productName"),
+            "targetMonths": product.get("targetMonths"),
             "blockerCount": product.get("blockerCount") or 0,
             "itemCount": len(product_items(product)),
             "qty": sum(_int(item.get("restockQty")) for item in product_items(product)),
@@ -324,15 +341,18 @@ def recover_interrupted_batches(root: Path) -> List[str]:
                     "items": [],
                 },
             )
+            current_items = product_items(current)
             state.setdefault("done", []).append({
                 "productId": current_id,
                 "productName": current.get("productName") or current_id,
-                "expected": len(product_items(current)),
+                "targetMonths": current.get("targetMonths"),
+                "expected": len(current_items),
                 "classification": "uncertain",
                 "status": "interrupted",
                 "message": "程式中斷時此商品可能已加車，續跑不會自動重加",
                 "confirmed": None,
                 "countMismatch": False,
+                "items": current_items,
             })
             state["remaining"] = remaining
         state["status"] = STATUS_NEEDS_RECONCILE
@@ -362,7 +382,7 @@ SKU_OUTCOMES = (
 
 
 def classify_job_result(result: Dict[str, Any], expected_count: int = 0) -> str:
-    """Classify a product job. Cart-page counts are records only, not stop reasons."""
+    """Classify a product job. Mapping blocked gaps may continue; unverified results pause."""
     status = str(result.get("status") or "")
     stopped = str(result.get("stoppedReason") or "")
     if status in CART_FULL_STATUSES or stopped == "cart_limit_reached":
@@ -371,12 +391,32 @@ def classify_job_result(result: Dict[str, Any], expected_count: int = 0) -> str:
         return "unavailable"
     count = result.get("countCheck") if isinstance(result.get("countCheck"), dict) else {}
     summary = result.get("summary") if isinstance(result.get("summary"), dict) else {}
+    verify = result.get("cartVerification") if isinstance(result.get("cartVerification"), dict) else {}
     confirmed = _int(count.get("confirmed") or len(summary.get("succeeded") or []))
+    unverified = [item for item in (summary.get("unverified") or []) if isinstance(item, dict)]
+    selection_mismatch = [item for item in (summary.get("selectionMismatch") or []) if isinstance(item, dict)]
+    blocked = [item for item in (summary.get("blocked") or []) if isinstance(item, dict)]
+    failed_items = [item for item in (summary.get("failed") or []) if isinstance(item, dict)]
+    expected = expected_count or _int(count.get("expected"))
     if status in {"failed", "error"} and confirmed <= 0:
         return "failed"
-    unverified = [item for item in (summary.get("unverified") or []) if isinstance(item, dict)]
-    if confirmed <= 0 and unverified and not summary.get("succeeded"):
+    if selection_mismatch:
+        return "mismatch"
+    if unverified:
         return "uncertain"
+    if verify.get("reason") == "cart_unreadable":
+        return "uncertain"
+    if status in {"failed", "error"}:
+        return "failed"
+    mismatch = bool(count.get("mismatch")) or bool(expected and confirmed != expected)
+    if mismatch:
+        unexplained = expected - confirmed - len(blocked)
+        if unexplained > 0 or failed_items:
+            return "mismatch"
+        if blocked:
+            return "partial"
+    if blocked:
+        return "partial"
     return "ok"
 
 
@@ -468,6 +508,7 @@ def summarize_product_row(product: Dict[str, Any], started: Dict[str, Any], job:
     return {
         "productId": str(product.get("productId") or ""),
         "productName": str(product.get("productName") or ""),
+        "targetMonths": product.get("targetMonths"),
         "expected": expected,
         "expectedQty": expected_qty,
         "addedQty": added_qty,
@@ -546,6 +587,7 @@ def apply_product_outcome(state: Dict[str, Any], product: Dict[str, Any], row: D
             remaining = [{
                 "productId": product.get("productId"),
                 "productName": product.get("productName"),
+                "targetMonths": product.get("targetMonths"),
                 "blockerCount": product.get("blockerCount") or 0,
                 "items": leftover,
                 "gaps": product.get("gaps") or [],
@@ -556,7 +598,7 @@ def apply_product_outcome(state: Dict[str, Any], product: Dict[str, Any], row: D
         state["message"] = "採購車已滿或接近上限，請清車後再繼續剩餘商品"
         return state
 
-    if classification in {"mismatch", "uncertain", "unavailable", "failed"}:
+    if classification in PAUSE_CLASSIFICATIONS:
         state["remaining"] = remaining
         state["status"] = STATUS_PAUSED_ATTENTION
         state["stoppedReason"] = str(classification)
@@ -695,8 +737,9 @@ def skipped_product_row(product: Dict[str, Any], started: Dict[str, Any]) -> Dic
     skipped = [item for item in (started.get("skipped") or []) if isinstance(item, dict)]
     return {
         "productId": str(product.get("productId") or ""),
-        "productName": str(product.get("productName") or ""),
-        "expected": 0,
+            "productName": str(product.get("productName") or ""),
+            "targetMonths": product.get("targetMonths"),
+            "expected": 0,
         "jobId": "",
         "classification": "skipped",
         "status": "skipped",
@@ -971,6 +1014,7 @@ def sku_rows_from_state(state: Dict[str, Any]) -> List[Dict[str, Any]]:
             rows.append({
                 "productId": done.get("productId") or "",
                 "productName": done.get("productName") or "",
+                "targetMonths": item.get("targetMonths") if item.get("targetMonths") not in (None, "") else done.get("targetMonths"),
                 "specId": str(item.get("specId") or live.get("specId") or added.get("specId") or ""),
                 "modelName": name,
                 "expectedQty": expected_qty,
@@ -996,6 +1040,7 @@ def sku_rows_from_state(state: Dict[str, Any]) -> List[Dict[str, Any]]:
         rows.append({
             "productId": gap.get("productId") or "",
             "productName": gap.get("productName") or "",
+            "targetMonths": gap.get("targetMonths"),
             "specId": str(gap.get("specId") or ""),
             "modelName": name,
             "expectedQty": _int(gap.get("restockQty") or 0),
@@ -1013,6 +1058,53 @@ def sku_rows_from_state(state: Dict[str, Any]) -> List[Dict[str, Any]]:
     return rows
 
 
+CONFIRMED_OUTCOMES = {"added"}
+BLOCKED_OUTCOMES = {"blocked", "skipped"}
+FAILED_OUTCOMES = {"failed"}
+
+
+def tally_sku_buckets(state: Dict[str, Any]) -> Dict[str, int]:
+    """Mutually exclusive SKU counts: planned = confirmed + blocked + failed + unverified + remaining."""
+    remaining_keys = set()
+    for product in state.get("remaining") or []:
+        if not isinstance(product, dict):
+            continue
+        for item in product_items(product):
+            remaining_keys.add((str(product.get("productId") or ""), str(item.get("modelName") or "").strip()))
+    outcome_by = {}
+    for row in sku_rows_from_state(state):
+        key = (str(row.get("productId") or ""), str(row.get("modelName") or "").strip())
+        if key[1]:
+            outcome_by[key] = str(row.get("outcome") or "")
+    confirmed = blocked = failed = unverified = remaining = planned = 0
+    for product in (state.get("snapshot") or {}).get("products") or []:
+        if not isinstance(product, dict):
+            continue
+        for item in product_items(product):
+            planned += 1
+            key = (str(product.get("productId") or ""), str(item.get("modelName") or "").strip())
+            if key in remaining_keys:
+                remaining += 1
+                continue
+            outcome = outcome_by.get(key) or "uncertain"
+            if outcome in CONFIRMED_OUTCOMES:
+                confirmed += 1
+            elif outcome in BLOCKED_OUTCOMES:
+                blocked += 1
+            elif outcome in FAILED_OUTCOMES:
+                failed += 1
+            else:
+                unverified += 1
+    return {
+        "planned": planned,
+        "confirmed": confirmed,
+        "blocked": blocked,
+        "failed": failed,
+        "unverified": unverified,
+        "remaining": remaining,
+    }
+
+
 def build_report(state: Dict[str, Any]) -> Dict[str, Any]:
     failures = []
     for row in state.get("done") or []:
@@ -1026,6 +1118,7 @@ def build_report(state: Dict[str, Any]) -> Dict[str, Any]:
         failures.extend(extract_failure_records(product, row, {"summary": row.get("summary") or {}}))
     skus = sku_rows_from_state(state)
     snapshot = state.get("snapshot") or {}
+    tally = tally_sku_buckets(state)
     return {
         "runId": state.get("runId"),
         "generatedAt": _now_iso(),
@@ -1033,6 +1126,7 @@ def build_report(state: Dict[str, Any]) -> Dict[str, Any]:
         "message": state.get("message"),
         "keyword": snapshot.get("keyword") or "",
         "totals": snapshot.get("totals") or {},
+        "tally": tally,
         "progress": public_state(state).get("progress"),
         "cart": state.get("cart") or {},
         "done": public_state(state).get("done"),

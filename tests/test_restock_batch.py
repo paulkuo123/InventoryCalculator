@@ -29,6 +29,7 @@ from restock_batch import (
     render_report_html,
     save_state,
     should_retry_start,
+    tally_sku_buckets,
     would_exceed_cart_safe_limit,
 )
 
@@ -85,11 +86,11 @@ class RestockBatchTests(unittest.TestCase):
         self.assertEqual(classify_job_result({
             "status": "partial",
             "countCheck": {"mismatch": True, "confirmed": 5},
-        }, 7), "ok")
+        }, 7), "mismatch")
         self.assertEqual(classify_job_result({
             "status": "success",
             "cartVerification": {"reason": "cart_unreadable"},
-        }, 2), "ok")
+        }, 2), "uncertain")
         self.assertEqual(classify_job_result({
             "status": "success",
             "countCheck": {"confirmed": 2, "mismatch": False},
@@ -102,7 +103,7 @@ class RestockBatchTests(unittest.TestCase):
                 "failed": [],
                 "unprocessed": [],
             },
-        }, 21), "ok")
+        }, 21), "partial")
         self.assertEqual(classify_job_result({
             "status": "error",
             "message": "1688 補貨流程未產生結果（返回碼 1）",
@@ -112,6 +113,22 @@ class RestockBatchTests(unittest.TestCase):
             "countCheck": {"confirmed": 0, "expected": 4, "mismatch": False},
             "summary": {"succeeded": [], "unverified": [{"modelName": "綠色"}, {"modelName": "橙色"}]},
         }, 4), "uncertain")
+        self.assertEqual(classify_job_result({
+            "status": "success",
+            "countCheck": {"confirmed": 6, "expected": 6, "mismatch": False},
+            "summary": {
+                "succeeded": [{"modelName": str(i)} for i in range(6)],
+                "selectionMismatch": [{"modelName": str(i)} for i in range(6)],
+            },
+        }, 6), "mismatch")
+        self.assertEqual(classify_job_result({
+            "status": "partial",
+            "countCheck": {"confirmed": 2, "expected": 6, "mismatch": True},
+            "summary": {
+                "succeeded": [{"modelName": "a"}, {"modelName": "b"}],
+                "unverified": [{"modelName": "c"}, {"modelName": "d"}, {"modelName": "e"}, {"modelName": "f"}],
+            },
+        }, 6), "uncertain")
 
     def test_cart_safe_limit_stops_before_next_product(self):
         self.assertTrue(would_exceed_cart_safe_limit(190, 10))
@@ -395,7 +412,7 @@ class RestockBatchTests(unittest.TestCase):
         result = run_batch_loop(state, start_fn, read_fn, lambda _state: None, sleep_fn=lambda _: None)
         self.assertEqual(started, ["1", "2"])
         self.assertEqual(result["status"], STATUS_COMPLETED_GAPS)
-        self.assertEqual(result["done"][0]["classification"], "ok")
+        self.assertEqual(result["done"][0]["classification"], "partial")
         self.assertTrue(any(gap.get("modelName") == "黑色軍規,11 pro" for gap in result["gaps"]))
 
     def test_skippable_start_is_not_retried(self):
@@ -488,6 +505,113 @@ class RestockBatchTests(unittest.TestCase):
             loaded = load_state(Path(temp_dir) / "run-io")
             self.assertEqual(loaded["runId"], saved["runId"])
             self.assertEqual(loaded["status"], STATUS_RUNNING)
+
+
+    def test_preview_freezes_phone_case_and_other_target_months(self):
+        snapshot = build_preview([
+            product("1", "氣囊防摔 iPhone 手機殼", [item("黑", 30)]),
+            product("2", "iPhone 吊飾掛繩", [item("白星熊", 10)]),
+            {
+                "productId": "3",
+                "productName": "旧资料手机壳",
+                "targetMonths": 3,
+                "items": [item("粉", 20)],
+            },
+        ])
+        self.assertEqual(snapshot["products"][0]["targetMonths"], 3)
+        self.assertEqual(snapshot["products"][0]["items"][0]["targetMonths"], 3)
+        self.assertEqual(snapshot["products"][1]["targetMonths"], 4)
+        self.assertEqual(snapshot["products"][1]["items"][0]["targetMonths"], 4)
+        self.assertEqual(snapshot["products"][2]["targetMonths"], 3)
+        state = create_state(snapshot, run_id="run-months")
+        self.assertEqual(state["snapshot"]["products"][0]["targetMonths"], 3)
+        self.assertEqual(state["remaining"][1]["targetMonths"], 4)
+        resumed = resume_state(state)
+        self.assertEqual(resumed["remaining"][0]["items"][0]["targetMonths"], 3)
+        self.assertEqual(resumed["remaining"][1]["items"][0]["restockQty"], 10)
+
+    def test_partial_blocked_continues_unverified_pauses(self):
+        snapshot = build_preview([
+            product("1", "軍規殼", [item("黑", spec="s1"), item("粉", spec="s2")]),
+            product("2", "吊飾", [item("白")]),
+        ])
+        blocked_state = create_state(snapshot, run_id="run-blocked-partial")
+        blocked_state = apply_product_outcome(blocked_state, snapshot["readyProducts"][0], {
+            "productId": "1",
+            "classification": "partial",
+            "confirmed": 1,
+        }, {"summary": {"blocked": [{"modelName": "粉", "message": "name_pair_not_on_live_page"}]}})
+        self.assertEqual(blocked_state["status"], STATUS_RUNNING)
+        self.assertEqual([p["productId"] for p in blocked_state["remaining"]], ["2"])
+
+        unverified_state = create_state(snapshot, run_id="run-unverified-pause")
+        unverified_state = apply_product_outcome(unverified_state, snapshot["readyProducts"][0], {
+            "productId": "1",
+            "classification": "uncertain",
+            "confirmed": 0,
+        }, {"summary": {"unverified": [{"modelName": "黑"}, {"modelName": "粉"}]}})
+        self.assertEqual(unverified_state["status"], STATUS_PAUSED_ATTENTION)
+        self.assertEqual([p["productId"] for p in unverified_state["remaining"]], ["2"])
+
+    def test_report_tally_is_mutually_exclusive(self):
+        snapshot = build_preview([
+            product("1", "A", [item("黑", spec="s1"), item("白", spec="s2")]),
+            product("2", "B", [item("粉", spec="s3")]),
+            product("3", "C", [item("綠", spec="s4")]),
+        ])
+        state = create_state(snapshot, run_id="run-tally")
+        state = apply_product_outcome(state, snapshot["readyProducts"][0], {
+            "productId": "1",
+            "productName": "A",
+            "classification": "partial",
+            "targetMonths": 4,
+            "items": snapshot["readyProducts"][0]["items"],
+            "summary": {
+                "succeeded": [{"modelName": "黑", "quantity": 10}],
+                "blocked": [{"modelName": "白", "quantity": 10}],
+            },
+        }, {"summary": {"succeeded": [{"modelName": "黑"}], "blocked": [{"modelName": "白"}]}})
+        state = apply_product_outcome(state, snapshot["readyProducts"][1], {
+            "productId": "2",
+            "productName": "B",
+            "classification": "uncertain",
+            "items": snapshot["readyProducts"][1]["items"],
+            "summary": {"unverified": [{"modelName": "粉"}]},
+        }, {"summary": {"unverified": [{"modelName": "粉"}]}})
+        report = build_report(state)
+        tally = report["tally"]
+        self.assertEqual(tally["planned"], 4)
+        self.assertEqual(tally["confirmed"], 1)
+        self.assertEqual(tally["blocked"], 1)
+        self.assertEqual(tally["unverified"], 1)
+        self.assertEqual(tally["remaining"], 1)
+        self.assertEqual(
+            tally["planned"],
+            tally["confirmed"] + tally["blocked"] + tally["failed"] + tally["unverified"] + tally["remaining"],
+        )
+        self.assertEqual(report["skus"][0]["targetMonths"], 4)
+        self.assertEqual(state["remaining"][0]["productId"], "3")
+
+    def test_interrupted_items_count_as_unverified_not_requeued(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            snapshot = build_preview([product("1", "A", [item("黑")]), product("2", "B", [item("白")])])
+            state = create_state(snapshot, run_id="run-crash-tally")
+            state["status"] = STATUS_RUNNING
+            state["currentProductId"] = "1"
+            save_state(root / "run-crash-tally", state)
+            recover_interrupted_batches(root)
+            loaded = load_state(root / "run-crash-tally")
+            tally = tally_sku_buckets(loaded)
+            self.assertEqual(loaded["done"][0]["items"][0]["modelName"], "黑")
+            self.assertEqual(tally["unverified"], 1)
+            self.assertEqual(tally["remaining"], 1)
+            self.assertEqual(
+                tally["planned"],
+                tally["confirmed"] + tally["blocked"] + tally["failed"] + tally["unverified"] + tally["remaining"],
+            )
+            resumed = resume_state(loaded)
+            self.assertEqual([p["productId"] for p in resumed["remaining"]], ["2"])
 
 
 if __name__ == "__main__":

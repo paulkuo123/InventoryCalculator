@@ -35,6 +35,7 @@ from home_bootstrap import (
     merged_watchlist_exclusion_ids,
     without_watchlist_exclusions,
 )
+from restock_rules import round_calculated_restock_qty, target_months_for_product
 
 EXIT_ERROR = 1
 EXIT_PAUSED = 2
@@ -162,12 +163,8 @@ def _int(value: Any) -> int:
         return 0
 
 
-def round_restock_qty(quantity: int, current_stock: int) -> int:
-    if quantity <= 0:
-        return 0
-    if current_stock == 0 and quantity <= 5:
-        return 5
-    return ((int(quantity) + 5) // 10) * 10
+def round_restock_qty(quantity: int, current_stock: int, monthly_rate: float = 0) -> int:
+    return round_calculated_restock_qty(quantity, current_stock, monthly_rate)
 
 
 def requires_second_sku(product_name: str, model_name: str) -> bool:
@@ -192,7 +189,7 @@ def suggested_restock_qty(product: Dict[str, Any], model: Dict[str, Any], months
     if monthly_rate <= 0 and not model.get("月銷量"):
         return 0
     expected = int(monthly_rate * months + 0.5)
-    return round_restock_qty(max(expected - current_stock, 0), current_stock)
+    return round_restock_qty(max(expected - current_stock, 0), current_stock, monthly_rate)
 
 
 def golden_model(golden: Dict[str, Any], product_id: str, spec_id: str, model_name: str) -> Dict[str, Any]:
@@ -233,12 +230,13 @@ def build_list_from_files(
         name = str(product.get("商品名稱") or "")
         if keyword and keyword not in name:
             continue
+        product_months = target_months_for_product(name, months)
         items = []
         blockers = 0
         for model in product.get("型號") or []:
             if not isinstance(model, dict):
                 continue
-            qty = suggested_restock_qty(product, model, months)
+            qty = suggested_restock_qty(product, model, product_months)
             if qty <= 0:
                 continue
             mapped = golden_model(golden, str(product_id), str(model.get("規格ID") or ""), str(model.get("型號名稱") or ""))
@@ -261,6 +259,7 @@ def build_list_from_files(
                     "alibabaSkuId": str(mapped.get("1688_sku_id") or ""),
                     "restockQty": qty,
                     "alibabaUrl": url,
+                    "targetMonths": product_months,
                 })
             else:
                 blockers += 1
@@ -268,6 +267,7 @@ def build_list_from_files(
             rows.append({
                 "productId": str(product_id),
                 "productName": name,
+                "targetMonths": product_months,
                 "blockerCount": blockers,
                 "items": items,
             })
@@ -295,6 +295,7 @@ def build_visible_style_products(
         products.append({
             "productId": row.get("productId"),
             "productName": row.get("productName"),
+            "targetMonths": row.get("targetMonths"),
             "items": row.get("items") or [],
             "blockerCount": row.get("blockerCount") or 0,
             "gaps": [{"modelName": "", "reason": f"{row.get('blockerCount')} 個型號未完成 1688 對應"}]
@@ -310,11 +311,11 @@ def start_batch(base_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
     return request_json("POST", f"{base_url.rstrip('/')}/api/alibaba-restock/batches", payload, timeout=30)
 
 
-def resume_batch(base_url: str, run_id: str, cart_cleared: bool = True) -> Dict[str, Any]:
+def resume_batch(base_url: str, run_id: str, cart_cleared: bool = False) -> Dict[str, Any]:
     return request_json(
         "POST",
         f"{base_url.rstrip('/')}/api/alibaba-restock/batches/{run_id}/resume",
-        {"cartCleared": cart_cleared},
+        {"cartCleared": bool(cart_cleared)},
         timeout=30,
     )
 
@@ -355,6 +356,11 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser.add_argument("--restock", action="store_true", help="載入首頁後開始整頁補貨")
     parser.add_argument("--yes", action="store_true", help="--restock 時不等待確認")
     parser.add_argument("--resume", metavar="RUN_ID", help="繼續先前暫停的批次")
+    parser.add_argument(
+        "--cart-cleared",
+        action="store_true",
+        help="續跑時才宣告採購車已清空；未加此旗標時 cartCleared=false",
+    )
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=60, help="等待 main.py 啟動的秒數")
     return parser.parse_args(argv)
@@ -407,7 +413,7 @@ def main(argv: Optional[list] = None) -> int:
         print("這一頁會載入 shopee_products.json 與觀察清單；沒看過畫面之前不會加車。", flush=True)
 
         if args.resume:
-            started = resume_batch(base, args.resume, cart_cleared=True)
+            started = resume_batch(base, args.resume, cart_cleared=bool(args.cart_cleared))
             if started.get("status") != "success" or not started.get("runId"):
                 print(started.get("message") or "續跑失敗", file=sys.stderr)
                 return EXIT_ERROR
