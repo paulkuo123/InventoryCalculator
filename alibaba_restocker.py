@@ -2510,6 +2510,30 @@ def add_to_cart_with_retry(
                 break
             page.wait_for_timeout(AFTER_FILL_WAIT_MS)
 
+        selected_summary = read_page_selection_summary(page)
+        debug.log("pre_submit_selected_summary", {
+            "modelNames": model_names,
+            "expectedItemCount": len(cart_items),
+            "expectedQuantityTotal": quantity_total,
+            "attempt": attempt,
+            "selectedSummary": selected_summary,
+        })
+        if selection_summary_mismatch(
+            selected_summary,
+            len(cart_items),
+            quantity_total,
+        ):
+            attempts.append({
+                "attempt": attempt,
+                "selectionSummary": selected_summary,
+                "feedback": {
+                    "status": "selection_mismatch",
+                    "message": "1688 頁面顯示的已選型號／數量與本次補貨不一致，未按加採購車",
+                },
+            })
+            final_status = "selection_mismatch"
+            break
+
         recovered_refills = recover_offer_page_before_submit(page, cart_items, debug)
         if recovered_refills is not None:
             recovered_offer = extract_offer_id(str(getattr(page, "url", "") or ""))
@@ -2590,7 +2614,7 @@ def add_to_cart_with_retry(
             })
             page.wait_for_timeout(AFTER_CART_DISMISS_WAIT_MS)
 
-    return {
+    result = {
         "ok": final_status in ("success", "clicked_unverified"),
         "status": final_status,
         "mode": "single_submit_for_product_page",
@@ -2599,6 +2623,11 @@ def add_to_cart_with_retry(
         "quantityTotal": quantity_total,
         "attempts": attempts,
     }
+    if final_status == "selection_mismatch" and attempts:
+        last_attempt = attempts[-1]
+        if "feedback" in last_attempt and "message" in last_attempt["feedback"]:
+            result["message"] = last_attempt["feedback"]["message"]
+    return result
 
 
 def dismiss_cart_feedback(page) -> Dict[str, Any]:
