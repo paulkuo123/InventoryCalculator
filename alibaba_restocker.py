@@ -809,43 +809,71 @@ _CORE_FOUNDATION = _load_macos_chinese_converter()
 _CF_UTF8 = 0x08000100
 
 
-def canonicalize_chinese(value: Any) -> str:
-    """Convert the complete label to simplified Chinese for comparison only.
+def _load_opencc_converter():
+    """載入 opencc-python-reimplemented 作為跨平台繁→簡轉換的 fallback。
 
-    There is deliberately no partial character-map fallback.  A raw/format
-    exact match can still be used by the caller, but a cross-script match must
-    fail closed when the full converter is unavailable or fails.
+    回傳一個可呼叫的轉換函式，若套件不可用則回傳 None。
+    僅在 CoreFoundation 不可用時使用。
+    """
+    try:
+        import opencc  # type: ignore
+        _converter = opencc.OpenCC("t2s")
+        # 以已知案例驗證套件資料完整性
+        if _converter.convert("墨綠色") != "墨绿色":
+            return None
+        return _converter.convert
+    except Exception:
+        return None
+
+
+# 僅在 CoreFoundation 不可用時才初始化 opencc，避免在 macOS 上雙重載入
+_OPENCC_CONVERTER = None if _CORE_FOUNDATION is not None else _load_opencc_converter()
+
+
+def canonicalize_chinese(value: Any) -> str:
+    """將完整標籤轉換為簡體中文，僅供比對用途。
+
+    優先使用 macOS CoreFoundation（macOS 行為不變）；
+    非 macOS 平台改用 opencc-python-reimplemented 作為 fallback。
+    兩者皆不可用時維持 fail-closed，拋出 ChineseCanonicalizationUnavailable。
     """
     text = _format_comparison_text(value)
     if not text:
         return ""
-    if _CORE_FOUNDATION is None:
-        raise ChineseCanonicalizationUnavailable("完整繁簡轉換器不可用")
-    source = mutable = transform = None
-    try:
-        source = _CORE_FOUNDATION.CFStringCreateWithCString(None, text.encode("utf-8"), _CF_UTF8)
-        if not source:
-            raise ChineseCanonicalizationUnavailable("無法建立 CoreFoundation 字串")
-        mutable = _CORE_FOUNDATION.CFStringCreateMutableCopy(None, 0, source)
-        transform = _CORE_FOUNDATION.CFStringCreateWithCString(
-            None, b"Traditional-Simplified", _CF_UTF8
-        )
-        if not mutable or not transform:
-            raise ChineseCanonicalizationUnavailable("無法建立繁簡轉換資源")
-        if not _CORE_FOUNDATION.CFStringTransform(mutable, None, transform, False):
-            raise ChineseCanonicalizationUnavailable("CoreFoundation 繁簡轉換失敗")
-        buffer = ctypes.create_string_buffer(max(64, len(text.encode("utf-8")) * 4 + 1))
-        if not _CORE_FOUNDATION.CFStringGetCString(mutable, buffer, len(buffer), _CF_UTF8):
-            raise ChineseCanonicalizationUnavailable("無法讀取繁簡轉換結果")
-        return _format_comparison_text(buffer.value.decode("utf-8"))
-    except ChineseCanonicalizationUnavailable:
-        raise
-    except Exception as exc:
-        raise ChineseCanonicalizationUnavailable("CoreFoundation 繁簡轉換失敗") from exc
-    finally:
-        for ref in (transform, mutable, source):
-            if ref:
-                _CORE_FOUNDATION.CFRelease(ref)
+    # --- macOS CoreFoundation 路徑（行為與原本完全相同）---
+    if _CORE_FOUNDATION is not None:
+        source = mutable = transform = None
+        try:
+            source = _CORE_FOUNDATION.CFStringCreateWithCString(None, text.encode("utf-8"), _CF_UTF8)
+            if not source:
+                raise ChineseCanonicalizationUnavailable("無法建立 CoreFoundation 字串")
+            mutable = _CORE_FOUNDATION.CFStringCreateMutableCopy(None, 0, source)
+            transform = _CORE_FOUNDATION.CFStringCreateWithCString(
+                None, b"Traditional-Simplified", _CF_UTF8
+            )
+            if not mutable or not transform:
+                raise ChineseCanonicalizationUnavailable("無法建立繁簡轉換資源")
+            if not _CORE_FOUNDATION.CFStringTransform(mutable, None, transform, False):
+                raise ChineseCanonicalizationUnavailable("CoreFoundation 繁簡轉換失敗")
+            buffer = ctypes.create_string_buffer(max(64, len(text.encode("utf-8")) * 4 + 1))
+            if not _CORE_FOUNDATION.CFStringGetCString(mutable, buffer, len(buffer), _CF_UTF8):
+                raise ChineseCanonicalizationUnavailable("無法讀取繁簡轉換結果")
+            return _format_comparison_text(buffer.value.decode("utf-8"))
+        except ChineseCanonicalizationUnavailable:
+            raise
+        except Exception as exc:
+            raise ChineseCanonicalizationUnavailable("CoreFoundation 繁簡轉換失敗") from exc
+        finally:
+            for ref in (transform, mutable, source):
+                if ref:
+                    _CORE_FOUNDATION.CFRelease(ref)
+    # --- 跨平台 opencc fallback ---
+    if _OPENCC_CONVERTER is not None:
+        try:
+            return _format_comparison_text(_OPENCC_CONVERTER(text))
+        except Exception as exc:
+            raise ChineseCanonicalizationUnavailable("opencc 繁簡轉換失敗") from exc
+    raise ChineseCanonicalizationUnavailable("完整繁簡轉換器不可用")
 
 
 JS_NORMALIZE_HELPER = r"""
