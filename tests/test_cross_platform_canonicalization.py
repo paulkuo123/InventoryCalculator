@@ -272,6 +272,133 @@ class TestCatalogMappingCheckCrossPlatform(unittest.TestCase):
             alibaba_restocker._OPENCC_CONVERTER = orig_opencc
 
 
+class TestM102TulipRegression(unittest.TestCase):
+    """M102 一朵鬱金香 繁簡混用回歸案例（offer 653288653055）。"""
+
+    FULL_CATALOG = {
+        "4717220317937": {"sku_id": "4717220317937", "sku_name": "白色花朵", "second_name": "", "parts": ["白色花朵"], "spec_text": "白色花朵"},
+        "4717220317938": {"sku_id": "4717220317938", "sku_name": "M113 杯子", "second_name": "", "parts": ["M113 杯子"], "spec_text": "M113 杯子"},
+        "4717220317939": {"sku_id": "4717220317939", "sku_name": "M114 华夫饼", "second_name": "", "parts": ["M114 华夫饼"], "spec_text": "M114 华夫饼"},
+        "4717220317940": {"sku_id": "4717220317940", "sku_name": "M115 黑色花朵", "second_name": "", "parts": ["M115 黑色花朵"], "spec_text": "M115 黑色花朵"},
+        "4717220317941": {"sku_id": "4717220317941", "sku_name": "M116 桃子", "second_name": "", "parts": ["M116 桃子"], "spec_text": "M116 桃子"},
+        "4717220317942": {"sku_id": "4717220317942", "sku_name": "M117爱心早餐", "second_name": "", "parts": ["M117爱心早餐"], "spec_text": "M117爱心早餐"},
+        "4717220317943": {"sku_id": "4717220317943", "sku_name": "M118戚风蛋糕", "second_name": "", "parts": ["M118戚风蛋糕"], "spec_text": "M118戚风蛋糕"},
+        "4717220317944": {"sku_id": "4717220317944", "sku_name": "M119 黄油蛋糕", "second_name": "", "parts": ["M119 黄油蛋糕"], "spec_text": "M119 黄油蛋糕"},
+        "4717220317945": {"sku_id": "4717220317945", "sku_name": "M120 曲奇饼干", "second_name": "", "parts": ["M120 曲奇饼干"], "spec_text": "M120 曲奇饼干"},
+        "4717220317946": {"sku_id": "4717220317946", "sku_name": "M121 松饼芝士", "second_name": "", "parts": ["M121 松饼芝士"], "spec_text": "M121 松饼芝士"},
+        "4717220317947": {"sku_id": "4717220317947", "sku_name": "M122 芝士奶酪", "second_name": "", "parts": ["M122 芝士奶酪"], "spec_text": "M122 芝士奶酪"},
+        "4717220317948": {"sku_id": "4717220317948", "sku_name": "M123 冰淇淋", "second_name": "", "parts": ["M123 冰淇淋"], "spec_text": "M123 冰淇淋"},
+        "4717220317949": {"sku_id": "4717220317949", "sku_name": "M124 开心果", "second_name": "", "parts": ["M124 开心果"], "spec_text": "M124 开心果"},
+        "4717220317950": {"sku_id": "4717220317950", "sku_name": "M125 黄色郁金香", "second_name": "", "parts": ["M125 黄色郁金香"], "spec_text": "M125 黄色郁金香"},
+        "4717220317951": {"sku_id": "4717220317951", "sku_name": "M102 一朵郁金香", "second_name": "", "parts": ["M102 一朵郁金香"], "spec_text": "M102 一朵郁金香"},
+    }
+
+    def _run_with_opencc(self, selection, catalog):
+        """強制使用 opencc fallback 執行 catalog_mapping_check。"""
+        orig_cf = alibaba_restocker._CORE_FOUNDATION
+        orig_opencc = alibaba_restocker._OPENCC_CONVERTER
+        try:
+            alibaba_restocker._CORE_FOUNDATION = None
+            if orig_opencc is None:
+                alibaba_restocker._OPENCC_CONVERTER = alibaba_restocker._load_opencc_converter()
+            return catalog_mapping_check(selection, catalog)
+        finally:
+            alibaba_restocker._CORE_FOUNDATION = orig_cf
+            alibaba_restocker._OPENCC_CONVERTER = orig_opencc
+
+    def test_m102_main_case_sku_id_fallback(self):
+        """M102 主案例：selection sku_name「一朵鬱金香」（繁體）vs catalog「M102 一朵郁金香」（簡體帶前綴）。
+
+        由於 mapping 物件的 sku_name 不含「M102」前綴，與 catalog 的「M102 一朵郁金香」
+        在名稱比對上無法完全吻合（即使經繁簡 canonicalization 後為「一朵郁金香」vs「m102 一朵郁金香」），
+        因此最終透過 sku_id_fallback 路徑匹配成功（matchMode == "sku_id_fallback"）。
+        關鍵是結果 ok=True、sku_id 正確、reason 不為 canonicalization_unavailable 或 spec_fingerprint_mismatch。
+        """
+        selection = {
+            "sku_id": "4717220317951",
+            "sku_name": "一朵鬱金香",
+            "sku_second_name": "",
+            "spec_text": "一朵郁金香",
+        }
+        result = self._run_with_opencc(selection, self.FULL_CATALOG)
+        self.assertTrue(result["ok"], f"M102 應匹配成功，實際：{result}")
+        self.assertEqual(result["sku_id"], "4717220317951")
+        self.assertEqual(result["matchMode"], "sku_id_fallback")
+        self.assertNotEqual(result.get("reason"), "canonicalization_unavailable")
+        self.assertNotEqual(result.get("reason"), "spec_fingerprint_mismatch")
+
+    def test_m102_pure_canonical_match_without_prefix(self):
+        """M102 純繁簡變體：catalog 名稱為「一朵郁金香」（無 M102 前綴），selection 的 sku_id 不存在於 catalog。
+
+        此案例確保 canonicalize_chinese 繁→簡轉換使「一朵鬱金香」==「一朵郁金香」，
+        匹配路徑為 canonical（非 sku_id_fallback）。
+        """
+        catalog = {
+            "4717220317951": {
+                "sku_id": "4717220317951",
+                "sku_name": "一朵郁金香",
+                "second_name": "",
+                "parts": ["一朵郁金香"],
+                "spec_text": "一朵郁金香",
+            },
+        }
+        selection = {
+            "sku_id": "9999999999999",
+            "sku_name": "一朵鬱金香",
+            "sku_second_name": "",
+        }
+        result = self._run_with_opencc(selection, catalog)
+        self.assertTrue(result["ok"], f"純繁簡匹配應成功，實際：{result}")
+        self.assertEqual(result["sku_id"], "4717220317951")
+        self.assertEqual(result["matchMode"], "canonical",
+                         "應透過 canonical 路徑匹配，而非 sku_id_fallback")
+
+    def test_m102_negative_different_flowers(self):
+        """反向保護：selection「一朵鬱金香」對僅含「M125 黄色郁金香」及「M115 黑色花朵」的 catalog，
+        且 sku_id 不在 catalog 中，必須 ok=False。
+        """
+        catalog = {
+            "4717220317950": {
+                "sku_id": "4717220317950",
+                "sku_name": "M125 黄色郁金香",
+                "second_name": "",
+                "parts": ["M125 黄色郁金香"],
+                "spec_text": "M125 黄色郁金香",
+            },
+            "4717220317940": {
+                "sku_id": "4717220317940",
+                "sku_name": "M115 黑色花朵",
+                "second_name": "",
+                "parts": ["M115 黑色花朵"],
+                "spec_text": "M115 黑色花朵",
+            },
+        }
+        selection = {
+            "sku_id": "9999999999999",
+            "sku_name": "一朵鬱金香",
+            "sku_second_name": "",
+        }
+        result = self._run_with_opencc(selection, catalog)
+        self.assertFalse(result["ok"], f"不同花色不應匹配，實際：{result}")
+
+    def test_canonicalize_tulip_equivalence(self):
+        """單元測試：canonicalize_chinese(「一朵鬱金香」) 應等於 canonicalize_chinese(「一朵郁金香」)。"""
+        orig_cf = alibaba_restocker._CORE_FOUNDATION
+        orig_opencc = alibaba_restocker._OPENCC_CONVERTER
+        try:
+            alibaba_restocker._CORE_FOUNDATION = None
+            if orig_opencc is None:
+                alibaba_restocker._OPENCC_CONVERTER = alibaba_restocker._load_opencc_converter()
+            self.assertEqual(
+                canonicalize_chinese("一朵鬱金香"),
+                canonicalize_chinese("一朵郁金香"),
+                "繁體「鬱」與簡體「郁」經 canonicalization 後應相等",
+            )
+        finally:
+            alibaba_restocker._CORE_FOUNDATION = orig_cf
+            alibaba_restocker._OPENCC_CONVERTER = orig_opencc
+
+
 class FakePage:
     """最小化的假 Playwright page，供 add_to_cart_with_retry 測試使用。"""
     def wait_for_timeout(self, ms):
