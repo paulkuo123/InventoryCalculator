@@ -398,6 +398,35 @@ class TestM102TulipRegression(unittest.TestCase):
             alibaba_restocker._CORE_FOUNDATION = orig_cf
             alibaba_restocker._OPENCC_CONVERTER = orig_opencc
 
+    def test_m102_fails_closed_when_both_converters_unavailable(self):
+        """證明「修好之前」Linux 上 M102 在 canonicalization 階段就會 fail-closed。
+
+        當 _CORE_FOUNDATION 與 _OPENCC_CONVERTER 均為 None 時（模擬舊版 Linux 環境缺少
+        任何中文轉換器的情況），catalog_mapping_check 必須在 canonicalization 就擋下，
+        回傳 ok=False 且 reason == "canonicalization_unavailable"。
+        這代表在 fallback 之前，Linux 上會在 canonicalization 就 fail-closed，連
+        sku_id_fallback 都到不了，所以 M102 會整批擋下來。
+        """
+        selection = {
+            "sku_id": "4717220317951",
+            "sku_name": "一朵鬱金香",
+            "sku_second_name": "",
+            "spec_text": "一朵郁金香",
+        }
+        orig_cf = alibaba_restocker._CORE_FOUNDATION
+        orig_opencc = alibaba_restocker._OPENCC_CONVERTER
+        try:
+            alibaba_restocker._CORE_FOUNDATION = None
+            alibaba_restocker._OPENCC_CONVERTER = None
+            result = catalog_mapping_check(selection, self.FULL_CATALOG)
+            self.assertIs(result["ok"], False,
+                          f"兩個轉換器均不可用時應 fail-closed，實際：{result}")
+            self.assertEqual(result["reason"], "canonicalization_unavailable",
+                             f"reason 應為 canonicalization_unavailable，實際：{result}")
+        finally:
+            alibaba_restocker._CORE_FOUNDATION = orig_cf
+            alibaba_restocker._OPENCC_CONVERTER = orig_opencc
+
 
 class FakePage:
     """最小化的假 Playwright page，供 add_to_cart_with_retry 測試使用。"""
