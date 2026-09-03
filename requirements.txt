@@ -5,3 +5,4 @@ requests
 pyinstaller
 pandas
 python-calamine
+opencc-python-reimplemented

@@ -538,7 +538,10 @@ class AlibabaRestockerTests(unittest.TestCase):
             }
         }
 
-        with patch.object(alibaba_restocker, "_CORE_FOUNDATION", None):
+        # 必須同時將 CoreFoundation 與 opencc fallback 都設為 None，
+        # 才能模擬「兩個轉換器皆不可用」的 fail-closed 情境。
+        with patch.object(alibaba_restocker, "_CORE_FOUNDATION", None), \
+             patch.object(alibaba_restocker, "_OPENCC_CONVERTER", None):
             result = alibaba_restocker.catalog_mapping_check(
                 {"sku_name": "愛心熊黑繩", "sku_second_name": ""}, catalog
             )
