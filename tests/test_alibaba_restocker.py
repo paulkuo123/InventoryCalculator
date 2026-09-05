@@ -8,6 +8,16 @@ import alibaba_restocker
 class FakePage:
     def __init__(self):
         self.waits = []
+        self.gotos = []
+        self._url = ""
+
+    @property
+    def url(self):
+        return self._url
+
+    def goto(self, url, wait_until="domcontentloaded", timeout=60000):
+        self.gotos.append(url)
+        self._url = url
 
     def wait_for_timeout(self, milliseconds):
         self.waits.append(milliseconds)
@@ -1531,6 +1541,206 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(failed, [])
         self.assertEqual(verification["reason"], "cart_partial")
         self.assertTrue(verification["truncated"])
+
+    def test_multi_sku_same_offer_submits_individually_with_reload(self):
+        """同 offer 多 SKU：逐一 fill+submit，第二筆起會重載商品頁。"""
+        page = FakePage()
+        debug = FakeDebug()
+        url = "https://detail.1688.com/offer/661385649783.html"
+        pending = [
+            {
+                "modelName": "粉色",
+                "alibabaSkuName": "粉色",
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "5996998447259",
+                "alibabaUrl": url,
+                "quantity": 10,
+            },
+            {
+                "modelName": "黑色",
+                "alibabaSkuName": "黑色",
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "5996998447260",
+                "alibabaUrl": url,
+                "quantity": 8,
+            },
+        ]
+        fill_returns = [
+            [{"status": "filled", "modelName": "粉色"}],
+            [{"status": "filled", "modelName": "黑色"}],
+        ]
+        with patch.object(
+            alibaba_restocker, "fill_sku_quantities_on_page", side_effect=fill_returns
+        ) as fill, patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            side_effect=[{"skuCount": 1, "quantity": 10}, {"skuCount": 1, "quantity": 8}],
+        ), patch.object(
+            alibaba_restocker,
+            "add_to_cart_with_retry",
+            side_effect=[
+                {"ok": True, "status": "success", "message": "已加入采购车"},
+                {"ok": True, "status": "success", "message": "已加入采购车"},
+            ],
+        ) as add, patch.object(
+            alibaba_restocker, "dismiss_cart_feedback", return_value={"ok": True}
+        ), patch.object(
+            alibaba_restocker, "verify_single_sku_in_cart_after_submit", return_value=None
+        ):
+            result = alibaba_restocker.fill_and_submit_offer_items_individually(
+                page, url, pending, debug
+            )
+
+        self.assertEqual(fill.call_count, 2)
+        self.assertEqual([len(call.args[1]) for call in fill.call_args_list], [1, 1])
+        self.assertEqual(add.call_count, 2)
+        self.assertEqual([len(call.args[1]) for call in add.call_args_list], [1, 1])
+        self.assertEqual(page.gotos, [url])
+        self.assertEqual(len(result["submissions"]), 2)
+        self.assertEqual(result["submissions"][0]["mode"], "per_sku_submit_for_product_page")
+        self.assertEqual(len(result["unverified"]), 2)
+        self.assertEqual(result["selection_mismatch"], [])
+        self.assertEqual(result["failed"], [])
+
+    def test_per_sku_selection_mismatch_keeps_pre_click_guard(self):
+        """逐 SKU 路徑仍沿用 PR#18：點擊前 selection_mismatch 不進確認桶。"""
+        page = FakePage()
+        debug = FakeDebug()
+        url = "https://detail.1688.com/offer/661385649783.html"
+        pending = [
+            {
+                "modelName": "粉色",
+                "alibabaSkuName": "粉色",
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "5996998447259",
+                "alibabaUrl": url,
+                "quantity": 10,
+            },
+            {
+                "modelName": "迷彩",
+                "alibabaSkuName": "迷彩",
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "5996998447261",
+                "alibabaUrl": url,
+                "quantity": 5,
+            },
+        ]
+        with patch.object(
+            alibaba_restocker,
+            "fill_sku_quantities_on_page",
+            side_effect=[
+                [{"status": "filled", "modelName": "粉色"}],
+                [{"status": "filled", "modelName": "迷彩"}],
+            ],
+        ), patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            side_effect=[
+                {"skuCount": 1, "quantity": 10},
+                {"skuCount": 1, "quantity": 5},
+            ],
+        ), patch.object(
+            alibaba_restocker,
+            "add_to_cart_with_retry",
+            side_effect=[
+                {
+                    "ok": False,
+                    "status": "selection_mismatch",
+                    "message": "1688 頁面顯示的已選型號／數量與本次補貨不一致，未按加採購車",
+                },
+                {"ok": True, "status": "success", "message": "已加入采购车"},
+            ],
+        ) as add, patch.object(
+            alibaba_restocker, "dismiss_cart_feedback", return_value={"ok": True}
+        ), patch.object(
+            alibaba_restocker,
+            "verify_single_sku_in_cart_after_submit",
+            return_value={
+                "modelName": "迷彩",
+                "alibabaSkuName": "迷彩",
+                "quantity": 5,
+                "confirmedAddedQty": 5,
+                "cartQuantityDelta": 5,
+            },
+        ):
+            result = alibaba_restocker.fill_and_submit_offer_items_individually(
+                page, url, pending, debug
+            )
+
+        self.assertEqual(add.call_count, 2)
+        self.assertEqual(len(result["selection_mismatch"]), 1)
+        self.assertEqual(result["selection_mismatch"][0]["modelName"], "粉色")
+        self.assertEqual(len(result["confirmed"]), 1)
+        self.assertEqual(result["confirmed"][0]["modelName"], "迷彩")
+        self.assertEqual(result["unverified"], [])
+
+    def test_single_sku_mismatch_still_stops_before_cart_click(self):
+        """單 SKU 真 mismatch 仍由 add_to_cart_with_retry 預點擊擋下（PR#18）。"""
+        page = FakePage()
+        debug = FakeDebug()
+        items = [{
+            "modelName": "粉色",
+            "alibabaSkuName": "粉色",
+            "alibabaSkuSecondName": "",
+            "quantity": 10,
+        }]
+        with patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            return_value={"skuCount": 2, "quantity": 25},
+        ), patch.object(
+            alibaba_restocker,
+            "click_add_to_cart",
+            return_value={"ok": True},
+        ) as click, patch.object(
+            alibaba_restocker,
+            "wait_for_cart_feedback",
+        ) as feedback, patch.object(
+            alibaba_restocker,
+            "recover_offer_page_before_submit",
+            return_value=None,
+        ):
+            result = alibaba_restocker.add_to_cart_with_retry(page, items, debug)
+
+        click.assert_not_called()
+        feedback.assert_not_called()
+        self.assertEqual(result["status"], "selection_mismatch")
+        self.assertIn("未按加採購車", result["message"])
+
+    def test_verify_single_sku_in_cart_after_submit_promotes_on_delta(self):
+        """送出後用既有 cart helpers 核對增量，足夠則提早確認。"""
+        page = FakePage()
+        debug = FakeDebug()
+        item = {
+            "modelName": "粉色",
+            "alibabaSkuName": "粉色",
+            "alibabaUrl": "https://detail.1688.com/offer/661385649783.html",
+            "quantity": 10,
+        }
+        baseline = [{"offerId": "661385649783", "skuName": "粉色", "quantity": 2}]
+        after = [{"offerId": "661385649783", "skuName": "粉色", "quantity": 12}]
+        with patch.object(alibaba_restocker, "open_and_read_cart", return_value=after):
+            confirmed = alibaba_restocker.verify_single_sku_in_cart_after_submit(
+                page,
+                item,
+                debug,
+                baseline_cart_lines=baseline,
+                required_offer_ids={"661385649783"},
+            )
+        self.assertIsNotNone(confirmed)
+        self.assertEqual(confirmed["confirmedAddedQty"], 10)
+        self.assertEqual(confirmed["cartQuantityDelta"], 10)
+
+        with patch.object(alibaba_restocker, "open_and_read_cart", return_value=baseline):
+            missing = alibaba_restocker.verify_single_sku_in_cart_after_submit(
+                page,
+                item,
+                debug,
+                baseline_cart_lines=baseline,
+                required_offer_ids={"661385649783"},
+            )
+        self.assertIsNone(missing)
+
 
 
 if __name__ == "__main__":
