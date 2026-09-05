@@ -31,10 +31,11 @@ ADD_TO_CART_TEXTS = [
     "加入訂單",
 ]
 GOLDEN_TABLE_FILE = "golden_table.json"
-# 1688 會在內部記住每個已確認規格的數量；同一商品頁可先依序填完所有
-# SKU，再以一次「加采购车」送出。優先用 live skuId 寫數量，名稱點擊只是
-# 找不到對應欄位時的後備。短暫等待只讓 React 同步目前 SKU 狀態，
-# 真正的成功與否仍由後續提示輪詢確認。
+# 1688 會在內部記住已確認規格的數量。同 offer 多 SKU（add_to_cart 且 >1）
+# 改為逐 SKU fill+加采购车並重載頁面（一次多色易 selection_mismatch／context destroy）；
+# 單 SKU／dry-run 仍走原路徑；單 SKU 真 mismatch 仍由 PR#18 預點擊擋下。
+# 優先用 live skuId 寫數量，名稱點擊只是找不到對應欄位時的後備。
+# 短暫等待只讓 React 同步目前 SKU 狀態，真正成功與否仍由後續提示／採購車核對確認。
 AFTER_FILL_WAIT_MS = 500
 AFTER_SKU_ID_FILL_WAIT_MS = 150
 AFTER_COLOR_FILTER_WAIT_MS = 500
@@ -156,6 +157,9 @@ def classify_group_submit(
     expected_qty = sum(int(entry.get("quantity") or 0) for entry in cart_items)
     if add_status == "cart_full":
         return "cart_full"
+    if add_status == "selection_mismatch":
+        # PR#18 預點擊 mismatch：未按加采购车，獨立成桶。
+        return "selection_mismatch"
     if add_status in {"success", "clicked_unverified"}:
         if selection_summary_mismatch(page_selection, expected_count, expected_qty):
             return "selection_mismatch"
@@ -2496,6 +2500,250 @@ def refill_cart_items(
     return refill_results
 
 
+def fill_and_submit_offer_items_individually(
+    page,
+    url: str,
+    pending_fills: List[Dict[str, Any]],
+    debug: "DebugLogger",
+    baseline_cart_lines: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """同 offer 多 SKU：逐一 fill + 加采购车，避免一次多色 selection_mismatch。
+
+    單筆真 mismatch 仍由 add_to_cart_with_retry 在點擊前擋下（不削弱 PR#18）。
+    每次成功送出後優先用現有採購車 helpers 核對該 SKU 是否仍在車內。
+    回傳 item_results／submissions 與各 bucket，供 run() 彙總。
+    """
+    item_results: List[Dict[str, Any]] = []
+    submissions: List[Dict[str, Any]] = []
+    confirmed: List[Dict[str, Any]] = []
+    unverified: List[Dict[str, Any]] = []
+    selection_mismatch: List[Dict[str, Any]] = []
+    failed: List[Dict[str, Any]] = []
+    cart_full: List[Dict[str, Any]] = []
+    stopped_reason = ""
+    offer_id = extract_offer_id(url)
+    required_offer_ids = {offer_id} if offer_id else None
+
+    for index, pending in enumerate(pending_fills):
+        if stopped_reason:
+            break
+        if index > 0:
+            debug.log("reload_offer_before_next_sku", {
+                "url": url,
+                "modelName": pending.get("modelName"),
+                "index": index,
+            })
+            print(f"逐 SKU 加車：重新開啟商品頁後填入下一規格（{index + 1}/{len(pending_fills)}）", flush=True)
+            page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(3000)
+
+        try:
+            fill_results = fill_sku_quantities_on_page(page, [pending], debug)
+        except Exception as exc:
+            debug.log("solo_fill_error", {
+                "message": str(exc),
+                "modelName": pending.get("modelName"),
+            })
+            fill_results = [{
+                "status": "error",
+                "modelName": pending.get("modelName"),
+                "alibabaSkuId": pending.get("alibabaSkuId"),
+                "alibabaSkuName": pending.get("alibabaSkuName"),
+                "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+                "quantity": pending.get("quantity"),
+                "message": str(exc),
+            }]
+
+        item_result = fill_results[0] if fill_results else {
+            "status": "error",
+            "modelName": pending.get("modelName"),
+            "message": "逐 SKU 填入未回傳結果",
+        }
+        debug.log("fill_quantity_result", {
+            "modelName": pending.get("modelName"),
+            "alibabaSkuId": pending.get("alibabaSkuId"),
+            "alibabaSkuName": pending.get("alibabaSkuName"),
+            "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+            "quantity": pending.get("quantity"),
+            "fillResult": item_result,
+            "mode": "per_sku",
+        })
+        item_results.append(item_result)
+
+        if item_result.get("status") != "filled":
+            print(
+                f"跳過加采购车：{pending.get('modelName')} -> {pending.get('alibabaSkuName')}，原因：型號或數量未成功填入",
+                flush=True,
+            )
+            debug.log("skip_add_to_cart", {
+                "modelName": pending.get("modelName"),
+                "alibabaSkuName": pending.get("alibabaSkuName"),
+                "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+                "quantity": pending.get("quantity"),
+                "fillResult": item_result,
+                "mode": "per_sku",
+            })
+            continue
+
+        cart_item = {**pending, "itemResult": item_result}
+        debug.log("queued_sku_for_per_sku_cart_submit", {
+            "modelName": pending.get("modelName"),
+            "alibabaSkuName": pending.get("alibabaSkuName"),
+            "alibabaSkuSecondName": pending.get("alibabaSkuSecondName"),
+            "quantity": pending.get("quantity"),
+        })
+        page.wait_for_timeout(AFTER_FILL_WAIT_MS)
+        page_selection = read_page_selection_summary(page)
+        filled_qty = int(cart_item.get("quantity") or 0)
+        debug.log("page_selection_summary", {
+            "url": url,
+            "selection": page_selection,
+            "filledCount": 1,
+            "filledQty": filled_qty,
+            "mode": "per_sku",
+        })
+        cart_result = add_to_cart_with_retry(page, [cart_item], debug)
+        feedback_selection = parse_page_selection_summary(
+            [
+                cart_result.get("message"),
+                *(
+                    (cart_result.get("samples") or [])
+                    if isinstance(cart_result.get("samples"), list)
+                    else []
+                ),
+            ]
+        )
+        page_selection = feedback_selection or page_selection
+        cart_result["pageSelection"] = page_selection
+        cart_result["mode"] = "per_sku_submit_for_product_page"
+        submission = {
+            "mode": "per_sku_submit_for_product_page",
+            "modelNames": [cart_item["modelName"]],
+            "itemCount": 1,
+            "quantityTotal": filled_qty,
+            "result": cart_result,
+        }
+        cart_item["itemResult"]["addToCart"] = cart_result
+        add_status = cart_result.get("status")
+        bucket = classify_group_submit([cart_item], add_status, page_selection)
+
+        if add_status != "cart_full":
+            dismiss_result = dismiss_cart_feedback(page)
+            submission["dismissCartFeedback"] = dismiss_result
+            debug.log("dismiss_cart_feedback_after_per_sku_submit", {
+                "url": url,
+                "modelNames": submission["modelNames"],
+                "dismissResult": dismiss_result,
+                "waitMs": AFTER_CART_DISMISS_WAIT_MS,
+            })
+            page.wait_for_timeout(AFTER_CART_DISMISS_WAIT_MS)
+
+        if bucket == "selection_mismatch":
+            observed = page_selection or {}
+            mismatch_message = str(cart_result.get("message") or "").strip()
+            if not mismatch_message:
+                mismatch_message = (
+                    f"頁面已選 {observed.get('skuCount')}款{observed.get('quantity')}個，"
+                    f"與預期 1款{filled_qty}個不符"
+                )
+            cart_item["message"] = mismatch_message
+            selection_mismatch.append(cart_item)
+            print(f"{mismatch_message}，該規格不列為確認", flush=True)
+        elif bucket == "unverified":
+            # 先 dismiss offer 頁提示，再進採購車核對增量，避免後續 SKU 白燒額度。
+            verified_item = verify_single_sku_in_cart_after_submit(
+                page,
+                cart_item,
+                debug,
+                baseline_cart_lines=baseline_cart_lines,
+                required_offer_ids=required_offer_ids,
+            )
+            if verified_item is not None:
+                confirmed.append(verified_item)
+                print(
+                    f"採購車已確認：1 個規格（{verified_item.get('modelName')}）",
+                    flush=True,
+                )
+            else:
+                unverified.append(cart_item)
+                print(
+                    f"已按一次加采购车，待採購車核對：1 個規格（{cart_item.get('modelName')}）",
+                    flush=True,
+                )
+        elif bucket == "cart_full":
+            stopped_reason = "cart_limit_reached"
+            cart_full.append(cart_item)
+            print("1688 採購車已達上限，停止後續補貨商品。", flush=True)
+        else:
+            failed.append(cart_item)
+            print(f"加采购车可能失敗：{cart_result}", flush=True)
+
+        submissions.append(submission)
+
+    return {
+        "item_results": item_results,
+        "submissions": submissions,
+        "confirmed": confirmed,
+        "unverified": unverified,
+        "selection_mismatch": selection_mismatch,
+        "failed": failed,
+        "cart_full": cart_full,
+        "stopped_reason": stopped_reason,
+        "processed_pending_count": index + 1 if pending_fills else 0,
+    }
+
+
+def verify_single_sku_in_cart_after_submit(
+    page,
+    cart_item: Dict[str, Any],
+    debug: "DebugLogger",
+    baseline_cart_lines: Optional[List[Dict[str, Any]]] = None,
+    required_offer_ids: Optional[set] = None,
+) -> Optional[Dict[str, Any]]:
+    """成功送出後立刻核對該 SKU 是否已出現在採購車增量中。
+
+    讀不到車或增量不足時回傳 None，留給整批結尾再核對；不另建框架。
+    """
+    if baseline_cart_lines is None:
+        return None
+    try:
+        cart_lines = open_and_read_cart(
+            page,
+            debug,
+            required_offer_ids=required_offer_ids,
+        )
+    except Exception as exc:
+        debug.log("per_sku_cart_verify_error", {
+            "modelName": cart_item.get("modelName"),
+            "message": str(exc),
+        })
+        return None
+    if cart_lines is None:
+        debug.log("per_sku_cart_verify_unreadable", {
+            "modelName": cart_item.get("modelName"),
+        })
+        return None
+    before_qty = cart_quantity_for_item(baseline_cart_lines, cart_item)
+    after_qty = cart_quantity_for_item(cart_lines, cart_item)
+    expected_qty = int(cart_item.get("quantity") or 0)
+    delta = after_qty - before_qty
+    updated = dict(cart_item)
+    updated["cartQuantityBefore"] = before_qty
+    updated["cartQuantityAfter"] = after_qty
+    updated["cartQuantityDelta"] = delta
+    debug.log("per_sku_cart_verify", {
+        "modelName": cart_item.get("modelName"),
+        "beforeQty": before_qty,
+        "afterQty": after_qty,
+        "expectedQty": expected_qty,
+        "delta": delta,
+    })
+    if expected_qty > 0 and delta >= expected_qty:
+        updated["confirmedAddedQty"] = expected_qty
+        return updated
+    return None
+
+
 def add_to_cart_with_retry(
     page,
     cart_items: List[Dict[str, Any]],
@@ -2793,7 +3041,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
         "draftId": draft_id,
         "addToCart": add_to_cart,
         "itemCount": len(items),
-        "cartSubmissionStrategy": "single_submit_per_alibaba_product_page",
+        "cartSubmissionStrategy": "per_sku_submit_when_multi_sku_same_offer",
         "afterFillWaitMs": AFTER_FILL_WAIT_MS,
         "afterCartClickWaitMs": AFTER_CART_CLICK_WAIT_MS,
         "afterCartDismissWaitMs": AFTER_CART_DISMISS_WAIT_MS,
@@ -2989,7 +3237,52 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 debug.log("item_start", pending)
                 pending_fills.append(pending)
 
-            if pending_fills:
+            use_per_sku_submit = bool(add_to_cart) and len(pending_fills) > 1
+            if pending_fills and use_per_sku_submit:
+                debug.log("use_per_sku_submit_for_multi_sku_offer", {
+                    "url": url,
+                    "itemCount": len(pending_fills),
+                    "modelNames": [entry.get("modelName") for entry in pending_fills],
+                })
+                print(
+                    f"同 offer 多規格改為逐 SKU 加采购车：{len(pending_fills)} 個規格",
+                    flush=True,
+                )
+                solo = fill_and_submit_offer_items_individually(
+                    page,
+                    url,
+                    pending_fills,
+                    debug,
+                    baseline_cart_lines=baseline_cart_lines,
+                )
+                group_result["items"].extend(solo.get("item_results") or [])
+                group_result["addToCart"].extend(solo.get("submissions") or [])
+                confirmed_cart_items.extend(solo.get("confirmed") or [])
+                unverified_cart_items.extend(solo.get("unverified") or [])
+                selection_mismatch_items.extend(solo.get("selection_mismatch") or [])
+                failed_cart_items.extend(solo.get("failed") or [])
+                if solo.get("cart_full"):
+                    stopped_reason = solo.get("stopped_reason") or "cart_limit_reached"
+                    cart_limit_items.extend(solo.get("cart_full") or [])
+                    processed = int(solo.get("processed_pending_count") or 0)
+                    for leftover in pending_fills[processed:]:
+                        unprocessed_items.append({
+                            "productId": str(leftover.get("productId") or product_id or ""),
+                            "productName": str(leftover.get("productName") or product_name or "").strip(),
+                            "modelName": str(leftover.get("modelName") or "").strip(),
+                            "quantity": int(leftover.get("quantity") or 0),
+                            "alibabaUrl": str(leftover.get("alibabaUrl") or url or ""),
+                        })
+                    for _, pending_items in grouped_entries[group_index + 1:]:
+                        for pending_item in pending_items:
+                            unprocessed_items.append({
+                                "productId": str(pending_item.get("productId") or product_id or ""),
+                                "productName": str(pending_item.get("productName") or product_name or "").strip(),
+                                "modelName": str(pending_item.get("modelName") or "").strip(),
+                                "quantity": int(pending_item.get("restockQty") or pending_item.get("adjustedQty") or 0),
+                                "alibabaUrl": str(pending_item.get("alibabaUrl") or ""),
+                            })
+            elif pending_fills:
                 try:
                     fill_results = fill_sku_quantities_on_page(page, pending_fills, debug)
                 except Exception as exc:
@@ -3034,81 +3327,81 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                         })
                     group_result["items"].append(item_result)
 
-            if add_to_cart and cart_items:
-                debug.log("wait_after_all_skus_before_single_cart_submit", {
-                    "url": url,
-                    "modelNames": [entry["modelName"] for entry in cart_items],
-                    "itemCount": len(cart_items),
-                    "waitMs": AFTER_FILL_WAIT_MS,
-                })
-                page.wait_for_timeout(AFTER_FILL_WAIT_MS)
-                page_selection = read_page_selection_summary(page)
-                filled_qty = sum(int(entry.get("quantity") or 0) for entry in cart_items)
-                debug.log("page_selection_summary", {
-                    "url": url,
-                    "selection": page_selection,
-                    "filledCount": len(cart_items),
-                    "filledQty": filled_qty,
-                })
-                cart_result = add_to_cart_with_retry(page, cart_items, debug)
-                feedback_selection = parse_page_selection_summary(
-                    [cart_result.get("message"), *((cart_result.get("samples") or []) if isinstance(cart_result.get("samples"), list) else [])]
-                )
-                page_selection = feedback_selection or page_selection
-                cart_result["pageSelection"] = page_selection
-                submission = {
-                    "mode": "single_submit_for_product_page",
-                    "modelNames": [entry["modelName"] for entry in cart_items],
-                    "itemCount": len(cart_items),
-                    "quantityTotal": sum(entry["quantity"] for entry in cart_items),
-                    "result": cart_result,
-                }
-                group_result["addToCart"].append(submission)
-                for cart_item in cart_items:
-                    cart_item["itemResult"]["addToCart"] = cart_result
-
-                add_status = cart_result.get("status")
-                bucket = classify_group_submit(cart_items, add_status, page_selection)
-                if bucket == "selection_mismatch":
-                    observed = page_selection or {}
-                    mismatch_message = (
-                        f"頁面已選 {observed.get('skuCount')}款{observed.get('quantity')}個，"
-                        f"與預期 {len(cart_items)}款{filled_qty}個不符"
-                    )
-                    for cart_item in cart_items:
-                        cart_item["message"] = mismatch_message
-                    selection_mismatch_items.extend(cart_items)
-                    print(f"{mismatch_message}，整組不列為確認", flush=True)
-                elif bucket == "unverified":
-                    unverified_cart_items.extend(cart_items)
-                    print(f"已按一次加采购车，待採購車核對：{len(cart_items)} 個規格", flush=True)
-                elif bucket == "cart_full":
-                    stopped_reason = "cart_limit_reached"
-                    cart_limit_items.extend(cart_items)
-                    for _, pending_items in grouped_entries[group_index + 1:]:
-                        for pending_item in pending_items:
-                            unprocessed_items.append({
-                                "productId": str(pending_item.get("productId") or product_id or ""),
-                                "productName": str(pending_item.get("productName") or product_name or "").strip(),
-                                "modelName": str(pending_item.get("modelName") or "").strip(),
-                                "quantity": int(pending_item.get("restockQty") or pending_item.get("adjustedQty") or 0),
-                                "alibabaUrl": str(pending_item.get("alibabaUrl") or ""),
-                            })
-                    print("1688 採購車已達上限，停止後續補貨商品。", flush=True)
-                else:
-                    failed_cart_items.extend(cart_items)
-                    print(f"加采购车可能失敗：{cart_result}", flush=True)
-
-                if add_status != "cart_full":
-                    dismiss_result = dismiss_cart_feedback(page)
-                    submission["dismissCartFeedback"] = dismiss_result
-                    debug.log("dismiss_cart_feedback_after_single_submit", {
+                if add_to_cart and cart_items:
+                    debug.log("wait_after_all_skus_before_single_cart_submit", {
                         "url": url,
-                        "modelNames": submission["modelNames"],
-                        "dismissResult": dismiss_result,
-                        "waitMs": AFTER_CART_DISMISS_WAIT_MS,
+                        "modelNames": [entry["modelName"] for entry in cart_items],
+                        "itemCount": len(cart_items),
+                        "waitMs": AFTER_FILL_WAIT_MS,
                     })
-                    page.wait_for_timeout(AFTER_CART_DISMISS_WAIT_MS)
+                    page.wait_for_timeout(AFTER_FILL_WAIT_MS)
+                    page_selection = read_page_selection_summary(page)
+                    filled_qty = sum(int(entry.get("quantity") or 0) for entry in cart_items)
+                    debug.log("page_selection_summary", {
+                        "url": url,
+                        "selection": page_selection,
+                        "filledCount": len(cart_items),
+                        "filledQty": filled_qty,
+                    })
+                    cart_result = add_to_cart_with_retry(page, cart_items, debug)
+                    feedback_selection = parse_page_selection_summary(
+                        [cart_result.get("message"), *((cart_result.get("samples") or []) if isinstance(cart_result.get("samples"), list) else [])]
+                    )
+                    page_selection = feedback_selection or page_selection
+                    cart_result["pageSelection"] = page_selection
+                    submission = {
+                        "mode": "single_submit_for_product_page",
+                        "modelNames": [entry["modelName"] for entry in cart_items],
+                        "itemCount": len(cart_items),
+                        "quantityTotal": sum(entry["quantity"] for entry in cart_items),
+                        "result": cart_result,
+                    }
+                    group_result["addToCart"].append(submission)
+                    for cart_item in cart_items:
+                        cart_item["itemResult"]["addToCart"] = cart_result
+
+                    add_status = cart_result.get("status")
+                    bucket = classify_group_submit(cart_items, add_status, page_selection)
+                    if bucket == "selection_mismatch":
+                        observed = page_selection or {}
+                        mismatch_message = (
+                            f"頁面已選 {observed.get('skuCount')}款{observed.get('quantity')}個，"
+                            f"與預期 {len(cart_items)}款{filled_qty}個不符"
+                        )
+                        for cart_item in cart_items:
+                            cart_item["message"] = mismatch_message
+                        selection_mismatch_items.extend(cart_items)
+                        print(f"{mismatch_message}，整組不列為確認", flush=True)
+                    elif bucket == "unverified":
+                        unverified_cart_items.extend(cart_items)
+                        print(f"已按一次加采购车，待採購車核對：{len(cart_items)} 個規格", flush=True)
+                    elif bucket == "cart_full":
+                        stopped_reason = "cart_limit_reached"
+                        cart_limit_items.extend(cart_items)
+                        for _, pending_items in grouped_entries[group_index + 1:]:
+                            for pending_item in pending_items:
+                                unprocessed_items.append({
+                                    "productId": str(pending_item.get("productId") or product_id or ""),
+                                    "productName": str(pending_item.get("productName") or product_name or "").strip(),
+                                    "modelName": str(pending_item.get("modelName") or "").strip(),
+                                    "quantity": int(pending_item.get("restockQty") or pending_item.get("adjustedQty") or 0),
+                                    "alibabaUrl": str(pending_item.get("alibabaUrl") or ""),
+                                })
+                        print("1688 採購車已達上限，停止後續補貨商品。", flush=True)
+                    else:
+                        failed_cart_items.extend(cart_items)
+                        print(f"加采购车可能失敗：{cart_result}", flush=True)
+
+                    if add_status != "cart_full":
+                        dismiss_result = dismiss_cart_feedback(page)
+                        submission["dismissCartFeedback"] = dismiss_result
+                        debug.log("dismiss_cart_feedback_after_single_submit", {
+                            "url": url,
+                            "modelNames": submission["modelNames"],
+                            "dismissResult": dismiss_result,
+                            "waitMs": AFTER_CART_DISMISS_WAIT_MS,
+                        })
+                        page.wait_for_timeout(AFTER_CART_DISMISS_WAIT_MS)
 
             results.append(group_result)
             if stopped_reason:
@@ -3235,7 +3528,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
             "productName": product_name,
             "draftId": draft_id,
             "addToCart": add_to_cart,
-            "cartSubmissionStrategy": "single_submit_per_alibaba_product_page",
+            "cartSubmissionStrategy": "per_sku_submit_when_multi_sku_same_offer",
             "debugLogPath": debug.path,
             "countCheck": count_check,
             "cartVerification": cart_verification,
