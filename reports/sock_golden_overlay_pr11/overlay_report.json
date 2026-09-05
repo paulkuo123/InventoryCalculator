@@ -1,0 +1,395 @@
+{
+  "generated_at": "2026-09-05T17:55:38Z",
+  "source_eric": "eric0219c/InventoryCalculator@codex/restore-local-sock-golden-table (PR #11)",
+  "base": "paulkuo123/InventoryCalculator main golden_table.json",
+  "rules": [
+    "Base = main; never wholesale replace with eric file",
+    "Only products whose 商品名稱 contains 襪 or 袜",
+    "Overlay 1688 URL/offer/sku/second/mapping fields from eric only when safe",
+    "Keep main if discontinued/sold-out or clearly newer verified",
+    "If unsure, keep main and list product_id as needs-human",
+    "No restocker/UI/submit strategy changes"
+  ],
+  "counts": {
+    "sock_products_considered": 52,
+    "overlaid": 0,
+    "kept-main": 47,
+    "needs-human": 5,
+    "models_overlaid": 0,
+    "golden_table_modified": false
+  },
+  "overlaid_products": [],
+  "needs_human_products": [
+    {
+      "product_id": "16790492139",
+      "商品名稱": "隔日到貨🔥 純色棉襪 3雙110 女襪S6 長襪 棉襪 白長襪 中筒襪 襪子 白色襪子 女生襪子 女長襪 襪子女",
+      "reasons": [
+        "URL conflict without clear newer-main winner"
+      ],
+      "model_count_needs_human": 1
+    },
+    {
+      "product_id": "18195479361",
+      "商品名稱": "隔日到貨🔥 純色棉襪 女襪 S11 長襪 棉襪 白長襪 中筒襪 襪子 白色襪子 女生襪子 女長襪 襪子女 白襪",
+      "reasons": [
+        "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay"
+      ],
+      "model_count_needs_human": 4
+    },
+    {
+      "product_id": "24527185955",
+      "商品名稱": "隔日到貨🔥 日系 少女系中筒襪 S18 女短襪 短襪女 棉襪 女生襪子 襪子女 純色女襪 襪子 穿搭 百搭 短襪",
+      "reasons": [
+        "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay"
+      ],
+      "model_count_needs_human": 7
+    },
+    {
+      "product_id": "25083569908",
+      "商品名稱": "隔日到貨🔥 韓國 冰冰襪 S26 襪子 長襪 素色襪子 涼感襪 中筒襪 短襪 素色長襪 堆堆襪 女襪 女生襪子 襪子女",
+      "reasons": [
+        "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay"
+      ],
+      "model_count_needs_human": 11
+    },
+    {
+      "product_id": "29559801000",
+      "商品名稱": "隔日到貨🔥 棉襪 提耳襪 襪子 短襪 船型襪 短襪 船襪 S32 踝襪 薄襪 腳踝襪 夏天襪子 薄短襪 防滑襪 素色",
+      "reasons": [
+        "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay"
+      ],
+      "model_count_needs_human": 8
+    }
+  ],
+  "model_decisions": [
+    {
+      "product_id": "16790492139",
+      "規格ID": "98491202820",
+      "型號名稱": "純白",
+      "decision": "needs-human",
+      "reason": "URL conflict without clear newer-main winner",
+      "main_url": "https://detail.1688.com/offer/682877407287.html",
+      "eric_url": "https://detail.1688.com/offer/703961968928.html"
+    },
+    {
+      "product_id": "18195479361",
+      "規格ID": "194771042428",
+      "型號名稱": "黑色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "18195479361",
+      "規格ID": "194771042429",
+      "型號名稱": "白色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "18195479361",
+      "規格ID": "194771042430",
+      "型號名稱": "奶白",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "18195479361",
+      "規格ID": "204771042427",
+      "型號名稱": "灰色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "24527185955",
+      "規格ID": "49417840234",
+      "型號名稱": "藍色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "24527185955",
+      "規格ID": "49417840235",
+      "型號名稱": "淺黃",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "24527185955",
+      "規格ID": "49417840236",
+      "型號名稱": "抹茶",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "24527185955",
+      "規格ID": "49417840237",
+      "型號名稱": "黑色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "24527185955",
+      "規格ID": "49417840238",
+      "型號名稱": "白色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "24527185955",
+      "規格ID": "49417840239",
+      "型號名稱": "奶白",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "24527185955",
+      "規格ID": "49417840240",
+      "型號名稱": "粉色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368643",
+      "型號名稱": "黑",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368644",
+      "型號名稱": "白",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368645",
+      "型號名稱": "抹茶綠",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368646",
+      "型號名稱": "酒紅",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368647",
+      "型號名稱": "淺紫",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368648",
+      "型號名稱": "薑黃",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368649",
+      "型號名稱": "膚色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368650",
+      "型號名稱": "淺灰",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368651",
+      "型號名稱": "奶白",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368652",
+      "型號名稱": "霧藍",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "25083569908",
+      "規格ID": "223005368653",
+      "型號名稱": "深灰",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292774",
+      "型號名稱": "白色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292778",
+      "型號名稱": "奶黃",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292773",
+      "型號名稱": "黑色",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292779",
+      "型號名稱": "奶白",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292775",
+      "型號名稱": "香芋紫",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292776",
+      "型號名稱": "天藍",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292777",
+      "型號名稱": "淡粉",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    },
+    {
+      "product_id": "29559801000",
+      "規格ID": "217771292780",
+      "型號名稱": "芽綠",
+      "decision": "needs-human",
+      "reason": "main second-spec polluted (收藏加购/优先发货); eric lacks safe clean second overlay",
+      "main_second": "均码【收藏加购优先发货】",
+      "eric_second": null
+    }
+  ],
+  "model_decisions_kept_main_count": 365,
+  "kept_main_product_ids": [
+    "10145075432",
+    "11375952575",
+    "18066755908",
+    "19069110256",
+    "20465189991",
+    "20565196685",
+    "21070740292",
+    "21369110720",
+    "21465188015",
+    "21673708906",
+    "21869109391",
+    "22225458491",
+    "22641058481",
+    "22825461851",
+    "22825472251",
+    "23025452536",
+    "23025473309",
+    "23062534010",
+    "23125468767",
+    "23488032975",
+    "23625462276",
+    "23725432503",
+    "24338945121",
+    "24827541886",
+    "25075729941",
+    "25977533355",
+    "26169261786",
+    "26355282562",
+    "26377085183",
+    "26757534364",
+    "27750389092",
+    "28009801771",
+    "28169260786",
+    "28418542578",
+    "28666513407",
+    "29709802185",
+    "29819264743",
+    "3034886715",
+    "3173071581",
+    "40033213067",
+    "4011081861",
+    "43780086986",
+    "49408920198",
+    "52458900021",
+    "54216463889",
+    "9148083937",
+    "9447133700"
+  ]
+}
