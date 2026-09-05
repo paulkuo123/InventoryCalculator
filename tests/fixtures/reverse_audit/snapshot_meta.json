@@ -1,0 +1,13 @@
+{
+  "capturedAt": "2026-09-05T12:00:00+08:00",
+  "timezone": "Asia/Taipei",
+  "accountHint": "fixture",
+  "cart": {
+    "complete": true,
+    "cartHeaderSkuCount": 1,
+    "cartLineCount": 1
+  },
+  "completeness": {
+    "allComplete": true
+  }
+}

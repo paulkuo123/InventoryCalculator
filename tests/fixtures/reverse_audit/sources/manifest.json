@@ -1,0 +1,22 @@
+{
+  "frozenAt": "2026-09-05T00:00:00+08:00",
+  "timezone": "Asia/Taipei",
+  "files": {
+    "shopee_products.json": {
+      "bytes": 840,
+      "sha256": "fixture"
+    },
+    "golden_table.json": {
+      "bytes": 1280,
+      "sha256": "fixture"
+    },
+    "personal_watchlist.json": {
+      "bytes": 53,
+      "sha256": "fixture"
+    },
+    "personal_watchlist_exclusions.json": {
+      "bytes": 23,
+      "sha256": "fixture"
+    }
+  }
+}

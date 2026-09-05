@@ -1,0 +1,47 @@
+{
+  "1001": {
+    "型號": [
+      {
+        "規格ID": "s1",
+        "型號名稱": "黑色,15",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/10001.html",
+        "1688_offer_id": "10001",
+        "1688_sku_id": "sku-a",
+        "1688_sku_name": "黑色",
+        "1688_sku_second_name": "15"
+      },
+      {
+        "規格ID": "s2",
+        "型號名稱": "白色,15",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/10001.html",
+        "1688_offer_id": "10001",
+        "1688_sku_id": "sku-b",
+        "1688_sku_name": "白色",
+        "1688_sku_second_name": "15"
+      },
+      {
+        "規格ID": "s3",
+        "型號名稱": "缺欄型號",
+        "1688_mapping_status": "draft",
+        "阿里巴巴商品URL": "",
+        "1688_sku_id": "",
+        "1688_sku_name": ""
+      }
+    ]
+  },
+  "1002": {
+    "型號": [
+      {
+        "規格ID": "t1",
+        "型號名稱": "黑色均碼",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/20002.html",
+        "1688_offer_id": "20002",
+        "1688_sku_id": "sku-sock",
+        "1688_sku_name": "黑色"
+      }
+    ]
+  }
+}

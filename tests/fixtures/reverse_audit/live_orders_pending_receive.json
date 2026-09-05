@@ -1,0 +1,14 @@
+{
+  "complete": true,
+  "pool": "pending_receive",
+  "labels": [
+    "待收货"
+  ],
+  "orderIds": [
+    "o-recv-1"
+  ],
+  "nOrders": 1,
+  "nLines": 0,
+  "orders": [],
+  "pageUrl": "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?orderStatus=waitbuyerreceive"
+}

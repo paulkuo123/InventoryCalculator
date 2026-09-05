@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-09-05T00:00:00+08:00",
+  "shopId": "fixture",
+  "uniqueProducts": 2,
+  "productIds": [
+    "1001",
+    "1002"
+  ]
+}
