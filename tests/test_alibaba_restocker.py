@@ -1707,6 +1707,72 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(result["status"], "selection_mismatch")
         self.assertIn("未按加採購車", result["message"])
 
+
+    def test_per_sku_gate_keeps_single_and_dry_run_on_batch_path(self):
+        """單 SKU 與 dry-run 不走逐筆；僅 add_to_cart 且同 offer >1 才啟用。"""
+        self.assertFalse(alibaba_restocker.should_submit_offer_items_individually(False, 8))
+        self.assertFalse(alibaba_restocker.should_submit_offer_items_individually(True, 1))
+        self.assertFalse(alibaba_restocker.should_submit_offer_items_individually(True, 0))
+        self.assertTrue(alibaba_restocker.should_submit_offer_items_individually(True, 2))
+        self.assertTrue(alibaba_restocker.should_submit_offer_items_individually(True, 8))
+
+    def test_per_sku_cart_full_stops_and_reports_remaining(self):
+        """採購車滿檔時停止後續 SKU，processed_pending_count 供 run() 標未處理。"""
+        page = FakePage()
+        debug = FakeDebug()
+        url = "https://detail.1688.com/offer/661385649783.html"
+        pending = [
+            {
+                "modelName": "粉色",
+                "alibabaSkuName": "粉色",
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "1",
+                "alibabaUrl": url,
+                "quantity": 10,
+            },
+            {
+                "modelName": "黑色",
+                "alibabaSkuName": "黑色",
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "2",
+                "alibabaUrl": url,
+                "quantity": 8,
+            },
+            {
+                "modelName": "迷彩",
+                "alibabaSkuName": "迷彩",
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "3",
+                "alibabaUrl": url,
+                "quantity": 5,
+            },
+        ]
+        with patch.object(
+            alibaba_restocker,
+            "fill_sku_quantities_on_page",
+            side_effect=[[{"status": "filled", "modelName": "粉色"}]],
+        ), patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            return_value={"skuCount": 1, "quantity": 10},
+        ), patch.object(
+            alibaba_restocker,
+            "add_to_cart_with_retry",
+            return_value={"ok": False, "status": "cart_full", "message": "採購車已滿"},
+        ) as add, patch.object(
+            alibaba_restocker, "dismiss_cart_feedback", return_value={"ok": True}
+        ):
+            result = alibaba_restocker.fill_and_submit_offer_items_individually(
+                page, url, pending, debug
+            )
+
+        self.assertEqual(add.call_count, 1)
+        self.assertEqual(result["stopped_reason"], "cart_limit_reached")
+        self.assertEqual(len(result["cart_full"]), 1)
+        self.assertEqual(result["cart_full"][0]["modelName"], "粉色")
+        self.assertEqual(result["processed_pending_count"], 1)
+        self.assertEqual(page.gotos, [])
+
     def test_verify_single_sku_in_cart_after_submit_promotes_on_delta(self):
         """送出後用既有 cart helpers 核對增量，足夠則提早確認。"""
         page = FakePage()
