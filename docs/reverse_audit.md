@@ -37,17 +37,21 @@ python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
 - uncertain／缺欄：**只記不猜**，不發明 URL／skuId
 - skip：停售／已知售完等
 
-## 覆蓋與 shortfall
+## 覆蓋、shortfall、超量與非預期
 
 - 訂單三池任一出現同 `(offerId, skuId)` → 視為已覆蓋（不問在途量是否 ≥ 應補）
-- 車內數量 ≥ 應補 → 覆蓋
+- 車內數量 ≥ 應補 → 覆蓋；若 `cart > expected`（且非 order-covered）另寫 `qty_excess.csv`（**只列出，不 PAUSE、不改量**）
 - 車內 `0 < qty < 應補` → **PAUSED**：完整列入 `qty_shortfall.csv`，**不自動改量**
 - 四處皆無 → `missing_to_add.csv`（僅 dry-run 建議；mutate 需核准旗標）
+- 反向掃車 → `unexpected_in_cart.csv`：以 **certain** 為界；uncertain／skip／訂單池同 key → `removable=false`；訂單已覆蓋但仍佔車 → 可選清車（`order_covered_still_in_cart`，不可刪）
+- 同 `(offerId, skuId)` 多 cart 列 → 整 key fail，列入 `ambiguous.csv`（`multi_cart_lines`）
+- 範圍：全車 certain；**不理**正向書包 cutoff
+- `--i-approve-mutate` **僅加車**（Phase 1 不加 set-qty／remove）
 
 ## 成功標準
 
-- dry-run 產出：`expected_*.csv`、`covered.csv`、`missing_to_add.csv`、`qty_shortfall.csv`、`ambiguous.csv`、`dry_run_summary.json`、`dry_run_report.md`
-- `dry_run_summary.json` 的 `status` 為 `READY_FOR_APPROVAL` 或 `PAUSED`
+- dry-run 產出：`expected_*.csv`、`covered.csv`、`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`ambiguous.csv`、`dry_run_summary.json`、`dry_run_report.md`
+- `dry_run_summary.json` 的 `status` 為 `READY_FOR_APPROVAL` 或 `PAUSED`；`diff` 含 `qty_excess`／`unexpected_*` 計數
 - mutate 未帶 `--i-approve-mutate` 時立即非零退出且不碰購物車
 - certain 列不得靠猜測補 URL／skuId；uncertain 不得進入 mutate
 - 四池 `complete!=true` 時 dry-run 拒絕執行

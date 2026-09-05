@@ -4,11 +4,59 @@
     {
       "offerId": "10001",
       "skuId": "sku-a",
-      "qty": 50,
-      "cartId": "c1",
+      "qty": 30,
+      "cartId": "c1a",
       "specText": "黑色;15",
+      "effective": true
+    },
+    {
+      "offerId": "10001",
+      "skuId": "sku-a",
+      "qty": 20,
+      "cartId": "c1b",
+      "specText": "黑色;15",
+      "effective": true
+    },
+    {
+      "offerId": "20002",
+      "skuId": "sku-sock",
+      "qty": 5,
+      "cartId": "c-sock",
+      "specText": "黑色均碼",
+      "effective": true
+    },
+    {
+      "offerId": "30003",
+      "skuId": "sku-extra",
+      "qty": 3,
+      "cartId": "c-extra",
+      "specText": "訂單池保護品",
+      "effective": true
+    },
+    {
+      "offerId": "40004",
+      "skuId": "sku-unc",
+      "qty": 2,
+      "cartId": "c-unc",
+      "specText": "uncertain 保護",
+      "effective": true
+    },
+    {
+      "offerId": "50005",
+      "skuId": "sku-skip",
+      "qty": 1,
+      "cartId": "c-skip",
+      "specText": "停售",
+      "effective": true
+    },
+    {
+      "offerId": "99999",
+      "skuId": "sku-orphan",
+      "qty": 4,
+      "cartId": "c-orphan",
+      "specText": "非預期可刪",
       "effective": true
     }
   ],
-  "nItems": 1
+  "nItems": 7
 }

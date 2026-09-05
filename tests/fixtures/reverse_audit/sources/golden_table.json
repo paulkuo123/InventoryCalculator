@@ -25,9 +25,19 @@
         "規格ID": "s3",
         "型號名稱": "缺欄型號",
         "1688_mapping_status": "draft",
-        "阿里巴巴商品URL": "",
-        "1688_sku_id": "",
-        "1688_sku_name": ""
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/40004.html",
+        "1688_offer_id": "40004",
+        "1688_sku_id": "sku-unc",
+        "1688_sku_name": "uncertain"
+      },
+      {
+        "規格ID": "s4",
+        "型號名稱": "停售型號",
+        "1688_mapping_status": "discontinued",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/50005.html",
+        "1688_offer_id": "50005",
+        "1688_sku_id": "sku-skip",
+        "1688_sku_name": "停售"
       }
     ]
   },
