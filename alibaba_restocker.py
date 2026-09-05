@@ -147,6 +147,11 @@ def selection_summary_mismatch(
     )
 
 
+def should_submit_offer_items_individually(add_to_cart: bool, pending_count: int) -> bool:
+    """同 offer 多 SKU 真加車時改逐筆；單 SKU／dry-run 維持整頁一次送出。"""
+    return bool(add_to_cart) and int(pending_count or 0) > 1
+
+
 def classify_group_submit(
     cart_items: List[Dict[str, Any]],
     add_status: str,
@@ -2521,12 +2526,11 @@ def fill_and_submit_offer_items_individually(
     failed: List[Dict[str, Any]] = []
     cart_full: List[Dict[str, Any]] = []
     stopped_reason = ""
+    processed_pending_count = 0
     offer_id = extract_offer_id(url)
     required_offer_ids = {offer_id} if offer_id else None
 
     for index, pending in enumerate(pending_fills):
-        if stopped_reason:
-            break
         if index > 0:
             debug.log("reload_offer_before_next_sku", {
                 "url": url,
@@ -2583,6 +2587,7 @@ def fill_and_submit_offer_items_individually(
                 "fillResult": item_result,
                 "mode": "per_sku",
             })
+            processed_pending_count = index + 1
             continue
 
         cart_item = {**pending, "itemResult": item_result}
@@ -2640,7 +2645,10 @@ def fill_and_submit_offer_items_individually(
 
         if bucket == "selection_mismatch":
             observed = page_selection or {}
-            mismatch_message = str(cart_result.get("message") or "").strip()
+            # PR#18 預點擊擋下時保留原訊息；toast 後頁面不符則用計數說明。
+            mismatch_message = ""
+            if add_status == "selection_mismatch":
+                mismatch_message = str(cart_result.get("message") or "").strip()
             if not mismatch_message:
                 mismatch_message = (
                     f"頁面已選 {observed.get('skuCount')}款{observed.get('quantity')}個，"
@@ -2679,6 +2687,9 @@ def fill_and_submit_offer_items_individually(
             print(f"加采购车可能失敗：{cart_result}", flush=True)
 
         submissions.append(submission)
+        processed_pending_count = index + 1
+        if stopped_reason:
+            break
 
     return {
         "item_results": item_results,
@@ -2689,7 +2700,7 @@ def fill_and_submit_offer_items_individually(
         "failed": failed,
         "cart_full": cart_full,
         "stopped_reason": stopped_reason,
-        "processed_pending_count": index + 1 if pending_fills else 0,
+        "processed_pending_count": processed_pending_count,
     }
 
 
@@ -3237,7 +3248,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 debug.log("item_start", pending)
                 pending_fills.append(pending)
 
-            use_per_sku_submit = bool(add_to_cart) and len(pending_fills) > 1
+            use_per_sku_submit = should_submit_offer_items_individually(add_to_cart, len(pending_fills))
             if pending_fills and use_per_sku_submit:
                 debug.log("use_per_sku_submit_for_multi_sku_offer", {
                     "url": url,
