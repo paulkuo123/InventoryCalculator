@@ -1,0 +1,720 @@
+"""Offline reverse-restock dry-run (frozen sources + live pool JSONs).
+
+Read-only: never mutates cart. shortfall → PAUSED (no auto qty fix).
+Never invents URL/skuId — uncertain rows are recorded only.
+"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from home_bootstrap import (
+    load_watchlist_exclusion_ids,
+    merged_watchlist_exclusion_ids,
+    parse_watchlist_payload,
+    without_watchlist_exclusions,
+)
+from restock_rules import (
+    calculated_restock_details,
+    target_months_for_product,
+)
+
+from reverse_audit.paths import repo_root
+from reverse_audit.util import (
+    KNOWN_SOLDOUT,
+    KNOWN_SOLDOUT_OFFERS,
+    as_int,
+    is_discontinued_sku,
+    load_json,
+    now_iso,
+    offer_from_url,
+    sha256_file,
+    write_csv,
+)
+
+SRC_NAMES = (
+    "shopee_products.json",
+    "golden_table.json",
+    "personal_watchlist.json",
+    "personal_watchlist_exclusions.json",
+)
+
+
+def source_map(root: Path) -> Dict[str, Path]:
+    return {
+        "shopee_products.json": root / "shopee_products.json",
+        "golden_table.json": root / "golden_table.json",
+        "personal_watchlist.json": root / "watchlists" / "personal_watchlist.json",
+        "personal_watchlist_exclusions.json": root
+        / "watchlists"
+        / "personal_watchlist_exclusions.json",
+    }
+
+
+def freeze_sources(out_dir: Path, root: Optional[Path] = None) -> Dict[str, Any]:
+    """Copy shopee/golden/watchlist into out_dir/sources with SHA256 manifest."""
+    import shutil
+
+    root = root or repo_root()
+    sources = out_dir / "sources"
+    sources.mkdir(parents=True, exist_ok=True)
+    manifest: Dict[str, Any] = {
+        "frozenAt": now_iso(),
+        "timezone": "Asia/Taipei",
+        "files": {},
+    }
+    for name, src in source_map(root).items():
+        if not src.exists():
+            raise FileNotFoundError(f"missing source: {src}")
+        dest = sources / name
+        shutil.copy2(src, dest)
+        digest = sha256_file(dest)
+        manifest["files"][name] = {
+            "sourcePath": str(src),
+            "copiedTo": str(dest),
+            "bytes": dest.stat().st_size,
+            "sha256": digest,
+        }
+    (sources / "manifest.json").write_text(
+        json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return manifest
+
+
+def golden_index(golden: Dict[str, Any], product_id: str) -> Tuple[Dict[str, Dict], Dict[str, Dict]]:
+    entry = golden.get(str(product_id)) or {}
+    by_spec: Dict[str, Dict] = {}
+    by_name: Dict[str, Dict] = {}
+    if not isinstance(entry, dict):
+        return by_spec, by_name
+    for gm in entry.get("型號") or []:
+        if not isinstance(gm, dict):
+            continue
+        sid = str(gm.get("規格ID") or "").strip()
+        nm = str(gm.get("型號名稱") or "").strip()
+        if sid:
+            by_spec[sid] = gm
+        if nm:
+            by_name[nm] = gm
+    return by_spec, by_name
+
+
+def classify_skip_reason(
+    status: str,
+    sku_name: str,
+    offer_id: str,
+    sku_id: str,
+) -> Optional[str]:
+    if status == "discontinued":
+        return "mapping_status=discontinued"
+    if is_discontinued_sku(sku_name):
+        return f"discontinued_sku_name={sku_name}"
+    if (offer_id, sku_id) in KNOWN_SOLDOUT:
+        return "known_soldout_hidden(粉色愛心兔)"
+    if offer_id in KNOWN_SOLDOUT_OFFERS and not sku_id:
+        return "known_soldout_offer(粉色愛心兔)"
+    if status in {"stale"} and is_discontinued_sku(sku_name):
+        return "stale+discontinued"
+    return None
+
+
+def build_expected(
+    products: Dict[str, Any],
+    golden: Dict[str, Any],
+    watch_ids: List[str],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    certain_rows: List[Dict[str, Any]] = []
+    uncertain_rows: List[Dict[str, Any]] = []
+    skip_rows: List[Dict[str, Any]] = []
+    stats = {
+        "watchlistAfterExclusions": len(watch_ids),
+        "intersectionProductCount": 0,
+        "modelsScanned": 0,
+        "modelsNeedRestock": 0,
+        "modelsNoNeed": 0,
+    }
+
+    products = {str(k): v for k, v in products.items()}
+    golden = {str(k): v for k, v in golden.items()}
+    product_ids = [pid for pid in watch_ids if pid in products and pid in golden]
+    stats["intersectionProductCount"] = len(product_ids)
+    watch_order = {pid: i for i, pid in enumerate(watch_ids)}
+
+    for pid in product_ids:
+        prod = products.get(pid) or {}
+        if not isinstance(prod, dict):
+            continue
+        name = str(prod.get("商品名稱") or "")
+        by_spec, by_name = golden_index(golden, pid)
+        models = prod.get("型號") or []
+        if isinstance(models, dict):
+            models = list(models.values())
+        for sm in models:
+            if not isinstance(sm, dict):
+                continue
+            stats["modelsScanned"] += 1
+            spec_id = str(sm.get("規格ID") or "").strip()
+            model_name = str(sm.get("型號名稱") or "").strip()
+            months = target_months_for_product(name, 4, model_name)
+            details = calculated_restock_details(prod, sm, months)
+            suggested = as_int(details.get("suggestedQty"))
+            if suggested <= 0:
+                stats["modelsNoNeed"] += 1
+                continue
+            stats["modelsNeedRestock"] += 1
+
+            gm = by_spec.get(spec_id) or by_name.get(model_name) or {}
+            url = str(gm.get("阿里巴巴商品URL") or sm.get("阿里巴巴商品URL") or "").strip()
+            offer_id = str(gm.get("1688_offer_id") or "").strip() or offer_from_url(url)
+            sku_id = str(gm.get("1688_sku_id") or "").strip()
+            sku_name = str(gm.get("1688_sku_name") or "").strip()
+            sku_second = str(gm.get("1688_sku_second_name") or "").strip()
+            status = str(gm.get("1688_mapping_status") or "").strip()
+            is_case = months == 3
+
+            base = {
+                "product_id": pid,
+                "product_name": name,
+                "spec_id": spec_id,
+                "model_name": model_name,
+                "is_phone_case": is_case,
+                "target_months": months,
+                "current_stock": details.get("currentStock"),
+                "monthly_sales": details.get("monthlySales"),
+                "effective_monthly_sales": details.get("effectiveMonthlySales"),
+                "raw_shortage": details.get("rawShortage"),
+                "suggested_qty": suggested,
+                "alibaba_url": url,
+                "offer_id": offer_id,
+                "sku_id": sku_id,
+                "sku_name": sku_name,
+                "sku_second_name": sku_second,
+                "mapping_status": status or ("missing" if not (url or sku_name) else ""),
+                "watchlist_order": watch_order.get(pid, 10**9),
+            }
+
+            skip_reason = classify_skip_reason(status, sku_name, offer_id, sku_id)
+            if skip_reason:
+                row = dict(base)
+                row["bucket"] = "skip"
+                row["skip_reason"] = skip_reason
+                skip_rows.append(row)
+                continue
+
+            url_ok = url.startswith("http")
+            certain = status == "approved" and url_ok and bool(sku_id)
+            if certain:
+                row = dict(base)
+                row["bucket"] = "certain"
+                certain_rows.append(row)
+            else:
+                missing = []
+                if status != "approved":
+                    missing.append(f"status={status or 'empty'}")
+                if not url_ok:
+                    missing.append("url")
+                if not sku_id:
+                    missing.append("skuId")
+                row = dict(base)
+                row["bucket"] = "uncertain"
+                row["uncertain_reason"] = "缺欄:" + ",".join(missing)
+                uncertain_rows.append(row)
+
+    return certain_rows, uncertain_rows, skip_rows, stats
+
+
+def aggregate_certain(certain_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    agg: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for row in certain_rows:
+        key = (str(row["offer_id"]), str(row["sku_id"]))
+        if key not in agg:
+            agg[key] = {
+                "offer_id": key[0],
+                "sku_id": key[1],
+                "suggested_qty": 0,
+                "is_phone_case": False,
+                "watchlist_order": row.get("watchlist_order", 10**9),
+                "alibaba_url": row.get("alibaba_url") or "",
+                "sku_name": row.get("sku_name") or "",
+                "sku_second_name": row.get("sku_second_name") or "",
+                "product_ids": [],
+                "product_names": [],
+                "model_names": [],
+                "sources": [],
+            }
+        a = agg[key]
+        a["suggested_qty"] += as_int(row.get("suggested_qty"))
+        a["is_phone_case"] = a["is_phone_case"] or bool(row.get("is_phone_case"))
+        a["watchlist_order"] = min(a["watchlist_order"], as_int(row.get("watchlist_order")))
+        if row.get("product_id") and row["product_id"] not in a["product_ids"]:
+            a["product_ids"].append(row["product_id"])
+        if row.get("product_name") and row["product_name"] not in a["product_names"]:
+            a["product_names"].append(row["product_name"])
+        if row.get("model_name"):
+            a["model_names"].append(row["model_name"])
+        a["sources"].append(
+            {
+                "product_id": row.get("product_id"),
+                "model_name": row.get("model_name"),
+                "suggested_qty": row.get("suggested_qty"),
+                "target_months": row.get("target_months"),
+            }
+        )
+    out = list(agg.values())
+    out.sort(
+        key=lambda r: (
+            -as_int(r.get("suggested_qty")),
+            0 if r.get("is_phone_case") else 1,
+            as_int(r.get("watchlist_order")),
+            str(r.get("offer_id")),
+            str(r.get("sku_id")),
+        )
+    )
+    return out
+
+
+def index_cart(cart: Dict[str, Any]) -> Tuple[Dict[Tuple[str, str], Dict[str, Any]], List[Dict[str, Any]]]:
+    by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    ambiguous_cart: List[Dict[str, Any]] = []
+    for item in cart.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        oid = str(item.get("offerId") or "").strip()
+        sid = str(item.get("skuId") or "").strip()
+        qty = as_int(item.get("qty") if item.get("qty") is not None else item.get("quantity"))
+        if not oid or not sid:
+            ambiguous_cart.append(
+                {
+                    "kind": "cart_missing_ids",
+                    "offer_id": oid,
+                    "sku_id": sid,
+                    "qty": qty,
+                    "specText": item.get("specText") or item.get("skuName") or "",
+                    "cartId": item.get("cartId") or "",
+                    "note": "cart line missing offerId or skuId",
+                }
+            )
+            continue
+        key = (oid, sid)
+        if key not in by_key:
+            by_key[key] = {
+                "offer_id": oid,
+                "sku_id": sid,
+                "qty": 0,
+                "cartIds": [],
+                "specTexts": [],
+                "effective": bool(item.get("effective", True)),
+            }
+        by_key[key]["qty"] += qty
+        cid = str(item.get("cartId") or "")
+        if cid and cid not in by_key[key]["cartIds"]:
+            by_key[key]["cartIds"].append(cid)
+        spec = str(item.get("specText") or item.get("skuName") or "")
+        if spec and spec not in by_key[key]["specTexts"]:
+            by_key[key]["specTexts"].append(spec)
+    return by_key, ambiguous_cart
+
+
+def index_orders(
+    pools: Dict[str, Dict[str, Any]],
+) -> Tuple[Dict[Tuple[str, str], Dict[str, Any]], List[Dict[str, Any]], Dict[str, Any]]:
+    by_key: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    ambiguous: List[Dict[str, Any]] = []
+    validation: Dict[str, Any] = {"pools": {}, "risks": []}
+
+    order_id_sets: Dict[str, set] = {}
+    for pool_name, data in pools.items():
+        labels = data.get("labels") or []
+        order_ids = [str(x) for x in (data.get("orderIds") or [])]
+        order_id_sets[pool_name] = set(order_ids)
+        page_url = str(data.get("pageUrl") or "")
+        validation["pools"][pool_name] = {
+            "labels": labels,
+            "nOrders": data.get("nOrders"),
+            "nLines": data.get("nLines") or len(data.get("orders") or []),
+            "orderIds": order_ids,
+            "orderIdCount": len(order_ids),
+            "complete": data.get("complete"),
+            "pageUrl": page_url,
+            "pageUrlLooksLikeWaitBuyerReceive": "orderStatus=waitbuyerreceive" in page_url,
+        }
+        for line in data.get("orders") or []:
+            if not isinstance(line, dict):
+                continue
+            oid = str(line.get("offerId") or "").strip()
+            sid = str(line.get("skuId") or "").strip()
+            qty = as_int(line.get("qty"))
+            order_id = str(line.get("orderId") or "")
+            if not oid or not sid:
+                ambiguous.append(
+                    {
+                        "kind": "order_missing_ids",
+                        "pool": pool_name,
+                        "offer_id": oid,
+                        "sku_id": sid,
+                        "orderId": order_id,
+                        "qty": qty,
+                        "specText": line.get("specText") or line.get("skuName") or "",
+                        "note": "order line missing offerId or skuId",
+                    }
+                )
+                continue
+            key = (oid, sid)
+            if key not in by_key:
+                by_key[key] = {
+                    "offer_id": oid,
+                    "sku_id": sid,
+                    "pools": [],
+                    "orderIds": [],
+                    "qty_sum": 0,
+                    "lines": 0,
+                }
+            rec = by_key[key]
+            if pool_name not in rec["pools"]:
+                rec["pools"].append(pool_name)
+            if order_id and order_id not in rec["orderIds"]:
+                rec["orderIds"].append(order_id)
+            rec["qty_sum"] += qty
+            rec["lines"] += 1
+
+    names = list(order_id_sets.keys())
+    overlaps = {}
+    for i in range(len(names)):
+        for j in range(i + 1, len(names)):
+            a, b = names[i], names[j]
+            inter = sorted(order_id_sets[a] & order_id_sets[b])
+            overlaps[f"{a}∩{b}"] = inter
+            if inter:
+                validation["risks"].append(f"orderId overlap {a}∩{b}: {inter}")
+    validation["orderIdOverlaps"] = overlaps
+    validation["orderIdsDistinct"] = all(len(v) == 0 for v in overlaps.values())
+
+    label_sets = {k: set(v.get("labels") or []) for k, v in validation["pools"].items()}
+    validation["labels"] = {k: sorted(v) for k, v in label_sets.items()}
+    validation["labelsDistinct"] = len(set(tuple(sorted(s)) for s in label_sets.values())) == len(
+        label_sets
+    )
+
+    wait_flags = [
+        (k, v["pageUrlLooksLikeWaitBuyerReceive"], v["pageUrl"])
+        for k, v in validation["pools"].items()
+    ]
+    if all(flag for _, flag, _ in wait_flags):
+        validation["risks"].append(
+            "ALL three order pool pageUrls contain orderStatus=waitbuyerreceive "
+            "(capture URL may not reflect tab filter; rely on labels/orderIds for pool identity)"
+        )
+    validation["pageUrlRisk"] = all(flag for _, flag, _ in wait_flags)
+    validation["poolsTrulyDifferent"] = bool(
+        validation["orderIdsDistinct"] and validation["labelsDistinct"]
+    )
+    return by_key, ambiguous, validation
+
+
+def diff_expected(
+    agg_certain: List[Dict[str, Any]],
+    cart_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+    order_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+) -> Tuple[List[Dict], List[Dict], List[Dict], bool]:
+    covered: List[Dict] = []
+    missing: List[Dict] = []
+    shortfall: List[Dict] = []
+    paused = False
+
+    for a in agg_certain:
+        key = (str(a["offer_id"]), str(a["sku_id"]))
+        expected = as_int(a["suggested_qty"])
+        order_hit = order_by_key.get(key)
+        cart_hit = cart_by_key.get(key)
+        cart_qty = as_int(cart_hit["qty"]) if cart_hit else 0
+
+        base = {
+            "offer_id": a["offer_id"],
+            "sku_id": a["sku_id"],
+            "sku_name": a.get("sku_name") or "",
+            "sku_second_name": a.get("sku_second_name") or "",
+            "alibaba_url": a.get("alibaba_url") or "",
+            "expected_qty": expected,
+            "is_phone_case": a.get("is_phone_case"),
+            "product_ids": "|".join(a.get("product_ids") or []),
+            "product_names": "|".join(a.get("product_names") or []),
+            "model_names": "|".join(a.get("model_names") or []),
+            "source_count": len(a.get("sources") or []),
+            "watchlist_order": a.get("watchlist_order"),
+        }
+
+        if order_hit:
+            row = dict(base)
+            row["coverage"] = "order"
+            row["order_pools"] = "|".join(order_hit.get("pools") or [])
+            row["order_ids"] = "|".join(order_hit.get("orderIds") or [])
+            row["order_qty_sum"] = order_hit.get("qty_sum")
+            row["cart_qty"] = cart_qty
+            row["note"] = "出現在訂單池即視為覆蓋（不問在途量）"
+            covered.append(row)
+            continue
+
+        if cart_hit and cart_qty > 0:
+            if cart_qty >= expected:
+                row = dict(base)
+                row["coverage"] = "cart"
+                row["cart_qty"] = cart_qty
+                row["cart_ids"] = "|".join(cart_hit.get("cartIds") or [])
+                row["delta"] = cart_qty - expected
+                row["note"] = "車內數量≥應補"
+                covered.append(row)
+            else:
+                paused = True
+                row = dict(base)
+                row["coverage"] = "cart_shortfall"
+                row["cart_qty"] = cart_qty
+                row["shortfall"] = expected - cart_qty
+                row["cart_ids"] = "|".join(cart_hit.get("cartIds") or [])
+                row["note"] = "車內 0<qty<應補 → PAUSED（不改量，僅記錄）"
+                shortfall.append(row)
+            continue
+
+        row = dict(base)
+        row["coverage"] = "missing"
+        row["cart_qty"] = cart_qty
+        row["note"] = "四處皆無 → dry-run 建議加車（尚未 mutate）"
+        missing.append(row)
+
+    return covered, missing, shortfall, paused
+
+
+def run_dry_run(
+    out_dir: Path,
+    *,
+    root: Optional[Path] = None,
+    refreeze_sources: bool = True,
+) -> Dict[str, Any]:
+    """Run offline dry-run against frozen live_* JSONs in out_dir."""
+    root = root or repo_root()
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    cart = load_json(out_dir / "live_cart.json")
+    pay = load_json(out_dir / "live_orders_pending_pay.json")
+    ship = load_json(out_dir / "live_orders_pending_ship.json")
+    recv = load_json(out_dir / "live_orders_pending_receive.json")
+    meta_path = out_dir / "snapshot_meta.json"
+    meta = load_json(meta_path) if meta_path.exists() else {}
+
+    for label, blob in [
+        ("live_cart", cart),
+        ("pending_pay", pay),
+        ("pending_ship", ship),
+        ("pending_receive", recv),
+    ]:
+        if not blob.get("complete"):
+            raise SystemExit(f"refusing dry-run: {label} complete!=true")
+
+    cart_n = len(cart.get("items") or [])
+    sources_dir = out_dir / "sources"
+    source_files_ready = all((sources_dir / name).exists() for name in SRC_NAMES)
+    if refreeze_sources or not source_files_ready:
+        manifest = freeze_sources(out_dir, root=root)
+    elif (sources_dir / "manifest.json").exists():
+        manifest = load_json(sources_dir / "manifest.json")
+    else:
+        manifest = {
+            "frozenAt": None,
+            "timezone": "Asia/Taipei",
+            "files": {},
+            "note": "reused existing sources/ without manifest",
+        }
+
+    products = load_json(sources_dir / "shopee_products.json")
+    golden = load_json(sources_dir / "golden_table.json")
+    watch_raw = load_json(sources_dir / "personal_watchlist.json")
+    watchlist = parse_watchlist_payload(watch_raw)
+    exclusion_ids = merged_watchlist_exclusion_ids(
+        load_watchlist_exclusion_ids(sources_dir / "personal_watchlist_exclusions.json"),
+        products,
+    )
+    filtered = without_watchlist_exclusions(watchlist["productIds"], exclusion_ids)
+    watch_ids = filtered["productIds"]
+
+    products = {str(k): v for k, v in products.items() if isinstance(v, dict)}
+    golden = {str(k): v for k, v in golden.items() if isinstance(v, dict)}
+
+    certain_rows, uncertain_rows, skip_rows, build_stats = build_expected(
+        products, golden, watch_ids
+    )
+    agg_certain = aggregate_certain(certain_rows)
+    cart_by_key, amb_cart = index_cart(cart)
+    order_by_key, amb_orders, pool_validation = index_orders(
+        {
+            "pending_pay": pay,
+            "pending_ship": ship,
+            "pending_receive": recv,
+        }
+    )
+    covered, missing, shortfall, paused = diff_expected(
+        agg_certain, cart_by_key, order_by_key
+    )
+    ambiguous = amb_cart + amb_orders
+    for a in agg_certain:
+        if not a.get("offer_id") or not a.get("sku_id"):
+            ambiguous.append(
+                {
+                    "kind": "certain_missing_key",
+                    "offer_id": a.get("offer_id"),
+                    "sku_id": a.get("sku_id"),
+                    "note": "aggregated certain missing offer/sku",
+                }
+            )
+
+    certain_fields = [
+        "product_id", "product_name", "spec_id", "model_name", "is_phone_case",
+        "target_months", "current_stock", "monthly_sales", "effective_monthly_sales",
+        "raw_shortage", "suggested_qty", "alibaba_url", "offer_id", "sku_id",
+        "sku_name", "sku_second_name", "mapping_status", "watchlist_order", "bucket",
+    ]
+    uncertain_fields = certain_fields + ["uncertain_reason"]
+    skip_fields = certain_fields + ["skip_reason"]
+    write_csv(out_dir / "expected_certain.csv", certain_rows, certain_fields)
+    write_csv(out_dir / "expected_uncertain.csv", uncertain_rows, uncertain_fields)
+    write_csv(out_dir / "expected_skip.csv", skip_rows, skip_fields)
+
+    covered_fields = [
+        "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
+        "expected_qty", "coverage", "cart_qty", "order_pools", "order_ids",
+        "order_qty_sum", "delta", "cart_ids", "is_phone_case",
+        "product_ids", "product_names", "model_names", "source_count",
+        "watchlist_order", "note",
+    ]
+    missing_fields = [
+        "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
+        "expected_qty", "coverage", "cart_qty", "is_phone_case",
+        "product_ids", "product_names", "model_names", "source_count",
+        "watchlist_order", "note",
+    ]
+    shortfall_fields = [
+        "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
+        "expected_qty", "cart_qty", "shortfall", "coverage", "cart_ids",
+        "is_phone_case", "product_ids", "product_names", "model_names",
+        "source_count", "watchlist_order", "note",
+    ]
+    write_csv(out_dir / "covered.csv", covered, covered_fields)
+    write_csv(out_dir / "missing_to_add.csv", missing, missing_fields)
+    write_csv(out_dir / "qty_shortfall.csv", shortfall, shortfall_fields)
+    write_csv(out_dir / "ambiguous.csv", ambiguous)
+
+    status = "PAUSED" if paused else "READY_FOR_APPROVAL"
+    summary = {
+        "generatedAt": now_iso(),
+        "timezone": "Asia/Taipei",
+        "mode": "offline_dry_run",
+        "status": status,
+        "paused": paused,
+        "pauseReason": (
+            "cart has 0<qty<expected for one or more certain SKUs; "
+            "task paused — no auto qty fix"
+            if paused
+            else None
+        ),
+        "snapshot": {
+            "capturedAt": meta.get("capturedAt"),
+            "accountHint": meta.get("accountHint"),
+            "cartHeaderSkuCount": (meta.get("cart") or {}).get("cartHeaderSkuCount"),
+            "cartLineCount": cart_n,
+            "orders": {
+                "pending_pay": {
+                    "nOrders": pay.get("nOrders"),
+                    "nLines": pay.get("nLines"),
+                    "complete": pay.get("complete"),
+                },
+                "pending_ship": {
+                    "nOrders": ship.get("nOrders"),
+                    "nLines": ship.get("nLines"),
+                    "complete": ship.get("complete"),
+                },
+                "pending_receive": {
+                    "nOrders": recv.get("nOrders"),
+                    "nLines": recv.get("nLines"),
+                    "complete": recv.get("complete"),
+                },
+            },
+            "completeness": meta.get("completeness"),
+        },
+        "sources": manifest,
+        "build": build_stats,
+        "exclusions": {
+            "count": len(exclusion_ids),
+            "removedFromWatchlist": filtered.get("excluded"),
+        },
+        "expected": {
+            "certain_model_rows": len(certain_rows),
+            "certain_aggregated_offer_sku": len(agg_certain),
+            "uncertain_model_rows": len(uncertain_rows),
+            "skip_model_rows": len(skip_rows),
+            "certain_qty_sum": sum(as_int(r.get("suggested_qty")) for r in agg_certain),
+        },
+        "diff": {
+            "covered": len(covered),
+            "covered_by_order": sum(1 for r in covered if r.get("coverage") == "order"),
+            "covered_by_cart": sum(1 for r in covered if r.get("coverage") == "cart"),
+            "missing_to_add": len(missing),
+            "missing_qty_sum": sum(as_int(r.get("expected_qty")) for r in missing),
+            "qty_shortfall": len(shortfall),
+            "shortfall_qty_sum": sum(as_int(r.get("shortfall")) for r in shortfall),
+            "ambiguous": len(ambiguous),
+        },
+        "orderPoolValidation": pool_validation,
+        "rules": {
+            "scope": "watchlist ∩ products ∩ golden; exclusions via home_bootstrap",
+            "qty": "calculated_restock_details + target_months_for_product (case=3 / else=4); sum by (offerId,skuId)",
+            "certain": "approved + URL + skuId",
+            "uncertain": "缺欄 — never guess URL/skuId",
+            "skip": "discontinued / 售完等 (+ known 粉色愛心兔)",
+            "orderCoverage": "any pool same offer+sku = covered",
+            "cartShortfall": "0<qty<expected → PAUSED; full list still produced; no qty mutate",
+        },
+        "outputs": {
+            "dir": str(out_dir),
+            "missing_to_add.csv": str(out_dir / "missing_to_add.csv"),
+            "dry_run_report.md": str(out_dir / "dry_run_report.md"),
+            "dry_run_summary.json": str(out_dir / "dry_run_summary.json"),
+        },
+        "noCartMutate": True,
+    }
+
+    (out_dir / "dry_run_summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    lines: List[str] = []
+    lines.append("# 反向補貨離線 dry-run 報告")
+    lines.append("")
+    lines.append(f"- 產生時間：{summary['generatedAt']}（Asia/Taipei）")
+    lines.append(
+        f"- 狀態：**{status}**"
+        + (" — 車內不足，已暫停、不改量" if paused else " — 可待核准後 mutate")
+    )
+    lines.append(f"- 模式：offline dry-run（不加車／不改量）")
+    lines.append(f"- 輸出目錄：`{out_dir}`")
+    lines.append("")
+    lines.append("## Diff（certain 聚合）")
+    lines.append(
+        f"- covered={len(covered)}；missing_to_add={len(missing)}；"
+        f"qty_shortfall={len(shortfall)}；ambiguous={len(ambiguous)}"
+    )
+    lines.append("")
+    lines.append("## 規則（定案）")
+    for k, v in summary["rules"].items():
+        lines.append(f"- **{k}**：{v}")
+    lines.append("")
+    lines.append("---")
+    lines.append(
+        "下一步：`python -m reverse_audit mutate --dir <此目錄> --i-approve-mutate`；"
+        "若 status=PAUSED 須先處理車內不足再繼續。"
+    )
+    lines.append("")
+    (out_dir / "dry_run_report.md").write_text("\n".join(lines), encoding="utf-8")
+    return summary

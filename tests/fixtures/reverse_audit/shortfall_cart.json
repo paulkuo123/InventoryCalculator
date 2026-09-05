@@ -1,0 +1,14 @@
+{
+  "complete": true,
+  "items": [
+    {
+      "offerId": "10001",
+      "skuId": "sku-a",
+      "qty": 2,
+      "cartId": "c1",
+      "specText": "黑色;15",
+      "effective": true
+    }
+  ],
+  "nItems": 1
+}

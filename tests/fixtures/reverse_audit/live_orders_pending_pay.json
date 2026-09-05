@@ -1,0 +1,22 @@
+{
+  "complete": true,
+  "pool": "pending_pay",
+  "labels": [
+    "待付款"
+  ],
+  "orderIds": [
+    "o-pay-1"
+  ],
+  "nOrders": 1,
+  "nLines": 1,
+  "orders": [
+    {
+      "orderId": "o-pay-1",
+      "offerId": "20002",
+      "skuId": "sku-sock",
+      "qty": 10,
+      "status": "待付款"
+    }
+  ],
+  "pageUrl": "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?orderStatus=waitbuyerpay"
+}
