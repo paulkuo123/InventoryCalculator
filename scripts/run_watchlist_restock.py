@@ -35,7 +35,7 @@ from home_bootstrap import (
     merged_watchlist_exclusion_ids,
     without_watchlist_exclusions,
 )
-from restock_rules import round_calculated_restock_qty, target_months_for_product
+from restock_rules import calculated_restock_details, round_calculated_restock_qty, target_months_for_product
 
 EXIT_ERROR = 1
 EXIT_PAUSED = 2
@@ -177,19 +177,7 @@ def requires_second_sku(product_name: str, model_name: str) -> bool:
 
 
 def suggested_restock_qty(product: Dict[str, Any], model: Dict[str, Any], months: int) -> int:
-    current_stock = _int(model.get("商品庫存"))
-    monthly_rate = float(model.get("月銷量") or 0)
-    if current_stock == 0:
-        model_sales = _int(model.get("已售出數量"))
-        product_sales = _int(product.get("已售出總數量"))
-        product_monthly = _int(product.get("總月銷量"))
-        if model_sales > 0 and product_sales > 0 and product_monthly > 0:
-            historical_rate = int(product_monthly * (model_sales / product_sales) * 10 + 0.5) / 10
-            monthly_rate = max(monthly_rate, historical_rate)
-    if monthly_rate <= 0 and not model.get("月銷量"):
-        return 0
-    expected = int(monthly_rate * months + 0.5)
-    return round_restock_qty(max(expected - current_stock, 0), current_stock, monthly_rate)
+    return calculated_restock_details(product, model, months)["suggestedQty"]
 
 
 def golden_model(golden: Dict[str, Any], product_id: str, spec_id: str, model_name: str) -> Dict[str, Any]:
@@ -236,7 +224,8 @@ def build_list_from_files(
         for model in product.get("型號") or []:
             if not isinstance(model, dict):
                 continue
-            qty = suggested_restock_qty(product, model, product_months)
+            item_months = target_months_for_product(name, months, model.get("型號名稱"))
+            qty = suggested_restock_qty(product, model, item_months)
             if qty <= 0:
                 continue
             mapped = golden_model(golden, str(product_id), str(model.get("規格ID") or ""), str(model.get("型號名稱") or ""))
@@ -259,7 +248,7 @@ def build_list_from_files(
                     "alibabaSkuId": str(mapped.get("1688_sku_id") or ""),
                     "restockQty": qty,
                     "alibabaUrl": url,
-                    "targetMonths": product_months,
+                    "targetMonths": item_months,
                 })
             else:
                 blockers += 1

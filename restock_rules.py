@@ -5,22 +5,25 @@ import re
 MAX_ALIBABA_RESTOCK_SKUS = 200
 PHONE_CASE_MONTHS = 3
 DEFAULT_RESTOCK_MONTHS = 4
-PHONE_CASE_NAME_RE = re.compile(r"手機殼|手机壳")
+PHONE_CASE_NAME_RE = re.compile(r"(?:手機殼|手机壳)(?!\s*(?:吊飾|掛飾|掛繩|掛鏈|吊饰|挂饰|挂绳|挂链))")
 
 
-def target_months_for_product(product_name, default_months=DEFAULT_RESTOCK_MONTHS):
+def target_months_for_product(product_name, default_months=DEFAULT_RESTOCK_MONTHS, model_name=""):
     """Phone cases use 3 months; other products use default_months (4).
 
-    Only the product name tokens 手機殼/手机壳 count. iPhone/iPad accessories
-    without those tokens are not phone cases.
+    Exclude case straps/charms and explicitly marked add-on models.
     """
-    if PHONE_CASE_NAME_RE.search(str(product_name or "")):
-        return PHONE_CASE_MONTHS
     try:
         months = int(default_months)
     except (TypeError, ValueError):
         months = DEFAULT_RESTOCK_MONTHS
-    return months if months > 0 else DEFAULT_RESTOCK_MONTHS
+    months = months if months > 0 else DEFAULT_RESTOCK_MONTHS
+    variant = re.split(r"[,，]", str(model_name or ""))[-1].strip()
+    if re.match(r"(?:加購|加购)", variant):
+        return months
+    if PHONE_CASE_NAME_RE.search(str(product_name or "")):
+        return PHONE_CASE_MONTHS
+    return months
 
 
 def validate_restock_sku_count(item_count):
@@ -86,3 +89,40 @@ def round_calculated_restock_qty(raw_shortage, current_stock, monthly_rate=0):
     if monthly > 0 and (stock / monthly) < 1.5 and raw > 3:
         return 5
     return 0
+
+
+def calculated_restock_details(product, model, months):
+    """Explain the same calculation used by the file-based restock launcher.
+
+    Callers handling untrusted snapshots must validate numeric fields first.
+    Golden Table and saved suggestion fields are deliberately not read here.
+    """
+    def count(value):
+        try:
+            return int(float(value or 0))
+        except (ValueError, TypeError):
+            return 0
+
+    stock = count(model.get("商品庫存"))
+    monthly = float(model.get("月銷量") or 0)
+    historical = None
+    if stock == 0:
+        model_sales = count(model.get("已售出數量"))
+        product_sales = count(product.get("已售出總數量"))
+        product_monthly = count(product.get("總月銷量"))
+        if model_sales > 0 and product_sales > 0 and product_monthly > 0:
+            historical = int(product_monthly * (model_sales / product_sales) * 10 + 0.5) / 10
+    effective = max(monthly, historical or 0)
+    target = int(effective * months + 0.5)
+    raw = max(0, target - stock)
+    return {
+        "currentStock": stock,
+        "monthlySales": monthly,
+        "historicalMonthlySales": historical,
+        "effectiveMonthlySales": effective,
+        "usesHistoricalShare": historical is not None and historical > monthly,
+        "targetMonths": months,
+        "targetStock": target,
+        "rawShortage": raw,
+        "suggestedQty": round_calculated_restock_qty(raw, stock, effective),
+    }

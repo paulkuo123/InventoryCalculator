@@ -5,6 +5,7 @@ import html
 import json
 import os
 import re
+from sku_spec import split_spec_dimensions
 import sys
 import time
 import unicodedata
@@ -955,7 +956,7 @@ def cart_limit_feedback_message(feedback: Dict[str, Any]) -> str:
 def spec_parts(value: Any) -> List[str]:
     text = html.unescape(str(value or "")).replace("&gt", ">")
     parts = []
-    for part in re.split(r"[|,，;；>＞]", text):
+    for part in split_spec_dimensions(text):
         part = part.strip()
         if not part:
             continue

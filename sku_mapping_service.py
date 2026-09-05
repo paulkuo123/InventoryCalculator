@@ -14,6 +14,7 @@ import html
 import json
 import os
 import re
+from sku_spec import split_spec_dimensions
 import shutil
 import sqlite3
 import threading
@@ -501,7 +502,7 @@ def _spec_parts(value: Any) -> List[str]:
     if not text:
         return []
     parts = []
-    for part in re.split(r"[|,，;；>＞]", text):
+    for part in split_spec_dimensions(text):
         part = part.strip()
         if not part:
             continue
@@ -531,7 +532,7 @@ def clean_mapping_name(value: Any, spec_text: Any = "", index: int = 0) -> str:
     # normalized for comparisons and would turn labels such as iPhone into
     # lowercase text in the Golden Table.
     raw_parts = []
-    for part in re.split(r"[|,，;；>＞]", html.unescape(str(spec_text or "")).strip()):
+    for part in split_spec_dimensions(html.unescape(str(spec_text or "")).strip()):
         part = part.strip()
         if not part:
             continue
