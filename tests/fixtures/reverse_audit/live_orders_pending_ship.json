@@ -8,7 +8,15 @@
     "o-ship-1"
   ],
   "nOrders": 1,
-  "nLines": 0,
-  "orders": [],
+  "nLines": 1,
+  "orders": [
+    {
+      "orderId": "o-ship-1",
+      "offerId": "30003",
+      "skuId": "sku-extra",
+      "qty": 3,
+      "status": "待发货"
+    }
+  ],
   "pageUrl": "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?orderStatus=waitsellersend"
 }

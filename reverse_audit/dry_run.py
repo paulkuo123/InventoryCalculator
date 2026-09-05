@@ -1,6 +1,7 @@
 """Offline reverse-restock dry-run (frozen sources + live pool JSONs).
 
 Read-only: never mutates cart. shortfall → PAUSED (no auto qty fix).
+Phase 1 also lists qty_excess + unexpected_in_cart (no PAUSE on excess).
 Never invents URL/skuId — uncertain rows are recorded only.
 """
 from __future__ import annotations
@@ -414,14 +415,45 @@ def index_orders(
     return by_key, ambiguous, validation
 
 
+def _cart_ids_pipe(cart_hit: Optional[Dict[str, Any]]) -> str:
+    if not cart_hit:
+        return ""
+    return "|".join(cart_hit.get("cartIds") or [])
+
+
+def _multi_cart_line_fail(cart_hit: Optional[Dict[str, Any]]) -> bool:
+    """Same (offerId, skuId) with multiple cart lines → whole key fails for later mutate."""
+    if not cart_hit:
+        return False
+    return len(cart_hit.get("cartIds") or []) > 1
+
+
+def expected_key_set(rows: List[Dict[str, Any]]) -> set:
+    """Keys with both offer_id and sku_id (uncertain/skip protection boundaries)."""
+    out = set()
+    for row in rows:
+        oid = str(row.get("offer_id") or "").strip()
+        sid = str(row.get("sku_id") or "").strip()
+        if oid and sid:
+            out.add((oid, sid))
+    return out
+
+
 def diff_expected(
     agg_certain: List[Dict[str, Any]],
     cart_by_key: Dict[Tuple[str, str], Dict[str, Any]],
     order_by_key: Dict[Tuple[str, str], Dict[str, Any]],
-) -> Tuple[List[Dict], List[Dict], List[Dict], bool]:
+) -> Tuple[List[Dict], List[Dict], List[Dict], List[Dict], bool]:
+    """Diff certain aggregates vs cart/orders.
+
+    Returns covered, missing, shortfall, qty_excess, paused.
+    Excess is listed only (does NOT set paused). Order-covered keys never
+    enter qty_excess even if cart_qty > expected.
+    """
     covered: List[Dict] = []
     missing: List[Dict] = []
     shortfall: List[Dict] = []
+    excess: List[Dict] = []
     paused = False
 
     for a in agg_certain:
@@ -430,6 +462,8 @@ def diff_expected(
         order_hit = order_by_key.get(key)
         cart_hit = cart_by_key.get(key)
         cart_qty = as_int(cart_hit["qty"]) if cart_hit else 0
+        cart_ids = _cart_ids_pipe(cart_hit)
+        multi_fail = _multi_cart_line_fail(cart_hit)
 
         base = {
             "offer_id": a["offer_id"],
@@ -453,7 +487,10 @@ def diff_expected(
             row["order_ids"] = "|".join(order_hit.get("orderIds") or [])
             row["order_qty_sum"] = order_hit.get("qty_sum")
             row["cart_qty"] = cart_qty
+            row["cart_ids"] = cart_ids
             row["note"] = "出現在訂單池即視為覆蓋（不問在途量）"
+            if cart_qty > 0:
+                row["note"] += "；車內仍有貨 → 另見 unexpected 可選清車"
             covered.append(row)
             continue
 
@@ -462,18 +499,37 @@ def diff_expected(
                 row = dict(base)
                 row["coverage"] = "cart"
                 row["cart_qty"] = cart_qty
-                row["cart_ids"] = "|".join(cart_hit.get("cartIds") or [])
+                row["cart_ids"] = cart_ids
                 row["delta"] = cart_qty - expected
                 row["note"] = "車內數量≥應補"
                 covered.append(row)
+                if cart_qty > expected:
+                    ex = dict(base)
+                    ex["coverage"] = "cart_excess"
+                    ex["cart_qty"] = cart_qty
+                    ex["excess"] = cart_qty - expected
+                    ex["target_qty"] = expected
+                    ex["cart_ids"] = cart_ids
+                    ex["specTexts"] = "|".join(cart_hit.get("specTexts") or [])
+                    ex["multi_cart_line_fail"] = multi_fail
+                    if multi_fail:
+                        ex["note"] = (
+                            "車內超量；同 key 多 cart 列 → 整 key fail（不自動改量）"
+                        )
+                    else:
+                        ex["note"] = "車內超量；預設不自動改量（不 PAUSE）"
+                    excess.append(ex)
             else:
                 paused = True
                 row = dict(base)
                 row["coverage"] = "cart_shortfall"
                 row["cart_qty"] = cart_qty
                 row["shortfall"] = expected - cart_qty
-                row["cart_ids"] = "|".join(cart_hit.get("cartIds") or [])
+                row["cart_ids"] = cart_ids
+                row["multi_cart_line_fail"] = multi_fail
                 row["note"] = "車內 0<qty<應補 → PAUSED（不改量，僅記錄）"
+                if multi_fail:
+                    row["note"] += "；同 key 多 cart 列 → 整 key fail"
                 shortfall.append(row)
             continue
 
@@ -483,7 +539,105 @@ def diff_expected(
         row["note"] = "四處皆無 → dry-run 建議加車（尚未 mutate）"
         missing.append(row)
 
-    return covered, missing, shortfall, paused
+    return covered, missing, shortfall, excess, paused
+
+
+def find_unexpected_in_cart(
+    cart_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+    certain_keys: set,
+    uncertain_keys: set,
+    skip_keys: set,
+    order_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Reverse-scan cart for keys not handled as certain expected diffs.
+
+    certain boundary: keys in certain_keys are skipped unless order-covered
+    and still in cart (optional clear candidates). uncertain/skip/order-pool
+    hits are listed with removable=false. Multi cart lines → fail whole key.
+    """
+    rows: List[Dict[str, Any]] = []
+
+    for key, cart_rec in sorted(cart_by_key.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        oid, sid = key
+        cart_qty = as_int(cart_rec.get("qty"))
+        cart_ids = "|".join(cart_rec.get("cartIds") or [])
+        spec_texts = "|".join(cart_rec.get("specTexts") or [])
+        order_hit = order_by_key.get(key)
+        order_pools = "|".join(order_hit.get("pools") or []) if order_hit else ""
+        multi_fail = _multi_cart_line_fail(cart_rec)
+
+        base = {
+            "offer_id": oid,
+            "sku_id": sid,
+            "cart_qty": cart_qty,
+            "cart_ids": cart_ids,
+            "specTexts": spec_texts,
+            "in_order_pools": order_pools,
+            "in_uncertain_expected": key in uncertain_keys,
+            "in_skip_expected": key in skip_keys,
+            "multi_cart_line_fail": multi_fail,
+        }
+
+        if key in certain_keys:
+            # Order-covered certain key still occupying cart → optional clear only.
+            if order_hit and cart_qty > 0:
+                row = dict(base)
+                row["removable"] = False
+                row["reason"] = "order_covered_still_in_cart"
+                row["note"] = "訂單已覆蓋但仍佔車位；可選清車（禁止當誤加刪除）"
+                if multi_fail:
+                    row["note"] += "；同 key 多 cart 列 → 整 key fail"
+                rows.append(row)
+            continue
+
+        row = dict(base)
+        if key in uncertain_keys:
+            row["removable"] = False
+            row["reason"] = "uncertain_protected"
+            row["note"] = "對上 uncertain expected → 永不 mutate"
+        elif key in skip_keys:
+            row["removable"] = False
+            row["reason"] = "skip_protected"
+            row["note"] = "對上 skip／已知售完等；列出但不刪"
+        elif order_hit:
+            row["removable"] = False
+            row["reason"] = "order_pool_protected"
+            row["note"] = "三池任一有同 key → 禁止當誤加刪除（知情列出）"
+        else:
+            row["removable"] = True
+            row["reason"] = "not_in_certain_expected"
+            row["note"] = "車內有、不在 certain 應補集合、且無保護"
+
+        if multi_fail:
+            row["removable"] = False
+            if row["reason"] == "not_in_certain_expected":
+                row["reason"] = "ambiguous_multi_cart_lines"
+            row["note"] = (row.get("note") or "") + "；同 key 多 cart 列 → 整 key fail"
+        rows.append(row)
+
+    return rows
+
+
+def collect_multi_cart_ambiguous(
+    cart_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Mark every same-key multi cart-line group as ambiguous/fail."""
+    out: List[Dict[str, Any]] = []
+    for key, cart_rec in sorted(cart_by_key.items(), key=lambda kv: (kv[0][0], kv[0][1])):
+        if not _multi_cart_line_fail(cart_rec):
+            continue
+        out.append(
+            {
+                "kind": "multi_cart_lines",
+                "offer_id": key[0],
+                "sku_id": key[1],
+                "qty": as_int(cart_rec.get("qty")),
+                "cartId": "|".join(cart_rec.get("cartIds") or []),
+                "specText": "|".join(cart_rec.get("specTexts") or []),
+                "note": "same (offerId,skuId) has multiple cart lines — whole key fail",
+            }
+        )
+    return out
 
 
 def run_dry_run(
@@ -554,10 +708,20 @@ def run_dry_run(
             "pending_receive": recv,
         }
     )
-    covered, missing, shortfall, paused = diff_expected(
+    covered, missing, shortfall, excess, paused = diff_expected(
         agg_certain, cart_by_key, order_by_key
     )
-    ambiguous = amb_cart + amb_orders
+    certain_keys = {(str(a["offer_id"]), str(a["sku_id"])) for a in agg_certain}
+    uncertain_keys = expected_key_set(uncertain_rows)
+    skip_keys = expected_key_set(skip_rows)
+    unexpected = find_unexpected_in_cart(
+        cart_by_key,
+        certain_keys,
+        uncertain_keys,
+        skip_keys,
+        order_by_key,
+    )
+    ambiguous = amb_cart + amb_orders + collect_multi_cart_ambiguous(cart_by_key)
     for a in agg_certain:
         if not a.get("offer_id") or not a.get("sku_id"):
             ambiguous.append(
@@ -597,14 +761,30 @@ def run_dry_run(
     shortfall_fields = [
         "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
         "expected_qty", "cart_qty", "shortfall", "coverage", "cart_ids",
-        "is_phone_case", "product_ids", "product_names", "model_names",
-        "source_count", "watchlist_order", "note",
+        "multi_cart_line_fail", "is_phone_case", "product_ids", "product_names",
+        "model_names", "source_count", "watchlist_order", "note",
+    ]
+    excess_fields = [
+        "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
+        "expected_qty", "cart_qty", "excess", "target_qty", "cart_ids",
+        "specTexts", "multi_cart_line_fail", "is_phone_case",
+        "product_ids", "product_names", "model_names", "source_count",
+        "watchlist_order", "coverage", "note",
+    ]
+    unexpected_fields = [
+        "offer_id", "sku_id", "cart_qty", "cart_ids", "specTexts",
+        "in_order_pools", "in_uncertain_expected", "in_skip_expected",
+        "removable", "reason", "multi_cart_line_fail", "note",
     ]
     write_csv(out_dir / "covered.csv", covered, covered_fields)
     write_csv(out_dir / "missing_to_add.csv", missing, missing_fields)
     write_csv(out_dir / "qty_shortfall.csv", shortfall, shortfall_fields)
+    write_csv(out_dir / "qty_excess.csv", excess, excess_fields)
+    write_csv(out_dir / "unexpected_in_cart.csv", unexpected, unexpected_fields)
     write_csv(out_dir / "ambiguous.csv", ambiguous)
 
+    unexpected_removable = sum(1 for r in unexpected if r.get("removable") is True)
+    unexpected_protected = len(unexpected) - unexpected_removable
     status = "PAUSED" if paused else "READY_FOR_APPROVAL"
     summary = {
         "generatedAt": now_iso(),
@@ -663,21 +843,35 @@ def run_dry_run(
             "missing_qty_sum": sum(as_int(r.get("expected_qty")) for r in missing),
             "qty_shortfall": len(shortfall),
             "shortfall_qty_sum": sum(as_int(r.get("shortfall")) for r in shortfall),
+            "qty_excess": len(excess),
+            "excess_qty_sum": sum(as_int(r.get("excess")) for r in excess),
+            "unexpected_in_cart": len(unexpected),
+            "unexpected_removable": unexpected_removable,
+            "unexpected_protected": unexpected_protected,
             "ambiguous": len(ambiguous),
         },
         "orderPoolValidation": pool_validation,
         "rules": {
-            "scope": "watchlist ∩ products ∩ golden; exclusions via home_bootstrap",
+            "scope": "watchlist ∩ products ∩ golden; exclusions via home_bootstrap; no schoolbag cutoff",
             "qty": "calculated_restock_details + target_months_for_product (case=3 / else=4); sum by (offerId,skuId)",
             "certain": "approved + URL + skuId",
             "uncertain": "缺欄 — never guess URL/skuId",
             "skip": "discontinued / 售完等 (+ known 粉色愛心兔)",
             "orderCoverage": "any pool same offer+sku = covered",
             "cartShortfall": "0<qty<expected → PAUSED; full list still produced; no qty mutate",
+            "cartExcess": "cart > expected (non order-covered) → qty_excess.csv; list only, no PAUSE, no qty mutate",
+            "unexpectedCart": (
+                "reverse-scan cart; certain boundary; order/uncertain/skip protected "
+                "(removable=false); order-covered still in cart = optional clear; "
+                "multi cart lines → whole key fail/ambiguous"
+            ),
+            "mutateFlags": "--i-approve-mutate remains add-only (missing_to_add); set-qty/remove not in Phase 1",
         },
         "outputs": {
             "dir": str(out_dir),
             "missing_to_add.csv": str(out_dir / "missing_to_add.csv"),
+            "qty_excess.csv": str(out_dir / "qty_excess.csv"),
+            "unexpected_in_cart.csv": str(out_dir / "unexpected_in_cart.csv"),
             "dry_run_report.md": str(out_dir / "dry_run_report.md"),
             "dry_run_summary.json": str(out_dir / "dry_run_summary.json"),
         },
@@ -688,6 +882,18 @@ def run_dry_run(
         json.dumps(summary, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8",
     )
+
+    def _preview(rows: List[Dict[str, Any]], n: int = 8) -> List[str]:
+        out_lines: List[str] = []
+        for r in rows[:n]:
+            out_lines.append(
+                f"  - `{r.get('offer_id')}` / `{r.get('sku_id')}` "
+                f"qty={r.get('cart_qty')} reason={r.get('reason') or r.get('coverage')} "
+                f"removable={r.get('removable', '')}"
+            )
+        if len(rows) > n:
+            out_lines.append(f"  - …另有 {len(rows) - n} 筆")
+        return out_lines
 
     lines: List[str] = []
     lines.append("# 反向補貨離線 dry-run 報告")
@@ -703,8 +909,23 @@ def run_dry_run(
     lines.append("## Diff（certain 聚合）")
     lines.append(
         f"- covered={len(covered)}；missing_to_add={len(missing)}；"
-        f"qty_shortfall={len(shortfall)}；ambiguous={len(ambiguous)}"
+        f"qty_shortfall={len(shortfall)}；qty_excess={len(excess)}；"
+        f"unexpected_in_cart={len(unexpected)} "
+        f"(removable={unexpected_removable}/protected={unexpected_protected})；"
+        f"ambiguous={len(ambiguous)}"
     )
+    lines.append("")
+    lines.append("## 車內超量／非預期")
+    lines.append(
+        f"- qty_excess={len(excess)}（excess_qty_sum="
+        f"{sum(as_int(r.get('excess')) for r in excess)}；不 PAUSE）"
+    )
+    lines.extend(_preview(excess))
+    lines.append(
+        f"- unexpected_in_cart={len(unexpected)} "
+        f"（removable={unexpected_removable}；protected={unexpected_protected}）"
+    )
+    lines.extend(_preview(unexpected))
     lines.append("")
     lines.append("## 規則（定案）")
     for k, v in summary["rules"].items():
@@ -713,7 +934,8 @@ def run_dry_run(
     lines.append("---")
     lines.append(
         "下一步：`python -m reverse_audit mutate --dir <此目錄> --i-approve-mutate`；"
-        "若 status=PAUSED 須先處理車內不足再繼續。"
+        "若 status=PAUSED 須先處理車內不足再繼續。`--i-approve-mutate` 僅加車；"
+        "超量／非預期 Phase 1 只列出，不改量不刪除。"
     )
     lines.append("")
     (out_dir / "dry_run_report.md").write_text("\n".join(lines), encoding="utf-8")
