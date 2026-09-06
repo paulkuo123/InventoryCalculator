@@ -50,12 +50,12 @@ class ManualWatchlistBrowserTests(unittest.TestCase):
                 page.on('pageerror', lambda error: errors.append(str(error)))
                 page.add_init_script("""
                     localStorage.setItem('inventoryPersonalWatchlistIds','["100"]');
-                    localStorage.setItem('inventoryPersonalWatchlistEnabled','1');
+                    localStorage.setItem('inventoryPersonalWatchlistEnabled','0');
                 """)
                 page.goto('http://inventory.test/?autoload=1', wait_until='networkidle')
                 toggle = page.locator('#personalWatchlistOnlyToggle')
                 self.assertFalse(toggle.is_checked())
-                self.assertTrue(toggle.is_disabled())
+                self.assertFalse(toggle.is_disabled())
                 self.assertNotIn(('GET', '/api/home/bootstrap'), requests)
                 self.assertEqual(page.evaluate("localStorage.getItem('inventoryPersonalWatchlistIds')"), '["100"]')
 
@@ -69,15 +69,21 @@ class ManualWatchlistBrowserTests(unittest.TestCase):
 
                 import_products()
                 self.assertFalse(toggle.is_checked())
-                self.assertTrue(toggle.is_disabled())
-                self.assertEqual(page.locator('#personalWatchlistSummary').inner_text(), '尚未匯入')
+                self.assertFalse(toggle.is_disabled())
+                self.assertIn('1 / 1', page.locator('#personalWatchlistSummary').inner_text())
                 page.locator('#personalWatchlistFile').set_input_files({
                     'name': 'watchlist.json', 'mimeType': 'application/json',
                     'buffer': b'{"schemaVersion":1,"productIds":["100"]}',
                 })
                 page.locator('#personalWatchlistImportButton').click()
-                page.wait_for_function("document.querySelector('#personalWatchlistOnlyToggle').checked")
+                page.wait_for_function("document.querySelector('#personalWatchlistStatus').textContent.startsWith('已匯入')")
+                self.assertTrue(toggle.is_checked())
                 page.locator('label:has(#personalWatchlistOnlyToggle)').click()
+                self.assertFalse(toggle.is_checked())
+                page.locator('label:has(#personalWatchlistOnlyToggle)').click()
+                self.assertTrue(toggle.is_checked())
+                page.locator('label:has(#personalWatchlistOnlyToggle)').click()
+                self.assertFalse(toggle.is_checked())
                 import_products()
                 self.assertFalse(toggle.is_checked(), 'Import must preserve the explicitly disabled filter')
                 self.assertEqual(page.evaluate('Object.keys(window.lastSearchResults).length'), 2)

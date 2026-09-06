@@ -182,8 +182,13 @@ document.addEventListener('DOMContentLoaded', function() {
     const MAX_SHOPEE_PRODUCTS_IMPORT_BYTES = 20 * 1024 * 1024;
     const MAX_PERSONAL_WATCHLIST_BYTES = 2 * 1024 * 1024;
     const PersonalWatchlist = window.PersonalWatchlist || {};
-    // Watchlists are loaded only by the explicit import action.
-    let personalWatchlistIds = [];
+    // Project watchlists are never bootstrapped. A list previously imported by
+    // the user may remain in this browser's local storage, together with its
+    // last explicit on/off choice.
+    const storedWatchlist = PersonalWatchlist.readStoredWatchlist
+        ? PersonalWatchlist.readStoredWatchlist(window.localStorage)
+        : { productIds: [], enabled: false };
+    let personalWatchlistIds = storedWatchlist.productIds || [];
     let personalWatchlistExclusionIds = [];
     let personalWatchlistExclusionsReady = null;
     
@@ -4182,7 +4187,7 @@ document.addEventListener('DOMContentLoaded', function() {
         personalWatchlistImportButton.addEventListener('click', importPersonalWatchlist);
     }
     if (personalWatchlistOnlyToggle) {
-        personalWatchlistOnlyToggle.checked = false;
+        personalWatchlistOnlyToggle.checked = Boolean(storedWatchlist.enabled && personalWatchlistIds.length);
         personalWatchlistOnlyToggle.addEventListener('change', function() {
             persistPersonalWatchlist(isPersonalWatchlistEnabled());
             updatePersonalWatchlistUi();
