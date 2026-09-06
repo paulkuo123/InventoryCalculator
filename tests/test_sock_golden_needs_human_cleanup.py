@@ -1,4 +1,8 @@
-"""Assert sock golden_table cleanup for PR #23 needs-human products."""
+"""Assert sock golden_table cleanup for PR #23 needs-human pollution products.
+
+純白 (16790492139) URL/offer decision is deferred pending live confirmation;
+this suite only guards pollution cleanup and that 純白 remains untouched on main.
+"""
 
 import json
 import unittest
@@ -71,6 +75,7 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
                         or str(model.get("1688_spec_text") or "").endswith(">均码")
                     )
                     self.assertNotIn("收藏加购", model.get("1688_spec_text") or "")
+                    self.assertIsNotNone(model.get("1688_sku_id"))
 
     def test_pink_model_without_pollution_is_untouched(self):
         models = {row["型號名稱"]: row for row in self.table["18195479361"]["型號"]}
@@ -79,7 +84,8 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
         self.assertIsNone(pink.get("1688_spec_text"))
         self.assertEqual(pink.get("1688_sku_name"), "奶粉")
 
-    def test_chunbai_keeps_main_offer_url(self):
+    def test_chunbai_left_untouched_pending_live_confirm(self):
+        """純白 URL/offer fill deferred; keep existing main URL, do not invent fields."""
         models = self.table[URL_KEEP_PRODUCT_ID]["型號"]
         chunbai = next(
             row
@@ -90,13 +96,13 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
         url = chunbai.get("阿里巴巴商品URL") or ""
         self.assertIn(MAIN_OFFER_ID, url)
         self.assertNotIn(ERIC_OFFER_ID, url)
-        self.assertEqual(chunbai.get("1688_offer_id"), MAIN_OFFER_ID)
         self.assertEqual(chunbai.get("1688_mapping_status"), "approved")
         self.assertEqual(chunbai.get("1688_sku_name"), "2349白色")
+        # Deferred: do not fill offer_id / second / spec in this PR
+        self.assertNotIn("1688_offer_id", chunbai)
+        self.assertNotIn("1688_sku_second_name", chunbai)
+        self.assertNotIn("1688_spec_text", chunbai)
         self.assertIsNone(chunbai.get("1688_sku_id"))
-        self.assertEqual(chunbai.get("1688_sku_second_name"), "均码")
-        self.assertEqual(chunbai.get("1688_spec_text"), "2349白色>均码")
-        self.assertIsNone(chunbai.get("1688_verified_at"))
 
 
 if __name__ == "__main__":
