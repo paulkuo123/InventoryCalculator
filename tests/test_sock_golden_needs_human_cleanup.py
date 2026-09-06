@@ -1,7 +1,7 @@
 """Assert sock golden_table cleanup for PR #23 needs-human pollution products.
 
-純白 (16790492139) URL/offer decision is deferred pending live confirmation;
-this suite only guards pollution cleanup and that 純白 remains untouched on main.
+純白 (16790492139) stays on the main offer after live confirmation;
+this suite also guards that SKU mapping is filled and not switched to eric.
 """
 
 import json
@@ -84,8 +84,8 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
         self.assertIsNone(pink.get("1688_spec_text"))
         self.assertEqual(pink.get("1688_sku_name"), "奶粉")
 
-    def test_chunbai_left_untouched_pending_live_confirm(self):
-        """純白 URL/offer fill deferred; keep existing main URL, do not invent fields."""
+    def test_chunbai_uses_main_offer_white_sku(self):
+        """純白 stays on main offer 682877407287 with live 2349白色 sku_id."""
         models = self.table[URL_KEEP_PRODUCT_ID]["型號"]
         chunbai = next(
             row
@@ -96,13 +96,17 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
         url = chunbai.get("阿里巴巴商品URL") or ""
         self.assertIn(MAIN_OFFER_ID, url)
         self.assertNotIn(ERIC_OFFER_ID, url)
-        self.assertEqual(chunbai.get("1688_mapping_status"), "approved")
+        self.assertEqual(chunbai.get("1688_offer_id"), MAIN_OFFER_ID)
+        self.assertEqual(chunbai.get("1688_sku_id"), "4881407420806")
         self.assertEqual(chunbai.get("1688_sku_name"), "2349白色")
-        # Deferred: do not fill offer_id / second / spec in this PR
-        self.assertNotIn("1688_offer_id", chunbai)
-        self.assertNotIn("1688_sku_second_name", chunbai)
-        self.assertNotIn("1688_spec_text", chunbai)
-        self.assertIsNone(chunbai.get("1688_sku_id"))
+        self.assertEqual(chunbai.get("1688_sku_second_name"), "均码")
+        self.assertEqual(chunbai.get("1688_spec_text"), "2349白色>均码")
+        self.assertEqual(chunbai.get("1688_mapping_status"), "approved")
+        self.assertEqual(chunbai.get("1688_mapping_source"), "manual")
+        self.assertEqual(
+            chunbai.get("1688_offer_fingerprint"),
+            "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d",
+        )
 
 
 if __name__ == "__main__":
