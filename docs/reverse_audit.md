@@ -33,8 +33,10 @@ python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
 - 範圍：watchlist（套用 exclusions）∩ `shopee_products.json` ∩ `golden_table.json`
 - 水位：`restock_rules.target_months_for_product` — **手機殼／手机壳 = 3 個月**，其餘 **4 個月**（吊飾／掛繩／明確加購除外）
 - 同 1688 `(offerId, skuId)` 加總各蝦皮型號建議量
-- certain：`approved` + 有效 URL + 有 `skuId`（進 diff／mutate 建議）
-- uncertain／缺欄：**只記不猜**，不發明 URL／skuId；`approved` + 有效 URL + 有 SKU 名稱／規格但缺 `skuId` 仍留 uncertain
+- certain：`approved` + 有效 URL +（有 `skuId` **或** 可用 name/spec）→ 進 qty diff／mutate 邊界
+- 缺 `skuId` 但有 name/spec：仍進 certain；聚合時若車內 **唯一** name/spec 對上（同加車腳本 `cart_line_matches_item`）→ 用該 live `skuId` 做 qty 對帳（**不回寫** golden）
+- name/spec **歧義**（一列對多車，或一車對多筆 distinct name/spec）→ fail closed：不進 mutate／delete
+- uncertain／缺欄：**只記不猜**，不發明 URL／skuId（無 approved／URL，或既無 `skuId` 也無可用 name/spec）
 - skip：停售／已知售完等
 
 ## 覆蓋、shortfall、超量與非預期
@@ -43,7 +45,7 @@ python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
 - 車內數量 ≥ 應補 → 覆蓋；若 `cart > expected`（且非 order-covered）另寫 `qty_excess.csv`（**只列出，不 PAUSE、不改量**）
 - 車內 `0 < qty < 應補` → **PAUSED**：完整列入 `qty_shortfall.csv`，**不自動改量**
 - 四處皆無 → `missing_to_add.csv`（僅 dry-run 建議；mutate 需核准旗標）
-- 反向掃車 → `unexpected_in_cart.csv`：以 **certain** 為界；uncertain／skip／訂單池同 key → `removable=false`；缺 `skuId` 的 approved+URL+name/spec uncertain 若以加車腳本同一套 name/spec 對上車內列 → `name_spec_protected`／歧義時 `ambiguous_name_spec_protected`（皆不可刪，不回寫 golden skuId）；訂單已覆蓋但仍佔車 → 可選清車（`order_covered_still_in_cart`，不可刪）
+- 反向掃車 → `unexpected_in_cart.csv`：以 **certain**（含唯一 name/spec 解析後的 key）為界；uncertain／skip／訂單池同 key → `removable=false`；歧義 name/spec → `ambiguous_name_spec`（不可刪）；訂單已覆蓋但仍佔車 → 可選清車（`order_covered_still_in_cart`，不可刪）。不再使用 `name_spec_protected` uncertain 保護路徑
 - 同 `(offerId, skuId)` 多 cart 列 → 整 key fail，列入 `ambiguous.csv`（`multi_cart_lines`）
 - 範圍：全車 certain；**不理**正向書包 cutoff
 - `--i-approve-mutate` **僅加車**（Phase 1 不加 set-qty／remove）

@@ -25,7 +25,7 @@ from reverse_audit.dry_run import (  # noqa: E402
     find_unexpected_in_cart,
     index_cart,
     index_orders,
-    name_spec_protectable_expected,
+    resolve_certain_name_spec_sku_ids,
     run_dry_run,
 )
 from reverse_audit.mutate import require_approve  # noqa: E402
@@ -128,7 +128,6 @@ class DryRunOfflineTests(unittest.TestCase):
             expected_key_set(uncertain),
             expected_key_set(skip),
             orders,
-            name_spec_expected=uncertain,
         )
         by_sku = {r["sku_id"]: r for r in unexpected}
         self.assertEqual(by_sku["sku-orphan"]["reason"], "not_in_certain_expected")
@@ -195,13 +194,13 @@ class DryRunOfflineTests(unittest.TestCase):
             self.assertGreaterEqual(summary["diff"]["qty_excess"], 1)
 
 
-class NameSpecProtectTests(unittest.TestCase):
-    """對齊加車腳本：缺 skuId 的 approved+URL+name/spec 不可誤標可刪。"""
+class NameSpecMappingTests(unittest.TestCase):
+    """certain = approved+URL+(skuId OR name/spec); unique name → qty diff; ambiguous fail-closed."""
 
     OFFER = "835811756019"
 
-    def _protectable_rows(self):
-        """煙灰藍小狗風格：approved + URL + name/spec，缺 1688_sku_id。"""
+    def _name_spec_certain_rows(self):
+        """煙灰藍小狗風格：approved + URL + name/spec，缺 1688_sku_id → certain。"""
         base = {
             "product_id": "41868933376",
             "product_name": "煙灰藍小狗",
@@ -210,19 +209,24 @@ class NameSpecProtectTests(unittest.TestCase):
             "offer_id": self.OFFER,
             "sku_id": "",
             "sku_name": "烟灰蓝 怪奇小狗",
-            "bucket": "uncertain",
-            "uncertain_reason": "缺欄:skuId",
+            "bucket": "certain",
+            "certain_via": "name_spec",
+            "suggested_qty": 5,
+            "watchlist_order": 0,
+            "is_phone_case": True,
         }
         return [
             {
                 **base,
                 "model_name": "煙灰藍小狗(單殼),14",
                 "sku_second_name": "14",
+                "suggested_qty": 5,
             },
             {
                 **base,
                 "model_name": "煙灰藍小狗(單殼),12 / 12 pro",
                 "sku_second_name": "12/12pro",
+                "suggested_qty": 10,
             },
         ]
 
@@ -251,30 +255,117 @@ class NameSpecProtectTests(unittest.TestCase):
             },
         }
 
-    def test_unique_name_spec_match_not_removable(self):
-        """唯一 name/spec 對上時不得標成 removable unexpected。"""
-        protectable = self._protectable_rows()
-        self.assertEqual(len(name_spec_protectable_expected(protectable)), 2)
+    def test_sku_id_only_match_is_certain(self):
+        """有 skuId（可無 name）→ certain via sku_id。"""
+        products = {
+            "9001": {
+                "商品名稱": "測試手機殼",
+                "型號": [
+                    {
+                        "規格ID": "x1",
+                        "型號名稱": "僅有sku",
+                        "商品庫存": "0",
+                        "月銷量": "10",
+                    }
+                ],
+            }
+        }
+        golden = {
+            "9001": {
+                "型號": [
+                    {
+                        "規格ID": "x1",
+                        "型號名稱": "僅有sku",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/90001.html",
+                        "1688_offer_id": "90001",
+                        "1688_sku_id": "sku-only-1",
+                        "1688_sku_name": "",
+                    }
+                ]
+            }
+        }
+        certain, uncertain, _skip, _ = build_expected(products, golden, ["9001"])
+        self.assertEqual(uncertain, [])
+        self.assertEqual(len(certain), 1)
+        self.assertEqual(certain[0]["sku_id"], "sku-only-1")
+        self.assertEqual(certain[0]["certain_via"], "sku_id")
+
+    def test_name_spec_only_certain_participates_in_qty_diff(self):
+        """缺 skuId 的 name/spec → certain；唯一對車後進 qty diff，且非 unexpected removable。"""
+        certain = self._name_spec_certain_rows()
+        cart = self._cart_by_key()
+        resolved, amb, amb_keys = resolve_certain_name_spec_sku_ids(certain, cart)
+        self.assertEqual(amb, [])
+        self.assertEqual(amb_keys, set())
+        by_second = {r["sku_second_name"]: r for r in resolved}
+        self.assertEqual(by_second["14"]["sku_id"], "5759315531121")
+        self.assertEqual(by_second["12/12pro"]["sku_id"], "5759315531126")
+        self.assertTrue(by_second["14"]["sku_id_resolved_from_cart"])
+
+        agg = aggregate_certain(resolved)
+        covered, missing, shortfall, excess, paused = diff_expected(agg, cart, {})
+        self.assertFalse(paused)
+        self.assertEqual(missing, [])
+        self.assertEqual(shortfall, [])
+        self.assertEqual(excess, [])
+        covered_skus = {r["sku_id"] for r in covered}
+        self.assertEqual(covered_skus, {"5759315531121", "5759315531126"})
+
+        certain_keys = {(a["offer_id"], a["sku_id"]) for a in agg}
         unexpected = find_unexpected_in_cart(
-            self._cart_by_key(),
-            certain_keys=set(),
-            uncertain_keys=set(),  # 缺 skuId → 進不了 key set
+            cart,
+            certain_keys=certain_keys,
+            uncertain_keys=set(),
             skip_keys=set(),
             order_by_key={},
-            name_spec_expected=protectable,
+            ambiguous_name_keys=amb_keys,
         )
         by_sku = {r["sku_id"]: r for r in unexpected}
-        for sid in ("5759315531121", "5759315531126"):
-            self.assertIn(sid, by_sku)
-            self.assertFalse(by_sku[sid]["removable"])
-            self.assertEqual(by_sku[sid]["reason"], "name_spec_protected")
-            self.assertTrue(by_sku[sid]["in_uncertain_expected"])
+        self.assertNotIn("5759315531121", by_sku)
+        self.assertNotIn("5759315531126", by_sku)
+        self.assertNotIn("name_spec_protected", [r.get("reason") for r in unexpected])
         self.assertTrue(by_sku["sku-orphan-other"]["removable"])
         self.assertEqual(by_sku["sku-orphan-other"]["reason"], "not_in_certain_expected")
 
-    def test_ambiguous_multi_match_stays_protected(self):
-        """一車列對上多筆 distinct name/spec → 仍保護、不可刪。"""
-        protectable = [
+    def test_neither_sku_nor_name_stays_uncertain(self):
+        """approved+URL 但既無 skuId 也無 usable name/spec → uncertain。"""
+        products = {
+            "9002": {
+                "商品名稱": "測試手機殼",
+                "型號": [
+                    {
+                        "規格ID": "y1",
+                        "型號名稱": "空白映射",
+                        "商品庫存": "0",
+                        "月銷量": "10",
+                    }
+                ],
+            }
+        }
+        golden = {
+            "9002": {
+                "型號": [
+                    {
+                        "規格ID": "y1",
+                        "型號名稱": "空白映射",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/90002.html",
+                        "1688_offer_id": "90002",
+                        "1688_sku_id": "",
+                        "1688_sku_name": "",
+                    }
+                ]
+            }
+        }
+        certain, uncertain, _skip, _ = build_expected(products, golden, ["9002"])
+        self.assertEqual(certain, [])
+        self.assertEqual(len(uncertain), 1)
+        self.assertIn("skuId+name/spec", uncertain[0]["uncertain_reason"])
+
+    def test_ambiguous_name_fail_closed(self):
+        """一車列對上多筆 distinct name/spec → 不進 mapped mutate／delete。"""
+        certain = [
             {
                 "mapping_status": "approved",
                 "alibaba_url": f"https://detail.1688.com/offer/{self.OFFER}.html",
@@ -283,6 +374,10 @@ class NameSpecProtectTests(unittest.TestCase):
                 "sku_name": "烟灰蓝 怪奇小狗",
                 "sku_second_name": "14",
                 "model_name": "with-second",
+                "bucket": "certain",
+                "certain_via": "name_spec",
+                "suggested_qty": 5,
+                "watchlist_order": 0,
             },
             {
                 "mapping_status": "approved",
@@ -292,6 +387,10 @@ class NameSpecProtectTests(unittest.TestCase):
                 "sku_name": "烟灰蓝 怪奇小狗",
                 "sku_second_name": "",  # 只要求主名 → 與上一列同時命中
                 "model_name": "primary-only",
+                "bucket": "certain",
+                "certain_via": "name_spec",
+                "suggested_qty": 5,
+                "watchlist_order": 0,
             },
         ]
         cart = {
@@ -303,21 +402,34 @@ class NameSpecProtectTests(unittest.TestCase):
                 "specTexts": ["烟灰蓝 怪奇小狗; 14"],
             },
         }
+        resolved, amb, amb_keys = resolve_certain_name_spec_sku_ids(certain, cart)
+        self.assertTrue(amb)
+        self.assertIn((self.OFFER, "5759315531121"), amb_keys)
+        self.assertFalse(
+            any(str(r.get("sku_id") or "").strip() for r in resolved)
+        )
+        agg = aggregate_certain(resolved)
+        certain_keys = {
+            (a["offer_id"], a["sku_id"])
+            for a in agg
+            if str(a.get("sku_id") or "").strip()
+        }
+        self.assertEqual(certain_keys, set())
         unexpected = find_unexpected_in_cart(
             cart,
-            certain_keys=set(),
+            certain_keys=certain_keys,
             uncertain_keys=set(),
             skip_keys=set(),
             order_by_key={},
-            name_spec_expected=protectable,
+            ambiguous_name_keys=amb_keys,
         )
         self.assertEqual(len(unexpected), 1)
         row = unexpected[0]
         self.assertFalse(row["removable"])
-        self.assertEqual(row["reason"], "ambiguous_name_spec_protected")
+        self.assertEqual(row["reason"], "ambiguous_name_spec")
 
-    def test_never_invents_url_for_missing_url_uncertain(self):
-        """缺 URL 的 uncertain 仍不發明 URL；亦不得靠 name/spec 進 certain。"""
+    def test_never_invents_url_or_golden_sku(self):
+        """缺 URL 仍不發明；name/spec certain 不把解析到的 skuId 寫回 expected 列。"""
         products = load_json(FIX / "sources" / "shopee_products.json")
         golden = load_json(FIX / "sources" / "golden_table.json")
         certain, uncertain, _skip, _ = build_expected(
@@ -325,33 +437,83 @@ class NameSpecProtectTests(unittest.TestCase):
         )
         for row in certain:
             self.assertTrue(str(row.get("alibaba_url") or "").startswith("http"))
-            self.assertTrue(str(row.get("sku_id") or "").strip())
         for row in uncertain:
             if "url" in (row.get("uncertain_reason") or ""):
                 self.assertFalse(str(row.get("alibaba_url") or "").startswith("http"))
-        # 缺 skuId 的 name/spec 列可進入 protectable；有 skuId 或缺 URL 則否
-        crafted = [
-            {
-                "mapping_status": "approved",
-                "alibaba_url": "https://detail.1688.com/offer/1.html",
-                "offer_id": "1",
-                "sku_id": "",
-                "sku_name": "有名",
+
+        crafted_certain = self._name_spec_certain_rows()
+        for row in crafted_certain:
+            self.assertEqual(row["bucket"], "certain")
+            self.assertEqual(row["certain_via"], "name_spec")
+            self.assertFalse(str(row.get("sku_id") or "").strip())
+
+        resolved, _, _ = resolve_certain_name_spec_sku_ids(
+            crafted_certain, self._cart_by_key()
+        )
+        # resolve 只用於 diff；原始 certain 列仍無 skuId（不回寫 golden）
+        for row in crafted_certain:
+            self.assertFalse(str(row.get("sku_id") or "").strip())
+        self.assertTrue(all(r.get("sku_id_resolved_from_cart") for r in resolved))
+
+        # 缺 URL → 不可升 certain
+        products_bad = {
+            "9003": {
+                "商品名稱": "測試手機殼",
+                "型號": [
+                    {
+                        "規格ID": "z1",
+                        "型號名稱": "無網址",
+                        "商品庫存": "0",
+                        "月銷量": "10",
+                    }
+                ],
+            }
+        }
+        golden_bad = {
+            "9003": {
+                "型號": [
+                    {
+                        "規格ID": "z1",
+                        "型號名稱": "無網址",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "",
+                        "1688_offer_id": "90003",
+                        "1688_sku_id": "",
+                        "1688_sku_name": "有名無網址",
+                    }
+                ]
+            }
+        }
+        certain_bad, uncertain_bad, _, _ = build_expected(
+            products_bad, golden_bad, ["9003"]
+        )
+        self.assertEqual(certain_bad, [])
+        self.assertTrue(any("url" in (r.get("uncertain_reason") or "") for r in uncertain_bad))
+
+    def test_name_spec_excess_on_resolved_cart_sku(self):
+        """name/spec certain 解析後車內超量 → qty_excess，而非 unexpected。"""
+        certain = [self._name_spec_certain_rows()[0]]  # qty 5 expected for 14
+        cart = {
+            (self.OFFER, "5759315531121"): {
+                "offer_id": self.OFFER,
+                "sku_id": "5759315531121",
+                "qty": 12,
+                "cartIds": ["c-14"],
+                "specTexts": ["烟灰蓝 怪奇小狗; 14"],
             },
-            {
-                "mapping_status": "approved",
-                "alibaba_url": "",  # 缺 URL — 不可保護、不可發明
-                "offer_id": "2",
-                "sku_id": "",
-                "sku_name": "有名無網址",
-            },
-        ]
-        protectable = name_spec_protectable_expected(crafted)
-        self.assertEqual(len(protectable), 1)
-        self.assertEqual(protectable[0]["offer_id"], "1")
-        self.assertTrue(protectable[0]["alibaba_url"].startswith("http"))
-        # build_expected 不得把缺欄列升成 certain
-        self.assertFalse(any(not str(r.get("sku_id") or "").strip() for r in certain))
+        }
+        resolved, _, amb_keys = resolve_certain_name_spec_sku_ids(certain, cart)
+        agg = aggregate_certain(resolved)
+        covered, _missing, _sf, excess, paused = diff_expected(agg, cart, {})
+        self.assertFalse(paused)
+        self.assertEqual(len(excess), 1)
+        self.assertEqual(excess[0]["sku_id"], "5759315531121")
+        self.assertEqual(as_int_ex(excess[0]["excess"]), 7)
+        certain_keys = {(a["offer_id"], a["sku_id"]) for a in agg}
+        unexpected = find_unexpected_in_cart(
+            cart, certain_keys, set(), set(), {}, ambiguous_name_keys=amb_keys
+        )
+        self.assertEqual(unexpected, [])
 
 
 def as_int_ex(value) -> int:
