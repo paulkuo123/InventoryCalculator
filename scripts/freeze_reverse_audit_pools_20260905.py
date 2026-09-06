@@ -5,10 +5,15 @@ Prefer CDP 9223 (shared chrome-profile); fall back to 9227.
 No cart mutations, no deletes, do not kill Chrome.
 """
 from __future__ import annotations
-import json, re, time, os, traceback
+import json, re, time, os, sys, traceback
 from datetime import datetime, timezone, timedelta
 from collections import defaultdict
 from playwright.sync_api import sync_playwright
+
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+from reverse_audit.freeze import strip_empty_dom_stub_lines  # noqa: E402
 
 OUT = os.environ.get(
     "REVERSE_AUDIT_OUT",
@@ -433,8 +438,7 @@ DEEP_ORDER_DOM = """
   deepText(document.documentElement, parts, 0);
   const joined = parts.join('\\n');
   for (const m of joined.matchAll(/(待付款|待发货|待發貨|待收货|待收貨)\\s*[（(]?(\\d+)[）)]?/g)) {
-    if m[1] not in tabCounts:
-      pass
+    if (!(m[1] in tabCounts)) tabCounts[m[1]] = +m[2];
   }
   // re-parse badges preferring short tab strip
   for (const line of (tabText || joined.slice(0, 2000)).split(/\\n+/)) {
@@ -476,9 +480,9 @@ DEEP_ORDER_DOM = """
     if (sm) seller = sm[1].trim();
     const offers = [...new Set([...( (card && card.innerHTML || '').match(/offer[\\/_]?(\\d{8,})/g) || [])].map(x => x.replace(/\\D/g,'')))];
     lines.push({
-      orderId: oid, offerId: offers[0] if offers else null, skuId: null,
+      orderId: oid, offerId: offers.length ? offers[0] : null, skuId: null,
       specText: '', skuName: '', qty: null, status, seller,
-      skuIdResolution: 'partial' if offers else 'missing', source: 'dom'
+      skuIdResolution: offers.length ? 'partial' : 'missing', source: 'dom'
     });
   }
   return {
@@ -783,7 +787,7 @@ def capture_cart(page, cdp_port, udd, retries=3):
 
 def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
     urls = [
-        f"https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?status={status_code}&page=1&pageSize=50",
+        f"https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?orderStatus={status_code}&page=1&pageSize=50",
         "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&pageSize=50",
         "https://trade.1688.com/order/buyer_order_list.htm",
         "https://work.1688.com/",
@@ -916,7 +920,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
         if not nav_ok:
             # last chance: force air status URL
             try:
-                u = f"https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?status={status_code}&page=1&pageSize=50"
+                u = f"https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?orderStatus={status_code}&page=1&pageSize=50"
                 page.goto(u, wait_until="domcontentloaded", timeout=120000)
                 page.wait_for_timeout(8000)
                 final_url = page.url
@@ -977,7 +981,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
         if status_code not in (page.url or ""):
             try:
                 page.goto(
-                    f"https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?status={status_code}&page=1&pageSize=50",
+                    f"https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?orderStatus={status_code}&page=1&pageSize=50",
                     wait_until="domcontentloaded",
                     timeout=120000,
                 )
@@ -1060,6 +1064,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
                 by[k] = ln
 
         lines = list(by.values())
+        lines, n_dom_stubs = strip_empty_dom_stub_lines(lines, notes)
         order_ids = sorted({str(x.get("orderId")) for x in lines if x.get("orderId")})
         tab_counts = (dom or {}).get("tabCounts") or {}
         expected = None
@@ -1138,6 +1143,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
             "domSample": (dom or {}).get("sample"),
             "cdpPort": cdp_port,
             "userDataDir": udd,
+            "domStubsRemoved": n_dom_stubs,
         }
         print(
             f"[orders:{pool}] orders={len(order_ids)} lines={len(lines)} tab={expected} complete={complete} reason={reason}",
