@@ -14,12 +14,28 @@ python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
 
 輸出一律落在：`reports/reverse_audit_YYYYMMDD/`。
 
+## dry-run 人工交付（請先看這份）
+
+**主交付檔：`補貨比對結果.csv`**（UTF-8-SIG，Excel 可直接開）
+
+| 欄位 | 說明 |
+|---|---|
+| 類型 | 車裡缺少（建議加）／車裡數量不足／車裡數量過多／車裡多出來（可能可刪｜先不要刪） |
+| 蝦皮商品id／蝦皮規格id | 聚合後 pipe 串接；非預期列可空白 |
+| 蝦皮商品名稱／型號 | 對應 product_names／model_names（非預期用車內規格文字） |
+| 應補數量／車內數量／差額說明 | 建議加 N、少 N、多 N、或「車內 N，不在應補清單」 |
+| 1688網址／1688_offer／1688_sku／備註 | 對帳與人工判斷用 |
+
+列順序：缺少（應補量大者優先）→ 不足 → 過多 → 多出來可刪 → 多出來先不要刪。**不含**已覆蓋（covered）列。
+
+其餘英文檔名 CSV（`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`covered.csv`、`expected_*.csv`、`ambiguous.csv`）為**機器用／內部**：mutate 讀 `missing_to_add.csv`，有 shortfall 時會檢查 `qty_shortfall.csv`；一般人工不必開。
+
 ## 參數
 
 | 參數 | 說明 |
 |---|---|
 | `freeze` | 透過 CDP 唯讀擷取採購車＋三個訂單池，寫入 `live_*.json`／`snapshot_meta.json` |
-| `dry-run` | **離線**：讀既有 `live_*.json` 與凍結來源，產出 expected／diff／報告；**不加車、不改量** |
+| `dry-run` | **離線**：讀既有 `live_*.json` 與凍結來源，產出整合表＋機器 CSV／報告；**不加車、不改量** |
 | `mutate` | 依 `missing_to_add.csv` 加車；**必須**加 `--i-approve-mutate`，否則 fail-closed 拒絕 |
 | `--date YYYYMMDD` | 報告目錄日期戳 |
 | `--dir PATH` | 直接指定報告目錄（優先於 `--date`） |
@@ -52,8 +68,9 @@ python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
 
 ## 成功標準
 
-- dry-run 產出：`expected_*.csv`、`covered.csv`、`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`ambiguous.csv`、`dry_run_summary.json`、`dry_run_report.md`
-- `dry_run_summary.json` 的 `status` 為 `READY_FOR_APPROVAL` 或 `PAUSED`；`diff` 含 `qty_excess`／`unexpected_*` 計數
+- dry-run **人工主檔**：`補貨比對結果.csv`（UTF-8-SIG）
+- dry-run 另產出機器用：`expected_*.csv`、`covered.csv`、`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`ambiguous.csv`、`dry_run_summary.json`、`dry_run_report.md`
+- `dry_run_summary.json` 的 `status` 為 `READY_FOR_APPROVAL` 或 `PAUSED`；`diff` 含 `qty_excess`／`unexpected_*` 計數；`outputs` 標示主交付為整合表
 - mutate 未帶 `--i-approve-mutate` 時立即非零退出且不碰購物車
 - certain 列不得靠猜測補 URL／skuId；uncertain 不得進入 mutate
 - 四池 `complete!=true` 時 dry-run 拒絕執行

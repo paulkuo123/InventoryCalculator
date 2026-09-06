@@ -51,6 +51,14 @@ def is_discontinued_sku(value: str) -> bool:
     return str(value or "").strip() in DISCONTINUED_SKU_NAMES
 
 
+def _csv_cell(value: Any) -> Any:
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return value
+
+
 def write_csv(
     path: Path,
     rows: List[Dict[str, Any]],
@@ -70,13 +78,29 @@ def write_csv(
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for row in rows:
-            out = {}
-            for k in fieldnames:
-                v = row.get(k, "")
-                if isinstance(v, bool):
-                    out[k] = "true" if v else "false"
-                elif isinstance(v, (list, dict)):
-                    out[k] = json.dumps(v, ensure_ascii=False)
-                else:
-                    out[k] = v
+            out = {k: _csv_cell(row.get(k, "")) for k in fieldnames}
+            writer.writerow(out)
+
+
+def write_csv_utf8_sig(
+    path: Path,
+    rows: List[Dict[str, Any]],
+    fieldnames: Optional[List[str]] = None,
+) -> None:
+    """Write CSV with UTF-8 BOM so Excel on Windows opens Traditional Chinese correctly."""
+    if fieldnames is None:
+        keys: List[str] = []
+        seen = set()
+        for row in rows:
+            for k in row.keys():
+                if k not in seen:
+                    seen.add(k)
+                    keys.append(k)
+        fieldnames = keys
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+        writer.writeheader()
+        for row in rows:
+            out = {k: _csv_cell(row.get(k, "")) for k in fieldnames}
             writer.writerow(out)
