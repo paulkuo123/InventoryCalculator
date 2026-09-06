@@ -320,7 +320,7 @@ class NameSpecProtectTests(unittest.TestCase):
         """缺 URL 的 uncertain 仍不發明 URL；亦不得靠 name/spec 進 certain。"""
         products = load_json(FIX / "sources" / "shopee_products.json")
         golden = load_json(FIX / "sources" / "golden_table.json")
-        certain, uncertain, skip, _ = build_expected(
+        certain, uncertain, _skip, _ = build_expected(
             products, golden, ["1001", "1002"]
         )
         for row in certain:
@@ -352,7 +352,6 @@ class NameSpecProtectTests(unittest.TestCase):
         self.assertTrue(protectable[0]["alibaba_url"].startswith("http"))
         # build_expected 不得把缺欄列升成 certain
         self.assertFalse(any(not str(r.get("sku_id") or "").strip() for r in certain))
-        self.assertTrue(any(r.get("bucket") == "skip" for r in skip) or len(skip) >= 0)
 
 
 def as_int_ex(value) -> int:
