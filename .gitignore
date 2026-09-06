@@ -15,6 +15,7 @@ build/
 
 # Mac OS
 .DS_Store
+._*
 
 # Project specific
 debug.log
@@ -36,6 +37,7 @@ ads_analysis_report*.md
 ads_analysis_report*.pdf
 ads_export_result*.json
 debug_snapshots/
+reports/
 outputs/
 *.numbers
 *.xlsx.bak_*
