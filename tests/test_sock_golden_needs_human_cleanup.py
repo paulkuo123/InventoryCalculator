@@ -1,7 +1,7 @@
 """Assert sock golden_table cleanup for PR #23 needs-human pollution products.
 
-純白 (16790492139) stays on the main offer after live confirmation;
-this suite also guards that SKU mapping is filled and not switched to eric.
+庭安 override: 純白 (16790492139) uses eric offer 703961968928;
+siblings on the same product stay on main 682877407287.
 """
 
 import json
@@ -23,6 +23,13 @@ CHUNBAI_MODEL_NAME = "純白"
 CHUNBAI_SPEC_ID = "98491202820"
 MAIN_OFFER_ID = "682877407287"
 ERIC_OFFER_ID = "703961968928"
+ERIC_SKU_ID = "5704602103113"
+ERIC_OFFER_FINGERPRINT = (
+    "a76f0b3649d1b2ff325e0cc6b3914af163d99923eae012179eb8ad9eaa95bf7d"
+)
+MAIN_OFFER_FINGERPRINT = (
+    "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d"
+)
 
 
 def _load_golden():
@@ -84,8 +91,8 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
         self.assertIsNone(pink.get("1688_spec_text"))
         self.assertEqual(pink.get("1688_sku_name"), "奶粉")
 
-    def test_chunbai_uses_main_offer_white_sku(self):
-        """純白 stays on main offer 682877407287 with live 2349白色 sku_id."""
+    def test_chunbai_uses_eric_offer_white_sku(self):
+        """庭安 override: 純白 uses eric offer; siblings stay on main."""
         models = self.table[URL_KEEP_PRODUCT_ID]["型號"]
         chunbai = next(
             row
@@ -94,19 +101,23 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
             and str(row.get("規格ID")) == CHUNBAI_SPEC_ID
         )
         url = chunbai.get("阿里巴巴商品URL") or ""
-        self.assertIn(MAIN_OFFER_ID, url)
-        self.assertNotIn(ERIC_OFFER_ID, url)
-        self.assertEqual(chunbai.get("1688_offer_id"), MAIN_OFFER_ID)
-        self.assertEqual(chunbai.get("1688_sku_id"), "4881407420806")
-        self.assertEqual(chunbai.get("1688_sku_name"), "2349白色")
+        self.assertIn(ERIC_OFFER_ID, url)
+        self.assertNotIn(MAIN_OFFER_ID, url)
+        self.assertEqual(
+            chunbai.get("阿里巴巴商品名稱"),
+            "女款中筒无骨堆堆袜子 春秋夏季黑白月子长袜网红ins潮流棉袜批发",
+        )
+        self.assertEqual(chunbai.get("1688_offer_id"), ERIC_OFFER_ID)
+        self.assertEqual(chunbai.get("1688_sku_id"), ERIC_SKU_ID)
+        self.assertEqual(chunbai.get("1688_sku_name"), "白色")
         self.assertEqual(chunbai.get("1688_sku_second_name"), "均码")
-        self.assertEqual(chunbai.get("1688_spec_text"), "2349白色>均码")
+        self.assertEqual(chunbai.get("1688_spec_text"), "白色>均码")
         self.assertEqual(chunbai.get("1688_mapping_status"), "approved")
         self.assertEqual(chunbai.get("1688_mapping_source"), "manual")
-        self.assertEqual(
-            chunbai.get("1688_offer_fingerprint"),
-            "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d",
-        )
+        self.assertEqual(chunbai.get("1688_offer_fingerprint"), ERIC_OFFER_FINGERPRINT)
+        black = next(row for row in models if row.get("型號名稱") == "黑色")
+        self.assertEqual(black.get("1688_offer_id"), MAIN_OFFER_ID)
+        self.assertEqual(black.get("1688_offer_fingerprint"), MAIN_OFFER_FINGERPRINT)
 
 
 if __name__ == "__main__":
