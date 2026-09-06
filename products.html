@@ -6,7 +6,7 @@
     <title>商品資料管理｜莉莉安庫存系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <link rel="stylesheet" href="styles.css">
-    <link rel="stylesheet" href="products.css">
+    <link rel="stylesheet" href="products.css?v=20260906-url-offer-all">
 </head>
 <body class="products-page">
     <header>
@@ -99,9 +99,9 @@
                     <div class="apply-url-offer-panel">
                         <div>
                             <strong>同商品的全部規格共用同一個 1688 商品頁？</strong>
-                            <p>前往 URL 管理讀取完整 SKU，預覽並人工確認後再套用。</p>
+                            <p>只會套用目前的商品 URL 與 Offer ID，不會覆蓋各規格的 SKU、價格、MOQ 或包裝倍數。</p>
                         </div>
-                        <button id="applyUrlOfferToAllButton" class="apply-url-offer-button" type="button"><i class="fas fa-arrow-up-right-from-square"></i> 到 URL 管理檢查並套用</button>
+                        <button id="applyUrlOfferToAllButton" class="apply-url-offer-button" type="button"><i class="fas fa-copy"></i> 套用 URL／Offer ID 到所有規格</button>
                     </div>
                     <p class="modal-helper">只會更新此型號，並同步到採購對照資料。</p>
                     <p id="alibabaEditMessage" class="modal-message" aria-live="polite"></p>
@@ -117,6 +117,6 @@
         </section>
     </div>
 
-    <script src="products.js"></script>
+    <script src="products.js?v=20260906-url-offer-all"></script>
 </body>
 </html>

@@ -3,6 +3,18 @@
 from typing import Any, Dict, List
 
 
+def apply_offer_to_models(models: List[Dict[str, Any]], product_url: str, offer_id: str) -> List[Dict[str, Any]]:
+    """只更新共用商品頁欄位，不碰各規格自己的 SKU 與採購設定。"""
+    updated = []
+    for model in models:
+        if not isinstance(model, dict):
+            continue
+        model["阿里巴巴商品URL"] = product_url
+        model["1688_offer_id"] = offer_id
+        updated.append(model)
+    return updated
+
+
 def _search_text(value: Any) -> str:
     return " ".join(str(value or "").split()).casefold()
 
