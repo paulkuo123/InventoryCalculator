@@ -13,6 +13,56 @@
 - **Shopee 廣告報表匯出**：自動依序下載過去一個月、昨天，以及過去 4 週滾動周報，共 6 份
 - **Shopee 廣告 AI 分析**：使用現有的昨天 / 最近一週（week_01）/ 過去一個月與過去 4 週趨勢資料，輸出 HTML 廣告調整報告
 - **Telegram Bot**：支援庫存搜尋、廣告匯出與廣告分析報告回傳
+- **反向補貨查核**：以 watchlist ∩ 蝦皮庫存 ∩ Golden Table 算出應補集合，反向核對 1688 採購車與待付款／待發貨／待收貨
+
+## 系統架構
+
+本專案可看成四條主線，加上共用資料檔。正向補貨負責「依建議量加車」；反向查核負責「用現況四池核對應補集合」，兩者不要混用同一套指令。
+
+### UI
+
+- 入口：`python main.py` 啟動內建 HTTP 伺服器並開啟瀏覽器。
+- 前端頁面：
+  - `/`（`index.html` + `script.js` + `styles.css`）：庫存儀表板、搜尋、補貨判讀
+  - `/ads.html`（`ads.js` / `ads.css`）：廣告匯出與 AI 分析工作台
+  - `/inbound.html`：1688 到貨入庫蝦皮
+  - `/sku-mapping.html`：1688 SKU 名稱 mapping 審核
+  - `/products.html`、`/golden-import.html`：商品與 Golden Table 匯入
+- 後端路由與 API 集中在 `main.py`（標準庫 `http.server`）。
+
+### 正向補貨（alibaba_restocker）
+
+- 核心：`alibaba_restocker.py`（1688 加採購車、SKU 選擇、MOQ／包裝倍數）。
+- 數量規則：`restock_rules.py`（手機殼／手机壳 **3 個月**，其餘 **4 個月**；吊飾／掛繩／明確加購除外）。
+- 批次與關注清單：`restock_batch.py`、`scripts/run_watchlist_restock.py`。
+- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。
+- 離線購物車數量核對（不連瀏覽器）：`scripts/reconcile_cart.py`，說明見 [`docs/cart-reconciliation.md`](docs/cart-reconciliation.md)。
+- 瀏覽器優先 ego-lite，否則 Chrome／Playwright Chromium。
+
+### 反向查核（reverse_audit）
+
+- 套件：`reverse_audit/`，進入點 `python -m reverse_audit …`。
+- 固定流程：**freeze → dry-run（離線）→ 人工核准 → mutate**。每次看最新預覽請用 **refresh** 重抓四池，不要沿用舊的 `live_*.json`。
+- freeze／mutate 是 CDP 腳本的薄封裝，以 `runpy` 載入 `scripts/` 內現行實作（含日期戳檔名，**不可刪**）。
+- 完整說明與成功標準：[`docs/reverse_audit.md`](docs/reverse_audit.md)。
+
+### 廣告
+
+- 匯出：`crawler.py --mode ads-export`（寫入 `ads_exports/`）。
+- 分析：`ads_analysis.py`（規則層 + 可選 OpenAI），工作台為 `ads.html`。
+- 文件：[`docs/ads_analysis_rules.md`](docs/ads_analysis_rules.md)、[`docs/ads_metrics_dictionary.md`](docs/ads_metrics_dictionary.md)、[`docs/ads_report_prompt_spec.md`](docs/ads_report_prompt_spec.md)。
+
+### 資料檔
+
+| 檔案／目錄 | 說明 |
+|---|---|
+| `golden_table.json` | 已核准 1688 mapping 與庫存快取（**納入 git，請保留**） |
+| `shopee_products.json` | 蝦皮商品／銷售快照（gitignore，本機資料） |
+| `cookies.json` | 蝦皮登入 Cookies（gitignore，**勿提交**） |
+| `watchlists/` | 個人關注與排除清單 |
+| `reports/` | reverse_audit／廣告等產出（應 gitignore；含 live dump，勿提交） |
+| `alibaba_chrome_profile/`、`alibaba_browser_profile/`、`shopee_chrome_profile/` | 本機瀏覽器登入狀態（gitignore，勿提交） |
+| `debug_snapshots/` | 除錯快照（gitignore） |
 
 ## 環境搭建
 
@@ -136,6 +186,41 @@ python main.py
 
 入庫紀錄保存在 `procurement.db`。`golden_table.json` 只會在蝦皮儲存並重新讀取驗證成功後同步庫存快取。
 
+### 反向查核怎麼跑
+
+詳細參數、水位與成功標準見 [`docs/reverse_audit.md`](docs/reverse_audit.md)。輸出一律落在 `reports/reverse_audit_YYYYMMDD/`。未給 `--date`／`--dir` 時，日期預設為 Asia/Taipei 今天。
+
+**1. 重抓四池再預覽（建議每次都用這個）**
+
+採購車與待付款／待發貨／待收貨是動態的。需要本機已登入的 Chrome remote debugging（CDP）。`--sources-only` 只凍本地來源、不跑 CDP。
+
+```bash
+python -m reverse_audit refresh --date YYYYMMDD
+# 等同：python -m reverse_audit dry-run --date YYYYMMDD --refreeze
+python -m reverse_audit freeze --date YYYYMMDD
+```
+
+**2. 離線 dry-run（不加車、不改量、不刪除）**
+
+讀既有 `live_*.json` 與凍結來源，產出人工主檔 `補貨比對結果.csv` 與機器用 CSV。
+
+```bash
+python -m reverse_audit dry-run --date YYYYMMDD
+```
+
+**3. mutate（改車；須明確核准旗標，互不隱含；缺旗標立即拒絕）**
+
+```bash
+# 只加車（missing_to_add.csv）
+python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
+# 只改量到 expected（shortfall 上補、excess 下砍）
+python -m reverse_audit mutate --date YYYYMMDD --i-approve-set-qty
+# 只刪 unexpected 且 removable=true（預設絕不刪）
+python -m reverse_audit mutate --date YYYYMMDD --i-approve-remove
+```
+
+freeze／mutate **不會**清除購物車或結束 Chrome。購物車「書包截止」的離線核對流程見 [`docs/cart-reconciliation.md`](docs/cart-reconciliation.md)。
+
 ### 獨立庫存計算器（GUI 工具）
 除了主要的爬蟲功能外，本專案還包含一個獨立的 PyQt5 庫存計算工具：
 ```bash
@@ -172,6 +257,8 @@ python3 crawler.py --mode ads-export --output ads_export_result.json --headless 
 ```bash
 python3 ads_analysis.py --include-ai true
 ```
+
+規則、指標定義與 prompt 規格見 [`docs/ads_analysis_rules.md`](docs/ads_analysis_rules.md)、[`docs/ads_metrics_dictionary.md`](docs/ads_metrics_dictionary.md)、[`docs/ads_report_prompt_spec.md`](docs/ads_report_prompt_spec.md)。
 
 預設行為：
 1. 讀取 `ads_exports/` 中各視窗最新一份 CSV
@@ -247,33 +334,38 @@ python build.py
 ## 專案結構
 
 ```
-InventoryCalculater/
-├── main.py              # Web 伺服器入口點
-├── crawler.py           # 蝦皮爬蟲（Playwright）
-├── ads_analysis.py      # Shopee 廣告分析器
-├── calculator.py        # PyQt5 庫存計算器（GUI）
-├── parser.py            # Excel 數據解析器
-├── telegram_bot.py      # Telegram Bot（庫存 / 廣告）
-├── pw_adapter.py        # Playwright ↔ Selenium 兼容層
-├── build.py             # PyInstaller 打包腳本
-├── index.html           # Web UI 前端
-├── ads.html             # 廣告工作台前端
-├── script.js            # 前端 JavaScript 邏輯
-├── ads.js               # 廣告工作台 JavaScript
-├── styles.css           # 前端樣式
-├── ads.css              # 廣告工作台樣式
-├── sku_mapping_service.py # SKU 快照、候選、AI 與審核服務
-├── sku-mapping.html     # 1688 SKU mapping 工作台
-├── sku-mapping.js       # mapping 審核互動
-├── sku-mapping.css      # mapping 工作台樣式
-├── requirements.txt     # Python 依賴套件
-├── setup_openai_key.py  # 設定專案本地 OpenAI Key
-├── config_loader.py     # 本地設定 / OpenAI Key 載入器
-├── .env.example         # 本地設定檔範例
-├── golden_table.json    # 參考數據表
-├── cookies.json         # 蝦皮登入 Cookies（需自行設置）
-├── ads_exports/         # 廣告 CSV 匯出資料夾
-└── dist/                # 打包後的執行檔
+InventoryCalculator/
+├── main.py                 # Web 伺服器入口（庫存 / 廣告 / 入庫 / mapping API）
+├── index.html / script.js / styles.css
+├── ads.html / ads.js / ads.css
+├── inbound.html / products.html / sku-mapping.html / golden-import.html
+├── alibaba_restocker.py    # 正向 1688 加採購車
+├── restock_batch.py / restock_rules.py
+├── sku_mapping_service.py  # SKU 快照、候選、AI 與審核
+├── ads_analysis.py         # Shopee 廣告分析
+├── crawler.py              # 蝦皮爬蟲與廣告匯出
+├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / mutate）
+├── scripts/                # 現行 CDP 輔助腳本（freeze／mutate 以 runpy 載入，勿刪）
+│   ├── freeze_reverse_audit_pools_20260905.py
+│   ├── mutate_add_missing_cdp_20260906.py
+│   ├── mutate_set_qty_cdp.py
+│   ├── mutate_remove_cdp.py
+│   ├── reconcile_cart.py
+│   └── run_watchlist_restock.py
+├── docs/
+│   ├── reverse_audit.md
+│   ├── cart-reconciliation.md
+│   ├── ads_analysis_rules.md
+│   ├── ads_metrics_dictionary.md
+│   └── ads_report_prompt_spec.md
+├── tests/                  # pytest（含 reverse_audit 離線安全測試）
+├── watchlists/             # 個人關注與排除清單
+├── golden_table.json       # 已核准 mapping（納入 git）
+├── cookies.json            # 蝦皮 Cookies（gitignore，需自行設置）
+├── shopee_products.json    # 蝦皮庫存快照（gitignore）
+├── reports/                # 產出目錄（gitignore；含 reverse_audit live dump）
+├── calculator.py / parser.py / telegram_bot.py / build.py
+└── requirements.txt
 ```
 
 ## 技術棧
@@ -305,6 +397,7 @@ InventoryCalculater/
 - **Web 框架**: 內建 `http.server` 模組
 - **數據處理**: pandas（Excel 解析）
 - **廣告分析**: OpenAI API + 自訂規則層
+- **反向查核**: `python -m reverse_audit`（CDP freeze／mutate + 離線 dry-run）
 - **通知 / 操作**: Telegram Bot API
 - **打包工具**: PyInstaller
 
