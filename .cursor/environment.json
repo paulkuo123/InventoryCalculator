@@ -1,0 +1,17 @@
+{
+  "name": "蝦皮庫存管理系統",
+  "install": "pip install --upgrade pip && pip install -r requirements.txt && python3 -m playwright install --with-deps chromium",
+  "terminals": [
+    {
+      "name": "web-server",
+      "command": "INVENTORY_SKIP_BROWSER=1 python3 main.py",
+      "description": "蝦皮庫存管理系統 Web UI (http://localhost:8080)：庫存首頁 / 廣告工作台 (/ads.html) / 到貨入庫 (/inbound.html) / SKU mapping (/sku-mapping.html)。INVENTORY_SKIP_BROWSER=1 讓伺服器在無頭環境不自動開瀏覽器分頁。"
+    }
+  ],
+  "ports": [
+    {
+      "name": "web",
+      "port": 8080
+    }
+  ]
+}
