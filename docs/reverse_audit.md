@@ -2,11 +2,29 @@
 
 以 **watchlist ∩ shopee_products ∩ golden_table** 算出應補集合，反向核對 1688 採購車與待付款／待發貨／待收貨。流程固定為：**freeze → dry-run → 人工核准 → mutate**。
 
+## 每次預覽請重抓四池
+
+採購車與待付款／待發貨／待收貨是**動態**的。每次要看最新預覽，請先重抓四池，**不要**沿用舊的 `live_*.json` 當「最新」。
+
+一鍵（freeze 四池 → 離線 dry-run）：
+
+```bash
+python -m reverse_audit refresh --date YYYYMMDD
+```
+
+等同別名：`python -m reverse_audit dry-run --date YYYYMMDD --refreeze`
+
+需要本機已登入的 Chrome remote debugging / CDP（既有 freeze 腳本）。**不是** Grok Bot computer-use。freeze／mutate **不會**清除購物車或結束 Chrome。
+
+`--cdp`、`--sources-only`（只凍本地來源、不跑 CDP）可傳給 `refresh`／`dry-run --refreeze`。freeze 之後預設仍會從 repo 重拷 `sources/`；若要沿用 freeze 剛寫入的 sources，加 `--no-refreeze-sources`。
+
 ## 進入點
 
 ```bash
+python -m reverse_audit refresh --date YYYYMMDD
 python -m reverse_audit freeze --date YYYYMMDD
 python -m reverse_audit dry-run --date YYYYMMDD
+python -m reverse_audit dry-run --date YYYYMMDD --refreeze   # 等同 refresh
 # 加車／改量／刪除各走獨立核准旗標（互不隱含；缺旗標立即拒絕）
 python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
 python -m reverse_audit mutate --date YYYYMMDD --i-approve-set-qty
@@ -47,39 +65,46 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 
 **主交付檔：`補貨比對結果.csv`**（UTF-8-SIG，Excel 可直接開）
 
+每個**蝦皮型號／規格一列**（概念鍵：`蝦皮商品id + 蝦皮規格id + 型號`），**不是**把同 1688 SKU 的多個型號用 `|` 串在同一列再加總應補數量。
+
 | 欄位 | 說明 |
 |---|---|
 | 類型 | 車裡缺少（建議加）／車裡數量不足／車裡數量過多／車裡多出來（可能可刪｜先不要刪） |
-| 蝦皮商品id／蝦皮規格id | 聚合後 pipe 串接；非預期列可空白 |
-| 蝦皮商品名稱／型號 | 對應 product_names／model_names（非預期用車內規格文字） |
-| 應補數量／車內數量／差額說明 | 建議加 N、少 N、多 N、或「車內 N，不在應補清單」 |
+| 蝦皮商品id／蝦皮規格id／型號 | **單一**型號的 id／規格／名稱（不是 pipe 聚合）。非預期列（沒有對上蝦皮型號）商品 id／規格 id 空白，型號用車內規格文字 |
+| 蝦皮商品名稱 | 該型號所屬商品名稱 |
+| 應補數量 | **該型號** `suggested_qty`（不是同 SKU 加總） |
+| 車內數量 | 該 1688 `(offer,sku)` 的車內量；多個蝦皮型號對到同一 SKU 時，各列顯示**同一**車內量（見備註） |
+| 差額說明 | 缺少：建議加 N（該型號）；不足／過多：少 N／多 N（該 1688 SKU 層級差額）；非預期：「車內 N，不在應補清單」 |
 | 1688網址／1688_offer／1688_sku／備註 | 對帳與人工判斷用 |
 
 列順序：缺少（應補量大者優先）→ 不足 → 過多 → 多出來可刪 → 多出來先不要刪。**不含**已覆蓋（covered）列。
 
-其餘英文檔名 CSV（`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`covered.csv`、`expected_*.csv`、`ambiguous.csv`）為**機器用／內部**：加車讀 `missing_to_add.csv`、改量讀 shortfall／excess、刪除讀 unexpected；一般人工先看整合表即可。
+其餘英文檔名 CSV（`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`covered.csv`、`expected_*.csv`、`ambiguous.csv`）為**機器用／內部**：仍可依 `(offer,sku)` 聚合（pipe 串接型號、加總應補數量）。加車讀 `missing_to_add.csv`、改量讀 shortfall／excess、刪除讀 unexpected；一般人工先看整合表即可。
 
 ## 參數
 
 | 參數 | 說明 |
 |---|---|
 | `freeze` | 透過 CDP 唯讀擷取採購車＋三個訂單池，寫入 `live_*.json`／`snapshot_meta.json` |
+| `refresh` | **一鍵**：先 freeze 四池再 dry-run（每次預覽請用這個） |
 | `dry-run` | **離線**：讀既有 `live_*.json` 與凍結來源，產出整合表＋機器 CSV／報告；**不加車、不改量、不刪除** |
+| `dry-run --refreeze` | 等同 `refresh` |
 | `mutate` | 改車；**至少**一個核准旗標，否則 fail-closed 拒絕 |
 | `--date YYYYMMDD` | 報告目錄日期戳 |
 | `--dir PATH` | 直接指定報告目錄（優先於 `--date`） |
+| `--refreeze` | dry-run 前先 freeze 四池 |
 | `--no-refreeze-sources` | dry-run 時沿用既有 `sources/`，不重拷 repo 根目錄來源 |
 | `--i-approve-mutate` | **只加車**（`missing_to_add.csv`）；不隱含改量／刪除 |
 | `--i-approve-set-qty` | **只改量**到 expected（shortfall 上補＋excess 下砍）；不隱含加車／刪除 |
 | `--i-approve-remove` | **只刪** `removable=true`；庭安須真的說刪；預設不刪 |
-| `--sources-only` | freeze 只凍本地來源，不跑 CDP |
+| `--sources-only` | freeze／refresh 只凍本地來源，不跑 CDP |
 | `--cdp URL` | 可選，設 `ALIBABA_RESTOCK_CDP` |
 
 ## 水位與範圍
 
 - 範圍：watchlist（套用 exclusions）∩ `shopee_products.json` ∩ `golden_table.json`
 - 水位：`restock_rules.target_months_for_product` — **手機殼／手机壳 = 3 個月**，其餘 **4 個月**（吊飾／掛繩／明確加購除外）
-- 同 1688 `(offerId, skuId)` 加總各蝦皮型號建議量
+- 同 1688 `(offerId, skuId)` 加總各蝦皮型號建議量（**機器 CSV／mutate** 用此聚合；人工 `補貨比對結果.csv` 仍一型號一列）
 - certain：`approved` + 有效 URL +（有 `skuId` **或** 可用 name/spec）→ 進 qty diff／mutate 邊界
 - 缺 `skuId` 但有 name/spec：仍進 certain；聚合時若車內 **唯一** name/spec 對上（同加車腳本 `cart_line_matches_item`）→ 用該 live `skuId` 做 qty 對帳（**不回寫** golden）
 - name/spec **歧義**（一列對多車，或一車對多筆 distinct name/spec）→ fail closed：不進 mutate／delete
@@ -100,8 +125,9 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 
 ## 成功標準
 
-- dry-run **人工主檔**：`補貨比對結果.csv`（UTF-8-SIG）
-- dry-run 另產出機器用：`expected_*.csv`、`covered.csv`、`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`ambiguous.csv`、`dry_run_summary.json`、`dry_run_report.md`
+- dry-run **人工主檔**：`補貨比對結果.csv`（UTF-8-SIG；每個蝦皮型號／規格一列）
+- dry-run 另產出機器用：`expected_*.csv`、`covered.csv`、`missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、`unexpected_in_cart.csv`、`ambiguous.csv`、`dry_run_summary.json`、`dry_run_report.md`（機器檔可維持 offer+sku 聚合）
+- `refresh`／`dry-run --refreeze` 先 freeze 四池再 dry-run
 - `dry_run_summary.json` 的 `status` 為 `READY_FOR_APPROVAL` 或 `PAUSED`；`diff` 含 `qty_excess`／`unexpected_*` 計數；`outputs` 標示主交付為整合表
 - mutate 未帶任何核准旗標時立即非零退出且不碰購物車；錯旗標／缺對應旗標 fail-closed
 - certain 列不得靠猜測補 URL／skuId；uncertain／訂單池保護 key 不得進入 remove
@@ -109,6 +135,7 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 
 ## 實作備註
 
+- `refresh` 等於 freeze 四池再 dry-run；每次預覽請用這個，不要沿用舊 live dump
 - `freeze` 先凍 `sources/`；完整模式再跑 CDP。缺腳本時退回 sources-only（不假裝已抓 live）。
 - `freeze`／`mutate` 為 CDP 腳本的薄封裝：
   - `scripts/freeze_reverse_audit_pools_20260905.py`

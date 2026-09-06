@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 FIX = ROOT / "tests" / "fixtures" / "reverse_audit"
@@ -19,6 +20,7 @@ sys.path.insert(0, str(ROOT))
 from reverse_audit.cli import main as cli_main  # noqa: E402
 from reverse_audit.dry_run import (  # noqa: E402
     aggregate_certain,
+    build_consolidated_zh_rows,
     build_expected,
     diff_expected,
     expected_key_set,
@@ -210,6 +212,17 @@ class DryRunOfflineTests(unittest.TestCase):
             with (out / "ambiguous.csv").open(encoding="utf-8") as f:
                 amb = list(csv.DictReader(f))
             self.assertTrue(any(r.get("kind") == "multi_cart_lines" for r in amb))
+
+            action_zh = [
+                r
+                for r in zh_rows
+                if r["類型"]
+                in {"車裡缺少（建議加）", "車裡數量不足", "車裡數量過多"}
+            ]
+            for r in action_zh:
+                self.assertNotIn("|", r["型號"])
+                self.assertNotIn("|", r["蝦皮商品id"])
+                self.assertNotIn("|", r["蝦皮規格id"])
 
     def test_run_dry_run_shortfall_paused_no_excess_pause(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1179,6 +1192,7 @@ class CliDryRunSmokeTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0)
         self.assertIn("dry-run", proc.stdout)
+        self.assertIn("refresh", proc.stdout)
 
     def test_cli_dry_run_on_fixture(self):
         with tempfile.TemporaryDirectory() as td:
@@ -1203,6 +1217,316 @@ class CliDryRunSmokeTests(unittest.TestCase):
             self.assertTrue((out / "missing_to_add.csv").exists())
             self.assertTrue((out / "qty_excess.csv").exists())
             self.assertTrue((out / "unexpected_in_cart.csv").exists())
+            self.assertTrue((out / "補貨比對結果.csv").exists())
+
+
+class HumanCsvOneRowPerModelTests(unittest.TestCase):
+    """補貨比對結果.csv expands to one Shopee model/spec row; machine CSVs stay aggregated."""
+
+    def _two_models_same_sku(self):
+        base = {
+            "mapping_status": "approved",
+            "alibaba_url": "https://detail.1688.com/offer/10001.html",
+            "offer_id": "10001",
+            "sku_id": "sku-shared",
+            "sku_name": "共享色",
+            "bucket": "certain",
+            "certain_via": "sku_id",
+            "watchlist_order": 0,
+            "is_phone_case": True,
+            "product_id": "1001",
+            "product_name": "可愛手機殼防摔",
+        }
+        return [
+            {
+                **base,
+                "spec_id": "s1",
+                "model_name": "黑色,15",
+                "suggested_qty": 10,
+            },
+            {
+                **base,
+                "spec_id": "s2",
+                "model_name": "白色,15",
+                "suggested_qty": 7,
+            },
+        ]
+
+    def test_missing_human_one_row_per_model_machine_still_summed(self):
+        certain = self._two_models_same_sku()
+        agg = aggregate_certain(certain)
+        self.assertEqual(len(agg), 1)
+        self.assertEqual(as_int_ex(agg[0]["suggested_qty"]), 17)
+        self.assertEqual(agg[0]["model_names"], ["黑色,15", "白色,15"])
+        self.assertEqual(len(agg[0]["sources"]), 2)
+        self.assertEqual(agg[0]["sources"][0]["spec_id"], "s1")
+        self.assertEqual(agg[0]["sources"][1]["product_name"], "可愛手機殼防摔")
+
+        covered, missing, shortfall, excess, paused = diff_expected(agg, {}, {})
+        self.assertFalse(paused)
+        self.assertEqual(covered, [])
+        self.assertEqual(shortfall, [])
+        self.assertEqual(excess, [])
+        self.assertEqual(len(missing), 1)
+        self.assertIn("|", missing[0]["model_names"])
+        self.assertIn("|", missing[0]["spec_ids"])
+        self.assertEqual(as_int_ex(missing[0]["expected_qty"]), 17)
+        self.assertEqual(missing[0]["source_count"], 2)
+
+        zh = build_consolidated_zh_rows(missing, shortfall, excess, [])
+        self.assertEqual(len(zh), 2)
+        by_model = {r["型號"]: r for r in zh}
+        self.assertEqual(set(by_model), {"黑色,15", "白色,15"})
+        for row in zh:
+            self.assertEqual(row["類型"], "車裡缺少（建議加）")
+            self.assertNotIn("|", row["型號"])
+            self.assertNotIn("|", row["蝦皮商品id"])
+            self.assertNotIn("|", row["蝦皮規格id"])
+            self.assertEqual(row["蝦皮商品id"], "1001")
+            self.assertEqual(row["1688_sku"], "sku-shared")
+        self.assertEqual(as_int_ex(by_model["黑色,15"]["應補數量"]), 10)
+        self.assertEqual(as_int_ex(by_model["白色,15"]["應補數量"]), 7)
+        self.assertEqual(by_model["黑色,15"]["差額說明"], "建議加 10")
+        self.assertEqual(by_model["白色,15"]["差額說明"], "建議加 7")
+        self.assertEqual(by_model["黑色,15"]["蝦皮規格id"], "s1")
+        self.assertEqual(by_model["白色,15"]["蝦皮規格id"], "s2")
+        # Larger per-model qty first
+        self.assertEqual(zh[0]["型號"], "黑色,15")
+
+    def test_shortfall_and_excess_expand_with_shared_cart_qty(self):
+        certain = self._two_models_same_sku()
+        agg = aggregate_certain(certain)
+        cart_sf = {
+            ("10001", "sku-shared"): {
+                "offer_id": "10001",
+                "sku_id": "sku-shared",
+                "qty": 5,
+                "cartIds": ["c1"],
+                "specTexts": ["共享色"],
+            }
+        }
+        _, _, shortfall, excess, paused = diff_expected(agg, cart_sf, {})
+        self.assertTrue(paused)
+        self.assertEqual(len(shortfall), 1)
+        self.assertEqual(as_int_ex(shortfall[0]["expected_qty"]), 17)
+        self.assertEqual(as_int_ex(shortfall[0]["shortfall"]), 12)
+
+        zh_sf = build_consolidated_zh_rows([], shortfall, [], [])
+        self.assertEqual(len(zh_sf), 2)
+        for row in zh_sf:
+            self.assertEqual(row["類型"], "車裡數量不足")
+            self.assertNotIn("|", row["型號"])
+            self.assertEqual(as_int_ex(row["車內數量"]), 5)
+            self.assertEqual(row["差額說明"], "少 12")
+            self.assertIn("共用", row["備註"])
+        by_model = {r["型號"]: r for r in zh_sf}
+        self.assertEqual(as_int_ex(by_model["黑色,15"]["應補數量"]), 10)
+        self.assertEqual(as_int_ex(by_model["白色,15"]["應補數量"]), 7)
+
+        cart_ex = {
+            ("10001", "sku-shared"): {
+                "offer_id": "10001",
+                "sku_id": "sku-shared",
+                "qty": 30,
+                "cartIds": ["c1"],
+                "specTexts": ["共享色"],
+            }
+        }
+        _, _, _, excess2, paused2 = diff_expected(agg, cart_ex, {})
+        self.assertFalse(paused2)
+        self.assertEqual(len(excess2), 1)
+        self.assertEqual(as_int_ex(excess2[0]["excess"]), 13)
+        zh_ex = build_consolidated_zh_rows([], [], excess2, [])
+        self.assertEqual(len(zh_ex), 2)
+        for row in zh_ex:
+            self.assertEqual(row["類型"], "車裡數量過多")
+            self.assertNotIn("|", row["型號"])
+            self.assertEqual(as_int_ex(row["車內數量"]), 30)
+            self.assertEqual(row["差額說明"], "多 13")
+        by_model_ex = {r["型號"]: r for r in zh_ex}
+        self.assertEqual(as_int_ex(by_model_ex["黑色,15"]["應補數量"]), 10)
+        self.assertEqual(as_int_ex(by_model_ex["白色,15"]["應補數量"]), 7)
+
+    def test_unexpected_rows_stay_blank_product_ids(self):
+        unexpected = [
+            {
+                "offer_id": "99999",
+                "sku_id": "sku-orphan",
+                "cart_qty": 4,
+                "specTexts": "非預期可刪",
+                "removable": True,
+                "reason": "not_in_certain_expected",
+                "note": "車內有、不在 certain 應補集合、且無保護",
+            }
+        ]
+        zh = build_consolidated_zh_rows([], [], [], unexpected)
+        self.assertEqual(len(zh), 1)
+        self.assertEqual(zh[0]["類型"], "車裡多出來（可能可刪）")
+        self.assertEqual(zh[0]["蝦皮商品id"], "")
+        self.assertEqual(zh[0]["蝦皮規格id"], "")
+        self.assertEqual(zh[0]["型號"], "非預期可刪")
+        self.assertEqual(zh[0]["應補數量"], "")
+
+    def test_run_dry_run_machine_csv_still_aggregated_for_mutate(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = _stage_fixture(Path(td))
+            products_path = out / "sources" / "shopee_products.json"
+            golden_path = out / "sources" / "golden_table.json"
+            products = json.loads(products_path.read_text(encoding="utf-8"))
+            golden = json.loads(golden_path.read_text(encoding="utf-8"))
+            products["1001"]["型號"].append(
+                {
+                    "規格ID": "s2b",
+                    "型號名稱": "白色,16",
+                    "月銷量": "10",
+                    "商品庫存": "0",
+                    "已售出數量": "0",
+                }
+            )
+            golden["1001"]["型號"].append(
+                {
+                    "規格ID": "s2b",
+                    "型號名稱": "白色,16",
+                    "1688_mapping_status": "approved",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/10001.html",
+                    "1688_offer_id": "10001",
+                    "1688_sku_id": "sku-b",
+                    "1688_sku_name": "白色",
+                    "1688_sku_second_name": "16",
+                }
+            )
+            products_path.write_text(
+                json.dumps(products, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            golden_path.write_text(
+                json.dumps(golden, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            run_dry_run(out, refreeze_sources=False)
+
+            with (out / "missing_to_add.csv").open(encoding="utf-8") as f:
+                machine = list(csv.DictReader(f))
+            sku_b = [r for r in machine if r["sku_id"] == "sku-b"]
+            self.assertEqual(len(sku_b), 1)
+            self.assertIn("|", sku_b[0]["model_names"])
+            self.assertIn("白色,15", sku_b[0]["model_names"])
+            self.assertIn("白色,16", sku_b[0]["model_names"])
+            summed = as_int_ex(sku_b[0]["expected_qty"])
+            self.assertGreater(summed, 0)
+
+            with (out / "補貨比對結果.csv").open(encoding="utf-8-sig") as f:
+                zh_rows = list(csv.DictReader(f))
+            human_b = [
+                r
+                for r in zh_rows
+                if r["1688_sku"] == "sku-b" and r["類型"] == "車裡缺少（建議加）"
+            ]
+            self.assertEqual(len(human_b), 2)
+            per_model_sum = sum(as_int_ex(r["應補數量"]) for r in human_b)
+            self.assertEqual(per_model_sum, summed)
+            for r in human_b:
+                self.assertNotIn("|", r["型號"])
+                self.assertIn(r["型號"], {"白色,15", "白色,16"})
+                self.assertEqual(as_int_ex(r["應補數量"]), summed // 2)
+
+
+class RefreshCliTests(unittest.TestCase):
+    """refresh and dry-run --refreeze call freeze then dry-run."""
+
+    def _fake_freeze(self, calls, code=0):
+        def freeze(out_dir, *, sources_only=False, root=None):
+            calls.append(("freeze", str(out_dir), bool(sources_only)))
+            return code
+
+        return freeze
+
+    def _fake_dry_run(self, calls):
+        def dry(out_dir, *, root=None, refreeze_sources=True):
+            calls.append(("dry-run", str(out_dir), bool(refreeze_sources)))
+            return {
+                "status": "READY_FOR_APPROVAL",
+                "paused": False,
+                "diff": {},
+                "expected": {},
+            }
+
+        return dry
+
+    def test_refresh_calls_freeze_then_dry_run(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "ra")
+            with mock.patch("reverse_audit.cli.run_freeze", self._fake_freeze(calls)):
+                with mock.patch(
+                    "reverse_audit.cli.run_dry_run", self._fake_dry_run(calls)
+                ):
+                    code = cli_main(["refresh", "--dir", out])
+        self.assertEqual(code, 0)
+        self.assertEqual([c[0] for c in calls], ["freeze", "dry-run"])
+        self.assertFalse(calls[0][2])  # sources_only
+        self.assertTrue(calls[1][2])  # refreeze_sources default True
+        self.assertEqual(calls[0][1], calls[1][1])
+
+    def test_dry_run_refreeze_is_refresh_alias(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "ra")
+            with mock.patch("reverse_audit.cli.run_freeze", self._fake_freeze(calls)):
+                with mock.patch(
+                    "reverse_audit.cli.run_dry_run", self._fake_dry_run(calls)
+                ):
+                    code = cli_main(["dry-run", "--refreeze", "--dir", out])
+        self.assertEqual(code, 0)
+        self.assertEqual([c[0] for c in calls], ["freeze", "dry-run"])
+
+    def test_dry_run_without_refreeze_skips_freeze(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as td:
+            out = _stage_fixture(Path(td))
+            with mock.patch("reverse_audit.cli.run_freeze", self._fake_freeze(calls)):
+                code = cli_main(
+                    ["dry-run", "--dir", str(out), "--no-refreeze-sources"]
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(calls, [])
+            self.assertTrue((out / "補貨比對結果.csv").exists())
+
+    def test_refresh_skips_dry_run_when_freeze_fails(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "ra")
+            with mock.patch(
+                "reverse_audit.cli.run_freeze", self._fake_freeze(calls, code=2)
+            ):
+                with mock.patch(
+                    "reverse_audit.cli.run_dry_run", self._fake_dry_run(calls)
+                ):
+                    code = cli_main(["refresh", "--dir", out])
+        self.assertEqual(code, 2)
+        self.assertEqual([c[0] for c in calls], ["freeze"])
+
+    def test_refresh_passes_sources_only_and_no_refreeze_sources(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as td:
+            out = str(Path(td) / "ra")
+            with mock.patch("reverse_audit.cli.run_freeze", self._fake_freeze(calls)):
+                with mock.patch(
+                    "reverse_audit.cli.run_dry_run", self._fake_dry_run(calls)
+                ):
+                    code = cli_main(
+                        [
+                            "refresh",
+                            "--dir",
+                            out,
+                            "--sources-only",
+                            "--no-refreeze-sources",
+                        ]
+                    )
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0], ("freeze", str(Path(out).resolve()), True))
+        self.assertEqual(calls[1][0], "dry-run")
+        self.assertFalse(calls[1][2])
 
 
 if __name__ == "__main__":

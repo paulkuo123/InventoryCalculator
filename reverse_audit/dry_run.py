@@ -308,6 +308,8 @@ def aggregate_certain(certain_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
         a["sources"].append(
             {
                 "product_id": row.get("product_id"),
+                "product_name": row.get("product_name"),
+                "spec_id": row.get("spec_id"),
                 "model_name": row.get("model_name"),
                 "suggested_qty": row.get("suggested_qty"),
                 "target_months": row.get("target_months"),
@@ -674,6 +676,8 @@ def diff_expected(
             "spec_ids": "|".join(a.get("spec_ids") or []),
             "source_count": len(a.get("sources") or []),
             "watchlist_order": a.get("watchlist_order"),
+            # Per-model sources for human CSV expansion only (machine CSVs ignore).
+            "sources": list(a.get("sources") or []),
         }
 
         if order_hit:
@@ -865,71 +869,129 @@ def _unexpected_note(row: Dict[str, Any]) -> str:
     return note or reason
 
 
+def _model_sources_for_human_csv(row: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Per Shopee model/spec sources; fallback to one synthetic row if missing."""
+    sources = row.get("sources")
+    if isinstance(sources, list) and sources:
+        return [s for s in sources if isinstance(s, dict)]
+    return [
+        {
+            "product_id": row.get("product_ids") or "",
+            "spec_id": row.get("spec_ids") or "",
+            "product_name": row.get("product_names") or "",
+            "model_name": row.get("model_names") or "",
+            "suggested_qty": row.get("expected_qty"),
+        }
+    ]
+
+
+def _shared_offer_sku_note(row: Dict[str, Any], sources: List[Dict[str, Any]]) -> str:
+    """Note that cart qty is shared across models mapped to the same 1688 SKU."""
+    if len(sources) <= 1:
+        return ""
+    cart_qty = as_int(row.get("cart_qty"))
+    if cart_qty <= 0:
+        return ""
+    expected = as_int(row.get("expected_qty"))
+    return f"車內數量為同 1688 (offer,sku) 共用（車內 {cart_qty}，應補合計 {expected}）"
+
+
+def _join_notes(*parts: str) -> str:
+    bits = [str(p).strip() for p in parts if str(p or "").strip()]
+    return "；".join(bits)
+
+
+def _human_row_from_source(
+    row: Dict[str, Any],
+    src: Dict[str, Any],
+    *,
+    type_label: str,
+    delta_text: str,
+    extra_note: str = "",
+) -> Dict[str, Any]:
+    return {
+        "類型": type_label,
+        "蝦皮商品id": src.get("product_id") or "",
+        "蝦皮規格id": src.get("spec_id") or "",
+        "蝦皮商品名稱": src.get("product_name") or "",
+        "型號": src.get("model_name") or "",
+        "應補數量": as_int(src.get("suggested_qty")),
+        "車內數量": as_int(row.get("cart_qty")),
+        "差額說明": delta_text,
+        "1688網址": _alibaba_url_for_row(row),
+        "1688_offer": row.get("offer_id") or "",
+        "1688_sku": row.get("sku_id") or "",
+        "備註": _join_notes(str(row.get("note") or ""), extra_note),
+    }
+
+
 def build_consolidated_zh_rows(
     missing: List[Dict[str, Any]],
     shortfall: List[Dict[str, Any]],
     excess: List[Dict[str, Any]],
     unexpected: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """Human-facing Traditional Chinese table (action items only; no covered)."""
+    """Human-facing Traditional Chinese table (action items only; no covered).
+
+    Missing / shortfall / excess expand to **one row per Shopee 型號/規格**
+    (product_id + spec_id + model_name). Machine CSVs stay aggregated.
+    """
     rows: List[Dict[str, Any]] = []
 
+    missing_human: List[Dict[str, Any]] = []
     for r in sorted(missing, key=lambda x: -as_int(x.get("expected_qty"))):
-        eq = as_int(r.get("expected_qty"))
-        rows.append(
-            {
-                "類型": "車裡缺少（建議加）",
-                "蝦皮商品id": r.get("product_ids") or "",
-                "蝦皮規格id": r.get("spec_ids") or "",
-                "蝦皮商品名稱": r.get("product_names") or "",
-                "型號": r.get("model_names") or "",
-                "應補數量": eq,
-                "車內數量": as_int(r.get("cart_qty")),
-                "差額說明": f"建議加 {eq}",
-                "1688網址": _alibaba_url_for_row(r),
-                "1688_offer": r.get("offer_id") or "",
-                "1688_sku": r.get("sku_id") or "",
-                "備註": r.get("note") or "",
-            }
+        sources = _model_sources_for_human_csv(r)
+        extra = _shared_offer_sku_note(r, sources)
+        for src in sources:
+            eq = as_int(src.get("suggested_qty"))
+            missing_human.append(
+                _human_row_from_source(
+                    r,
+                    src,
+                    type_label="車裡缺少（建議加）",
+                    delta_text=f"建議加 {eq}",
+                    extra_note=extra,
+                )
+            )
+    missing_human.sort(
+        key=lambda x: (
+            -as_int(x.get("應補數量")),
+            str(x.get("蝦皮商品id") or ""),
+            str(x.get("蝦皮規格id") or ""),
+            str(x.get("型號") or ""),
         )
+    )
+    rows.extend(missing_human)
 
     for r in shortfall:
+        sources = _model_sources_for_human_csv(r)
+        extra = _shared_offer_sku_note(r, sources)
         sf = as_int(r.get("shortfall"))
-        rows.append(
-            {
-                "類型": "車裡數量不足",
-                "蝦皮商品id": r.get("product_ids") or "",
-                "蝦皮規格id": r.get("spec_ids") or "",
-                "蝦皮商品名稱": r.get("product_names") or "",
-                "型號": r.get("model_names") or "",
-                "應補數量": as_int(r.get("expected_qty")),
-                "車內數量": as_int(r.get("cart_qty")),
-                "差額說明": f"少 {sf}",
-                "1688網址": _alibaba_url_for_row(r),
-                "1688_offer": r.get("offer_id") or "",
-                "1688_sku": r.get("sku_id") or "",
-                "備註": r.get("note") or "",
-            }
-        )
+        for src in sources:
+            rows.append(
+                _human_row_from_source(
+                    r,
+                    src,
+                    type_label="車裡數量不足",
+                    delta_text=f"少 {sf}",
+                    extra_note=extra,
+                )
+            )
 
     for r in excess:
+        sources = _model_sources_for_human_csv(r)
+        extra = _shared_offer_sku_note(r, sources)
         ex = as_int(r.get("excess"))
-        rows.append(
-            {
-                "類型": "車裡數量過多",
-                "蝦皮商品id": r.get("product_ids") or "",
-                "蝦皮規格id": r.get("spec_ids") or "",
-                "蝦皮商品名稱": r.get("product_names") or "",
-                "型號": r.get("model_names") or "",
-                "應補數量": as_int(r.get("expected_qty")),
-                "車內數量": as_int(r.get("cart_qty")),
-                "差額說明": f"多 {ex}",
-                "1688網址": _alibaba_url_for_row(r),
-                "1688_offer": r.get("offer_id") or "",
-                "1688_sku": r.get("sku_id") or "",
-                "備註": r.get("note") or "",
-            }
-        )
+        for src in sources:
+            rows.append(
+                _human_row_from_source(
+                    r,
+                    src,
+                    type_label="車裡數量過多",
+                    delta_text=f"多 {ex}",
+                    extra_note=extra,
+                )
+            )
 
     removable = [r for r in unexpected if r.get("removable") is True]
     protected = [r for r in unexpected if r.get("removable") is not True]
@@ -1225,7 +1287,9 @@ def run_dry_run(
             CONSOLIDATED_CSV_NAME: str(consolidated_path),
             "machine_csvs_note": (
                 "English CSVs (missing_to_add / qty_* / unexpected_* / expected_* / "
-                "covered / ambiguous) are machine/internal; mutate reads missing_to_add.csv"
+                "covered / ambiguous) are machine/internal and may still aggregate "
+                "multiple Shopee models onto one (offer,sku) with pipe-joined fields "
+                "and summed qty; mutate reads those files. Human CSV is one row per 型號."
             ),
             "missing_to_add.csv": str(out_dir / "missing_to_add.csv"),
             "qty_excess.csv": str(out_dir / "qty_excess.csv"),
@@ -1270,7 +1334,8 @@ def run_dry_run(
         f" 共 {len(consolidated)} 筆待處理／需注意項目"
     )
     lines.append(
-        "  （含：車裡缺少、數量不足、數量過多、車裡多出來；**不含**已覆蓋 covered）"
+        "  （含：車裡缺少、數量不足、數量過多、車裡多出來；**不含**已覆蓋 covered；"
+        "每個蝦皮型號／規格一列，應補數量為該型號建議量）"
     )
     lines.append("")
     lines.append("## Diff 摘要（certain 聚合）")
