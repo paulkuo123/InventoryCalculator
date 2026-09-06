@@ -1529,5 +1529,110 @@ class RefreshCliTests(unittest.TestCase):
         self.assertFalse(calls[1][2])
 
 
+def _load_deep_order_dom() -> str:
+    text = (ROOT / "scripts" / "freeze_reverse_audit_pools_20260905.py").read_text(
+        encoding="utf-8"
+    )
+    marker = 'DEEP_ORDER_DOM = """'
+    start = text.index(marker) + len(marker)
+    end = text.index('"""', start)
+    return text[start:end]
+
+
+class DeepOrderDomFreezeTests(unittest.TestCase):
+    def test_deep_order_dom_is_javascript_not_python(self):
+        js = _load_deep_order_dom()
+        self.assertNotIn(" not in ", js)
+        self.assertNotIn(" if offers else ", js)
+        self.assertNotRegex(js, r"(?m)^\s*pass\s*$")
+        self.assertNotIn("if m[1] not in tabCounts", js)
+        self.assertNotIn("offers[0] if offers else", js)
+        self.assertIn("offers.length", js)
+        self.assertIn("!(m[1] in tabCounts)", js)
+        self.assertIn("in tabCounts", js)
+        self.assertIn("offers.length ? offers[0] : null", js)
+        self.assertIn("offers.length ? 'partial' : 'missing'", js)
+
+    def test_order_list_urls_use_order_status_query(self):
+        src = (ROOT / "scripts" / "freeze_reverse_audit_pools_20260905.py").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn(
+            "buyer-order-list.html?orderStatus={status_code}",
+            src,
+        )
+        self.assertNotIn(
+            "buyer-order-list.html?status={status_code}",
+            src,
+        )
+        self.assertGreaterEqual(
+            src.count("buyer-order-list.html?orderStatus={status_code}"),
+            3,
+        )
+
+    def test_strip_empty_dom_stub_lines_keeps_useful_and_mtop(self):
+        from reverse_audit.freeze import (
+            DOM_STUB_STRIP_NOTE,
+            is_empty_dom_stub_line,
+            strip_empty_dom_stub_lines,
+        )
+
+        shell = {
+            "orderId": "5127",
+            "offerId": None,
+            "skuId": None,
+            "specText": "",
+            "skuName": "",
+            "qty": None,
+            "status": "待付款",
+            "seller": "某店",
+            "source": "dom",
+        }
+        dom_with_offer = {
+            **shell,
+            "offerId": "682133351130",
+            "skuIdResolution": "partial",
+        }
+        mtop = {
+            "orderId": "5127",
+            "offerId": "682133351130",
+            "skuId": "5057048663211",
+            "specText": "颜色:黑色",
+            "skuName": "袜",
+            "qty": 600,
+            "source": "mtop",
+        }
+        mtop_no_sku_still_kept = {
+            "orderId": "5128",
+            "offerId": None,
+            "skuId": None,
+            "specText": "",
+            "skuName": "",
+            "qty": None,
+            "source": "mtop",
+        }
+        dom_with_spec = {**shell, "orderId": "5129", "specText": "颜色:白"}
+
+        self.assertTrue(is_empty_dom_stub_line(shell))
+        self.assertFalse(is_empty_dom_stub_line(dom_with_offer))
+        self.assertFalse(is_empty_dom_stub_line(mtop))
+        self.assertFalse(is_empty_dom_stub_line(mtop_no_sku_still_kept))
+        self.assertFalse(is_empty_dom_stub_line(dom_with_spec))
+
+        notes: list[str] = []
+        kept, n_removed = strip_empty_dom_stub_lines(
+            [shell, dom_with_offer, mtop, mtop_no_sku_still_kept, dom_with_spec],
+            notes,
+        )
+        self.assertEqual(n_removed, 1)
+        self.assertEqual(len(kept), 4)
+        self.assertNotIn(shell, kept)
+        self.assertIn(DOM_STUB_STRIP_NOTE, notes)
+
+        kept2, n2 = strip_empty_dom_stub_lines([mtop, mtop_no_sku_still_kept])
+        self.assertEqual(n2, 0)
+        self.assertEqual(kept2, [mtop, mtop_no_sku_still_kept])
+
+
 if __name__ == "__main__":
     unittest.main()
