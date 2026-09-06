@@ -35,7 +35,24 @@ from reverse_audit.util import (
     offer_from_url,
     sha256_file,
     write_csv,
+    write_csv_utf8_sig,
 )
+
+CONSOLIDATED_CSV_NAME = "補貨比對結果.csv"
+CONSOLIDATED_FIELDS = [
+    "類型",
+    "蝦皮商品id",
+    "蝦皮規格id",
+    "蝦皮商品名稱",
+    "型號",
+    "應補數量",
+    "車內數量",
+    "差額說明",
+    "1688網址",
+    "1688_offer",
+    "1688_sku",
+    "備註",
+]
 
 SRC_NAMES = (
     "shopee_products.json",
@@ -270,6 +287,7 @@ def aggregate_certain(certain_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
                 "product_ids": [],
                 "product_names": [],
                 "model_names": [],
+                "spec_ids": [],
                 "sources": [],
             }
         a = agg[key]
@@ -284,6 +302,9 @@ def aggregate_certain(certain_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
             a["product_names"].append(row["product_name"])
         if row.get("model_name"):
             a["model_names"].append(row["model_name"])
+        sid_shopee = str(row.get("spec_id") or "").strip()
+        if sid_shopee and sid_shopee not in a["spec_ids"]:
+            a["spec_ids"].append(sid_shopee)
         a["sources"].append(
             {
                 "product_id": row.get("product_id"),
@@ -650,6 +671,7 @@ def diff_expected(
             "product_ids": "|".join(a.get("product_ids") or []),
             "product_names": "|".join(a.get("product_names") or []),
             "model_names": "|".join(a.get("model_names") or []),
+            "spec_ids": "|".join(a.get("spec_ids") or []),
             "source_count": len(a.get("sources") or []),
             "watchlist_order": a.get("watchlist_order"),
         }
@@ -825,6 +847,118 @@ def collect_multi_cart_ambiguous(
     return out
 
 
+def _alibaba_url_for_row(row: Dict[str, Any]) -> str:
+    url = str(row.get("alibaba_url") or "").strip()
+    if url.startswith("http"):
+        return url
+    offer = str(row.get("offer_id") or "").strip()
+    if offer:
+        return f"https://detail.1688.com/offer/{offer}.html"
+    return ""
+
+
+def _unexpected_note(row: Dict[str, Any]) -> str:
+    note = str(row.get("note") or "").strip()
+    reason = str(row.get("reason") or "").strip()
+    if note and reason and reason not in note:
+        return f"{note}；{reason}"
+    return note or reason
+
+
+def build_consolidated_zh_rows(
+    missing: List[Dict[str, Any]],
+    shortfall: List[Dict[str, Any]],
+    excess: List[Dict[str, Any]],
+    unexpected: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Human-facing Traditional Chinese table (action items only; no covered)."""
+    rows: List[Dict[str, Any]] = []
+
+    for r in sorted(missing, key=lambda x: -as_int(x.get("expected_qty"))):
+        eq = as_int(r.get("expected_qty"))
+        rows.append(
+            {
+                "類型": "車裡缺少（建議加）",
+                "蝦皮商品id": r.get("product_ids") or "",
+                "蝦皮規格id": r.get("spec_ids") or "",
+                "蝦皮商品名稱": r.get("product_names") or "",
+                "型號": r.get("model_names") or "",
+                "應補數量": eq,
+                "車內數量": as_int(r.get("cart_qty")),
+                "差額說明": f"建議加 {eq}",
+                "1688網址": _alibaba_url_for_row(r),
+                "1688_offer": r.get("offer_id") or "",
+                "1688_sku": r.get("sku_id") or "",
+                "備註": r.get("note") or "",
+            }
+        )
+
+    for r in shortfall:
+        sf = as_int(r.get("shortfall"))
+        rows.append(
+            {
+                "類型": "車裡數量不足",
+                "蝦皮商品id": r.get("product_ids") or "",
+                "蝦皮規格id": r.get("spec_ids") or "",
+                "蝦皮商品名稱": r.get("product_names") or "",
+                "型號": r.get("model_names") or "",
+                "應補數量": as_int(r.get("expected_qty")),
+                "車內數量": as_int(r.get("cart_qty")),
+                "差額說明": f"少 {sf}",
+                "1688網址": _alibaba_url_for_row(r),
+                "1688_offer": r.get("offer_id") or "",
+                "1688_sku": r.get("sku_id") or "",
+                "備註": r.get("note") or "",
+            }
+        )
+
+    for r in excess:
+        ex = as_int(r.get("excess"))
+        rows.append(
+            {
+                "類型": "車裡數量過多",
+                "蝦皮商品id": r.get("product_ids") or "",
+                "蝦皮規格id": r.get("spec_ids") or "",
+                "蝦皮商品名稱": r.get("product_names") or "",
+                "型號": r.get("model_names") or "",
+                "應補數量": as_int(r.get("expected_qty")),
+                "車內數量": as_int(r.get("cart_qty")),
+                "差額說明": f"多 {ex}",
+                "1688網址": _alibaba_url_for_row(r),
+                "1688_offer": r.get("offer_id") or "",
+                "1688_sku": r.get("sku_id") or "",
+                "備註": r.get("note") or "",
+            }
+        )
+
+    removable = [r for r in unexpected if r.get("removable") is True]
+    protected = [r for r in unexpected if r.get("removable") is not True]
+    for group, type_label in (
+        (removable, "車裡多出來（可能可刪）"),
+        (protected, "車裡多出來（先不要刪）"),
+    ):
+        for r in group:
+            cart_qty = as_int(r.get("cart_qty"))
+            rows.append(
+                {
+                    "類型": type_label,
+                    "蝦皮商品id": "",
+                    "蝦皮規格id": "",
+                    "蝦皮商品名稱": "",
+                    "型號": r.get("specTexts") or "",
+                    "應補數量": "",
+                    "車內數量": cart_qty,
+                    "差額說明": f"車內 {cart_qty}，不在應補清單",
+                    "1688網址": _alibaba_url_for_row(r),
+                    "1688_offer": r.get("offer_id") or "",
+                    "1688_sku": r.get("sku_id") or "",
+                    "備註": _unexpected_note(r),
+                }
+            )
+
+    return rows
+
+
 def run_dry_run(
     out_dir: Path,
     *,
@@ -955,26 +1089,26 @@ def run_dry_run(
         "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
         "expected_qty", "coverage", "cart_qty", "order_pools", "order_ids",
         "order_qty_sum", "delta", "cart_ids", "is_phone_case",
-        "product_ids", "product_names", "model_names", "source_count",
+        "product_ids", "product_names", "model_names", "spec_ids", "source_count",
         "watchlist_order", "note",
     ]
     missing_fields = [
         "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
         "expected_qty", "coverage", "cart_qty", "is_phone_case",
-        "product_ids", "product_names", "model_names", "source_count",
+        "product_ids", "product_names", "model_names", "spec_ids", "source_count",
         "watchlist_order", "note",
     ]
     shortfall_fields = [
         "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
         "expected_qty", "cart_qty", "shortfall", "coverage", "cart_ids",
         "multi_cart_line_fail", "is_phone_case", "product_ids", "product_names",
-        "model_names", "source_count", "watchlist_order", "note",
+        "model_names", "spec_ids", "source_count", "watchlist_order", "note",
     ]
     excess_fields = [
         "offer_id", "sku_id", "sku_name", "sku_second_name", "alibaba_url",
         "expected_qty", "cart_qty", "excess", "target_qty", "cart_ids",
         "specTexts", "multi_cart_line_fail", "is_phone_case",
-        "product_ids", "product_names", "model_names", "source_count",
+        "product_ids", "product_names", "model_names", "spec_ids", "source_count",
         "watchlist_order", "coverage", "note",
     ]
     unexpected_fields = [
@@ -988,6 +1122,10 @@ def run_dry_run(
     write_csv(out_dir / "qty_excess.csv", excess, excess_fields)
     write_csv(out_dir / "unexpected_in_cart.csv", unexpected, unexpected_fields)
     write_csv(out_dir / "ambiguous.csv", ambiguous)
+
+    consolidated = build_consolidated_zh_rows(missing, shortfall, excess, unexpected)
+    consolidated_path = out_dir / CONSOLIDATED_CSV_NAME
+    write_csv_utf8_sig(consolidated_path, consolidated, CONSOLIDATED_FIELDS)
 
     unexpected_removable = sum(1 for r in unexpected if r.get("removable") is True)
     unexpected_protected = len(unexpected) - unexpected_removable
@@ -1080,6 +1218,12 @@ def run_dry_run(
         },
         "outputs": {
             "dir": str(out_dir),
+            "primary_human_csv": str(consolidated_path),
+            CONSOLIDATED_CSV_NAME: str(consolidated_path),
+            "machine_csvs_note": (
+                "English CSVs (missing_to_add / qty_* / unexpected_* / expected_* / "
+                "covered / ambiguous) are machine/internal; mutate reads missing_to_add.csv"
+            ),
             "missing_to_add.csv": str(out_dir / "missing_to_add.csv"),
             "qty_excess.csv": str(out_dir / "qty_excess.csv"),
             "unexpected_in_cart.csv": str(out_dir / "unexpected_in_cart.csv"),
@@ -1117,7 +1261,16 @@ def run_dry_run(
     lines.append(f"- 模式：offline dry-run（不加車／不改量）")
     lines.append(f"- 輸出目錄：`{out_dir}`")
     lines.append("")
-    lines.append("## Diff（certain 聚合）")
+    lines.append("## 人工交付（請先看這份）")
+    lines.append(
+        f"- **`{CONSOLIDATED_CSV_NAME}`**（UTF-8-SIG，Excel 可直接開）—"
+        f" 共 {len(consolidated)} 筆待處理／需注意項目"
+    )
+    lines.append(
+        "  （含：車裡缺少、數量不足、數量過多、車裡多出來；**不含**已覆蓋 covered）"
+    )
+    lines.append("")
+    lines.append("## Diff 摘要（certain 聚合）")
     lines.append(
         f"- covered={len(covered)}；missing_to_add={len(missing)}；"
         f"qty_shortfall={len(shortfall)}；qty_excess={len(excess)}；"
@@ -1126,7 +1279,7 @@ def run_dry_run(
         f"ambiguous={len(ambiguous)}"
     )
     lines.append("")
-    lines.append("## 車內超量／非預期")
+    lines.append("## 車內超量／非預期（預覽）")
     lines.append(
         f"- qty_excess={len(excess)}（excess_qty_sum="
         f"{sum(as_int(r.get('excess')) for r in excess)}；不 PAUSE）"
@@ -1141,6 +1294,13 @@ def run_dry_run(
     lines.append("## 規則（定案）")
     for k, v in summary["rules"].items():
         lines.append(f"- **{k}**：{v}")
+    lines.append("")
+    lines.append("## 機器用／內部 CSV（一般人不用開）")
+    lines.append(
+        "- `missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、"
+        "`unexpected_in_cart.csv`、`covered.csv`、`expected_*.csv`、`ambiguous.csv`"
+    )
+    lines.append("- mutate 讀取 `missing_to_add.csv`；有 shortfall 時會檢查 `qty_shortfall.csv`")
     lines.append("")
     lines.append("---")
     lines.append(

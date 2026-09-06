@@ -159,9 +159,34 @@ class DryRunOfflineTests(unittest.TestCase):
             self.assertGreaterEqual(summary["diff"]["unexpected_removable"], 1)
             self.assertGreaterEqual(summary["diff"]["unexpected_protected"], 1)
 
+            zh_path = out / "補貨比對結果.csv"
+            self.assertTrue(zh_path.exists())
+            raw = zh_path.read_bytes()
+            self.assertTrue(raw.startswith(b"\xef\xbb\xbf"), "UTF-8 BOM required")
+            with zh_path.open(encoding="utf-8-sig") as f:
+                zh_rows = list(csv.DictReader(f))
+            self.assertTrue(zh_rows)
+            self.assertIn("類型", zh_rows[0])
+            self.assertIn("蝦皮商品id", zh_rows[0])
+            self.assertIn("蝦皮規格id", zh_rows[0])
+            self.assertIn("差額說明", zh_rows[0])
+            types = {r["類型"] for r in zh_rows}
+            self.assertIn("車裡缺少（建議加）", types)
+            self.assertIn("車裡數量過多", types)
+            self.assertTrue(
+                "車裡多出來（可能可刪）" in types or "車裡多出來（先不要刪）" in types
+            )
+            report = (out / "dry_run_report.md").read_text(encoding="utf-8")
+            self.assertIn("補貨比對結果.csv", report)
+            self.assertEqual(
+                summary["outputs"]["primary_human_csv"],
+                str(zh_path),
+            )
+
             with (out / "qty_excess.csv").open(encoding="utf-8") as f:
                 excess_rows = list(csv.DictReader(f))
             self.assertTrue(any(r["sku_id"] == "sku-a" for r in excess_rows))
+            self.assertIn("spec_ids", excess_rows[0])
 
             with (out / "unexpected_in_cart.csv").open(encoding="utf-8") as f:
                 unc_rows = list(csv.DictReader(f))
@@ -185,6 +210,9 @@ class DryRunOfflineTests(unittest.TestCase):
             self.assertEqual(summary["status"], "PAUSED")
             self.assertTrue(summary["paused"])
             self.assertGreaterEqual(summary["diff"]["qty_shortfall"], 1)
+            with (out / "補貨比對結果.csv").open(encoding="utf-8-sig") as f:
+                zh_rows = list(csv.DictReader(f))
+            self.assertTrue(any(r["類型"] == "車裡數量不足" for r in zh_rows))
 
         with tempfile.TemporaryDirectory() as td:
             out = _stage_fixture(Path(td))
