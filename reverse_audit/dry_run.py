@@ -2,7 +2,9 @@
 
 Read-only: never mutates cart. shortfall → PAUSED (no auto qty fix).
 Phase 1 also lists qty_excess + unexpected_in_cart (no PAUSE on excess).
-Never invents URL/skuId — uncertain rows are recorded only.
+Never invents URL/skuId into golden_table — uncertain (true missing fields)
+are recorded only. Certain = approved + URL + (skuId OR usable name/spec);
+unique cart name/spec match resolves live skuId for qty diff.
 """
 from __future__ import annotations
 
@@ -206,10 +208,15 @@ def build_expected(
                 continue
 
             url_ok = url.startswith("http")
-            certain = status == "approved" and url_ok and bool(sku_id)
+            has_sku = bool(sku_id)
+            has_name_spec = bool(sku_name)
+            certain = status == "approved" and url_ok and (has_sku or has_name_spec)
             if certain:
                 row = dict(base)
                 row["bucket"] = "certain"
+                row["certain_via"] = "sku_id" if has_sku else "name_spec"
+                if not has_sku:
+                    row["note"] = "approved+URL+name/spec；缺 skuId（qty 以唯一 name/spec 對車）"
                 certain_rows.append(row)
             else:
                 missing = []
@@ -217,7 +224,9 @@ def build_expected(
                     missing.append(f"status={status or 'empty'}")
                 if not url_ok:
                     missing.append("url")
-                if not sku_id:
+                if not has_sku and not has_name_spec:
+                    missing.append("skuId+name/spec")
+                elif not has_sku:
                     missing.append("skuId")
                 row = dict(base)
                 row["bucket"] = "uncertain"
@@ -227,20 +236,37 @@ def build_expected(
     return certain_rows, uncertain_rows, skip_rows, stats
 
 
+def _agg_bucket_key(row: Dict[str, Any]) -> Tuple[Any, ...]:
+    """Aggregate by (offerId, skuId), or by name identity when skuId still empty."""
+    oid = str(row.get("offer_id") or "").strip()
+    sid = str(row.get("sku_id") or "").strip()
+    if sid:
+        return ("sku", oid, sid)
+    return (
+        "name",
+        oid,
+        str(row.get("sku_name") or "").strip(),
+        str(row.get("sku_second_name") or "").strip(),
+    )
+
+
 def aggregate_certain(certain_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    agg: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    agg: Dict[Tuple[Any, ...], Dict[str, Any]] = {}
     for row in certain_rows:
-        key = (str(row["offer_id"]), str(row["sku_id"]))
+        key = _agg_bucket_key(row)
         if key not in agg:
+            sid = str(row.get("sku_id") or "").strip()
             agg[key] = {
-                "offer_id": key[0],
-                "sku_id": key[1],
+                "offer_id": str(row.get("offer_id") or "").strip(),
+                "sku_id": sid,
                 "suggested_qty": 0,
                 "is_phone_case": False,
                 "watchlist_order": row.get("watchlist_order", 10**9),
                 "alibaba_url": row.get("alibaba_url") or "",
                 "sku_name": row.get("sku_name") or "",
                 "sku_second_name": row.get("sku_second_name") or "",
+                "certain_via": row.get("certain_via") or ("sku_id" if sid else "name_spec"),
+                "sku_id_resolved_from_cart": bool(row.get("sku_id_resolved_from_cart")),
                 "product_ids": [],
                 "product_names": [],
                 "model_names": [],
@@ -250,6 +276,8 @@ def aggregate_certain(certain_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
         a["suggested_qty"] += as_int(row.get("suggested_qty"))
         a["is_phone_case"] = a["is_phone_case"] or bool(row.get("is_phone_case"))
         a["watchlist_order"] = min(a["watchlist_order"], as_int(row.get("watchlist_order")))
+        if row.get("sku_id_resolved_from_cart"):
+            a["sku_id_resolved_from_cart"] = True
         if row.get("product_id") and row["product_id"] not in a["product_ids"]:
             a["product_ids"].append(row["product_id"])
         if row.get("product_name") and row["product_name"] not in a["product_names"]:
@@ -272,6 +300,8 @@ def aggregate_certain(certain_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
             as_int(r.get("watchlist_order")),
             str(r.get("offer_id")),
             str(r.get("sku_id")),
+            str(r.get("sku_name") or ""),
+            str(r.get("sku_second_name") or ""),
         )
     )
     return out
@@ -439,35 +469,11 @@ def expected_key_set(rows: List[Dict[str, Any]]) -> set:
     return out
 
 
-def name_spec_protectable_expected(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """approved + URL + offer + sku_name, with empty sku_id (name/spec-only uncertain).
-
-    Stays in uncertain (never promoted to certain). Used only to protect cart
-    lines that restocker could have added via name/spec fallback — never
-    invents or writes skuId/URL into golden_table.
-    """
-    out: List[Dict[str, Any]] = []
-    for row in rows:
-        status = str(row.get("mapping_status") or "").strip()
-        url = str(row.get("alibaba_url") or "").strip()
-        offer_id = str(row.get("offer_id") or "").strip()
-        sku_id = str(row.get("sku_id") or "").strip()
-        sku_name = str(row.get("sku_name") or "").strip()
-        if (
-            status == "approved"
-            and url.startswith("http")
-            and offer_id
-            and sku_name
-            and not sku_id
-        ):
-            out.append(row)
-    return out
-
-
 def _expected_as_restock_item(row: Dict[str, Any]) -> Dict[str, Any]:
     """Map reverse_audit expected fields onto restocker cart_line_matches_item keys."""
     return {
-        "alibabaSkuId": str(row.get("sku_id") or "").strip(),
+        # Name/spec resolve must not short-circuit on empty golden skuId vs cart skuId.
+        "alibabaSkuId": "",
         "alibabaSkuName": str(row.get("sku_name") or "").strip(),
         "alibabaSkuSecondName": str(row.get("sku_second_name") or "").strip(),
         "alibabaUrl": str(row.get("alibaba_url") or "").strip(),
@@ -500,34 +506,111 @@ def _name_spec_identity(row: Dict[str, Any]) -> Tuple[str, str, str]:
     )
 
 
-def match_name_spec_protectable(
-    offer_id: str,
-    sku_id: str,
-    cart_rec: Dict[str, Any],
-    protectable: List[Dict[str, Any]],
-) -> Tuple[bool, bool]:
-    """Return (matched, ambiguous) using restocker name/spec matching.
-
-    Ambiguous = one cart line matches multiple distinct expected name/spec
-    identities. Callers must treat both unique and ambiguous as non-removable.
-    """
-    if not protectable:
-        return False, False
-    # Lazy import: reuse Chinese canonicalize / cart_text_has_name without
-    # loading restocker at dry_run module import time.
+def _cart_keys_matching_expected(
+    row: Dict[str, Any],
+    cart_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+) -> List[Tuple[str, str]]:
+    """Cart keys that uniquely-or-not match an expected row via restocker name/spec."""
     from alibaba_restocker import cart_line_matches_item
 
-    line = _cart_rec_as_match_line(offer_id, sku_id, cart_rec)
-    matched_ids: set = set()
-    for row in protectable:
-        row_offer = str(row.get("offer_id") or "").strip()
-        if row_offer and row_offer != str(offer_id or "").strip():
+    item = _expected_as_restock_item(row)
+    row_offer = str(row.get("offer_id") or "").strip()
+    matches: List[Tuple[str, str]] = []
+    for (oid, sid), cart_rec in cart_by_key.items():
+        if row_offer and oid != row_offer:
             continue
-        if cart_line_matches_item(line, _expected_as_restock_item(row)):
-            matched_ids.add(_name_spec_identity(row))
-    if not matched_ids:
-        return False, False
-    return True, len(matched_ids) > 1
+        line = _cart_rec_as_match_line(oid, sid, cart_rec)
+        if cart_line_matches_item(line, item):
+            matches.append((oid, sid))
+    return matches
+
+
+def resolve_certain_name_spec_sku_ids(
+    certain_rows: List[Dict[str, Any]],
+    cart_by_key: Dict[Tuple[str, str], Dict[str, Any]],
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], set]:
+    """Fill empty certain skuId from unique cart name/spec match.
+
+    Unique match → copy row with cart skuId (diff key only; never writes golden).
+    Ambiguous (expected→many cart, or cart→many expected identities) → fail closed:
+    omit from qty mutate set; return ambiguous records + cart keys.
+    No cart match → keep empty skuId (still certain for missing listing).
+    """
+    with_sku: List[Dict[str, Any]] = []
+    name_only: List[Dict[str, Any]] = []
+    for row in certain_rows:
+        if str(row.get("sku_id") or "").strip():
+            with_sku.append(row)
+        else:
+            name_only.append(row)
+
+    row_to_keys: List[List[Tuple[str, str]]] = []
+    key_to_indices: Dict[Tuple[str, str], List[int]] = {}
+    for i, row in enumerate(name_only):
+        keys = _cart_keys_matching_expected(row, cart_by_key)
+        row_to_keys.append(keys)
+        for key in keys:
+            key_to_indices.setdefault(key, []).append(i)
+
+    resolved: List[Dict[str, Any]] = list(with_sku)
+    ambiguous: List[Dict[str, Any]] = []
+    ambiguous_cart_keys: set = set()
+
+    for i, row in enumerate(name_only):
+        keys = row_to_keys[i]
+        if not keys:
+            resolved.append(row)
+            continue
+        if len(keys) != 1:
+            ambiguous_cart_keys.update(keys)
+            ambiguous.append(
+                {
+                    "kind": "ambiguous_name_spec",
+                    "offer_id": row.get("offer_id"),
+                    "sku_id": "",
+                    "sku_name": row.get("sku_name") or "",
+                    "sku_second_name": row.get("sku_second_name") or "",
+                    "cart_keys": "|".join(f"{o}/{s}" for o, s in keys),
+                    "note": (
+                        "name/spec certain 對上多筆車內 sku → fail closed"
+                        "（不進 qty mutate／delete）"
+                    ),
+                }
+            )
+            continue
+        key = keys[0]
+        peer_ids = {
+            _name_spec_identity(name_only[j]) for j in key_to_indices.get(key, [])
+        }
+        if len(peer_ids) > 1:
+            ambiguous_cart_keys.add(key)
+            ambiguous.append(
+                {
+                    "kind": "ambiguous_name_spec",
+                    "offer_id": key[0],
+                    "sku_id": key[1],
+                    "sku_name": row.get("sku_name") or "",
+                    "sku_second_name": row.get("sku_second_name") or "",
+                    "specText": "|".join(
+                        (cart_by_key.get(key) or {}).get("specTexts") or []
+                    ),
+                    "note": (
+                        "一車列對上多筆 distinct name/spec certain → fail closed"
+                        "（不進 qty mutate／delete）"
+                    ),
+                }
+            )
+            continue
+        filled = dict(row)
+        filled["sku_id"] = key[1]
+        filled["sku_id_resolved_from_cart"] = True
+        filled["note"] = (
+            (str(row.get("note") or "").rstrip("；") + "；" if row.get("note") else "")
+            + "skuId 由車內唯一 name/spec 對上（僅 diff，不回寫 golden）"
+        )
+        resolved.append(filled)
+
+    return resolved, ambiguous, ambiguous_cart_keys
 
 
 def diff_expected(
@@ -639,19 +722,19 @@ def find_unexpected_in_cart(
     uncertain_keys: set,
     skip_keys: set,
     order_by_key: Dict[Tuple[str, str], Dict[str, Any]],
-    name_spec_expected: Optional[List[Dict[str, Any]]] = None,
+    ambiguous_name_keys: Optional[set] = None,
 ) -> List[Dict[str, Any]]:
     """Reverse-scan cart for keys not handled as certain expected diffs.
 
     certain boundary: keys in certain_keys are skipped unless order-covered
     and still in cart (optional clear candidates). uncertain/skip/order-pool
-    hits are listed with removable=false. Approved+URL+name/spec expected rows
-    without skuId also protect cart lines that uniquely or ambiguously match
-    via the same restocker name/spec fallback (never invent URL/skuId).
+    hits are listed with removable=false. Ambiguous name/spec cart keys are
+    fail-closed (removable=false). Unique name/spec matches are resolved into
+    certain_keys before this scan — not listed as unexpected.
     Multi cart lines → fail whole key.
     """
     rows: List[Dict[str, Any]] = []
-    protectable = name_spec_protectable_expected(name_spec_expected or [])
+    ambiguous_name_keys = ambiguous_name_keys or set()
 
     for key, cart_rec in sorted(cart_by_key.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         oid, sid = key
@@ -699,29 +782,16 @@ def find_unexpected_in_cart(
             row["removable"] = False
             row["reason"] = "order_pool_protected"
             row["note"] = "三池任一有同 key → 禁止當誤加刪除（知情列出）"
-        else:
-            matched, ambiguous = match_name_spec_protectable(
-                oid, sid, cart_rec, protectable
+        elif key in ambiguous_name_keys:
+            row["removable"] = False
+            row["reason"] = "ambiguous_name_spec"
+            row["note"] = (
+                "name/spec 對上多筆 certain 或一列對多車 → fail closed（不可刪）"
             )
-            if matched:
-                row["removable"] = False
-                row["in_uncertain_expected"] = True
-                if ambiguous:
-                    row["reason"] = "ambiguous_name_spec_protected"
-                    row["note"] = (
-                        "車內列對上多筆缺 skuId 的 approved+URL+name/spec "
-                        "uncertain → 歧義不刪（對齊加車腳本）"
-                    )
-                else:
-                    row["reason"] = "name_spec_protected"
-                    row["note"] = (
-                        "對上缺 skuId 的 approved+URL+name/spec uncertain "
-                        "（加車腳本 name/spec fallback）→ 永不當誤加刪除"
-                    )
-            else:
-                row["removable"] = True
-                row["reason"] = "not_in_certain_expected"
-                row["note"] = "車內有、不在 certain 應補集合、且無保護"
+        else:
+            row["removable"] = True
+            row["reason"] = "not_in_certain_expected"
+            row["note"] = "車內有、不在 certain 應補集合、且無保護"
 
         if multi_fail:
             row["removable"] = False
@@ -814,7 +884,6 @@ def run_dry_run(
     certain_rows, uncertain_rows, skip_rows, build_stats = build_expected(
         products, golden, watch_ids
     )
-    agg_certain = aggregate_certain(certain_rows)
     cart_by_key, amb_cart = index_cart(cart)
     order_by_key, amb_orders, pool_validation = index_orders(
         {
@@ -823,10 +892,18 @@ def run_dry_run(
             "pending_receive": recv,
         }
     )
+    resolved_certain, name_ambiguous, ambiguous_name_keys = (
+        resolve_certain_name_spec_sku_ids(certain_rows, cart_by_key)
+    )
+    agg_certain = aggregate_certain(resolved_certain)
     covered, missing, shortfall, excess, paused = diff_expected(
         agg_certain, cart_by_key, order_by_key
     )
-    certain_keys = {(str(a["offer_id"]), str(a["sku_id"])) for a in agg_certain}
+    certain_keys = {
+        (str(a["offer_id"]), str(a["sku_id"]))
+        for a in agg_certain
+        if str(a.get("offer_id") or "").strip() and str(a.get("sku_id") or "").strip()
+    }
     uncertain_keys = expected_key_set(uncertain_rows)
     skip_keys = expected_key_set(skip_rows)
     unexpected = find_unexpected_in_cart(
@@ -835,17 +912,29 @@ def run_dry_run(
         uncertain_keys,
         skip_keys,
         order_by_key,
-        name_spec_expected=uncertain_rows,
+        ambiguous_name_keys=ambiguous_name_keys,
     )
-    ambiguous = amb_cart + amb_orders + collect_multi_cart_ambiguous(cart_by_key)
+    ambiguous = (
+        amb_cart + amb_orders + collect_multi_cart_ambiguous(cart_by_key) + name_ambiguous
+    )
     for a in agg_certain:
         if not a.get("offer_id") or not a.get("sku_id"):
             ambiguous.append(
                 {
-                    "kind": "certain_missing_key",
+                    "kind": (
+                        "name_spec_unresolved_sku"
+                        if str(a.get("sku_name") or "").strip()
+                        else "certain_missing_key"
+                    ),
                     "offer_id": a.get("offer_id"),
                     "sku_id": a.get("sku_id"),
-                    "note": "aggregated certain missing offer/sku",
+                    "sku_name": a.get("sku_name") or "",
+                    "sku_second_name": a.get("sku_second_name") or "",
+                    "note": (
+                        "name/spec certain 車內無唯一對上 → 不發明 skuId"
+                        if str(a.get("sku_name") or "").strip()
+                        else "aggregated certain missing offer/sku"
+                    ),
                 }
             )
 
@@ -854,6 +943,7 @@ def run_dry_run(
         "target_months", "current_stock", "monthly_sales", "effective_monthly_sales",
         "raw_shortage", "suggested_qty", "alibaba_url", "offer_id", "sku_id",
         "sku_name", "sku_second_name", "mapping_status", "watchlist_order", "bucket",
+        "certain_via", "note",
     ]
     uncertain_fields = certain_fields + ["uncertain_reason"]
     skip_fields = certain_fields + ["skip_reason"]
@@ -970,20 +1060,19 @@ def run_dry_run(
         "rules": {
             "scope": "watchlist ∩ products ∩ golden; exclusions via home_bootstrap; no schoolbag cutoff",
             "qty": "calculated_restock_details + target_months_for_product (case=3 / else=4); sum by (offerId,skuId)",
-            "certain": "approved + URL + skuId（進 mutate／diff 聚合）",
-            "uncertain": (
-                "缺欄 — never guess URL/skuId；approved+URL+name/spec 缺 skuId "
-                "仍留 uncertain，但可保護車內 name/spec 對上的列"
+            "certain": (
+                "approved + URL + (skuId OR usable name/spec)；"
+                "缺 skuId 時以車內唯一 name/spec 解析 live skuId 進 qty diff"
             ),
+            "uncertain": "缺欄（無 approved／URL，或既無 skuId 也無 usable name/spec）— never guess URL/skuId",
             "skip": "discontinued / 售完等 (+ known 粉色愛心兔)",
             "orderCoverage": "any pool same offer+sku = covered",
             "cartShortfall": "0<qty<expected → PAUSED; full list still produced; no qty mutate",
             "cartExcess": "cart > expected (non order-covered) → qty_excess.csv; list only, no PAUSE, no qty mutate",
             "unexpectedCart": (
-                "reverse-scan cart; certain boundary; order/uncertain/skip protected "
-                "(removable=false); approved+URL+name/spec（缺 skuId）via restocker "
-                "name/spec fallback → name_spec_protected / "
-                "ambiguous_name_spec_protected（皆不可刪）; "
+                "reverse-scan cart; certain boundary（含唯一 name/spec 解析後的 key）；"
+                "order/uncertain/skip protected (removable=false)；"
+                "ambiguous name/spec → fail closed（ambiguous_name_spec，不可刪）；"
                 "order-covered still in cart = optional clear; "
                 "multi cart lines → whole key fail/ambiguous"
             ),
