@@ -1,10 +1,11 @@
-"""CLI: python -m reverse_audit freeze|dry-run|mutate."""
+"""CLI: python -m reverse_audit freeze|refresh|dry-run|mutate."""
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from pathlib import Path
+from typing import Any, Dict
 
 from reverse_audit.dry_run import run_dry_run
 from reverse_audit.freeze import run_freeze
@@ -17,6 +18,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m reverse_audit",
         description=(
             "反向補貨查核：freeze → offline dry-run → explicit mutate。"
+            "每次預覽請 refresh 重抓四池，不要沿用舊 live_*.json。"
             "不猜 URL/skuId；車內不足暫停且不自動改量；"
             "改量／刪除須各自核准旗標（互不隱含）。"
         ),
@@ -48,8 +50,34 @@ def build_parser() -> argparse.ArgumentParser:
         help="只凍結本地 shopee/golden/watchlist，不跑 CDP",
     )
 
+    refresh_p = sub.add_parser(
+        "refresh",
+        help="重抓四池（freeze）再離線 dry-run；每次預覽請用此指令",
+    )
+    add_common(refresh_p)
+    refresh_p.add_argument(
+        "--sources-only",
+        action="store_true",
+        help="freeze 只凍本地來源，不跑 CDP（仍會接著 dry-run）",
+    )
+    refresh_p.add_argument(
+        "--no-refreeze-sources",
+        action="store_true",
+        help="dry-run 沿用 freeze 寫入的 sources/，不從 repo root 再拷一次",
+    )
+
     dry_p = sub.add_parser("dry-run", help="離線對 live_*.json dry-run（永不改車）")
     add_common(dry_p)
+    dry_p.add_argument(
+        "--refreeze",
+        action="store_true",
+        help="先 freeze 四池再 dry-run（等同 refresh）",
+    )
+    dry_p.add_argument(
+        "--sources-only",
+        action="store_true",
+        help="僅在 --refreeze 時有效：freeze 只凍本地來源，不跑 CDP",
+    )
     dry_p.add_argument(
         "--no-refreeze-sources",
         action="store_true",
@@ -86,6 +114,38 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+def _print_dry_run_brief(summary: Dict[str, Any], out_dir: Path) -> None:
+    print(
+        json.dumps(
+            {
+                "status": summary.get("status"),
+                "paused": summary.get("paused"),
+                "diff": summary.get("diff"),
+                "expected": summary.get("expected"),
+                "dir": str(out_dir),
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        flush=True,
+    )
+
+
+def run_refresh(
+    out_dir: Path,
+    *,
+    sources_only: bool = False,
+    refreeze_sources: bool = True,
+) -> int:
+    """Freeze cart + 3 order pools, then offline dry-run."""
+    freeze_code = run_freeze(out_dir, sources_only=sources_only)
+    if freeze_code:
+        return freeze_code
+    summary = run_dry_run(out_dir, refreeze_sources=refreeze_sources)
+    _print_dry_run_brief(summary, out_dir)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     parser = build_parser()
@@ -109,25 +169,24 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "freeze":
         return run_freeze(out_dir, sources_only=bool(args.sources_only))
+    if args.command == "refresh":
+        return run_refresh(
+            out_dir,
+            sources_only=bool(args.sources_only),
+            refreeze_sources=not args.no_refreeze_sources,
+        )
     if args.command == "dry-run":
+        if args.refreeze:
+            return run_refresh(
+                out_dir,
+                sources_only=bool(args.sources_only),
+                refreeze_sources=not args.no_refreeze_sources,
+            )
         summary = run_dry_run(
             out_dir,
             refreeze_sources=not args.no_refreeze_sources,
         )
-        print(
-            json.dumps(
-                {
-                    "status": summary.get("status"),
-                    "paused": summary.get("paused"),
-                    "diff": summary.get("diff"),
-                    "expected": summary.get("expected"),
-                    "dir": str(out_dir),
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            flush=True,
-        )
+        _print_dry_run_brief(summary, out_dir)
         return 0
     if args.command == "mutate":
         approve_add = bool(args.i_approve_mutate)
