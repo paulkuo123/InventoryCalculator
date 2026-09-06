@@ -182,10 +182,8 @@ document.addEventListener('DOMContentLoaded', function() {
     const MAX_SHOPEE_PRODUCTS_IMPORT_BYTES = 20 * 1024 * 1024;
     const MAX_PERSONAL_WATCHLIST_BYTES = 2 * 1024 * 1024;
     const PersonalWatchlist = window.PersonalWatchlist || {};
-    const storedWatchlist = PersonalWatchlist.readStoredWatchlist
-        ? PersonalWatchlist.readStoredWatchlist(window.localStorage)
-        : { productIds: [], enabled: false };
-    let personalWatchlistIds = storedWatchlist.productIds || [];
+    // Watchlists are loaded only by the explicit import action.
+    let personalWatchlistIds = [];
     let personalWatchlistExclusionIds = [];
     let personalWatchlistExclusionsReady = null;
     
@@ -381,17 +379,6 @@ document.addEventListener('DOMContentLoaded', function() {
         );
     }
 
-    function enablePersonalWatchlistFilterIfReady() {
-        if (!personalWatchlistIds.length || !personalWatchlistOnlyToggle) return false;
-        if (!personalWatchlistOnlyToggle.checked) {
-            personalWatchlistOnlyToggle.checked = true;
-            persistPersonalWatchlist(true);
-            updatePersonalWatchlistUi();
-            return true;
-        }
-        return false;
-    }
-
     async function preparePersonalWatchlistForResults() {
         await ensurePersonalWatchlistExclusions();
         const sanitized = sanitizePersonalWatchlistIds(personalWatchlistIds);
@@ -400,7 +387,7 @@ document.addEventListener('DOMContentLoaded', function() {
             persistPersonalWatchlist(isPersonalWatchlistEnabled());
             updatePersonalWatchlistUi();
         }
-        return enablePersonalWatchlistFilterIfReady();
+        return isPersonalWatchlistEnabled();
     }
 
     function setPersonalWatchlistStatus(text, type = '') {
@@ -427,7 +414,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 personalWatchlistSummary.textContent = `${counts.matched} / ${counts.imported} 命中目前搜尋`;
             }
         }
-        persistPersonalWatchlist(isPersonalWatchlistEnabled());
     }
 
     function showPersonalWatchlistCard(visible) {
@@ -505,6 +491,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     'success'
                 );
                 window.batchRestockEnabled = personalWatchlistIds.length > 0 && Boolean(window.lastSearchResults);
+                persistPersonalWatchlist(isPersonalWatchlistEnabled());
                 updatePersonalWatchlistUi();
                 if (window.lastSearchResults) {
                     rerenderCurrentSearchResults();
@@ -1982,59 +1969,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 alert(error.message || '續跑失敗');
                 if (resumeRestockBatchButton) resumeRestockBatchButton.disabled = false;
             });
-    }
-
-    async function bootstrapHomePage() {
-        setShopeeProductsImportStatus('正在自動載入 shopee_products.json 與觀察清單…', 'loading');
-        try {
-            const response = await fetch('/api/home/bootstrap');
-            const data = await response.json().catch(() => ({}));
-            window.homeBootstrap = data;
-            window.batchRestockEnabled = Boolean(data.batchRestockEnabled);
-            if (!data.products || (data.status !== 'success' && data.status !== 'partial')) {
-                setShopeeProductsImportStatus(data.message || '自動載入失敗', 'error');
-                updateBatchRestockToolbar();
-                return;
-            }
-            if (data.watchlist && Array.isArray(data.watchlist.productIds) && data.watchlist.productIds.length) {
-                personalWatchlistIds = data.watchlist.productIds;
-                if (data.watchlistExclusions && Array.isArray(data.watchlistExclusions.productIds)) {
-                    setPersonalWatchlistExclusionIds(data.watchlistExclusions.productIds);
-                }
-                if (personalWatchlistOnlyToggle) {
-                    personalWatchlistOnlyToggle.checked = true;
-                }
-                persistPersonalWatchlist(true);
-            }
-            await applyCrawlerSuccessResults(data.products);
-            const autoloadKeyword = new URLSearchParams(window.location.search).get('keyword') || '';
-            if (autoloadKeyword) {
-                if (advancedSearchInput) advancedSearchInput.value = autoloadKeyword;
-                window.currentAdvancedKeyword = autoloadKeyword;
-                displayProducts(window.lastSearchResults, autoloadKeyword, window.currentSearchOption || 'product');
-            }
-            const shopee = data.shopee || {};
-            const golden = data.golden || {};
-            setShopeeProductsImportStatus(
-                `${data.message || '已自動載入'}。資料時間 ${shopee.mtime || '未知'}；` +
-                `Golden 可補 ${golden.restockableModelCount || 0}、未完成 ${golden.incompleteModelCount || 0}。`,
-                data.status === 'success' ? 'success' : 'error'
-            );
-            if (data.status === 'success') {
-                setPersonalWatchlistStatus(
-                    `已自動載入觀察清單 ${data.watchlistCounts?.matched || 0} / ${data.watchlistCounts?.imported || 0} 命中。`,
-                    'success'
-                );
-            } else if (data.watchlistInfo && !data.watchlistInfo.ok) {
-                setPersonalWatchlistStatus(data.message || '觀察清單載入失敗', 'error');
-            }
-            updateBatchRestockToolbar();
-            await refreshRestockBatchCard();
-        } catch (error) {
-            window.batchRestockEnabled = false;
-            setShopeeProductsImportStatus(error.message || '自動載入失敗', 'error');
-            updateBatchRestockToolbar();
-        }
     }
 
     if (resumeRestockBatchButton) {
@@ -4248,8 +4182,9 @@ document.addEventListener('DOMContentLoaded', function() {
         personalWatchlistImportButton.addEventListener('click', importPersonalWatchlist);
     }
     if (personalWatchlistOnlyToggle) {
-        personalWatchlistOnlyToggle.checked = Boolean(storedWatchlist.enabled && personalWatchlistIds.length);
+        personalWatchlistOnlyToggle.checked = false;
         personalWatchlistOnlyToggle.addEventListener('change', function() {
+            persistPersonalWatchlist(isPersonalWatchlistEnabled());
             updatePersonalWatchlistUi();
             rerenderCurrentSearchResults();
         });
@@ -4269,11 +4204,7 @@ document.addEventListener('DOMContentLoaded', function() {
         updatePersonalWatchlistUi();
     });
     loadAlibabaBindings();
-    if (new URLSearchParams(window.location.search).get('autoload') === '1') {
-        bootstrapHomePage();
-    } else {
-        refreshRestockBatchCard();
-    }
+    refreshRestockBatchCard();
     loadSkuReviewReports().then(() => {
         if (skuReviewReportSelect && skuReviewReportSelect.value) {
             loadSkuReview();

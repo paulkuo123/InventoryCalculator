@@ -27,9 +27,8 @@ from run_watchlist_restock import (
 class RunWatchlistRestockTests(unittest.TestCase):
     def test_urls(self):
         self.assertEqual(server_url(8080), "http://127.0.0.1:8080")
-        self.assertEqual(home_url(8080), "http://127.0.0.1:8080/?autoload=1")
-        self.assertEqual(home_url(8080, autoload=False), "http://127.0.0.1:8080/")
-        self.assertEqual(home_url(8080, keyword="吊飾"), "http://127.0.0.1:8080/?autoload=1&keyword=%E5%90%8A%E9%A3%BE")
+        self.assertEqual(home_url(8080), "http://127.0.0.1:8080/")
+        self.assertEqual(home_url(8080, keyword="吊飾"), "http://127.0.0.1:8080/?keyword=%E5%90%8A%E9%A3%BE")
 
     def test_parse_args_defaults_to_review_only(self):
         args = parse_args([])

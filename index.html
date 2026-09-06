@@ -89,7 +89,7 @@
             <div class="cookie-import-header">
                 <div>
                     <h3><i class="fas fa-file-import"></i> 手動匯入 shopee_products.json</h3>
-                    <p>一般開啟 <code>main.py</code> 不會自動載入。請用 <code>scripts/run_watchlist_restock.py</code> 啟動並帶 <code>?autoload=1</code>，或在這裡手動匯入。</p>
+                    <p>選擇商品資料檔後按「匯入並套用」。觀察清單請在下方另外匯入。</p>
                 </div>
             </div>
             <div class="shopee-products-import-actions">
@@ -193,7 +193,7 @@
             <div class="cookie-import-header">
                 <div>
                     <h3><i class="fas fa-bookmark"></i> 個人觀察清單</h3>
-                    <p>由正式補貨腳本啟動時會自動載入 <code>watchlists/personal_watchlist.json</code>。一般開啟則請手動匯入，或沿用瀏覽器已存的清單。</p>
+                    <p>手動匯入觀察清單後，可切換「只顯示我的觀察清單」。再次匯入商品資料會保留目前的篩選選擇。</p>
                 </div>
                 <span class="cookie-import-hint" id="personalWatchlistSummary">尚未匯入</span>
             </div>
@@ -316,6 +316,6 @@
 
     <section id="restockOperationStatus" class="restock-operation-status" aria-live="polite" hidden></section>
 
-    <script src="script.js?v=20260830-skip-unapproved"></script>
+    <script src="script.js?v=20260906-manual-import"></script>
 </body>
 </html>

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Official launcher: start main.py, load the homepage for review, then restock via API.
 
-This script owns the watchlist restock workflow. main.py stays the inventory
-server and single-product restock engine; it does not auto-load or auto-restock
-unless this script opens the page with ?autoload=1.
+This script owns the watchlist restock workflow. The homepage requires explicit
+product/watchlist imports; opening it does not load a list or change its filter.
 """
 
 from __future__ import annotations
@@ -45,11 +44,9 @@ def server_url(port: int) -> str:
     return f"http://127.0.0.1:{int(port)}"
 
 
-def home_url(port: int, autoload: bool = True, keyword: str = "") -> str:
+def home_url(port: int, keyword: str = "") -> str:
     url = f"{server_url(port)}/"
     params = []
-    if autoload:
-        params.append("autoload=1")
     if keyword:
         params.append(f"keyword={urllib.parse.quote(keyword)}")
     if params:
@@ -395,11 +392,11 @@ def main(argv: Optional[list] = None) -> int:
             flush=True,
         )
 
-        review_url = home_url(args.port, autoload=True, keyword=args.keyword)
+        review_url = home_url(args.port, keyword=args.keyword)
         if not args.no_browser:
             webbrowser.open(review_url)
         print(f"請先在瀏覽器對結果：{review_url}", flush=True)
-        print("這一頁會載入 shopee_products.json 與觀察清單；沒看過畫面之前不會加車。", flush=True)
+        print("請在這一頁手動匯入 shopee_products.json 與觀察清單，再核對補貨內容。", flush=True)
 
         if args.resume:
             started = resume_batch(base, args.resume, cart_cleared=bool(args.cart_cleared))
