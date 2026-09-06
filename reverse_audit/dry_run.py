@@ -1214,7 +1214,10 @@ def run_dry_run(
                 "order-covered still in cart = optional clear; "
                 "multi cart lines → whole key fail/ambiguous"
             ),
-            "mutateFlags": "--i-approve-mutate remains add-only (missing_to_add); set-qty/remove not in Phase 1",
+            "mutateFlags": (
+                "--i-approve-mutate=add only; --i-approve-set-qty=shortfall UP+excess DOWN; "
+                "--i-approve-remove=removable only; flags never imply each other"
+            ),
         },
         "outputs": {
             "dir": str(out_dir),
@@ -1300,7 +1303,10 @@ def run_dry_run(
         "- `missing_to_add.csv`、`qty_shortfall.csv`、`qty_excess.csv`、"
         "`unexpected_in_cart.csv`、`covered.csv`、`expected_*.csv`、`ambiguous.csv`"
     )
-    lines.append("- mutate 讀取 `missing_to_add.csv`；有 shortfall 時會檢查 `qty_shortfall.csv`")
+    lines.append(
+        "- mutate：`--i-approve-mutate` 加車；`--i-approve-set-qty` 改量；"
+        "`--i-approve-remove` 刪除（預設不刪，須庭安明確說刪）"
+    )
     lines.append("")
     lines.append("---")
     lines.append(

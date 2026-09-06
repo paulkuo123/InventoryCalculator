@@ -28,7 +28,15 @@ from reverse_audit.dry_run import (  # noqa: E402
     resolve_certain_name_spec_sku_ids,
     run_dry_run,
 )
-from reverse_audit.mutate import require_approve  # noqa: E402
+from reverse_audit.mutate import (  # noqa: E402
+    plan_remove_rows,
+    plan_set_qty_rows,
+    refuse_no_flags_message,
+    remove_runtime_blocked,
+    require_approve,
+    run_mutate_actions,
+    shortfall_row_count,
+)
 from reverse_audit.paths import resolve_report_dir  # noqa: E402
 from reverse_audit.util import load_json  # noqa: E402
 
@@ -562,6 +570,18 @@ class MutateSafetyTests(unittest.TestCase):
         code = cli_main(["mutate", "--dir", "/tmp/does-not-matter-for-gate"])
         self.assertEqual(code, 2)
 
+    def test_cli_mutate_without_flag_mentions_all_flags(self):
+        proc = subprocess.run(
+            [sys.executable, "-m", "reverse_audit", "mutate", "--date", "20260905"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("--i-approve-mutate", proc.stderr)
+        self.assertIn("--i-approve-set-qty", proc.stderr)
+        self.assertIn("--i-approve-remove", proc.stderr)
+
     def test_cli_mutate_subprocess_without_flag(self):
         proc = subprocess.run(
             [sys.executable, "-m", "reverse_audit", "mutate", "--date", "20260905"],
@@ -571,6 +591,582 @@ class MutateSafetyTests(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 2)
         self.assertIn("--i-approve-mutate", proc.stderr)
+
+    def test_refuse_no_flags_message_lists_flags(self):
+        msg = refuse_no_flags_message()
+        self.assertIn("--i-approve-mutate", msg)
+        self.assertIn("--i-approve-set-qty", msg)
+        self.assertIn("--i-approve-remove", msg)
+
+
+class MutateFlagGatingTests(unittest.TestCase):
+    """Phase 2–4: independent fail-closed flags; planners without live CDP."""
+
+    def _write_csv(self, path: Path, fieldnames, rows):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            for r in rows:
+                w.writerow(r)
+
+    def _mock_dispatch(self, calls: list):
+        def dispatch(script: Path, out_dir: Path) -> int:
+            calls.append((script.name, str(out_dir)))
+            return 0
+
+        return dispatch
+
+    def test_set_qty_alone_does_not_require_mutate(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "qty_shortfall.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "expected_qty",
+                    "cart_qty",
+                    "cart_ids",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "111",
+                        "sku_id": "sku-sf",
+                        "expected_qty": "10",
+                        "cart_qty": "3",
+                        "cart_ids": "c1",
+                        "multi_cart_line_fail": "false",
+                    }
+                ],
+            )
+            self._write_csv(
+                out / "qty_excess.csv",
+                ["offer_id", "sku_id", "expected_qty", "target_qty", "cart_ids"],
+                [],
+            )
+            calls = []
+            code = run_mutate_actions(
+                out,
+                approve_add=False,
+                approve_set_qty=True,
+                approve_remove=False,
+                dispatch=self._mock_dispatch(calls),
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(len(calls), 1)
+            self.assertIn("set_qty", calls[0][0])
+
+    def test_remove_alone_does_not_imply_add_or_set_qty(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "unexpected_in_cart.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "cart_qty",
+                    "cart_ids",
+                    "in_order_pools",
+                    "in_uncertain_expected",
+                    "in_skip_expected",
+                    "removable",
+                    "reason",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "222",
+                        "sku_id": "sku-orphan",
+                        "cart_qty": "2",
+                        "cart_ids": "c-orphan",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "false",
+                    }
+                ],
+            )
+            calls = []
+            code = run_mutate_actions(
+                out,
+                approve_add=False,
+                approve_set_qty=False,
+                approve_remove=True,
+                dispatch=self._mock_dispatch(calls),
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(len(calls), 1)
+            self.assertIn("remove", calls[0][0])
+
+    def test_add_blocked_by_shortfall_without_set_qty(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "missing_to_add.csv",
+                ["offer_id", "sku_id", "expected_qty", "alibaba_url"],
+                [
+                    {
+                        "offer_id": "1",
+                        "sku_id": "s",
+                        "expected_qty": "5",
+                        "alibaba_url": "https://detail.1688.com/offer/1.html",
+                    }
+                ],
+            )
+            self._write_csv(
+                out / "qty_shortfall.csv",
+                ["offer_id", "sku_id", "expected_qty", "cart_qty", "cart_ids"],
+                [
+                    {
+                        "offer_id": "9",
+                        "sku_id": "sf",
+                        "expected_qty": "10",
+                        "cart_qty": "2",
+                        "cart_ids": "c9",
+                    }
+                ],
+            )
+            calls = []
+            code = run_mutate_actions(
+                out,
+                approve_add=True,
+                approve_set_qty=False,
+                approve_remove=False,
+                dispatch=self._mock_dispatch(calls),
+            )
+            self.assertEqual(code, 2)
+            self.assertEqual(calls, [])
+
+    def test_add_unlocked_when_set_qty_completed_same_run(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "missing_to_add.csv",
+                ["offer_id", "sku_id", "expected_qty", "alibaba_url"],
+                [
+                    {
+                        "offer_id": "1",
+                        "sku_id": "s",
+                        "expected_qty": "5",
+                        "alibaba_url": "https://detail.1688.com/offer/1.html",
+                    }
+                ],
+            )
+            self._write_csv(
+                out / "qty_shortfall.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "expected_qty",
+                    "cart_qty",
+                    "cart_ids",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "9",
+                        "sku_id": "sf",
+                        "expected_qty": "10",
+                        "cart_qty": "2",
+                        "cart_ids": "c9",
+                        "multi_cart_line_fail": "false",
+                    }
+                ],
+            )
+            self._write_csv(
+                out / "qty_excess.csv",
+                ["offer_id", "sku_id", "expected_qty", "target_qty", "cart_ids"],
+                [],
+            )
+            calls = []
+            code = run_mutate_actions(
+                out,
+                approve_add=True,
+                approve_set_qty=True,
+                approve_remove=False,
+                dispatch=self._mock_dispatch(calls),
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(len(calls), 2)
+            self.assertIn("set_qty", calls[0][0])
+            self.assertIn("add", calls[1][0])
+
+    def test_cli_set_qty_alone_exit_zero_with_mock_empty_plan(self):
+        """CLI accepts --i-approve-set-qty without --i-approve-mutate."""
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "qty_shortfall.csv",
+                ["offer_id", "sku_id", "expected_qty", "cart_ids"],
+                [],
+            )
+            self._write_csv(
+                out / "qty_excess.csv",
+                ["offer_id", "sku_id", "expected_qty", "target_qty", "cart_ids"],
+                [],
+            )
+            # Empty plan → set-qty returns 0 without CDP
+            code = cli_main(
+                ["mutate", "--dir", str(out), "--i-approve-set-qty"]
+            )
+            self.assertEqual(code, 0)
+
+    def test_order_of_actions_set_qty_then_remove_then_add(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "qty_shortfall.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "expected_qty",
+                    "cart_ids",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "1",
+                        "sku_id": "a",
+                        "expected_qty": "5",
+                        "cart_ids": "c1",
+                        "multi_cart_line_fail": "false",
+                    }
+                ],
+            )
+            self._write_csv(
+                out / "qty_excess.csv",
+                ["offer_id", "sku_id", "expected_qty", "target_qty", "cart_ids"],
+                [],
+            )
+            self._write_csv(
+                out / "unexpected_in_cart.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "cart_ids",
+                    "in_order_pools",
+                    "in_uncertain_expected",
+                    "in_skip_expected",
+                    "removable",
+                    "reason",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "2",
+                        "sku_id": "b",
+                        "cart_ids": "c2",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "false",
+                    }
+                ],
+            )
+            self._write_csv(
+                out / "missing_to_add.csv",
+                ["offer_id", "sku_id", "expected_qty", "alibaba_url"],
+                [
+                    {
+                        "offer_id": "3",
+                        "sku_id": "c",
+                        "expected_qty": "1",
+                        "alibaba_url": "https://detail.1688.com/offer/3.html",
+                    }
+                ],
+            )
+            calls = []
+            code = run_mutate_actions(
+                out,
+                approve_add=True,
+                approve_set_qty=True,
+                approve_remove=True,
+                dispatch=self._mock_dispatch(calls),
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(len(calls), 3)
+            self.assertIn("set_qty", calls[0][0])
+            self.assertIn("remove", calls[1][0])
+            self.assertIn("add", calls[2][0])
+
+
+class SetQtyPlannerTests(unittest.TestCase):
+    def _write_csv(self, path: Path, fieldnames, rows):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            for r in rows:
+                w.writerow(r)
+
+    def test_absolute_target_from_expected_and_skips_multi_cart(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "qty_shortfall.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "expected_qty",
+                    "cart_qty",
+                    "cart_ids",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "111",
+                        "sku_id": "ok",
+                        "expected_qty": "12",
+                        "cart_qty": "4",
+                        "cart_ids": "c1",
+                        "multi_cart_line_fail": "false",
+                    },
+                    {
+                        "offer_id": "222",
+                        "sku_id": "multi",
+                        "expected_qty": "8",
+                        "cart_qty": "3",
+                        "cart_ids": "c2|c3",
+                        "multi_cart_line_fail": "true",
+                    },
+                ],
+            )
+            self._write_csv(
+                out / "qty_excess.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "expected_qty",
+                    "target_qty",
+                    "cart_qty",
+                    "cart_ids",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "333",
+                        "sku_id": "ex",
+                        "expected_qty": "5",
+                        "target_qty": "5",
+                        "cart_qty": "9",
+                        "cart_ids": "c4",
+                        "multi_cart_line_fail": "false",
+                    }
+                ],
+            )
+            accepted, skipped = plan_set_qty_rows(out)
+            self.assertEqual(len(accepted), 2)
+            by_sku = {r["sku_id"]: r for r in accepted}
+            self.assertEqual(by_sku["ok"]["target_qty"], 12)
+            self.assertEqual(by_sku["ex"]["target_qty"], 5)
+            self.assertTrue(
+                any(r.get("skip_reason") == "multi_cart_line_fail" for r in skipped)
+            )
+
+
+class RemovePlannerTests(unittest.TestCase):
+    def _write_csv(self, path: Path, fieldnames, rows):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=fieldnames)
+            w.writeheader()
+            for r in rows:
+                w.writerow(r)
+
+    def test_only_removable_true_accepted_with_runtime_recheck(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            fields = [
+                "offer_id",
+                "sku_id",
+                "cart_qty",
+                "cart_ids",
+                "in_order_pools",
+                "in_uncertain_expected",
+                "in_skip_expected",
+                "removable",
+                "reason",
+                "multi_cart_line_fail",
+            ]
+            self._write_csv(
+                out / "unexpected_in_cart.csv",
+                fields,
+                [
+                    {
+                        "offer_id": "1",
+                        "sku_id": "orphan",
+                        "cart_qty": "1",
+                        "cart_ids": "c1",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "false",
+                    },
+                    {
+                        "offer_id": "2",
+                        "sku_id": "prot",
+                        "cart_qty": "1",
+                        "cart_ids": "c2",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "false",
+                        "reason": "order_pool_protected",
+                        "multi_cart_line_fail": "false",
+                    },
+                    {
+                        # Hand-edited removable=true but protected reason → refuse
+                        "offer_id": "3",
+                        "sku_id": "handedit",
+                        "cart_qty": "1",
+                        "cart_ids": "c3",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "order_pool_protected",
+                        "multi_cart_line_fail": "false",
+                    },
+                    {
+                        "offer_id": "4",
+                        "sku_id": "unc",
+                        "cart_qty": "1",
+                        "cart_ids": "c4",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "true",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "false",
+                    },
+                    {
+                        "offer_id": "5",
+                        "sku_id": "multi",
+                        "cart_qty": "2",
+                        "cart_ids": "c5|c6",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "true",
+                    },
+                ],
+            )
+            accepted, skipped = plan_remove_rows(out)
+            self.assertEqual(len(accepted), 1)
+            self.assertEqual(accepted[0]["sku_id"], "orphan")
+            skip_reasons = {r["sku_id"]: r["skip_reason"] for r in skipped}
+            self.assertEqual(skip_reasons["prot"], "removable_false")
+            self.assertIn("protected_reason", skip_reasons["handedit"])
+            self.assertEqual(skip_reasons["unc"], "in_uncertain_expected")
+            self.assertEqual(skip_reasons["multi"], "multi_cart_line_fail")
+
+    def test_remove_runtime_blocked_helpers(self):
+        self.assertIsNotNone(
+            remove_runtime_blocked(
+                {
+                    "reason": "uncertain_protected",
+                    "removable": "true",
+                    "offer_id": "1",
+                    "sku_id": "x",
+                    "cart_ids": "c1",
+                }
+            )
+        )
+        self.assertIsNotNone(
+            remove_runtime_blocked(
+                {
+                    "reason": "not_in_certain_expected",
+                    "in_order_pools": "pending_pay",
+                    "offer_id": "1",
+                    "sku_id": "x",
+                    "cart_ids": "c1",
+                }
+            )
+        )
+        self.assertIsNone(
+            remove_runtime_blocked(
+                {
+                    "reason": "not_in_certain_expected",
+                    "in_order_pools": "",
+                    "in_uncertain_expected": "false",
+                    "in_skip_expected": "false",
+                    "offer_id": "1",
+                    "sku_id": "x",
+                    "cart_ids": "c1",
+                    "multi_cart_line_fail": "false",
+                }
+            )
+        )
+
+    def test_remove_not_blocked_by_shortfall_pause(self):
+        """Remove may run independently when shortfall CSV has rows."""
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            self._write_csv(
+                out / "qty_shortfall.csv",
+                ["offer_id", "sku_id", "expected_qty", "cart_ids"],
+                [
+                    {
+                        "offer_id": "9",
+                        "sku_id": "sf",
+                        "expected_qty": "10",
+                        "cart_ids": "c9",
+                    }
+                ],
+            )
+            self.assertEqual(shortfall_row_count(out), 1)
+            self._write_csv(
+                out / "unexpected_in_cart.csv",
+                [
+                    "offer_id",
+                    "sku_id",
+                    "cart_ids",
+                    "in_order_pools",
+                    "in_uncertain_expected",
+                    "in_skip_expected",
+                    "removable",
+                    "reason",
+                    "multi_cart_line_fail",
+                ],
+                [
+                    {
+                        "offer_id": "2",
+                        "sku_id": "b",
+                        "cart_ids": "c2",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "false",
+                    }
+                ],
+            )
+            calls = []
+
+            def dispatch(script, out_dir):
+                calls.append(script.name)
+                return 0
+
+            code = run_mutate_actions(
+                out,
+                approve_add=False,
+                approve_set_qty=False,
+                approve_remove=True,
+                dispatch=dispatch,
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(calls, ["mutate_remove_cdp.py"])
 
 
 class CliDryRunSmokeTests(unittest.TestCase):

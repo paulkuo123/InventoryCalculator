@@ -8,7 +8,7 @@ from pathlib import Path
 
 from reverse_audit.dry_run import run_dry_run
 from reverse_audit.freeze import run_freeze
-from reverse_audit.mutate import run_mutate
+from reverse_audit.mutate import refuse_no_flags_message, run_mutate_actions
 from reverse_audit.paths import resolve_report_dir, today_yyyymmdd
 
 
@@ -17,7 +17,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="python -m reverse_audit",
         description=(
             "反向補貨查核：freeze → offline dry-run → explicit mutate。"
-            "不猜 URL/skuId；車內不足暫停且不自動改量。"
+            "不猜 URL/skuId；車內不足暫停且不自動改量；"
+            "改量／刪除須各自核准旗標（互不隱含）。"
         ),
     )
     sub = p.add_subparsers(dest="command", required=True)
@@ -57,14 +58,30 @@ def build_parser() -> argparse.ArgumentParser:
 
     mut_p = sub.add_parser(
         "mutate",
-        help="依 missing_to_add.csv 加車（必須 --i-approve-mutate）",
+        help=(
+            "改車（須至少一個核准旗標）："
+            "--i-approve-mutate 加車 / --i-approve-set-qty 改量 / "
+            "--i-approve-remove 刪除 removable"
+        ),
     )
     add_common(mut_p)
     mut_p.add_argument(
         "--i-approve-mutate",
         action="store_true",
         dest="i_approve_mutate",
-        help="明確核准 mutate（缺少則 fail-closed）",
+        help="明確核准加車（missing_to_add.csv only；不隱含改量／刪除）",
+    )
+    mut_p.add_argument(
+        "--i-approve-set-qty",
+        action="store_true",
+        dest="i_approve_set_qty",
+        help="明確核准設量到 expected（shortfall 上補＋excess 下砍；不隱含加車／刪除）",
+    )
+    mut_p.add_argument(
+        "--i-approve-remove",
+        action="store_true",
+        dest="i_approve_remove",
+        help="明確核准刪除 removable=true（庭安須真的說刪；預設不刪）",
     )
     return p
 
@@ -87,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
 
     if getattr(args, "cdp", None):
         import os
+
         os.environ["ALIBABA_RESTOCK_CDP"] = str(args.cdp)
 
     if args.command == "freeze":
@@ -112,15 +130,25 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
     if args.command == "mutate":
-        if not bool(args.i_approve_mutate):
-            print(
-                "refusing mutate: pass --i-approve-mutate after reviewing dry-run "
-                "(fail-closed; default never mutates cart)",
-                file=sys.stderr,
-            )
+        approve_add = bool(args.i_approve_mutate)
+        approve_set_qty = bool(args.i_approve_set_qty)
+        approve_remove = bool(args.i_approve_remove)
+        if not (approve_add or approve_set_qty or approve_remove):
+            print(refuse_no_flags_message(), file=sys.stderr)
             return 2
         try:
-            return run_mutate(out_dir, approved=True)
+            return run_mutate_actions(
+                out_dir,
+                approve_add=approve_add,
+                approve_set_qty=approve_set_qty,
+                approve_remove=approve_remove,
+            )
+        except SystemExit as exc:
+            msg = exc.code if isinstance(exc.code, str) else str(exc)
+            if isinstance(exc.code, int):
+                return int(exc.code)
+            print(msg, file=sys.stderr)
+            return 2
         except FileNotFoundError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
