@@ -201,7 +201,7 @@ class RunWatchlistRestockTests(unittest.TestCase):
         if not any(product.get("items") for product in payload["products"]):
             self.assertTrue(
                 any(int(product.get("blockerCount") or 0) > 0 for product in payload["products"]),
-                "raw approved without Phase 1 re-verification must stay non-purchasable",
+                "expected restock items or blockers after model-row trust tier",
             )
         for product in payload["products"]:
             if product.get("items"):

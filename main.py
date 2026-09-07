@@ -2637,8 +2637,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 skipped.append({
                     **skip_target,
                     "reason": (
-                        "1688 SKU mapping 已核准但尚未完成 Phase 1 補驗證，不可採購"
-                        if gate_reason == "phase1_unverified"
+                        "1688 SKU mapping 缺 1688_sku_id，待補驗證，不可採購"
+                        if gate_reason == "missing_sku_id"
+                        else "1688 SKU mapping 缺 URL／offer，待補驗證，不可採購"
+                        if gate_reason == "missing_url"
+                        else "1688 SKU mapping 型號列衝突，不可採購"
+                        if gate_reason == "conflict"
+                        else "1688 SKU mapping 已核准但尚待補驗證／審核未通過，不可採購"
+                        if gate_reason in {"must_reverify", "phase1_unverified", "rejected", "sold_out"}
                         else f"1688 SKU mapping 尚未核准（{mapping_status}）"
                     ),
                 })

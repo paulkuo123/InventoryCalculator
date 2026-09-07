@@ -248,15 +248,31 @@ def build_expected(
                     "1688_sku_name": sku_name,
                     "1688_mapping_status": status,
                 })
-                if gate_reason == "phase1_unverified":
-                    missing.append("phase1_unverified")
-                if status != "approved":
-                    missing.append(f"status={status or 'empty'}")
-                if not url_ok:
+                # Prefer stable gate reason codes from mapping_procurement_gate.
+                if gate_reason in {
+                    "missing_sku_id",
+                    "missing_url",
+                    "conflict",
+                    "must_reverify",
+                    "rejected",
+                    "sold_out",
+                    "phase1_unverified",  # legacy alias
+                }:
+                    missing.append(gate_reason)
+                if status != "approved" and not any(m.startswith("status=") for m in missing):
+                    if gate_reason and str(gate_reason).startswith("status="):
+                        missing.append(gate_reason)
+                    else:
+                        missing.append(f"status={status or 'empty'}")
+                if not url_ok and "missing_url" not in missing and "url" not in missing:
                     missing.append("url")
-                if not has_sku and not has_name_spec:
+                if not has_sku and not has_name_spec and "skuId+name/spec" not in missing:
                     missing.append("skuId+name/spec")
-                elif not has_sku and gate_reason != "phase1_unverified":
+                elif (
+                    not has_sku
+                    and gate_reason not in {"missing_sku_id", "must_reverify", "phase1_unverified", "conflict", "rejected"}
+                    and "skuId" not in missing
+                ):
                     missing.append("skuId")
                 row = dict(base)
                 row["bucket"] = "uncertain"

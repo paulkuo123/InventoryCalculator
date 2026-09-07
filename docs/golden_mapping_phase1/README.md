@@ -5,6 +5,7 @@
 | 檔案 | 內容 |
 |---|---|
 | [locked_paths.md](locked_paths.md) | 已鎖定的舊寫入路徑（410／旗標） |
+| [trust_tiers.md](trust_tiers.md) | 型號列信任分級：自動信任 vs 待補驗證（多 offer 非硬擋） |
 
 執行測試：
 

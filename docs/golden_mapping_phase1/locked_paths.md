@@ -16,4 +16,4 @@ Allowed writes:
 - `applyScope=url_offer_all` still updates URL/Offer only (PR #38)
 - `applyScope=single` may edit URL/SKU names but **cannot** set `1688_mapping_status=approved`
 
-Raw `approved` without `1688_phase1_verified_at` is not purchasable / not reverse_audit certain. Existing `1688_verified_at` from legacy auto-approvals is ignored. This PR does not bulk-rewrite `golden_table.json`.
+Trust tiers are **model-row** based (see [trust_tiers.md](trust_tiers.md)): `approved` + valid `1688_sku_id` + URL/offer + no row conflict → auto-trusted / purchasable / certain. Product-level multi-offer is **not** a hard block. Missing sku_id/URL or row conflict → must re-verify (Phase 1 stamp remains a human override). Existing `1688_verified_at` from legacy auto-approvals alone never grants trust. This PR does not bulk-rewrite `golden_table.json`.

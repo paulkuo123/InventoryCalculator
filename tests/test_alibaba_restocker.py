@@ -473,18 +473,22 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(fields["sku_id"], "5191344225957")
         self.assertEqual(fields["status"], "approved")
 
-    def test_restock_mapping_requires_phase1_reverification(self):
-        unverified = {
+    def test_restock_mapping_auto_trusts_approved_sku_url(self):
+        """Trust tier: approved + sku_id + URL is purchasable without Phase 1 stamp."""
+        auto = {
             "status": "approved",
             "sku_id": "sku-1",
             "sku_name": "黑色",
             "url": "https://detail.1688.com/offer/1.html",
         }
-        self.assertFalse(alibaba_restocker.restock_mapping_is_purchasable(unverified, unverified["url"]))
-        verified = dict(unverified)
-        verified["phase1_verified_at"] = "2026-09-07T12:00:00Z"
-        self.assertTrue(alibaba_restocker.restock_mapping_is_purchasable(verified, verified["url"]))
-        discontinued = dict(verified)
+        self.assertTrue(alibaba_restocker.restock_mapping_is_purchasable(auto, auto["url"]))
+        missing_sku = dict(auto)
+        missing_sku["sku_id"] = ""
+        self.assertFalse(alibaba_restocker.restock_mapping_is_purchasable(missing_sku, missing_sku["url"]))
+        phase1 = dict(missing_sku)
+        phase1["phase1_verified_at"] = "2026-09-07T12:00:00Z"
+        self.assertTrue(alibaba_restocker.restock_mapping_is_purchasable(phase1, phase1["url"]))
+        discontinued = dict(auto)
         discontinued["status"] = "discontinued"
         self.assertFalse(alibaba_restocker.restock_mapping_is_purchasable(discontinued, discontinued["url"]))
 

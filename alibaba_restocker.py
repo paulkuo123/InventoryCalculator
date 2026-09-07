@@ -3201,10 +3201,18 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 item_url = str(item.get("alibabaUrl") or url or "")
                 if not restock_mapping_is_purchasable(sku_fields, item_url):
                     gate_reason = restock_not_purchasable_reason(sku_fields, item_url)
-                    if gate_reason == "phase1_unverified":
-                        blocker_message = "SKU mapping 已核准但尚未完成 Phase 1 補驗證，不可採購"
-                    elif gate_reason == "discontinued":
+                    if gate_reason == "discontinued":
                         blocker_message = "SKU mapping 已停售，未加入採購車"
+                    elif gate_reason == "sold_out":
+                        blocker_message = "SKU mapping 已售罄／停售，未加入採購車"
+                    elif gate_reason == "missing_sku_id":
+                        blocker_message = "SKU mapping 缺 1688_sku_id，待補驗證，不可採購"
+                    elif gate_reason == "missing_url":
+                        blocker_message = "SKU mapping 缺 URL／offer，待補驗證，不可採購"
+                    elif gate_reason == "conflict":
+                        blocker_message = "SKU mapping 型號列衝突，不可採購"
+                    elif gate_reason in {"must_reverify", "phase1_unverified", "rejected"}:
+                        blocker_message = "SKU mapping 已核准但尚待補驗證／審核未通過，不可採購"
                     else:
                         blocker_message = f"SKU mapping 尚未核准（{mapping_status}）"
                     item_result = {
