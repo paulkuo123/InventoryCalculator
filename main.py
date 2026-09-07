@@ -1754,6 +1754,15 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             output_path = job.get("_outputFile")
             cleanup_paths = [job.get("_inputFile"), output_path, job.get("_statusFile")]
         worker_result = self._load_json_if_exists(output_path)
+        if action in ("preview", "apply"):
+            logger.info(
+                "入庫%s結果 job=%s receipt=%s returncode=%s results=%s",
+                "預覽" if action == "preview" else "套用",
+                job_id,
+                payload.get("receiptId"),
+                process.returncode,
+                json.dumps(worker_result.get("results") or [], ensure_ascii=False),
+            )
         try:
             if process.returncode != 0 or worker_result.get("status") != "success":
                 message = str(worker_result.get("message") or "入庫瀏覽器工作失敗")
