@@ -619,6 +619,31 @@ def navigate_shopee_product_list(page, product_id: str, status_path: str) -> Lis
     return models
 
 
+def read_exact_shopee_product_models(page, product_id: str, status_path: str) -> List[Dict[str, Any]]:
+    """Read exact per-model stocks from Shopee's stock modal.
+
+    The product list abbreviates large quantities (for example, ``2630`` can be
+    rendered as ``2k``). Those values are useful for display but are not safe for
+    stock arithmetic or post-save verification. The stock modal keeps the full
+    integer for every model, so merge those exact values back onto the list models.
+    """
+    models = navigate_shopee_product_list(page, product_id, status_path)
+    modal = open_shopee_stock_modal(page, product_id)
+    try:
+        modal_rows = read_stock_modal_rows(page)
+        if not modal_rows:
+            raise ValueError("設定庫存視窗沒有可讀取的規格庫存")
+        exact_models: List[Dict[str, Any]] = []
+        for model in models:
+            row = select_stock_modal_row(modal_rows, str(model.get("modelName") or ""))
+            exact_model = dict(model)
+            exact_model["currentStock"] = int(row["currentStock"])
+            exact_models.append(exact_model)
+        return exact_models
+    finally:
+        close_stock_modal_without_saving(modal)
+
+
 def preview_stocks(base_dir: str, payload: Dict[str, Any], status_path: str) -> Dict[str, Any]:
     updates = payload.get("updates") or []
     results: List[Dict[str, Any]] = []
@@ -634,7 +659,7 @@ def preview_stocks(base_dir: str, payload: Dict[str, Any], status_path: str) -> 
                 grouped[str(update.get("shopee_product_id") or update.get("productId"))].append(update)
             for product_id, product_updates in grouped.items():
                 try:
-                    models = navigate_shopee_product_list(page, product_id, status_path)
+                    models = read_exact_shopee_product_models(page, product_id, status_path)
                     for update in product_updates:
                         try:
                             model = select_live_model(
@@ -921,7 +946,7 @@ def verify_post_save_stocks(
     for attempt, delay_ms in enumerate(POST_SAVE_STOCK_VERIFY_DELAYS_MS, start=1):
         page.wait_for_timeout(delay_ms)
         try:
-            live_models = navigate_shopee_product_list(page, product_id, status_path)
+            live_models = read_exact_shopee_product_models(page, product_id, status_path)
         except Exception as exc:
             last_error = str(exc)
             continue
@@ -960,7 +985,10 @@ def verify_post_save_stocks(
     for update, before, target in prepared:
         update_id = str(update.get("id") or "")
         after = observations.get(update_id)
-        if after is None:
+        matched = after == target
+        if matched:
+            message = ""
+        elif after is None:
             message = f"儲存後已重新讀取庫存 {attempts} 次仍無法確認結果"
             if last_error:
                 message = f"{message}：{last_error}"
@@ -971,7 +999,7 @@ def verify_post_save_stocks(
             )
         results.append({
             "updateId": update.get("id"),
-            "status": "manual_review",
+            "status": "success" if matched else "manual_review",
             "beforeApply": before,
             "targetStock": target,
             "afterStock": after,

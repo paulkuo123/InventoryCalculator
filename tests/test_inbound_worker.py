@@ -10,6 +10,7 @@ from inbound_worker import (
     order_url_from_reference,
     parse_order_api_payload,
     parse_order_dom_rows,
+    read_exact_shopee_product_models,
     resolve_snapshot_offer_ids,
     open_shopee_stock_modal,
     locate_shopee_stock_modal,
@@ -296,12 +297,28 @@ class InboundWorkerParsingTest(unittest.TestCase):
         stale_models = [{"modelId": "model-black", "modelName": "黑色", "currentStock": 100}]
         saved_models = [{"modelId": "model-black", "modelName": "黑色", "currentStock": 150}]
 
-        with patch("inbound_worker.navigate_shopee_product_list", side_effect=[stale_models, saved_models]):
+        with patch("inbound_worker.read_exact_shopee_product_models", side_effect=[stale_models, saved_models]):
             result = verify_post_save_stocks(FakePage(), "product-1", prepared, "unused-status.json")
 
         self.assertEqual(FakePage.waits, [1200, 2500])
         self.assertEqual(result[0]["status"], "success")
         self.assertEqual(result[0]["afterStock"], 150)
+
+    def test_exact_stock_reader_uses_full_modal_value_instead_of_list_abbreviation(self):
+        list_models = [{"modelId": "white", "modelName": "白色", "currentStock": 2}]
+        modal_rows = [{"modelName": "白色", "currentStock": 2630, "editable": True}]
+        modal = object()
+
+        with patch("inbound_worker.navigate_shopee_product_list", return_value=list_models), \
+                patch("inbound_worker.open_shopee_stock_modal", return_value=modal), \
+                patch("inbound_worker.read_stock_modal_rows", return_value=modal_rows), \
+                patch("inbound_worker.close_stock_modal_without_saving") as close_modal:
+            result = read_exact_shopee_product_models(
+                object(), "product-1", "unused-status.json"
+            )
+
+        self.assertEqual(result[0]["currentStock"], 2630)
+        close_modal.assert_called_once_with(modal)
 
     def test_post_save_verification_requires_manual_review_after_all_retries(self):
         class FakePage:
@@ -318,13 +335,38 @@ class InboundWorkerParsingTest(unittest.TestCase):
         )]
         stale_models = [{"modelId": "model-black", "modelName": "黑色", "currentStock": 100}]
 
-        with patch("inbound_worker.navigate_shopee_product_list", return_value=stale_models):
+        with patch("inbound_worker.read_exact_shopee_product_models", return_value=stale_models):
             result = verify_post_save_stocks(FakePage(), "product-1", prepared, "unused-status.json")
 
         self.assertEqual(FakePage.waits, [1200, 2500, 4000])
         self.assertEqual(result[0]["status"], "manual_review")
         self.assertEqual(result[0]["afterStock"], 100)
         self.assertIn("重新讀取庫存 3 次", result[0]["message"])
+
+    def test_post_save_verification_keeps_individually_matched_models_successful(self):
+        class FakePage:
+            waits = []
+
+            @classmethod
+            def wait_for_timeout(cls, milliseconds):
+                cls.waits.append(milliseconds)
+
+        prepared = [
+            ({"id": 9, "shopee_model_id": "blue", "shopee_model_name": "霧藍"}, 163, 293),
+            ({"id": 10, "shopee_model_id": "white", "shopee_model_name": "白色"}, 0, 2630),
+        ]
+        models = [
+            {"modelId": "blue", "modelName": "霧藍", "currentStock": 293},
+            {"modelId": "white", "modelName": "白色", "currentStock": 0},
+        ]
+
+        with patch("inbound_worker.read_exact_shopee_product_models", return_value=models):
+            result = verify_post_save_stocks(FakePage(), "product-1", prepared, "unused-status.json")
+
+        self.assertEqual(result[0]["status"], "success")
+        self.assertEqual(result[0]["message"], "")
+        self.assertEqual(result[1]["status"], "manual_review")
+        self.assertIn("最後讀值 0 仍與目標 2630 不一致", result[1]["message"])
 
 
 if __name__ == "__main__":
