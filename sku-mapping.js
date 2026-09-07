@@ -1,7 +1,18 @@
 (() => {
   const $ = id => document.getElementById(id);
   const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '', inventorySource: null };
+  const WRITE_GOLDEN_PHRASE = 'WRITE_GOLDEN';
+  const sourceState = { groups: [], busy: false };
   const urlState = { groups: [], activeGroup: null, preview: null, busy: false, healthBusy: false, healthJobId: '', loadRequest: 0 };
+  const writeGatePayload = extra => ({
+    confirmWrite: true,
+    confirmPhrase: WRITE_GOLDEN_PHRASE,
+    allowMultiOffer: Boolean($('allowMultiOffer')?.checked || $('sourceAllowMultiOffer')?.checked),
+    allowSharedSkuId: Boolean($('allowSharedSkuId')?.checked),
+    reviewer: 'local_user',
+    ...extra,
+  });
+  const confirmGoldenWrite = summary => window.confirm(`即將寫入 Golden Table（Phase 1 閘門）。\n\n${summary}\n\n確定後會留下審核紀錄；不會自動發明 SKU。`);
   const baseTitle = document.title;
   let operationDismissTimer = null;
   let operationFadeTimer = null;
@@ -267,7 +278,9 @@
     return `<article class="card tier-card-${esc(item.review_tier)}" data-id="${esc(item.id)}" data-tier="${esc(item.review_tier)}">
       <label class="select-row"><input type="checkbox" class="select-item"> 批次處理</label>
       <div class="source">${sourceImage ? `<img src="${esc(sourceImage)}" loading="lazy" alt="">` : '<div class="source-placeholder">無圖片</div>'}
-        <div><h2>${esc(item.model_name || '未命名型號')}</h2><p>${esc(item.product_name || '')}</p><p>商品 ID：${esc(item.product_id)}　規格 ID：${esc(item.model_id)}</p><p>即時庫存：<strong>${item.liveInventoryAvailable ? fmt(item.currentStock) : '尚未更新'}</strong>　建議補貨：<strong>${item.liveInventoryAvailable ? fmt(item.restockQty) : '尚未更新'}</strong></p><p>型號月銷量：<strong>${item.liveInventoryAvailable ? fmt(item.monthlySales) : '尚未更新'}</strong>　商品月銷量：<strong>${item.liveInventoryAvailable ? fmt(item.productMonthlySales) : '尚未更新'}</strong></p><span class="badge ${esc(item.status)}">${esc(item.status === 'suspected_discontinued' ? '疑似下架' : item.status)}</span><span class="tier-badge tier-${esc(item.review_tier)}">${esc(item.review_tier === 'green' ? '綠色：唯一精確' : item.review_tier === 'yellow' ? '黃色：人工比較' : item.review_tier === 'red' && ['stale', 'suspected_discontinued'].includes(item.status) ? '紅色：需重新掃描' : item.review_tier === 'red' ? '紅色：阻擋' : '已核准')}</span>${item.offer_id ? `<a class="open-1688" href="${esc(item.product_url || `https://detail.1688.com/offer/${item.offer_id}.html`)}" target="_blank" rel="noopener">開啟 1688 ↗</a>` : ''}<button class="change-url-inline" type="button" data-url-change="true">更換連結</button>${existing}</div></div>
+        <div><h2>${esc(item.model_name || '未命名型號')}</h2><p>${esc(item.product_name || '')}</p><p>商品 ID：${esc(item.product_id)}　規格 ID：${esc(item.model_id)}</p><p>即時庫存：<strong>${item.liveInventoryAvailable ? fmt(item.currentStock) : '尚未更新'}</strong>　建議補貨：<strong>${item.liveInventoryAvailable ? fmt(item.restockQty) : '尚未更新'}</strong></p><p>型號月銷量：<strong>${item.liveInventoryAvailable ? fmt(item.monthlySales) : '尚未更新'}</strong>　商品月銷量：<strong>${item.liveInventoryAvailable ? fmt(item.productMonthlySales) : '尚未更新'}</strong></p><span class="badge ${esc(item.status)}">${esc(item.status === 'suspected_discontinued' ? '疑似下架' : item.status)}</span><span class="tier-badge tier-${esc(item.review_tier)}">${esc(item.review_tier === 'green' ? '綠色：唯一精確' : item.review_tier === 'yellow' ? '黃色：人工比較' : item.review_tier === 'red' && ['stale', 'suspected_discontinued'].includes(item.status) ? '紅色：需重新掃描' : item.review_tier === 'red' ? '紅色：阻擋' : '已核准')}</span>
+        <div class="layer-badges">${item.primary_problem_type ? `<span class="layer-badge ${esc(item.primary_problem_type)}">${esc(item.primary_problem_type_zh || item.primary_problem_type)}</span>` : ''}${item.link_status_zh ? `<span class="layer-badge">${esc(item.link_status_zh)}</span>` : ''}${item.source_status_zh ? `<span class="layer-badge">${esc(item.source_status_zh)}</span>` : ''}${item.sku_status_zh ? `<span class="layer-badge">${esc(item.sku_status_zh)}</span>` : ''}${item.phase1_verified ? '<span class="layer-badge">Phase 1 已補驗證</span>' : (String(item.mapping_status || '') === 'approved' ? '<span class="layer-badge EXISTING_APPROVAL">待補驗證，不可採購</span>' : '')}</div>
+        ${item.offer_id ? `<a class="open-1688" href="${esc(item.product_url || `https://detail.1688.com/offer/${item.offer_id}.html`)}" target="_blank" rel="noopener">開啟 1688 ↗</a>` : ''}<button class="change-url-inline" type="button" data-url-change="true">更換連結</button>${existing}</div></div>
       <div><div class="candidates">${candidates.length ? candidates.map((candidate, index) => candidateCard(item, candidate, index + 1)).join('') : '<div class="reason">尚未取得可通過規則的 SKU 候選；不代表 1688 沒有這個 SKU。</div>'}</div>${aiSummary(item, candidates)}${manualTools}
       <div class="reason"><strong>${displayText(item.review_reason || '等待人工確認')}</strong>${(ai.evidence || []).length ? `<br>${displayText(ai.evidence.join('；'))}` : ''}${evidence.error ? `<br>${displayText(evidence.error)}` : ''}</div>
       <div class="actions"><button class="approve" data-action="approve">核准選取 SKU</button><button data-action="defer">稍後處理</button><button data-action="no_match">標記無匹配</button><button data-action="discontinued">標記停售</button></div></div></article>`;
@@ -282,7 +295,7 @@
   }
 
   async function loadQueue() {
-    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, urlPresence: $('urlPresence').value, restockOnly: String($('restockOnly').checked), query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), _: String(Date.now()) });
+    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, urlPresence: $('urlPresence').value, restockOnly: String($('restockOnly').checked), query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), problemType: $('problemType')?.value || '', linkStatus: $('linkStatus')?.value || '', sourceStatus: $('sourceStatus')?.value || '', skuStatus: $('skuStatus')?.value || '', existingApprovalQueue: String(Boolean($('existingApprovalQueue')?.checked)), _: String(Date.now()) });
     const response = await fetch(`/api/sku-mapping/queue?${params}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || data.status !== 'success') throw new Error(data.message || '待審核清單載入失敗');
@@ -652,10 +665,11 @@
     if (explicitSkuId && !selection.skuId) selection.skuId = explicitSkuId;
     if (['approve','replace'].includes(action) && !selection.candidateKey && !selection.skuName && !selection.skuId) { message('請先選擇完整規格名稱，或從完整 SKU 清單手動指定。', 'error'); return; }
     if (['replace','discontinued','no_match'].includes(action) && !window.confirm(`確定要${action === 'replace' ? '取代既有 mapping' : action === 'discontinued' ? '標記停售' : '標記無匹配'}嗎？`)) return;
+    if (['approve', 'replace', 'discontinued'].includes(action) && !confirmGoldenWrite(`${action === 'discontinued' ? '標記停售' : '核准／寫入 SKU'}：${item.product_name || ''}／${item.model_name || ''}`)) return;
     if (triggerButton) triggerButton.disabled = true;
     message(action === 'approve' ? '正在儲存 SKU mapping…' : '正在更新 mapping 狀態…');
     try {
-      const response = await fetch('/api/sku-mapping/decisions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ items: [{ productId: item.product_id, modelId: item.model_id, action, candidateKey: selection.candidateKey, skuId: selection.skuId, skuName: selection.skuName, skuSecondName: selection.skuSecondName, version: item.version }] }) });
+      const response = await fetch('/api/sku-mapping/decisions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(writeGatePayload({ items: [{ productId: item.product_id, modelId: item.model_id, action, candidateKey: selection.candidateKey, skuId: selection.skuId, skuName: selection.skuName, skuSecondName: selection.skuSecondName, offerId: item.offer_id || '', version: item.version }] })) });
       const data = await response.json();
       if (response.status === 409) { await reload(); message('這筆資料剛重新掃描，頁面版本已更新；請使用重新載入後的候選再操作。', 'error'); return; }
       if (!response.ok || !['success'].includes(data.status)) throw new Error(data.message || '儲存 mapping 失敗');
@@ -713,13 +727,14 @@
       ? `確定將 ${rows.length} 筆標記為「無匹配」？這不會刪除 1688 快照，之後仍可重新掃描或重跑 AI。`
       : `確定將 ${rows.length} 筆標記為「停售」？這些項目會被阻擋採購。`;
     if (!window.confirm(prompt)) return;
+    if (action === 'discontinued' && !confirmGoldenWrite(`批次標記停售 ${rows.length} 筆`)) return;
     const items = rows.map(row => ({ productId: row.product_id, modelId: row.model_id, action, version: row.version }));
     setBatchBusy(true, `${label}進行中：已送出 ${rows.length} 筆`);
     try {
       const response = await fetch('/api/sku-mapping/decisions', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({items, batch: true}),
+        body: JSON.stringify(writeGatePayload({items, batch: true})),
       });
       const data = await response.json();
       if (response.status === 409) { await reload(); operationDone('部分資料剛更新，請重新勾選後再試。', 'error'); return; }
@@ -779,9 +794,10 @@
       defaultCount ? `${defaultCount} 筆未手動指定，將使用候選第 1 號。` : '',
     ].filter(Boolean).join('\n') || '每筆都已手動選擇候選。';
     if (!window.confirm(`確定核准 ${items.length} 筆 SKU mapping？\n${warning}`)) return;
+    if (!confirmGoldenWrite(`批次核准 ${items.length} 筆，將寫入 Golden Table 並標記 Phase 1 已補驗證。`)) return;
     setBatchBusy(true, `批次核准進行中：正在處理 ${items.length} 筆，請稍候…`);
     try {
-      const response = await fetch('/api/sku-mapping/decisions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ items, batch: true }) });
+      const response = await fetch('/api/sku-mapping/decisions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(writeGatePayload({ items, batch: true })) });
       const data = await response.json();
       if (response.status === 409) { await reload(); operationDone('部分資料剛重新掃描，頁面版本已更新；請重新勾選後再試。', 'error'); return; }
       if (!response.ok || data.status !== 'success') throw new Error(data.message || '批次核准失敗');
@@ -804,14 +820,98 @@
     finally { setBatchBusy(false); }
   }
 
+  async function loadSourceGroups() {
+    const params = new URLSearchParams({
+      query: $('sourceGroupQuery')?.value || '',
+      sourceStatus: $('sourceGroupStatus')?.value || 'all',
+      _: String(Date.now()),
+    });
+    const response = await fetch(`/api/sku-mapping/source-groups?${params}`, { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok || data.status !== 'success') throw new Error(data.message || '來源群組載入失敗');
+    sourceState.groups = data.groups || [];
+    renderSourceGroups();
+    if ($('sourceGroupEmpty')) $('sourceGroupEmpty').hidden = sourceState.groups.length > 0;
+    return data;
+  }
+
+  function renderSourceGroups() {
+    const node = $('sourceGroupList');
+    if (!node) return;
+    node.innerHTML = sourceState.groups.map(product => `
+      <article class="source-group-card" data-product="${esc(product.productId)}">
+        <h3>${esc(product.productName || '未命名商品')}</h3>
+        <small>商品 ID：${esc(product.productId)}　offer 數：${esc(product.offerCount)}${product.multiOffer ? '　⚠ 同商品多來源' : ''}</small>
+        ${(product.offers || []).map(offer => `
+          <section class="source-offer" data-group="${esc(offer.groupId)}">
+            <div class="compare-pair">
+              <figure>
+                ${product.productImageUrl || offer.models?.[0]?.modelImageUrl ? `<img src="${esc(offer.models?.[0]?.modelImageUrl || product.productImageUrl)}" alt="">` : '<div class="source-placeholder">無蝦皮圖</div>'}
+                <figcaption>蝦皮</figcaption>
+              </figure>
+              <figure>
+                ${offer.alibabaImageUrl ? `<img src="${esc(offer.alibabaImageUrl)}" alt="">` : '<div class="source-placeholder">無 1688 快照圖</div>'}
+                <figcaption>1688 offer ${esc(offer.offerId || '（缺）')}</figcaption>
+              </figure>
+            </div>
+            <div class="url-group-meta">
+              <span class="layer-badge SOURCE">${esc(offer.sourceStatusZh || offer.sourceStatus)}</span>
+              ${offer.productUrl ? `<a href="${esc(offer.productUrl)}" target="_blank" rel="noopener">開啟 1688 ↗</a>` : ''}
+              <small>型號 ${esc(offer.modelCount)}　來源已確認 ${esc(offer.confirmedCount)}　Phase 1 已補驗證 ${esc(offer.phase1VerifiedCount)}</small>
+            </div>
+            <ul class="source-member-list">${(offer.models || []).map(model => `<li>${esc(model.modelName || model.modelId)}　${esc(model.skuStatusZh || model.mappingStatus || '')}${model.phase1Verified ? '　已補驗證' : ''}</li>`).join('')}</ul>
+            <div class="source-offer-actions">
+              <button type="button" class="primary" data-source-action="confirm_source">確認此來源</button>
+              <button type="button" data-source-action="reject_source">否決此來源</button>
+            </div>
+          </section>
+        `).join('')}
+      </article>
+    `).join('');
+  }
+
+  async function submitSourceReview(product, offer, action) {
+    if (sourceState.busy) return;
+    const label = action === 'reject_source' ? '否決來源' : '確認來源';
+    if (!confirmGoldenWrite(`${label}：${product.productName || product.productId} / offer ${offer.offerId || '（缺）'}（${offer.modelCount} 個型號）`)) return;
+    sourceState.busy = true;
+    try {
+      const response = await fetch('/api/sku-mapping/source-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(writeGatePayload({
+          action,
+          productId: product.productId,
+          offerId: offer.offerId,
+          modelIds: (offer.models || []).map(model => model.modelId),
+        })),
+      });
+      const data = await response.json();
+      if (!response.ok || data.status !== 'success') throw new Error(data.message || data.issues?.[0]?.message || `${label}失敗`);
+      $('sourceReviewMessage').textContent = `已${label} ${data.updatedCount || 0} 個型號。`;
+      $('sourceReviewMessage').className = 'message success';
+      await loadSourceGroups();
+    } catch (error) {
+      $('sourceReviewMessage').textContent = error.message;
+      $('sourceReviewMessage').className = 'message error';
+    } finally {
+      sourceState.busy = false;
+    }
+  }
+
   function switchWorkbench(mode) {
     const showUrls = mode === 'urls';
-    $('skuReviewView').hidden = showUrls;
+    const showSource = mode === 'source';
+    $('skuReviewView').hidden = showUrls || showSource;
     $('urlManagerView').hidden = !showUrls;
-    $('skuReviewTab').classList.toggle('active', !showUrls);
+    if ($('sourceReviewView')) $('sourceReviewView').hidden = !showSource;
+    $('skuReviewTab').classList.toggle('active', !showUrls && !showSource);
     $('urlManagerTab').classList.toggle('active', showUrls);
-    $('skuReviewTab').setAttribute('aria-selected', String(!showUrls));
+    if ($('sourceReviewTab')) $('sourceReviewTab').classList.toggle('active', showSource);
+    $('skuReviewTab').setAttribute('aria-selected', String(!showUrls && !showSource));
     $('urlManagerTab').setAttribute('aria-selected', String(showUrls));
+    if ($('sourceReviewTab')) $('sourceReviewTab').setAttribute('aria-selected', String(showSource));
+    if (showSource) return loadSourceGroups();
     return showUrls ? loadUrlGroups() : Promise.resolve();
   }
 
@@ -1266,7 +1366,18 @@
     loadQueue().catch(error => message(error.message, 'error'));
     window.scrollTo({top: 0, behavior: 'smooth'});
   });
-  ['status', 'tier', 'urlPresence', 'restockOnly'].forEach(id => $(id).addEventListener('change', () => { clearSelections(); state.page = 1; reload(); }));
+  ['status', 'tier', 'urlPresence', 'restockOnly', 'problemType', 'linkStatus', 'sourceStatus', 'skuStatus', 'existingApprovalQueue'].forEach(id => {
+    const node = $(id);
+    if (!node) return;
+    node.addEventListener('change', () => {
+      if (id === 'existingApprovalQueue' && node.checked && $('problemType')) $('problemType').value = 'EXISTING_APPROVAL';
+      if (id === 'problemType' && node.value === 'EXISTING_APPROVAL' && $('existingApprovalQueue')) $('existingApprovalQueue').checked = true;
+      if (id === 'problemType' && node.value !== 'EXISTING_APPROVAL' && $('existingApprovalQueue')) $('existingApprovalQueue').checked = false;
+      clearSelections();
+      state.page = 1;
+      reload();
+    });
+  });
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !$('urlChangeModal').hidden) {
       closeUrlChange();
@@ -1278,8 +1389,25 @@
     if (event.key === 'Enter') active.querySelector('[data-action="approve"]')?.click();
   });
   $('skuReviewTab').addEventListener('click', () => switchWorkbench('sku'));
+  if ($('sourceReviewTab')) $('sourceReviewTab').addEventListener('click', () => switchWorkbench('source'));
   $('urlManagerTab').addEventListener('click', () => switchWorkbench('urls'));
   $('reloadUrlGroups').addEventListener('click', loadUrlGroups);
+  if ($('reloadSourceGroups')) $('reloadSourceGroups').addEventListener('click', () => loadSourceGroups().catch(error => { $('sourceReviewMessage').textContent = error.message; $('sourceReviewMessage').className = 'message error'; }));
+  if ($('sourceGroupStatus')) $('sourceGroupStatus').addEventListener('change', () => loadSourceGroups().catch(() => {}));
+  let sourceQueryTimer;
+  if ($('sourceGroupQuery')) $('sourceGroupQuery').addEventListener('input', () => {
+    clearTimeout(sourceQueryTimer);
+    sourceQueryTimer = setTimeout(() => loadSourceGroups().catch(() => {}), 300);
+  });
+  if ($('sourceGroupList')) $('sourceGroupList').addEventListener('click', event => {
+    const button = event.target.closest('[data-source-action]');
+    if (!button) return;
+    const offerNode = button.closest('.source-offer');
+    const productNode = button.closest('.source-group-card');
+    const product = sourceState.groups.find(row => String(row.productId) === String(productNode?.dataset.product));
+    const offer = product?.offers?.find(row => String(row.groupId) === String(offerNode?.dataset.group));
+    if (product && offer) submitSourceReview(product, offer, button.dataset.sourceAction);
+  });
   $('urlGroupStatus').addEventListener('change', loadUrlGroups);
   $('urlLinkStatus').addEventListener('change', loadUrlGroups);
   $('checkUrlHealth').addEventListener('click', () => checkUrlHealth());

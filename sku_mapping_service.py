@@ -29,6 +29,23 @@ from urllib.parse import urlparse
 import requests
 
 from config_loader import load_deepseek_api_key, load_gemini_api_key, load_openai_api_key, load_openai_config_value, load_xai_api_key
+from golden_mapping_phase0 import (
+    SOURCE_STATUS_ZH,
+    SKU_STATUS_ZH,
+    LINK_STATUS_ZH,
+    PROBLEM_TYPE_ZH,
+    classify_golden_table,
+)
+from golden_mapping_phase1_gate import (
+    ConsistencyBlocked,
+    apply_sku_review_stamp,
+    apply_source_review_fields,
+    sibling_consistency_issues,
+)
+from mapping_procurement_gate import (
+    UNVERIFIED_APPROVED_SKU_STATUSES,
+    is_phase1_reverified,
+)
 
 
 GOLDEN_TABLE_FILE = "golden_table.json"
@@ -2148,17 +2165,32 @@ class SkuMappingService:
         url_presence: str = "with",
         page: int = 1,
         page_size: int = 50,
+        problem_type: str = "",
+        link_status: str = "",
+        source_status: str = "",
+        sku_status: str = "",
+        existing_approval_queue: bool = False,
     ) -> Dict[str, Any]:
         status = str(status or "review").strip()
         query = normalize_text(query)
         url_presence = str(url_presence or "with").strip().lower()
         if url_presence not in {"all", "with", "without"}:
             raise ValueError("URL 篩選值不正確")
+        problem_type = str(problem_type or "").strip().upper()
+        link_status = str(link_status or "").strip()
+        source_status = str(source_status or "").strip()
+        sku_status = str(sku_status or "").strip()
+        existing_approval_queue = bool(existing_approval_queue) or problem_type == "EXISTING_APPROVAL"
+        phase1_filter = bool(problem_type or link_status or source_status or sku_status or existing_approval_queue)
         page = max(1, int(page or 1))
         page_size = max(1, min(200, int(page_size or 50)))
         params: List[Any] = []
         clauses = []
-        if status == "review":
+        if existing_approval_queue:
+            pass
+        elif phase1_filter and status in {"review", "all"}:
+            pass
+        elif status == "review":
             # Manual terminal/deferred decisions have dedicated filters.  They
             # must leave the default 待處理 queue, otherwise the button appears
             # to have done nothing even though SQLite was updated.
@@ -2189,6 +2221,7 @@ class SkuMappingService:
         # also lets us exclude legacy suggestion rows whose model no longer has
         # an Alibaba URL.
         model_lookup = self._model_lookup(golden, live_lookup)
+        phase0_index = self._phase0_row_index(golden, shopee)
         with self.connect() as conn:
             rows = conn.execute(
                 f"SELECT s.*, o.product_url, o.product_name AS snapshot_product_name, o.status AS snapshot_status, o.fingerprint, o.skus_json AS snapshot_skus_json "
@@ -2300,10 +2333,17 @@ class SkuMappingService:
         # read-only queue row from Golden Table so the URL filter can still
         # find them and lead the user into the reviewed URL setup flow.
         show_without_url = (
-            url_presence in {"all", "without"}
-            and not offer_id
-            and not tier
-            and status in {"review", "all", "missing"}
+            not offer_id
+            and (
+                (
+                    url_presence in {"all", "without"}
+                    and not tier
+                    and status in {"review", "all", "missing"}
+                    and not existing_approval_queue
+                )
+                or problem_type == "LINK"
+                or link_status in {"url_missing", "url_malformed"}
+            )
         )
         if show_without_url:
             for (product_id, model_id), metadata in model_lookup.items():
@@ -2350,6 +2390,57 @@ class SkuMappingService:
                     "modelImageUrl": str(metadata.get("modelImageUrl") or ""),
                     "updated_at": 0,
                 })
+        if existing_approval_queue:
+            seen = {(str(item.get("product_id")), str(item.get("model_id"))) for item in result}
+            for (product_id, model_id), metadata in model_lookup.items():
+                if (str(product_id), str(model_id)) in seen:
+                    continue
+                class_row = phase0_index.get((str(product_id), str(model_id))) or {}
+                if str(class_row.get("sku_status") or "") not in UNVERIFIED_APPROVED_SKU_STATUSES:
+                    continue
+                if metadata.get("phase1Verified"):
+                    continue
+                if restock_only and float(metadata.get("restockQty") or 0) <= 0:
+                    continue
+                if query:
+                    search_text = normalize_text(" ".join((
+                        str(product_id),
+                        str(model_id),
+                        str(metadata.get("modelName") or ""),
+                        str(metadata.get("productName") or ""),
+                    )))
+                    if query not in search_text:
+                        continue
+                result.append({
+                    "id": f"existing-approval:{product_id}:{model_id}",
+                    "product_id": product_id,
+                    "model_id": model_id,
+                    "product_name": str(metadata.get("productName") or ""),
+                    "model_name": str(metadata.get("modelName") or ""),
+                    "product_url": "",
+                    "offer_id": "",
+                    "status": "approved",
+                    "review_tier": "approved",
+                    "review_reason": "既有核准，待補驗證",
+                    "mapping_status": "approved",
+                    "existing_sku_id": str(metadata.get("existingSkuId") or ""),
+                    "existing_sku_name": str(metadata.get("existingSkuName") or ""),
+                    "existing_second_name": str(metadata.get("existingSecondName") or ""),
+                    "existing_spec_text": str(metadata.get("existingSpecText") or ""),
+                    "candidates": [],
+                    "evidence": {},
+                    "has_url": bool(metadata.get("hasUrl")),
+                    "restockQty": int(metadata.get("restockQty") or 0),
+                    "monthlySales": metadata.get("monthlySales", 0),
+                    "productMonthlySales": metadata.get("productMonthlySales", 0),
+                    "currentStock": metadata.get("currentStock", 0),
+                    "liveInventoryAvailable": bool(metadata.get("liveInventoryAvailable")),
+                    "productOrder": metadata.get("productOrder", 0),
+                    "modelOrder": metadata.get("modelOrder", 0),
+                    "productImageUrl": str(metadata.get("productImageUrl") or ""),
+                    "modelImageUrl": str(metadata.get("modelImageUrl") or ""),
+                    "updated_at": 0,
+                })
         tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
         # Keep each product together.  Products are ordered by total monthly
         # sales (falling back to the sum of their model sales); variants inside
@@ -2362,6 +2453,35 @@ class SkuMappingService:
             tier_order.get(str(item.get("review_tier") or "red"), 2),
             -int(item.get("updated_at") or 0),
         ))
+        matched = []
+        for item in result:
+            key = (str(item.get("product_id") or ""), str(item.get("model_id") or ""))
+            class_row = phase0_index.get(key) or {}
+            metadata = model_lookup.get(key, {})
+            item["link_status"] = class_row.get("link_status") or ""
+            item["link_status_zh"] = class_row.get("link_status_zh") or ""
+            item["source_status"] = class_row.get("source_status") or ""
+            item["source_status_zh"] = class_row.get("source_status_zh") or ""
+            item["sku_status"] = class_row.get("sku_status") or ""
+            item["sku_status_zh"] = class_row.get("sku_status_zh") or ""
+            item["primary_problem_type"] = class_row.get("primary_problem_type") or ""
+            item["primary_problem_type_zh"] = class_row.get("primary_problem_type_zh") or ""
+            item["phase1_verified"] = bool(metadata.get("phase1Verified"))
+            item["source_review_status"] = str(metadata.get("sourceReviewStatus") or "")
+            item["sku_review_status"] = str(metadata.get("skuReviewStatus") or "")
+            if not self._queue_matches_phase0(
+                item,
+                class_row,
+                metadata,
+                problem_type=problem_type,
+                link_status=link_status,
+                source_status=source_status,
+                sku_status=sku_status,
+                existing_approval_queue=existing_approval_queue,
+            ):
+                continue
+            matched.append(item)
+        result = matched
         total = len(result)
         result = result[(page - 1) * page_size: page * page_size]
         return {
@@ -2412,8 +2532,222 @@ class SkuMappingService:
                     "existingSecondName": clean_mapping_name(model.get("1688_sku_second_name"), model.get("1688_spec_text"), 1),
                     "existingSpecText": display_text(model.get("1688_spec_text") or ""),
                     "mappingStatus": str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing")),
+                    "phase1Verified": is_phase1_reverified(model),
+                    "sourceReviewStatus": str(model.get("1688_source_review_status") or ""),
+                    "skuReviewStatus": str(model.get("1688_sku_review_status") or ""),
                 }
         return lookup
+
+    def _phase0_row_index(
+        self,
+        golden: Dict[str, Any],
+        shopee: Optional[Dict[str, Any]] = None,
+    ) -> Dict[Tuple[str, str], Dict[str, Any]]:
+        suggestion_map: Dict[Tuple[str, str], str] = {}
+        with self.connect() as conn:
+            try:
+                for row in conn.execute("SELECT product_id, model_id, status FROM sku_mapping_suggestions"):
+                    suggestion_map[(str(row["product_id"]), str(row["model_id"]))] = str(row["status"] or "")
+            except sqlite3.Error:
+                suggestion_map = {}
+        health = {
+            str(offer_id): str((row or {}).get("status") or "")
+            for offer_id, row in self._latest_url_health().items()
+        }
+        rows = classify_golden_table(golden, shopee or {}, suggestion_map, health)
+        return {(str(row["product_id"]), str(row["model_id"])): row for row in rows}
+
+    @staticmethod
+    def _queue_matches_phase0(
+        item: Dict[str, Any],
+        class_row: Dict[str, Any],
+        metadata: Dict[str, Any],
+        *,
+        problem_type: str,
+        link_status: str,
+        source_status: str,
+        sku_status: str,
+        existing_approval_queue: bool,
+    ) -> bool:
+        if existing_approval_queue:
+            if metadata.get("phase1Verified"):
+                return False
+            if str(class_row.get("sku_status") or "") not in UNVERIFIED_APPROVED_SKU_STATUSES:
+                return False
+        elif problem_type and str(class_row.get("primary_problem_type") or "") != problem_type:
+            return False
+        if link_status and str(class_row.get("link_status") or "") != link_status:
+            return False
+        if source_status and str(class_row.get("source_status") or "") != source_status:
+            return False
+        if sku_status and str(class_row.get("sku_status") or "") != sku_status:
+            return False
+        return True
+
+    def _offer_preview_image(self, offer_id: str) -> str:
+        offer_id = normalize_id(offer_id)
+        if not offer_id:
+            return ""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT skus_json FROM alibaba_offer_snapshots WHERE offer_id=? AND status='ok' ORDER BY id DESC LIMIT 1",
+                (offer_id,),
+            ).fetchone()
+        if not row:
+            return ""
+        skus = self._json_load(row["skus_json"] if "skus_json" in row.keys() else row[0], [])
+        for sku in skus:
+            if isinstance(sku, dict) and str(sku.get("image_url") or "").strip():
+                return str(sku.get("image_url") or "").strip()
+        return ""
+
+    def source_groups(self, query: str = "", source_status: str = "all") -> Dict[str, Any]:
+        """Group models by product then 1688 offer for source confirmation."""
+        golden = self._golden()
+        shopee, inventory_source = self._live_inventory()
+        query_text = normalize_text(query)
+        source_status = str(source_status or "all").strip()
+        phase0_index = self._phase0_row_index(golden, shopee)
+        groups: List[Dict[str, Any]] = []
+        for product_order, (product_id, product) in enumerate(golden.items()):
+            if not isinstance(product, dict):
+                continue
+            product_name = str(product.get("商品名稱") or "")
+            product_image = str(product.get("商品圖片網址") or "")
+            grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+            offers = set()
+            for model in product.get("型號") or []:
+                if not isinstance(model, dict):
+                    continue
+                url = canonical_url(model.get("阿里巴巴商品URL"))
+                offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(url)
+                if offer_id:
+                    offers.add(offer_id)
+                grouped[offer_id or url or "__missing__"].append(model)
+            if query_text:
+                haystack = normalize_text(" ".join((str(product_id), product_name, " ".join(offers))))
+                if query_text not in haystack:
+                    continue
+            offer_groups = []
+            for group_key, models in grouped.items():
+                first = models[0]
+                url = canonical_url(first.get("阿里巴巴商品URL"))
+                offer_id = normalize_id(first.get("1688_offer_id")) or parse_offer_id(url)
+                members = []
+                statuses = []
+                for model in models:
+                    model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+                    class_row = phase0_index.get((str(product_id), model_id)) or {}
+                    statuses.append(str(class_row.get("source_status") or ""))
+                    members.append({
+                        "modelId": model_id,
+                        "modelName": str(model.get("型號名稱") or ""),
+                        "modelImageUrl": str(model.get("型號圖片網址") or ""),
+                        "mappingStatus": str(model.get("1688_mapping_status") or ""),
+                        "skuName": str(model.get("1688_sku_name") or ""),
+                        "skuSecondName": str(model.get("1688_sku_second_name") or ""),
+                        "skuId": normalize_id(model.get("1688_sku_id")),
+                        "linkStatus": class_row.get("link_status") or "",
+                        "sourceStatus": class_row.get("source_status") or "",
+                        "sourceStatusZh": class_row.get("source_status_zh") or "",
+                        "skuStatus": class_row.get("sku_status") or "",
+                        "skuStatusZh": class_row.get("sku_status_zh") or "",
+                        "problemType": class_row.get("primary_problem_type") or "",
+                        "phase1Verified": is_phase1_reverified(model),
+                        "sourceReviewStatus": str(model.get("1688_source_review_status") or ""),
+                    })
+                group_source = "source_multi_unverified" if len(offers) > 1 and offer_id else (statuses[0] if statuses else "source_missing")
+                if any(value == "source_page_suspect" for value in statuses):
+                    group_source = "source_page_suspect"
+                if source_status not in {"", "all"} and group_source != source_status:
+                    continue
+                offer_groups.append({
+                    "groupId": f"{product_id}|||{offer_id or group_key}",
+                    "offerId": offer_id,
+                    "productUrl": url,
+                    "sourceStatus": group_source,
+                    "sourceStatusZh": SOURCE_STATUS_ZH.get(group_source, group_source),
+                    "alibabaImageUrl": self._offer_preview_image(offer_id),
+                    "modelCount": len(members),
+                    "models": members,
+                    "confirmedCount": sum(1 for row in members if row.get("sourceReviewStatus") == "confirmed"),
+                    "phase1VerifiedCount": sum(1 for row in members if row.get("phase1Verified")),
+                })
+            if not offer_groups:
+                continue
+            groups.append({
+                "productId": str(product_id),
+                "productName": product_name,
+                "productImageUrl": product_image,
+                "productOrder": product_order,
+                "offerCount": len(offers),
+                "multiOffer": len(offers) > 1,
+                "offers": offer_groups,
+            })
+        groups.sort(key=lambda row: (0 if row.get("multiOffer") else 1, int(row.get("productOrder") or 0)))
+        return {
+            "status": "success",
+            "groups": groups,
+            "total": len(groups),
+            "inventorySource": inventory_source,
+            "sourceStatusLabels": SOURCE_STATUS_ZH,
+            "skuStatusLabels": SKU_STATUS_ZH,
+            "linkStatusLabels": LINK_STATUS_ZH,
+            "problemTypeLabels": PROBLEM_TYPE_ZH,
+        }
+
+    def apply_source_review(
+        self,
+        product_id: str,
+        offer_id: str,
+        action: str,
+        model_ids: Optional[Sequence[Any]] = None,
+        reviewer: str = "local_user",
+        allow_multi_offer: bool = False,
+    ) -> Dict[str, Any]:
+        action = str(action or "confirm_source").strip()
+        if action not in {"confirm_source", "reject_source"}:
+            raise ValueError("來源鑑定動作只接受 confirm_source 或 reject_source")
+        product_id = normalize_id(product_id)
+        offer_id = normalize_id(offer_id)
+        wanted = {normalize_id(value) for value in (model_ids or []) if str(value or "").strip()}
+        golden = self._golden()
+        product = golden.get(product_id)
+        if not isinstance(product, dict):
+            raise FileNotFoundError("找不到 golden table 商品")
+        issues = sibling_consistency_issues(
+            product,
+            target_offer_id=offer_id,
+            allow_multi_offer=allow_multi_offer,
+        )
+        if issues:
+            raise ConsistencyBlocked("同商品存在多個 1688 offer，請勾選允許刻意分流後再確認來源", issues)
+        now = int(time.time())
+        verified_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+        updated = []
+        for model in product.get("型號") or []:
+            if not isinstance(model, dict):
+                continue
+            model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+            model_offer = normalize_id(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL"))
+            if offer_id and model_offer != offer_id:
+                continue
+            if wanted and model_id not in wanted:
+                continue
+            apply_source_review_fields(model, action=action, reviewer=reviewer, verified_at=verified_at)
+            updated.append({"productId": product_id, "modelId": model_id, "action": action})
+        if not updated:
+            raise ValueError("沒有符合條件的型號可寫入來源鑑定")
+        backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_source_review_{now}")
+        original_bytes = self.golden_path.read_bytes()
+        shutil.copy2(self.golden_path, backup_path)
+        prune_golden_table_backups(backup_path)
+        tmp_path = self.golden_path.with_suffix(".json.source-review.tmp")
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False, indent=4)
+            handle.write("\n")
+        os.replace(tmp_path, self.golden_path)
+        return {"status": "success", "updatedCount": len(updated), "updated": updated, "action": action}
 
     def _images_for_model(self, product_id: str, model_id: str) -> Tuple[str, str]:
         product = self._golden().get(str(product_id), {})
@@ -4379,7 +4713,7 @@ class SkuMappingService:
                     (suggestion["id"], rank, candidate.get("candidate_key") or mapping_candidate_key(model.get("offer_id"), candidate.get("sku_name", ""), candidate.get("second_name", "")), candidate.get("sku_id", ""), candidate.get("sku_name", ""), candidate.get("second_name", ""), candidate.get("spec_text", ""), int(candidate.get("dimension_count") or len(candidate.get("parts") or _spec_parts(candidate.get("spec_text")))), json.dumps(candidate.get("parts") or _spec_parts(candidate.get("spec_text")), ensure_ascii=False), candidate.get("image_url", ""), candidate.get("price"), candidate.get("stock"), candidate.get("deterministic_score", 0), json.dumps(candidate.get("evidence", {}), ensure_ascii=False)),
                 )
 
-    def decisions(self, items: Iterable[Dict[str, Any]], reviewer: str = "local_user", batch: bool = False) -> Dict[str, Any]:
+    def decisions(self, items: Iterable[Dict[str, Any]], reviewer: str = "local_user", batch: bool = False, stamp_phase1: bool = True) -> Dict[str, Any]:
         items = list(items or [])
         if not items:
             raise ValueError("沒有要套用的 SKU mapping 決定")
@@ -4387,7 +4721,7 @@ class SkuMappingService:
             self._validate_safe_batch(items)
         updated = []
         for item in items:
-            updated.append(self._apply_decision(item, reviewer, batch=batch))
+            updated.append(self._apply_decision(item, reviewer, batch=batch, stamp_phase1=stamp_phase1))
         return {"status": "success", "updatedCount": len(updated), "updated": updated}
 
     def _decision_context(self, item: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any], List[Dict[str, Any]]]:
@@ -4467,7 +4801,7 @@ class SkuMappingService:
                 if selected_key and selected_key not in {str(candidate.get("candidate_key") or "") for candidate in candidates}:
                     raise ValueError(f"{product_id}/{model_id} 的名稱組合不在該 offer 清單")
 
-    def _apply_decision(self, item: Dict[str, Any], reviewer: str, batch: bool = False) -> Dict[str, Any]:
+    def _apply_decision(self, item: Dict[str, Any], reviewer: str, batch: bool = False, stamp_phase1: bool = True) -> Dict[str, Any]:
         product_id, model_id, row, candidates = self._decision_context(item)
         action = str(item.get("action") or "approve").strip()
         selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
@@ -4490,7 +4824,7 @@ class SkuMappingService:
             selected_parts = selected.get("parts") or self._json_load(selected.get("parts_json"), []) or _spec_parts(selected.get("spec_text"))
             if max(int(selected.get("dimension_count") or 0), len(selected_parts), 1) >= 2 and not display_text(selected.get("second_name")):
                 raise ValueError("此商品有第二規格，但核准資料缺少 1688_sku_second_name")
-            self._write_approved_mapping(row, selected, action, reviewer)
+            self._write_approved_mapping(row, selected, action, reviewer, stamp_phase1=stamp_phase1)
             new_status = "approved"
         elif action == "discontinued":
             self._write_status_mapping(row, "discontinued", reviewer)
@@ -4506,7 +4840,7 @@ class SkuMappingService:
             raise ValueError("不支援的 mapping action")
         return {"productId": product_id, "modelId": model_id, "status": new_status, "candidateKey": str(selected.get("candidate_key") or "") if selected else "", "skuId": selected_id, "skuName": str(selected.get("sku_name") or "") if selected else "", "skuSecondName": str(selected.get("second_name") or "") if selected else ""}
 
-    def _write_approved_mapping(self, suggestion: Dict[str, Any], candidate: Dict[str, Any], action: str, reviewer: str) -> None:
+    def _write_approved_mapping(self, suggestion: Dict[str, Any], candidate: Dict[str, Any], action: str, reviewer: str, stamp_phase1: bool = True) -> None:
         golden = self._golden()
         product = golden.get(str(suggestion["product_id"]))
         if not isinstance(product, dict):
@@ -4534,6 +4868,8 @@ class SkuMappingService:
         ai_evidence = evidence.get("ai") if isinstance(evidence, dict) else {}
         target["1688_mapping_source"] = "ai_reviewed" if action == "approve" and isinstance(ai_evidence, dict) and ai_evidence.get("source") in AI_SUCCESS_SOURCES else "manual"
         target["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now))
+        if stamp_phase1:
+            apply_sku_review_stamp(target, reviewer=reviewer, verified_at=target["1688_verified_at"])
         # A manual catalog choice may come from a newer offer snapshot than the
         # suggestion that opened the review card.  Persist the snapshot that
         # actually contained the approved SKU, not the older suggestion one.

@@ -473,6 +473,21 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(fields["sku_id"], "5191344225957")
         self.assertEqual(fields["status"], "approved")
 
+    def test_restock_mapping_requires_phase1_reverification(self):
+        unverified = {
+            "status": "approved",
+            "sku_id": "sku-1",
+            "sku_name": "黑色",
+            "url": "https://detail.1688.com/offer/1.html",
+        }
+        self.assertFalse(alibaba_restocker.restock_mapping_is_purchasable(unverified, unverified["url"]))
+        verified = dict(unverified)
+        verified["phase1_verified_at"] = "2026-09-07T12:00:00Z"
+        self.assertTrue(alibaba_restocker.restock_mapping_is_purchasable(verified, verified["url"]))
+        discontinued = dict(verified)
+        discontinued["status"] = "discontinued"
+        self.assertFalse(alibaba_restocker.restock_mapping_is_purchasable(discontinued, discontinued["url"]))
+
     @unittest.skipUnless(sys.platform == "darwin", "uses the macOS system Chinese converter")
     def test_catalog_mapping_canonicalizes_primary_and_secondary_separately(self):
         catalog = {

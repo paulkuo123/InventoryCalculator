@@ -23,6 +23,8 @@ from http.client import RemoteDisconnected
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
+from mapping_procurement_gate import is_purchasable
+
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_PORT = 8080
@@ -234,7 +236,7 @@ def build_list_from_files(
                 url.startswith("http")
                 and sku_name
                 and sku_name not in DISCONTINUED_SKU_NAMES
-                and status == "approved"
+                and is_purchasable(mapped, 阿里巴巴商品URL=url)
                 and (not requires_second_sku(name, str(model.get("型號名稱") or "")) or second)
             ):
                 items.append({

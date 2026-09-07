@@ -330,6 +330,9 @@ class NameSpecMappingTests(unittest.TestCase):
                         "1688_offer_id": "90001",
                         "1688_sku_id": "sku-only-1",
                         "1688_sku_name": "",
+                        "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+                        "1688_source_review_status": "confirmed",
+                        "1688_sku_review_status": "confirmed",
                     }
                 ]
             }
@@ -339,6 +342,34 @@ class NameSpecMappingTests(unittest.TestCase):
         self.assertEqual(len(certain), 1)
         self.assertEqual(certain[0]["sku_id"], "sku-only-1")
         self.assertEqual(certain[0]["certain_via"], "sku_id")
+
+    def test_raw_approved_without_phase1_is_uncertain(self):
+        """Phase 1: raw approved is not certain until gated re-verification."""
+        products = {
+            "9004": {
+                "商品名稱": "測試手機殼",
+                "型號": [{"規格ID": "u1", "型號名稱": "未補驗證", "商品庫存": "0", "月銷量": "10"}],
+            }
+        }
+        golden = {
+            "9004": {
+                "型號": [{
+                    "規格ID": "u1",
+                    "型號名稱": "未補驗證",
+                    "1688_mapping_status": "approved",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/90004.html",
+                    "1688_offer_id": "90004",
+                    "1688_sku_id": "sku-unverified",
+                    "1688_sku_name": "黑色",
+                    "1688_verified_at": "2026-08-08T05:40:22Z",
+                }]
+            }
+        }
+        certain, uncertain, skip, _ = build_expected(products, golden, ["9004"])
+        self.assertEqual(certain, [])
+        self.assertEqual(skip, [])
+        self.assertEqual(len(uncertain), 1)
+        self.assertIn("phase1_unverified", uncertain[0]["uncertain_reason"])
 
     def test_name_spec_only_certain_participates_in_qty_diff(self):
         """缺 skuId 的 name/spec → certain；唯一對車後進 qty diff，且非 unexpected removable。"""
@@ -1393,6 +1424,9 @@ class HumanCsvOneRowPerModelTests(unittest.TestCase):
                     "1688_sku_id": "sku-b",
                     "1688_sku_name": "白色",
                     "1688_sku_second_name": "16",
+                    "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+                    "1688_source_review_status": "confirmed",
+                    "1688_sku_review_status": "confirmed",
                 }
             )
             products_path.write_text(

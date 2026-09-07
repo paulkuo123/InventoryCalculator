@@ -848,6 +848,8 @@ def apply_high_confidence(base_dir: str, report: Dict[str, Any], overwrite_exist
 
 
 def main() -> None:
+    from golden_mapping_phase1_gate import LegacyPathLocked, reject_legacy_mapper
+
     parser = argparse.ArgumentParser(description="從 1688 商品頁產生 SKU 型號對應報告")
     parser.add_argument("--product-id", default="", help="只處理指定 Shopee 商品 ID，例如 16790492139")
     parser.add_argument(
@@ -932,7 +934,10 @@ def main() -> None:
             )
 
     if args.apply_high_confidence:
-        print(apply_high_confidence(base_dir, report, args.overwrite_existing), flush=True)
+        try:
+            reject_legacy_mapper("alibaba_sku_mapper")
+        except LegacyPathLocked as exc:
+            raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":

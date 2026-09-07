@@ -366,7 +366,7 @@
             alibabaLastPriceCny: fields.alibabaLastPriceCny.value.trim(),
             alibabaMinOrderQty: fields.alibabaMinOrderQty.value || '1',
             alibabaPackageMultiple: fields.alibabaPackageMultiple.value || '1',
-            mappingApproved: Boolean(fields.alibabaSkuName.value.trim()),
+            mappingApproved: false,
             applyScope,
         };
         if (payload.alibabaProductUrl && !/^https?:\/\//i.test(payload.alibabaProductUrl)) {

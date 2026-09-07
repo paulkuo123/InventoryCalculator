@@ -195,7 +195,14 @@ class RunWatchlistRestockTests(unittest.TestCase):
         payload = build_visible_style_products(Path("."), keyword="吊飾", months=4)
         self.assertEqual(payload["keyword"], "吊飾")
         self.assertTrue(payload["products"])
-        self.assertTrue(any(product.get("items") for product in payload["products"]))
+        self.assertTrue(
+            any(product.get("items") or int(product.get("blockerCount") or 0) > 0 for product in payload["products"])
+        )
+        if not any(product.get("items") for product in payload["products"]):
+            self.assertTrue(
+                any(int(product.get("blockerCount") or 0) > 0 for product in payload["products"]),
+                "raw approved without Phase 1 re-verification must stay non-purchasable",
+            )
         for product in payload["products"]:
             if product.get("items"):
                 expected = target_months_for_product(product.get("productName") or "")
