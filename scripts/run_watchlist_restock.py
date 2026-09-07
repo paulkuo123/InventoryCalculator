@@ -23,7 +23,7 @@ from http.client import RemoteDisconnected
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
-from mapping_procurement_gate import is_purchasable
+from mapping_procurement_gate import is_purchasable, model_has_shared_sku_conflict, shared_sku_conflict_model_keys
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -220,6 +220,10 @@ def build_list_from_files(
         product_months = target_months_for_product(name, months)
         items = []
         blockers = 0
+        golden_product = golden.get(str(product_id) or "") or {}
+        conflict_keys = shared_sku_conflict_model_keys(
+            golden_product.get("型號") or [] if isinstance(golden_product, dict) else []
+        )
         for model in product.get("型號") or []:
             if not isinstance(model, dict):
                 continue
@@ -227,17 +231,25 @@ def build_list_from_files(
             qty = suggested_restock_qty(product, model, item_months)
             if qty <= 0:
                 continue
-            mapped = golden_model(golden, str(product_id), str(model.get("規格ID") or ""), str(model.get("型號名稱") or ""))
+            spec_id = str(model.get("規格ID") or "")
+            model_name = str(model.get("型號名稱") or "")
+            mapped = golden_model(golden, str(product_id), spec_id, model_name)
             sku_name = str(mapped.get("1688_sku_name") or "").strip()
             second = str(mapped.get("1688_sku_second_name") or "").strip()
             url = str(mapped.get("阿里巴巴商品URL") or model.get("阿里巴巴商品URL") or "").strip()
             status = str(mapped.get("1688_mapping_status") or "").strip()
+            in_conflict = model_has_shared_sku_conflict(
+                spec_id=spec_id,
+                model_name=model_name,
+                conflict_keys=conflict_keys,
+                model=mapped,
+            )
             if (
                 url.startswith("http")
                 and sku_name
                 and sku_name not in DISCONTINUED_SKU_NAMES
-                and is_purchasable(mapped, 阿里巴巴商品URL=url)
-                and (not requires_second_sku(name, str(model.get("型號名稱") or "")) or second)
+                and is_purchasable(mapped, 阿里巴巴商品URL=url, shared_sku_conflict=in_conflict)
+                and (not requires_second_sku(name, model_name) or second)
             ):
                 items.append({
                     "specId": str(model.get("規格ID") or ""),

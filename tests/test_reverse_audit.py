@@ -398,6 +398,87 @@ class NameSpecMappingTests(unittest.TestCase):
         self.assertEqual(len(uncertain), 1)
         self.assertIn("missing_sku_id", uncertain[0]["uncertain_reason"])
 
+    def test_shared_sku_id_same_product_is_uncertain_conflict(self):
+        products = {
+            "9010": {
+                "商品名稱": "冰冰襪",
+                "型號": [
+                    {"規格ID": "g1", "型號名稱": "淺灰", "商品庫存": "0", "月銷量": "10"},
+                    {"規格ID": "g2", "型號名稱": "深灰", "商品庫存": "0", "月銷量": "10"},
+                ],
+            }
+        }
+        golden = {
+            "9010": {
+                "型號": [
+                    {
+                        "規格ID": "g1",
+                        "型號名稱": "淺灰",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/111.html",
+                        "1688_offer_id": "111",
+                        "1688_sku_id": "6205321050395",
+                        "1688_sku_name": "淺灰",
+                    },
+                    {
+                        "規格ID": "g2",
+                        "型號名稱": "深灰",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/111.html",
+                        "1688_offer_id": "111",
+                        "1688_sku_id": "6205321050395",
+                        "1688_sku_name": "深灰",
+                    },
+                ]
+            }
+        }
+        certain, uncertain, skip, _ = build_expected(products, golden, ["9010"])
+        self.assertEqual(certain, [])
+        self.assertEqual(skip, [])
+        self.assertEqual(len(uncertain), 2)
+        for row in uncertain:
+            self.assertIn("conflict", row["uncertain_reason"])
+
+    def test_different_sku_ids_same_product_remain_certain(self):
+        products = {
+            "9011": {
+                "商品名稱": "測試吊飾",
+                "型號": [
+                    {"規格ID": "a1", "型號名稱": "黑色", "商品庫存": "0", "月銷量": "10"},
+                    {"規格ID": "a2", "型號名稱": "白色", "商品庫存": "0", "月銷量": "10"},
+                ],
+            }
+        }
+        golden = {
+            "9011": {
+                "型號": [
+                    {
+                        "規格ID": "a1",
+                        "型號名稱": "黑色",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/111.html",
+                        "1688_offer_id": "111",
+                        "1688_sku_id": "sku-a",
+                        "1688_sku_name": "黑色",
+                    },
+                    {
+                        "規格ID": "a2",
+                        "型號名稱": "白色",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/222.html",
+                        "1688_offer_id": "222",
+                        "1688_sku_id": "sku-b",
+                        "1688_sku_name": "白色",
+                    },
+                ]
+            }
+        }
+        certain, uncertain, skip, _ = build_expected(products, golden, ["9011"])
+        self.assertEqual(uncertain, [])
+        self.assertEqual(skip, [])
+        self.assertEqual(len(certain), 2)
+        self.assertEqual({row["sku_id"] for row in certain}, {"sku-a", "sku-b"})
+
     def test_name_spec_only_certain_participates_in_qty_diff(self):
         """缺 skuId 的 name/spec → certain；唯一對車後進 qty diff，且非 unexpected removable。"""
         certain = self._name_spec_certain_rows()

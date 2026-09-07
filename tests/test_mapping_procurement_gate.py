@@ -14,6 +14,9 @@ from mapping_procurement_gate import (
     not_purchasable_reason,
     stamp_phase1_verified,
     trust_tier,
+    annotate_shared_sku_conflicts,
+    model_has_shared_sku_conflict,
+    shared_sku_conflict_model_keys,
 )
 
 
@@ -140,6 +143,87 @@ class MappingProcurementGateTests(unittest.TestCase):
         incomplete["phase1_verified_at"] = "2026-09-07T12:00:00Z"
         incomplete["url"] = mapped["alibabaUrl"]
         self.assertTrue(is_purchasable(incomplete, url=mapped["alibabaUrl"]))
+
+
+class SharedSkuConflictHelperTests(unittest.TestCase):
+    def test_same_nonempty_sku_id_marks_both_models(self):
+        models = [
+            {
+                "規格ID": "g1",
+                "型號名稱": "淺灰",
+                "1688_sku_id": "6205321050395",
+                "1688_mapping_status": "approved",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/1.html",
+            },
+            {
+                "規格ID": "g2",
+                "型號名稱": "深灰",
+                "1688_sku_id": "6205321050395",
+                "1688_mapping_status": "approved",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/1.html",
+            },
+        ]
+        keys = shared_sku_conflict_model_keys(models)
+        self.assertEqual(keys, {"g1", "g2", "淺灰", "深灰"})
+        for row in models:
+            self.assertTrue(
+                model_has_shared_sku_conflict(
+                    spec_id=row["規格ID"],
+                    model_name=row["型號名稱"],
+                    conflict_keys=keys,
+                )
+            )
+            self.assertFalse(is_purchasable(row, shared_sku_conflict=True))
+            self.assertFalse(is_certain(row, shared_sku_conflict=True))
+            self.assertFalse(is_auto_trusted(row, shared_sku_conflict=True))
+            self.assertEqual(not_purchasable_reason(row, shared_sku_conflict=True), "conflict")
+        annotate_shared_sku_conflicts(models)
+        self.assertTrue(models[0]["shared_sku_conflict"])
+        self.assertTrue(models[1]["shared_sku_conflict"])
+        self.assertFalse(is_purchasable(models[0]))
+        self.assertFalse(is_purchasable(models[1]))
+
+    def test_different_sku_ids_even_different_offers_do_not_conflict(self):
+        models = [
+            _approved(
+                **{
+                    "規格ID": "a1",
+                    "型號名稱": "黑色",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/111.html",
+                    "1688_offer_id": "111",
+                    "1688_sku_id": "sku-a",
+                }
+            ),
+            _approved(
+                **{
+                    "規格ID": "a2",
+                    "型號名稱": "白色",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/222.html",
+                    "1688_offer_id": "222",
+                    "1688_sku_id": "sku-b",
+                }
+            ),
+        ]
+        keys = shared_sku_conflict_model_keys(models)
+        self.assertEqual(keys, set())
+        annotate_shared_sku_conflicts(models)
+        self.assertFalse(models[0]["shared_sku_conflict"])
+        self.assertFalse(models[1]["shared_sku_conflict"])
+        self.assertTrue(is_purchasable(models[0]))
+        self.assertTrue(is_purchasable(models[1]))
+        self.assertTrue(is_certain(models[0]))
+        self.assertTrue(is_auto_trusted(models[1]))
+
+    def test_empty_sku_ids_do_not_conflict_with_each_other(self):
+        models = [
+            {"規格ID": "e1", "型號名稱": "A", "1688_sku_id": ""},
+            {"規格ID": "e2", "型號名稱": "B", "1688_sku_id": "   "},
+        ]
+        self.assertEqual(shared_sku_conflict_model_keys(models), set())
+        annotate_shared_sku_conflicts(models)
+        self.assertFalse(models[0]["shared_sku_conflict"])
+        self.assertFalse(models[1]["shared_sku_conflict"])
+
 
 
 if __name__ == "__main__":

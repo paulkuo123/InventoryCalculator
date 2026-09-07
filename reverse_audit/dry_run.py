@@ -26,7 +26,13 @@ from restock_rules import (
 )
 
 from reverse_audit.paths import repo_root
-from mapping_procurement_gate import certain_via, is_certain, not_purchasable_reason
+from mapping_procurement_gate import (
+    certain_via,
+    is_certain,
+    model_has_shared_sku_conflict,
+    not_purchasable_reason,
+    shared_sku_conflict_model_keys,
+)
 from reverse_audit.util import (
     KNOWN_SOLDOUT,
     KNOWN_SOLDOUT_OFFERS,
@@ -171,6 +177,10 @@ def build_expected(
             continue
         name = str(prod.get("商品名稱") or "")
         by_spec, by_name = golden_index(golden, pid)
+        golden_entry = golden.get(pid) or {}
+        conflict_keys = shared_sku_conflict_model_keys(
+            golden_entry.get("型號") or [] if isinstance(golden_entry, dict) else []
+        )
         models = prod.get("型號") or []
         if isinstance(models, dict):
             models = list(models.values())
@@ -229,10 +239,17 @@ def build_expected(
             url_ok = url.startswith("http")
             has_sku = bool(sku_id)
             has_name_spec = bool(sku_name)
+            in_conflict = model_has_shared_sku_conflict(
+                spec_id=spec_id,
+                model_name=model_name,
+                conflict_keys=conflict_keys,
+                model=gm,
+            )
             certain = is_certain(gm, 阿里巴巴商品URL=url, **{
                 "1688_sku_id": sku_id,
                 "1688_sku_name": sku_name,
                 "1688_mapping_status": status,
+                "shared_sku_conflict": in_conflict,
             })
             if certain:
                 row = dict(base)
@@ -247,6 +264,7 @@ def build_expected(
                     "1688_sku_id": sku_id,
                     "1688_sku_name": sku_name,
                     "1688_mapping_status": status,
+                    "shared_sku_conflict": in_conflict,
                 })
                 # Prefer stable gate reason codes from mapping_procurement_gate.
                 if gate_reason in {

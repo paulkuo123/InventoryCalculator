@@ -111,7 +111,11 @@ from golden_mapping_phase1_gate import (
     reject_overwrite_all,
     require_write_gate,
 )
-from mapping_procurement_gate import is_purchasable, not_purchasable_reason
+from mapping_procurement_gate import (
+    is_purchasable,
+    not_purchasable_reason,
+    shared_sku_conflict_model_keys,
+)
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 from housekeeping import remove_files, remove_stale_matching_files
 from restock_rules import resolve_restock_quantity, validate_restock_sku_count
@@ -2621,6 +2625,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     "1688_phase1_verified_at": golden_mapping.get("phase1_verified_at") or "",
                     "1688_source_review_status": golden_mapping.get("source_review_status") or "",
                     "1688_sku_review_status": golden_mapping.get("sku_review_status") or "",
+                    "shared_sku_conflict": bool(golden_mapping.get("shared_sku_conflict")),
                 }
             ):
                 gate_reason = not_purchasable_reason(
@@ -2632,6 +2637,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                         "1688_phase1_verified_at": golden_mapping.get("phase1_verified_at") or "",
                         "1688_source_review_status": golden_mapping.get("source_review_status") or "",
                         "1688_sku_review_status": golden_mapping.get("sku_review_status") or "",
+                        "shared_sku_conflict": bool(golden_mapping.get("shared_sku_conflict")),
                     }
                 )
                 skipped.append({
@@ -2706,11 +2712,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         product = golden.get(str(product_id or ""), {})
         if not isinstance(product, dict):
             return {}
-        for model in product.get("型號", []) or []:
+        models = product.get("型號", []) or []
+        conflict_keys = shared_sku_conflict_model_keys(models)
+        for model in models:
             if not isinstance(model, dict):
                 continue
             current_id = normalize_identifier(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
-            if current_id != str(model_id or "") and str(model.get("型號名稱") or "").strip() != str(model_name or "").strip():
+            current_name = str(model.get("型號名稱") or "").strip()
+            if current_id != str(model_id or "") and current_name != str(model_name or "").strip():
                 continue
             sku_id = normalize_identifier(model.get("1688_sku_id"))
             status = str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing")).strip()
@@ -2718,6 +2727,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 dimension_count = int(float(model.get("1688_dimension_count") or (2 if model.get("1688_sku_second_name") else 1)))
             except (TypeError, ValueError):
                 dimension_count = 2 if model.get("1688_sku_second_name") else 1
+            spec_id = normalize_identifier(model.get("規格ID"))
             return {
                 "sku_id": sku_id,
                 "offer_id": normalize_identifier(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL")),
@@ -2731,6 +2741,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "phase1_verified_at": str(model.get("1688_phase1_verified_at") or "").strip(),
                 "source_review_status": str(model.get("1688_source_review_status") or "").strip(),
                 "sku_review_status": str(model.get("1688_sku_review_status") or "").strip(),
+                "shared_sku_conflict": spec_id in conflict_keys or current_name in conflict_keys,
             }
         return {}
 

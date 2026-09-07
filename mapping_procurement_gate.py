@@ -17,7 +17,8 @@ This module never writes ``golden_table.json``.
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections import defaultdict
+from typing import Any, Iterable, Mapping, Optional, Set
 
 PHASE1_VERIFIED_AT_KEY = "1688_phase1_verified_at"
 PHASE1_VERIFIED_BY_KEY = "1688_phase1_verified_by"
@@ -51,6 +52,93 @@ _SOLD_OUT_STATUSES = frozenset({
 
 def _text(value: Any) -> str:
     return str(value or "").strip()
+
+def _sku_id_of(model: Mapping[str, Any]) -> str:
+    return _text(
+        model.get("1688_sku_id")
+        or model.get("sku_id")
+        or model.get("alibabaSkuId")
+    )
+
+
+def _model_identity_keys(model: Mapping[str, Any]) -> list:
+    spec_id = _text(
+        model.get("規格ID")
+        or model.get("spec_id")
+        or model.get("specId")
+        or model.get("model_id")
+        or model.get("modelId")
+    )
+    name = _text(
+        model.get("型號名稱")
+        or model.get("model_name")
+        or model.get("modelName")
+    )
+    keys = []
+    if spec_id:
+        keys.append(spec_id)
+    if name:
+        keys.append(name)
+    return keys
+
+
+def shared_sku_conflict_model_keys(models: Optional[Iterable[Any]] = None) -> Set[str]:
+    """Return spec_id / model_name keys that share a non-empty 1688_sku_id within one product.
+
+    Empty sku_ids never conflict with each other. Call per product before gate checks.
+    """
+    sku_to_models: dict = defaultdict(list)
+    for model in models or []:
+        if not isinstance(model, Mapping):
+            continue
+        sku_id = _sku_id_of(model)
+        if not sku_id:
+            continue
+        sku_to_models[sku_id].append(model)
+
+    conflict_keys: Set[str] = set()
+    for group in sku_to_models.values():
+        if len(group) < 2:
+            continue
+        for model in group:
+            conflict_keys.update(_model_identity_keys(model))
+    return conflict_keys
+
+
+def annotate_shared_sku_conflicts(models: Optional[Iterable[Any]] = None) -> Set[str]:
+    """Set ``shared_sku_conflict`` on each model dict. Returns the conflict key set.
+
+    Mutates mapping dicts in place; do not pass golden_table rows that might be written back.
+    """
+    conflict_keys = shared_sku_conflict_model_keys(models)
+    for model in models or []:
+        if not isinstance(model, dict):
+            continue
+        model["shared_sku_conflict"] = any(
+            key in conflict_keys for key in _model_identity_keys(model)
+        )
+    return conflict_keys
+
+
+def model_has_shared_sku_conflict(
+    spec_id: str = "",
+    model_name: str = "",
+    conflict_keys: Optional[Set[str]] = None,
+    model: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    """True when this model's spec_id or name is in the per-product conflict set."""
+    if not conflict_keys:
+        return False
+    keys = []
+    spec_id = _text(spec_id)
+    model_name = _text(model_name)
+    if spec_id:
+        keys.append(spec_id)
+    if model_name:
+        keys.append(model_name)
+    if model is not None and isinstance(model, Mapping):
+        keys.extend(_model_identity_keys(model))
+    return any(key in conflict_keys for key in keys)
 
 
 def mapping_view(source: Optional[Mapping[str, Any]] = None, **overrides: Any) -> dict:
