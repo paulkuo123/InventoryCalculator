@@ -68,3 +68,15 @@ Signed-in Chrome CDP `127.0.0.1:9232`（chrome-profile-10），重用「1688精�
 | `waf` / `login_wall` / `oid_mismatch` / `error` | 0 |
 
 明細：`cdp24_health_20260909.csv`、`cdp24_SUMMARY_20260909.md`、`cdp24_RESULT_20260909.md`。
+
+## 計劃 C 候選證據包（2026-09-08 UTC／檔名 20260909）
+
+Signed-in CDP 9232，唯讀詳情／店舖（全站搜尋會 captcha）。**未改 golden、未加車。**
+
+| 結果 | 筆數 |
+|---|---:|
+| `with_candidate` | 13（高 2／中 5／低 6） |
+| `no_candidate` | 36 |
+| **合計** | **49** |
+
+明細：`planC_candidates_20260909.csv`、`planC_SUMMARY_20260909.md`、`planC_RESULT_20260909.md`。
