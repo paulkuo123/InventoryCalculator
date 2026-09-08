@@ -56,3 +56,15 @@ HEAD：`90962b237e3e6faa11fe7354317d75ae5624ed44`
 - CDP 抽樣（Captcha／登入牆，不加車）：`cdp_samples_20260908.json`
 
 本目錄會進 PR。同內容也寫在 `reports/golden_triage_20260908/`（該路徑被 `.gitignore` 忽略）以及 `/workspace/_handoff/`。
+
+## CDP live-health 複檢（2026-09-08 UTC／檔名 20260909）
+
+Signed-in Chrome CDP `127.0.0.1:9232`（chrome-profile-10），重用「1688精选货源」分頁，唯讀、不加車。HTTP WAF 已被取代為真實分類。
+
+| health | 獨立 URL |
+|---|---:|
+| `alive` | 7 |
+| `dead` | 17（404×15 + 下架詳情×2） |
+| `waf` / `login_wall` / `oid_mismatch` / `error` | 0 |
+
+明細：`cdp24_health_20260909.csv`、`cdp24_SUMMARY_20260909.md`、`cdp24_RESULT_20260909.md`。
