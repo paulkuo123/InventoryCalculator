@@ -17,6 +17,9 @@ DOCS = REPO / "docs" / "golden_ai5_20260909"
 
 AI4_CSV = HANDOFF / "golden_ai4_candidates_20260909.csv"
 PLANC_CSV = HANDOFF / "golden_triage_planC_candidates_20260909.csv"
+EXISTING_QUEUE = HANDOFF / "golden_ai5_queue_20260909.json"
+CUPS_PRODUCT_ID = "19666639659"
+AI4_RESUME_SOURCE = "ai4_resume"
 
 CONF_RANK = {"高": 0, "中": 1, "低": 2}
 MAIN_FIELDS = [
@@ -125,6 +128,7 @@ def _norm_main(row: dict, index: int) -> dict:
         "planC_note": planC_note,
         "why_not_others": "",
         "shelved_round1": planC_note == "shelved_round1",
+        "source": "",
     }
 
 
@@ -165,6 +169,7 @@ def _norm_appendix(row: dict, index: int) -> dict:
         "planC_note": "shelved_round1",
         "why_not_others": _txt(row, "why_not_others"),
         "shelved_round1": True,
+        "source": "",
     }
 
 
@@ -183,6 +188,59 @@ def load_main() -> list[dict]:
     for i, item in enumerate(items, start=1):
         item["index"] = i
     return items
+
+
+def load_cup_resume() -> list[dict]:
+    with AI4_CSV.open(encoding="utf-8-sig", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    picked = [
+        r
+        for r in rows
+        if _txt(r, "product_id") == CUPS_PRODUCT_ID
+        and _txt(r, "candidate_status") == "with_candidate"
+        and _txt(r, "confidence") in {"高", "中"}
+        and _has_candidate(r)
+    ]
+    if len(picked) != 12:
+        raise SystemExit(f"cup resume expected 12, got {len(picked)}")
+    items = [_norm_main(r, 0) for r in picked]
+    for item in items:
+        item["source"] = AI4_RESUME_SOURCE
+    return items
+
+
+def merge_main(existing: list[dict], cups: list[dict]) -> list[dict]:
+    by_key: dict[tuple[str, str], dict] = {}
+    for item in existing:
+        row = dict(item)
+        row.setdefault("source", "")
+        by_key[(row["product_id"], row["spec_id"])] = row
+    for cup in cups:
+        key = (cup["product_id"], cup["spec_id"])
+        if key in by_key:
+            merged = dict(by_key[key])
+            for field, value in cup.items():
+                if field in {"index", "case_id", "queue"}:
+                    continue
+                merged[field] = value
+            merged["source"] = AI4_RESUME_SOURCE
+            by_key[key] = merged
+        else:
+            by_key[key] = dict(cup)
+    items = list(by_key.values())
+    items.sort(key=_sort_key)
+    for i, item in enumerate(items, start=1):
+        item["index"] = i
+        item["queue"] = "main"
+        item["case_id"] = f"main:{item['product_id']}:{item['spec_id']}"
+    return items
+
+
+def load_existing_or_build() -> tuple[list[dict], list[dict]]:
+    if EXISTING_QUEUE.exists():
+        payload = json.loads(EXISTING_QUEUE.read_text(encoding="utf-8"))
+        return list(payload.get("main") or []), list(payload.get("appendix") or [])
+    return load_main(), load_appendix()
 
 
 def load_appendix() -> list[dict]:
@@ -380,7 +438,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <div class="eyebrow">莉莉安 · Golden AI-5</div>
       <h1>1688 候選審核工作台</h1>
       <p>一次看一案：左邊蝦皮、右邊 1688 候選。核准／駁回／改換／略過／停售只寫進本機審核結果，<b>不會</b>動 <code>golden_table.json</code>，也不加採購車。</p>
-      <div class="warn">預設先審高／中信心；低信心在「低」分頁。附錄 7 筆是先前已擱的 Plan C，非本批必審。</div>
+      <div class="warn">預設先審高／中信心；低信心在「低」分頁。主佇列 81＝原 69＋杯套／愛心熊 resume 12（source=ai4_resume）。附錄 7 筆是先前已擱的 Plan C，非本批必審。</div>
       <p class="kbd" style="margin-top:8px">快捷鍵：1 核准 · 2 駁回 · 3 改換 · 4 略過 · 5 停售 · ← → 上一／下一筆（輸入框內不觸發）</p>
     </div>
   </header>
@@ -482,7 +540,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       const mid = mainItems.filter((x) => x.confidence === "中").length;
       const low = mainItems.filter((x) => x.confidence === "低").length;
       document.getElementById("metrics").innerHTML = `
-        <div class="metric"><strong>${mainReviewed()} / ${mainItems.length}</strong><span>主佇列已審（必審 69）</span></div>
+        <div class="metric"><strong>${mainReviewed()} / ${mainItems.length}</strong><span>主佇列已審（必審 ${mainItems.length}）</span></div>
         <div class="metric"><strong>${high}</strong><span>高信心</span></div>
         <div class="metric"><strong>${mid}</strong><span>中信心</span></div>
         <div class="metric"><strong>${low}</strong><span>低信心（可後審）</span></div>
@@ -546,7 +604,7 @@ HTML_TEMPLATE = r"""<!doctype html>
             <div class="hero">
               ${img}
               <div>
-                <div><span class="badge">${escapeHtml(item.source_queue || "")}</span>${shelved}<span class="badge">應補 ${item.suggested_qty}</span></div>
+                <div><span class="badge">${escapeHtml(item.source_queue || "")}</span>${item.source ? `<span class="badge">${escapeHtml(item.source)}</span>` : ""}${shelved}<span class="badge">應補 ${item.suggested_qty}</span></div>
                 <strong>${escapeHtml(item.product_name)}</strong>
                 <div class="meta">
                   <div><b>型號</b> ${escapeHtml(item.model_name)}</div>
@@ -754,20 +812,24 @@ def write_csv_template(path: Path) -> None:
 
 
 def main() -> None:
-    main_items = load_main()
-    appendix_items = load_appendix()
+    existing_main, appendix_items = load_existing_or_build()
+    cups = load_cup_resume()
+    main_items = merge_main(existing_main, cups)
     main_counts = counts(main_items)
     appendix_counts = counts(appendix_items)
+    resume_n = sum(1 for item in main_items if item.get("source") == AI4_RESUME_SOURCE)
 
-    if main_counts["total"] != 69 or main_counts["高"] != 14 or main_counts["中"] != 18 or main_counts["低"] != 37:
+    if main_counts["total"] != 81 or main_counts["高"] != 19 or main_counts["中"] != 25 or main_counts["低"] != 37:
         raise SystemExit(f"main queue mismatch: {main_counts}")
+    if resume_n != 12:
+        raise SystemExit(f"ai4_resume count mismatch: {resume_n}")
     if appendix_counts["total"] != 7 or appendix_counts["高"] != 2 or appendix_counts["中"] != 5:
         raise SystemExit(f"appendix mismatch: {appendix_counts}")
 
     payload = {
         "generated_at": "2026-09-09",
         "golden_sha256": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
-        "note": "Main queue is AI-4 with_candidate only. Appendix is Plan C shelved high/mid. Decisions must not be written to golden_table.json.",
+        "note": "Main queue is original AI-4 with_candidate 69 plus 12 cup/heart-bear ai4_resume rows (product 19666639659). Appendix is Plan C shelved high/mid. Decisions must not be written to golden_table.json.",
         "counts": {
             "main": main_counts,
             "appendix": appendix_counts,
@@ -805,6 +867,7 @@ def main() -> None:
 
     print("main", main_counts)
     print("appendix", appendix_counts)
+    print("ai4_resume", resume_n)
     print("wrote", targets["html"][1])
 
 

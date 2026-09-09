@@ -1,12 +1,12 @@
 {
   "generated_at": "2026-09-09",
   "golden_sha256": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
-  "note": "Main queue is AI-4 with_candidate only. Appendix is Plan C shelved high/mid. Decisions must not be written to golden_table.json.",
+  "note": "Main queue is original AI-4 with_candidate 69 plus 12 cup/heart-bear ai4_resume rows (product 19666639659). Appendix is Plan C shelved high/mid. Decisions must not be written to golden_table.json.",
   "counts": {
     "main": {
-      "total": 69,
-      "高": 14,
-      "中": 18,
+      "total": 81,
+      "高": 19,
+      "中": 25,
       "低": 37
     },
     "appendix": {
@@ -47,12 +47,46 @@
       "checked_at": "2026-09-09T02:43:33Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
+    },
+    {
+      "case_id": "main:19666639659:165266189285",
+      "queue": "main",
+      "index": 2,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189285",
+      "model_name": "米菲兔",
+      "suggested_qty": 30,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-bovd2pg5ankvd9_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "米菲兔",
+      "candidate_sku_id": "5933116172305",
+      "candidate_spec": "米菲兔",
+      "confidence": "高",
+      "reason": "resume同檔補配：顏色對上；款名「米菲/菲兔」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
     },
     {
       "case_id": "main:19960782914:156212462950",
       "queue": "main",
-      "index": 2,
+      "index": 3,
       "source_queue": "P3_mapping_suspect",
       "product_id": "19960782914",
       "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果",
@@ -79,12 +113,13 @@
       "checked_at": "2026-09-09T02:48:18Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:24242091907:188264743039",
       "queue": "main",
-      "index": 3,
+      "index": 4,
       "source_queue": "P3_mapping_suspect",
       "product_id": "24242091907",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR X 保護殼 軟殼 蘋果",
@@ -111,12 +146,13 @@
       "checked_at": "2026-09-09T02:49:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:25209231609:187868744259",
       "queue": "main",
-      "index": 4,
+      "index": 5,
       "source_queue": "P3_mapping_suspect",
       "product_id": "25209231609",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XR SE X 保護殼 軟殼 蘋果",
@@ -143,12 +179,79 @@
       "checked_at": "2026-09-09T02:49:28Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
+    },
+    {
+      "case_id": "main:19666639659:165266189288",
+      "queue": "main",
+      "index": 6,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189288",
+      "model_name": "米色MES",
+      "suggested_qty": 20,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-g61mx044ankv9d_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "米色mes petits amis",
+      "candidate_sku_id": "5933116172301",
+      "candidate_spec": "米色mes petits amis",
+      "confidence": "高",
+      "reason": "resume全站搜「杯套 爱心熊 愛心熊」：顏色對上；款名「色mes/mes/es」；型號字面命中；品類不太像",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:43:41Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
+    },
+    {
+      "case_id": "main:19666639659:165266189292",
+      "queue": "main",
+      "index": 7,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189292",
+      "model_name": "Hello",
+      "suggested_qty": 20,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-wf7vaap5ankv8b_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "hello",
+      "candidate_sku_id": "5933116172302",
+      "candidate_spec": "hello",
+      "confidence": "高",
+      "reason": "resume同檔補配：款名「hello/he/ll」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
     },
     {
       "case_id": "main:19960782914:157234980249",
       "queue": "main",
-      "index": 5,
+      "index": 8,
       "source_queue": "P3_mapping_suspect",
       "product_id": "19960782914",
       "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果",
@@ -175,12 +278,13 @@
       "checked_at": "2026-09-09T02:48:18Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:19960782914:225676862459",
       "queue": "main",
-      "index": 6,
+      "index": 9,
       "source_queue": "P3_mapping_suspect",
       "product_id": "19960782914",
       "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果",
@@ -207,12 +311,13 @@
       "checked_at": "2026-09-09T02:48:18Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20525145965:173733287305",
       "queue": "main",
-      "index": 7,
+      "index": 10,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20525145965",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼",
@@ -239,12 +344,13 @@
       "checked_at": "2026-09-09T02:51:12Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:24092279273:233891894799",
       "queue": "main",
-      "index": 8,
+      "index": 11,
       "source_queue": "P3_mapping_suspect",
       "product_id": "24092279273",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 保護殼 軟殼 蘋果",
@@ -271,12 +377,13 @@
       "checked_at": "2026-09-09T02:51:31Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:24092279273:233891894802",
       "queue": "main",
-      "index": 9,
+      "index": 12,
       "source_queue": "P3_mapping_suspect",
       "product_id": "24092279273",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 保護殼 軟殼 蘋果",
@@ -303,12 +410,13 @@
       "checked_at": "2026-09-09T02:51:31Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:24242091907:188264743032",
       "queue": "main",
-      "index": 10,
+      "index": 13,
       "source_queue": "P3_mapping_suspect",
       "product_id": "24242091907",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR X 保護殼 軟殼 蘋果",
@@ -335,12 +443,13 @@
       "checked_at": "2026-09-09T02:49:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:25209231609:370088793892",
       "queue": "main",
-      "index": 11,
+      "index": 14,
       "source_queue": "P3_mapping_suspect",
       "product_id": "25209231609",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XR SE X 保護殼 軟殼 蘋果",
@@ -367,12 +476,13 @@
       "checked_at": "2026-09-09T02:49:28Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:25717655009:207357888387",
       "queue": "main",
-      "index": 12,
+      "index": 15,
       "source_queue": "P3_mapping_suspect",
       "product_id": "25717655009",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR X 保護殼 硬殼 素色殼",
@@ -399,12 +509,13 @@
       "checked_at": "2026-09-09T02:51:57Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:41207454368:275633329326",
       "queue": "main",
-      "index": 13,
+      "index": 16,
       "source_queue": "P3_mapping_suspect",
       "product_id": "41207454368",
       "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼",
@@ -431,12 +542,13 @@
       "checked_at": "2026-09-09T02:43:33Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:41207454368:280633324555",
       "queue": "main",
-      "index": 14,
+      "index": 17,
       "source_queue": "P3_mapping_suspect",
       "product_id": "41207454368",
       "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼",
@@ -463,12 +575,79 @@
       "checked_at": "2026-09-09T02:43:33Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
+    },
+    {
+      "case_id": "main:19666639659:165266189286",
+      "queue": "main",
+      "index": 18,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189286",
+      "model_name": "Have a warm day",
+      "suggested_qty": 10,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-gpshrdj5ankv29_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "have a warm day in your heart",
+      "candidate_sku_id": "5933116172300",
+      "candidate_spec": "have a warm day in your heart",
+      "confidence": "高",
+      "reason": "resume同檔補配：款名「haveawarmday/ar/ay」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
+    },
+    {
+      "case_id": "main:19666639659:165266189289",
+      "queue": "main",
+      "index": 19,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189289",
+      "model_name": "貓和主人",
+      "suggested_qty": 10,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-komfyu84ankv32_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "猫和主人",
+      "candidate_sku_id": "5933116172303",
+      "candidate_spec": "猫和主人",
+      "confidence": "高",
+      "reason": "resume同檔補配：款名「猫和主人/主人/猫和」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
     },
     {
       "case_id": "main:23551074058:204499705550",
       "queue": "main",
-      "index": 15,
+      "index": 20,
       "source_queue": "P3_mapping_suspect",
       "product_id": "23551074058",
       "product_name": "隔日到貨🔥 韓版簡約原宿後背包 學生背包 大容量 B52 背包 百搭 防潑水 尼龍 手提 雙肩包 背包 書包 潮流 後背",
@@ -495,12 +674,13 @@
       "checked_at": "2026-09-09T02:37:43Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:15595545007:137218800599",
       "queue": "main",
-      "index": 16,
+      "index": 21,
       "source_queue": "P3_mapping_suspect",
       "product_id": "15595545007",
       "product_name": "隔日到貨🔥 Airpods 耳機清潔筆 耳機清潔 筆電清潔 鍵盤清潔 藍芽耳機清潔 手機配件 3C清潔",
@@ -527,12 +707,13 @@
       "checked_at": "2026-09-09T02:39:27Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23551074058:206949496877",
       "queue": "main",
-      "index": 17,
+      "index": 22,
       "source_queue": "P3_mapping_suspect",
       "product_id": "23551074058",
       "product_name": "隔日到貨🔥 韓版簡約原宿後背包 學生背包 大容量 B52 背包 百搭 防潑水 尼龍 手提 雙肩包 背包 書包 潮流 後背",
@@ -559,12 +740,13 @@
       "checked_at": "2026-09-09T02:37:43Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23625462276:107951396378",
       "queue": "main",
-      "index": 18,
+      "index": 23,
       "source_queue": "P3_mapping_suspect",
       "product_id": "23625462276",
       "product_name": "隔日到貨🔥 狗狗刺繡襪 女長襪 長襪 中筒襪 襪子 S30 襪子女 白長襪 女襪 女生襪子 白色襪子 白襪",
@@ -591,12 +773,13 @@
       "checked_at": "2026-09-09T02:41:50Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23551074058:204499705551",
       "queue": "main",
-      "index": 19,
+      "index": 24,
       "source_queue": "P3_mapping_suspect",
       "product_id": "23551074058",
       "product_name": "隔日到貨🔥 韓版簡約原宿後背包 學生背包 大容量 B52 背包 百搭 防潑水 尼龍 手提 雙肩包 背包 書包 潮流 後背",
@@ -623,12 +806,13 @@
       "checked_at": "2026-09-09T02:37:43Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:28169260786:233530649343",
       "queue": "main",
-      "index": 20,
+      "index": 25,
       "source_queue": "P3_mapping_suspect",
       "product_id": "28169260786",
       "product_name": "隔日到貨🔥 點點捲邊襪 S7 襪子 純色棉襪 素色襪 女襪 長襪 純色 點點襪 棉襪 中筒襪 襪子 韓風",
@@ -655,12 +839,46 @@
       "checked_at": "2026-09-09T02:42:08Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
+    },
+    {
+      "case_id": "main:19666639659:165266189287",
+      "queue": "main",
+      "index": 26,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189287",
+      "model_name": "愛心熊",
+      "suggested_qty": 60,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-kgca09l5ankv48_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "爱心熊",
+      "candidate_sku_id": "5933116172304",
+      "candidate_spec": "爱心熊",
+      "confidence": "中",
+      "reason": "resume同檔補配：款名「爱心熊」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
     },
     {
       "case_id": "main:25259235570:225996975633",
       "queue": "main",
-      "index": 21,
+      "index": 27,
       "source_queue": "P3_mapping_suspect",
       "product_id": "25259235570",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR 保護殼 軟殼 蘋果 小狗",
@@ -687,12 +905,13 @@
       "checked_at": "2026-09-09T02:47:28Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:21869109391:405613043534",
       "queue": "main",
-      "index": 22,
+      "index": 28,
       "source_queue": "P3_mapping_suspect",
       "product_id": "21869109391",
       "product_name": "隔日到貨🔥 刺繡棉襪 女襪 S16 長襪 棉襪 白長襪 中筒襪 襪子 白色襪子 女生襪子 女長襪 襪子女 小熊襪",
@@ -719,12 +938,13 @@
       "checked_at": "2026-09-09T02:47:52Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:22501643420:230075709675",
       "queue": "main",
-      "index": 23,
+      "index": 29,
       "source_queue": "P3_mapping_suspect",
       "product_id": "22501643420",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼",
@@ -751,12 +971,13 @@
       "checked_at": "2026-09-09T02:49:53Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:18396514233:245742439192",
       "queue": "main",
-      "index": 24,
+      "index": 30,
       "source_queue": "P3_mapping_suspect",
       "product_id": "18396514233",
       "product_name": "隔日到貨🔥 iPhone 立體珍珠 手機殼 17 16 15 14 13 12 11 pro 保護殼 鏡面殼 蘋果",
@@ -783,12 +1004,13 @@
       "checked_at": "2026-09-09T02:50:36Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:18396514233:245742439196",
       "queue": "main",
-      "index": 25,
+      "index": 31,
       "source_queue": "P3_mapping_suspect",
       "product_id": "18396514233",
       "product_name": "隔日到貨🔥 iPhone 立體珍珠 手機殼 17 16 15 14 13 12 11 pro 保護殼 鏡面殼 蘋果",
@@ -815,12 +1037,13 @@
       "checked_at": "2026-09-09T02:50:36Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:19960782914:225676862457",
       "queue": "main",
-      "index": 26,
+      "index": 32,
       "source_queue": "P3_mapping_suspect",
       "product_id": "19960782914",
       "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果",
@@ -847,12 +1070,13 @@
       "checked_at": "2026-09-09T02:48:18Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20373719873:59258811614",
       "queue": "main",
-      "index": 27,
+      "index": 33,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20373719873",
       "product_name": "隔日到貨🔥 韓版寬邊奶茶色系髮箍 髮飾 髮箍 頭飾 飾品 配件",
@@ -879,12 +1103,13 @@
       "checked_at": "2026-09-09T02:51:00Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:25259235570:225996975638",
       "queue": "main",
-      "index": 28,
+      "index": 34,
       "source_queue": "P3_mapping_suspect",
       "product_id": "25259235570",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR 保護殼 軟殼 蘋果 小狗",
@@ -911,12 +1136,13 @@
       "checked_at": "2026-09-09T02:47:28Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:25259235570:225996975642",
       "queue": "main",
-      "index": 29,
+      "index": 35,
       "source_queue": "P3_mapping_suspect",
       "product_id": "25259235570",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR 保護殼 軟殼 蘋果 小狗",
@@ -943,12 +1169,13 @@
       "checked_at": "2026-09-09T02:47:28Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:27750389092:255856434596",
       "queue": "main",
-      "index": 30,
+      "index": 36,
       "source_queue": "P3_mapping_suspect",
       "product_id": "27750389092",
       "product_name": "隔日到貨🔥 牽手襪 中筒襪 棉長襪 長襪 中筒襪 襪子 白色襪子 女襪 長襪 情侶襪 襪子女 白長襪",
@@ -975,12 +1202,79 @@
       "checked_at": "2026-09-09T02:45:16Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
+    },
+    {
+      "case_id": "main:19666639659:108909267604",
+      "queue": "main",
+      "index": 37,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "108909267604",
+      "model_name": "沉思",
+      "suggested_qty": 10,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul9-licofuotawqq8a_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "沉思杯套",
+      "candidate_sku_id": "5933116172309",
+      "candidate_spec": "沉思杯套",
+      "confidence": "中",
+      "reason": "resume同檔補配：款名「沉思」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
+    },
+    {
+      "case_id": "main:19666639659:108909267605",
+      "queue": "main",
+      "index": 38,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "108909267605",
+      "model_name": "摸頭",
+      "suggested_qty": 10,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul0-lgt3xmphf03018_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "摸头杯套",
+      "candidate_sku_id": "5933116172310",
+      "candidate_spec": "摸头杯套",
+      "confidence": "中",
+      "reason": "resume同檔補配：款名「摸头」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
     },
     {
       "case_id": "main:20488473843:235303163998",
       "queue": "main",
-      "index": 31,
+      "index": 39,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1007,12 +1301,145 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "shelved_round1",
       "why_not_others": "",
-      "shelved_round1": true
+      "shelved_round1": true,
+      "source": ""
+    },
+    {
+      "case_id": "main:19666639659:108909267603",
+      "queue": "main",
+      "index": 40,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "108909267603",
+      "model_name": "煮茶",
+      "suggested_qty": 5,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul2-lgt3yx9x8bvw14_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "煮茶杯套",
+      "candidate_sku_id": "5933116172311",
+      "candidate_spec": "煮茶杯套",
+      "confidence": "中",
+      "reason": "resume同檔補配：款名「煮茶」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
+    },
+    {
+      "case_id": "main:19666639659:165266189290",
+      "queue": "main",
+      "index": 41,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189290",
+      "model_name": "情人節",
+      "suggested_qty": 5,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-1m39gdb5ankv1e_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "情人节",
+      "candidate_sku_id": "5933116172316",
+      "candidate_spec": "情人节",
+      "confidence": "中",
+      "reason": "resume同檔補配：款名「情人节」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
+    },
+    {
+      "case_id": "main:19666639659:165266189291",
+      "queue": "main",
+      "index": 42,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189291",
+      "model_name": "靠樹",
+      "suggested_qty": 5,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-nwkfb3d5ankv9e_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "靠树",
+      "candidate_sku_id": "5933116172307",
+      "candidate_spec": "靠树",
+      "confidence": "中",
+      "reason": "resume同檔補配：款名「靠树」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
+    },
+    {
+      "case_id": "main:19666639659:165266189293",
+      "queue": "main",
+      "index": 43,
+      "source_queue": "AI2_dead",
+      "product_id": "19666639659",
+      "product_name": "隔日到貨🔥 杯套 杯袋 飲料提袋 飲料袋 環保袋 手搖飲料袋 飲料袋 提袋 方便 便攜 棉麻 飲料杯套 帆布袋",
+      "spec_id": "165266189293",
+      "model_name": "男孩",
+      "suggested_qty": 5,
+      "bucket": "url_suspect",
+      "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-gfrzta24ankve7_tn",
+      "old_url": "https://detail.1688.com/offer/644276542345.html",
+      "old_offer_id": "644276542345",
+      "old_sku_id": "",
+      "old_health": "dead",
+      "candidate_status": "with_candidate",
+      "candidate_offer_url": "https://detail.1688.com/offer/977900422023.html",
+      "candidate_offer_id": "977900422023",
+      "candidate_sku_name": "男孩",
+      "candidate_sku_id": "5933116172312",
+      "candidate_spec": "男孩",
+      "confidence": "中",
+      "reason": "resume同檔補配：款名「男孩」；型號字面命中；SKU名對上",
+      "method": "site_search",
+      "alt_offer_id": "",
+      "search_query": "杯套 爱心熊 愛心熊",
+      "checked_at": "2026-09-09T03:49:08Z",
+      "planC_note": "",
+      "why_not_others": "",
+      "shelved_round1": false,
+      "source": "ai4_resume"
     },
     {
       "case_id": "main:23381311738:184609541262",
       "queue": "main",
-      "index": 32,
+      "index": 44,
       "source_queue": "P1_no_url",
       "product_id": "23381311738",
       "product_name": "隔日到貨🔥 iPhone 手機殼 15 14 pro 13 12 11 XS XR SE X 保護殼 軟殼 蘋果",
@@ -1039,12 +1466,13 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "shelved_round1",
       "why_not_others": "",
-      "shelved_round1": true
+      "shelved_round1": true,
+      "source": ""
     },
     {
       "case_id": "main:20465189991:156338784744",
       "queue": "main",
-      "index": 33,
+      "index": 45,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20465189991",
       "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪",
@@ -1071,12 +1499,13 @@
       "checked_at": "2026-09-09T02:38:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20465189991:156338784745",
       "queue": "main",
-      "index": 34,
+      "index": 46,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20465189991",
       "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪",
@@ -1103,12 +1532,13 @@
       "checked_at": "2026-09-09T02:38:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20465189991:156338784740",
       "queue": "main",
-      "index": 35,
+      "index": 47,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20465189991",
       "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪",
@@ -1135,12 +1565,13 @@
       "checked_at": "2026-09-09T02:38:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:4011081861:11588286011",
       "queue": "main",
-      "index": 36,
+      "index": 48,
       "source_queue": "P3_mapping_suspect",
       "product_id": "4011081861",
       "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪",
@@ -1167,12 +1598,13 @@
       "checked_at": "2026-09-09T02:42:27Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:4011081861:11588286002",
       "queue": "main",
-      "index": 37,
+      "index": 49,
       "source_queue": "P3_mapping_suspect",
       "product_id": "4011081861",
       "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪",
@@ -1199,12 +1631,13 @@
       "checked_at": "2026-09-09T02:43:06Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:27750389092:255856434594",
       "queue": "main",
-      "index": 38,
+      "index": 50,
       "source_queue": "P3_mapping_suspect",
       "product_id": "27750389092",
       "product_name": "隔日到貨🔥 牽手襪 中筒襪 棉長襪 長襪 中筒襪 襪子 白色襪子 女襪 長襪 情侶襪 襪子女 白長襪",
@@ -1231,12 +1664,13 @@
       "checked_at": "2026-09-09T02:45:16Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:4011081861:11588286004",
       "queue": "main",
-      "index": 39,
+      "index": 51,
       "source_queue": "P3_mapping_suspect",
       "product_id": "4011081861",
       "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪",
@@ -1263,12 +1697,13 @@
       "checked_at": "2026-09-09T02:42:27Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:26757534364:233087223854",
       "queue": "main",
-      "index": 40,
+      "index": 52,
       "source_queue": "P3_mapping_suspect",
       "product_id": "26757534364",
       "product_name": "隔日到貨🔥 純色棉襪 花邊襪 S3 女襪 長襪 棉襪 白長襪 中筒襪 襪子 女生襪子 女長襪 襪子女 捲邊襪",
@@ -1295,12 +1730,13 @@
       "checked_at": "2026-09-09T02:47:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:27750389092:255856434595",
       "queue": "main",
-      "index": 41,
+      "index": 53,
       "source_queue": "P3_mapping_suspect",
       "product_id": "27750389092",
       "product_name": "隔日到貨🔥 牽手襪 中筒襪 棉長襪 長襪 中筒襪 襪子 白色襪子 女襪 長襪 情侶襪 襪子女 白長襪",
@@ -1327,12 +1763,13 @@
       "checked_at": "2026-09-09T02:45:16Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20465189991:156338784743",
       "queue": "main",
-      "index": 42,
+      "index": 54,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20465189991",
       "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪",
@@ -1359,12 +1796,13 @@
       "checked_at": "2026-09-09T02:38:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20465189991:156338784748",
       "queue": "main",
-      "index": 43,
+      "index": 55,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20465189991",
       "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪",
@@ -1391,12 +1829,13 @@
       "checked_at": "2026-09-09T02:38:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20465189991:156338784749",
       "queue": "main",
-      "index": 44,
+      "index": 56,
       "source_queue": "P3_mapping_suspect",
       "product_id": "20465189991",
       "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪",
@@ -1423,12 +1862,13 @@
       "checked_at": "2026-09-09T02:38:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:22825472251:213884095381",
       "queue": "main",
-      "index": 45,
+      "index": 57,
       "source_queue": "P3_mapping_suspect",
       "product_id": "22825472251",
       "product_name": "隔日到貨🔥 水果襪 女襪 S33 長襪 棉襪 白長襪 中筒襪 襪子 白色襪子 女生襪子 女長襪 襪子女",
@@ -1455,12 +1895,13 @@
       "checked_at": "2026-09-09T02:45:52Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:4011081861:11588286010",
       "queue": "main",
-      "index": 46,
+      "index": 58,
       "source_queue": "P3_mapping_suspect",
       "product_id": "4011081861",
       "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪",
@@ -1487,12 +1928,13 @@
       "checked_at": "2026-09-09T02:42:27Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:9159438193:92291528084",
       "queue": "main",
-      "index": 47,
+      "index": 59,
       "source_queue": "P3_mapping_suspect",
       "product_id": "9159438193",
       "product_name": "隔日到貨🔥 ins風 手機氣囊 多功能指環扣 伸縮折疊 立體氣囊 手機架 適合各手機 氣囊 黏貼式 懶人氣囊",
@@ -1519,12 +1961,13 @@
       "checked_at": "2026-09-09T02:48:53Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:21070740292:183690984111",
       "queue": "main",
-      "index": 48,
+      "index": 60,
       "source_queue": "P3_mapping_suspect",
       "product_id": "21070740292",
       "product_name": "隔日到貨🔥 棋盤格長襪 S14 長襪 棉襪 中筒襪 襪子 白長襪 襪子女 女生襪子 女襪 情侶襪 女長襪",
@@ -1551,12 +1994,13 @@
       "checked_at": "2026-09-09T02:50:13Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:22501643420:230075709671",
       "queue": "main",
-      "index": 49,
+      "index": 61,
       "source_queue": "P3_mapping_suspect",
       "product_id": "22501643420",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼",
@@ -1583,12 +2027,13 @@
       "checked_at": "2026-09-09T02:49:53Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:26757534364:233087223853",
       "queue": "main",
-      "index": 50,
+      "index": 62,
       "source_queue": "P3_mapping_suspect",
       "product_id": "26757534364",
       "product_name": "隔日到貨🔥 純色棉襪 花邊襪 S3 女襪 長襪 棉襪 白長襪 中筒襪 襪子 女生襪子 女長襪 襪子女 捲邊襪",
@@ -1615,12 +2060,13 @@
       "checked_at": "2026-09-09T02:47:03Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:4011081861:11588286009",
       "queue": "main",
-      "index": 51,
+      "index": 63,
       "source_queue": "P3_mapping_suspect",
       "product_id": "4011081861",
       "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪",
@@ -1647,12 +2093,13 @@
       "checked_at": "2026-09-09T02:42:27Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20488473843:204276976414",
       "queue": "main",
-      "index": 52,
+      "index": 64,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1679,12 +2126,13 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "planC_reuse",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20488473843:204276976416",
       "queue": "main",
-      "index": 53,
+      "index": 65,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1711,12 +2159,13 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "planC_reuse",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20488473843:204276976417",
       "queue": "main",
-      "index": 54,
+      "index": 66,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1743,12 +2192,13 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "planC_reuse",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:25083447472:226541342229",
       "queue": "main",
-      "index": 55,
+      "index": 67,
       "source_queue": "P1_no_url",
       "product_id": "25083447472",
       "product_name": "隔日到貨🔥 ins韓風 手機殼吊飾 Airpods殼吊飾 手機殼掛飾 手機掛件 掛飾 手機吊飾 手機掛繩 掛繩",
@@ -1775,12 +2225,13 @@
       "checked_at": "2026-09-09T02:27:44Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:11515728220:26604391185",
       "queue": "main",
-      "index": 56,
+      "index": 68,
       "source_queue": "P1_no_url",
       "product_id": "11515728220",
       "product_name": "隔日到貨🔥 ins風 手機氣囊 多功能指環扣 伸縮折疊 立體氣囊 手機架 適合各手機 氣囊 黏貼式 懶人氣囊",
@@ -1807,12 +2258,13 @@
       "checked_at": "2026-09-09T02:28:33Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:11515728220:36238148048",
       "queue": "main",
-      "index": 57,
+      "index": 69,
       "source_queue": "P1_no_url",
       "product_id": "11515728220",
       "product_name": "隔日到貨🔥 ins風 手機氣囊 多功能指環扣 伸縮折疊 立體氣囊 手機架 適合各手機 氣囊 黏貼式 懶人氣囊",
@@ -1839,12 +2291,13 @@
       "checked_at": "2026-09-09T02:28:33Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:12439413079:171110111462",
       "queue": "main",
-      "index": 58,
+      "index": 70,
       "source_queue": "AI2_dead",
       "product_id": "12439413079",
       "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 XS XR SE3 X 保護殼 軟殼 蘋果",
@@ -1871,12 +2324,13 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "planC_reuse",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20488473843:204277011262",
       "queue": "main",
-      "index": 59,
+      "index": 71,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1903,12 +2357,13 @@
       "checked_at": "2026-09-09T02:35:46Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20488473843:204277011267",
       "queue": "main",
-      "index": 60,
+      "index": 72,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1935,12 +2390,13 @@
       "checked_at": "2026-09-09T02:35:46Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20488473843:69316974495",
       "queue": "main",
-      "index": 61,
+      "index": 73,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1967,12 +2423,13 @@
       "checked_at": "2026-09-09T02:35:46Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:20488473843:69316974496",
       "queue": "main",
-      "index": 62,
+      "index": 74,
       "source_queue": "AI2_dead",
       "product_id": "20488473843",
       "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套",
@@ -1999,12 +2456,13 @@
       "checked_at": "2026-09-09T02:35:46Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23161561299:138799819931",
       "queue": "main",
-      "index": 63,
+      "index": 75,
       "source_queue": "P1_no_url",
       "product_id": "23161561299",
       "product_name": "隔日到貨🔥 Airpods 保護套 1代 2代 3代 pro pro2 耳機套 A31 矽膠 軟殼 保護殼 蘋果",
@@ -2031,12 +2489,13 @@
       "checked_at": "2026-09-09T02:34:07Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23161561299:138799819932",
       "queue": "main",
-      "index": 64,
+      "index": 76,
       "source_queue": "P1_no_url",
       "product_id": "23161561299",
       "product_name": "隔日到貨🔥 Airpods 保護套 1代 2代 3代 pro pro2 耳機套 A31 矽膠 軟殼 保護殼 蘋果",
@@ -2063,12 +2522,13 @@
       "checked_at": "2026-09-09T02:34:07Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23244459752:167688526079",
       "queue": "main",
-      "index": 65,
+      "index": 77,
       "source_queue": "P1_no_url",
       "product_id": "23244459752",
       "product_name": "隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 環保袋 購物袋 收納包 簡約文青",
@@ -2095,12 +2555,13 @@
       "checked_at": "2026-09-09T02:27:10Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23244459752:167688526087",
       "queue": "main",
-      "index": 66,
+      "index": 78,
       "source_queue": "P1_no_url",
       "product_id": "23244459752",
       "product_name": "隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 環保袋 購物袋 收納包 簡約文青",
@@ -2127,12 +2588,13 @@
       "checked_at": "2026-09-09T02:27:10Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:23244459752:167688526090",
       "queue": "main",
-      "index": 67,
+      "index": 79,
       "source_queue": "P1_no_url",
       "product_id": "23244459752",
       "product_name": "隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 環保袋 購物袋 收納包 簡約文青",
@@ -2159,12 +2621,13 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:8743346211:64914252592",
       "queue": "main",
-      "index": 68,
+      "index": 80,
       "source_queue": "AI2_off_shelf",
       "product_id": "8743346211",
       "product_name": "隔日到貨🔥 iPhone 手機殼 15 14 13 12 11 pro Max XS XR SE 保護殼 軟殼",
@@ -2191,12 +2654,13 @@
       "checked_at": "2026-09-09T02:27:09Z",
       "planC_note": "planC_reuse",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     },
     {
       "case_id": "main:9228589144:64271483250",
       "queue": "main",
-      "index": 69,
+      "index": 81,
       "source_queue": "AI2_off_shelf",
       "product_id": "9228589144",
       "product_name": "隔日到貨🔥 iPhone 手機殼 15 14 13 12 11 pro Max XS XR SE 保護殼 軟殼",
@@ -2223,7 +2687,8 @@
       "checked_at": "2026-09-09T02:37:22Z",
       "planC_note": "",
       "why_not_others": "",
-      "shelved_round1": false
+      "shelved_round1": false,
+      "source": ""
     }
   ],
   "appendix": [
