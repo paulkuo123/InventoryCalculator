@@ -83,7 +83,9 @@ def _qty(row: dict) -> int:
 
 
 def _sort_key(item: dict) -> tuple:
+    # Steering 2026-09-09: cup/heart-bear ai4_resume 12 first for 庭安
     return (
+        0 if item.get("source") == AI4_RESUME_SOURCE else 1,
         CONF_RANK.get(item["confidence"], 9),
         -item["suggested_qty"],
         item["product_id"],
@@ -438,7 +440,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <div class="eyebrow">莉莉安 · Golden AI-5</div>
       <h1>1688 候選審核工作台</h1>
       <p>一次看一案：左邊蝦皮、右邊 1688 候選。核准／駁回／改換／略過／停售只寫進本機審核結果，<b>不會</b>動 <code>golden_table.json</code>，也不加採購車。</p>
-      <div class="warn">預設先審高／中信心；低信心在「低」分頁。主佇列 81＝原 69＋杯套／愛心熊 resume 12（source=ai4_resume）。附錄 7 筆是先前已擱的 Plan C，非本批必審。</div>
+      <div class="warn">杯套／愛心熊 resume 12（source=ai4_resume）已排在主佇列最前面方便先審；其後才是原 69。預設分頁仍是高／中；低信心在「低」分頁。主佇列 81。附錄 7 筆是先前已擱的 Plan C，非本批必審。</div>
       <p class="kbd" style="margin-top:8px">快捷鍵：1 核准 · 2 駁回 · 3 改換 · 4 略過 · 5 停售 · ← → 上一／下一筆（輸入框內不觸發）</p>
     </div>
   </header>
@@ -863,7 +865,8 @@ def main() -> None:
         write_csv_template(path)
 
     src = Path(__file__).resolve()
-    shutil.copy2(src, DOCS / "_ai5_build_review_ui.py")
+    if src.resolve() != (DOCS / "_ai5_build_review_ui.py").resolve():
+        shutil.copy2(src, DOCS / "_ai5_build_review_ui.py")
 
     print("main", main_counts)
     print("appendix", appendix_counts)
