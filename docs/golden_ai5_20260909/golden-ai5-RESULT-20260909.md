@@ -53,10 +53,13 @@ python3 -m http.server 8765
 - SUMMARY：`/workspace/_handoff/golden_ai5_SUMMARY_20260909.md`
 - 腳本：`/workspace/_handoff/_ai5_build_review_ui.py`
 
+## 瀏覽器抽驗
+已用本機 `python3 -m http.server 8765` 開 UI：預設優先 32 筆、全部必審 69、低 37、附錄 7；點過核准／略過，進度會累加並寫 localStorage。**未**點 1688 購買／加入进货单。
+
 ## Docs PR（保持 OPEN，不合 main）
-- URL：（push 後填）
+- URL：https://github.com/paulkuo123/InventoryCalculator/pull/46
 - Branch：`docs/golden-ai5-review-20260909`
-- Commit：（commit 後填）
+- Commit：`ca920a1`（本檔補 PR URL 後會再一筆）
 - 路徑：`docs/golden_ai5_20260909/`
 - State：**OPEN**（**未 merge**）
 
@@ -64,4 +67,4 @@ python3 -m http.server 8765
 - Touched golden? **no**
 - Merged main? **no**
 - Added cart? **no**
-- EXIT：0（PR 開好後）
+- EXIT：`0`
