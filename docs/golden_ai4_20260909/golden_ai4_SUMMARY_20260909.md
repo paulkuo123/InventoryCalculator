@@ -99,3 +99,15 @@ P3 本批取建議量前 **60**；3c 對上 49 筆（含後背包白色應補 40
 **杯套／愛心熊 12 列（應補 190）全找到**，offer `977900422023`，高 5／中 7，可進 AI-5。充電線多半只有長度對上（低 8），200 公分對 0.2m 不穩。安全褲仍 blocked。下一檔保護貼 captcha。
 
 詳見 `/workspace/_handoff/golden-ai4-resume-RESULT-20260909.md`。
+
+---
+
+## resume2（2026-09-09 12:05 CST）
+
+- 第二次 captcha 清完後續跑；slow_nav ≥4.2s。
+- 第一檔保護貼 `9969182845` 全站搜 **立刻 punish**（navs=1）→ STOP。
+- 計數不變：with_candidate **89**／no_candidate **44**／blocked **120**（高 19／中 25／低 45）。
+- 本輪新高／中給 AI-5：**0**。
+- RESULT：`golden-ai4-resume2-RESULT-20260909.md`
+- resume JSON 已更新；分頁導回活頁 `740525848630`。
+- Golden SHA 仍 `8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e`。
