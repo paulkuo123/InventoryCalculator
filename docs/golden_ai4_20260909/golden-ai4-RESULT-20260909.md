@@ -75,3 +75,8 @@
 3. 已擱 Plan C 高／中 7 筆維持擱。
 4. P3 剩餘 303 下一輪； captcha 解掉再決定要不要搜。
 5. 低信心不要當補貨主力。
+
+---
+
+## resume 後（2026-09-09）
+已續跑。杯套／愛心熊 12 列找到（高5／中7）。blocked 158→120。保護貼又撞 captcha。詳見 `golden-ai4-resume-RESULT-20260909.md`。Golden SHA 仍 `8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e`。

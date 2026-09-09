@@ -82,3 +82,20 @@ P3 本批取建議量前 **60**；3c 對上 49 筆（含後背包白色應補 40
 - `/workspace/_handoff/golden_ai4_SUMMARY_20260909.md`
 - `/workspace/_handoff/golden-ai4-RESULT-20260909.md`
 - `/workspace/_handoff/golden_ai4_resume_20260909.json`
+
+---
+
+## resume 後（2026-09-09 03:34–03:53Z）
+
+庭安點完驗證碼後只重跑原本 `blocked_captcha`。主 3B；搜尋頁改版已修 `offerId=` 擷取。保護貼全站搜又撞 **punish** → STOP。Golden SHA 不變。原 with／no 列未改。
+
+| | 續跑前 | 續跑後 | 差 |
+|---|---:|---:|---:|
+| 有候選 | 69 | **89** | +20 |
+| 找不到 | 26 | **44** | +18 |
+| 卡驗證碼 | 158 | **120** | -38 |
+| 高／中／低 | 14／18／37 | **19／25／45** | +5／+7／+8 |
+
+**杯套／愛心熊 12 列（應補 190）全找到**，offer `977900422023`，高 5／中 7，可進 AI-5。充電線多半只有長度對上（低 8），200 公分對 0.2m 不穩。安全褲仍 blocked。下一檔保護貼 captcha。
+
+詳見 `/workspace/_handoff/golden-ai4-resume-RESULT-20260909.md`。
