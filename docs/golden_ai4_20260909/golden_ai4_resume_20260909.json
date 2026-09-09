@@ -1,17 +1,37 @@
 {
-  "stopped_at": "2026-09-09T05:13:38Z",
-  "round": "resume3",
-  "last_completed_product_id": "23244459752",
-  "last_attempted_product_id": "9791809096",
+  "stopped_at": "2026-09-09T15:39:17Z",
+  "round": "resume4",
+  "last_completed_product_id": "24514999862",
+  "last_attempted_product_id": "15007585064",
   "row_index": 253,
-  "blocked_url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfEX0h0uAv8VxXargYw9lmALrfPosVopBkGFincKYqk5OlOwDjFi3Uo88n5Gz_1Gs8_k9cyza6HbhubJ9ByGOyw-IVkUK_pFqMzZYiUpaxtmEewWgkNEF-PpOI6ViIqnaLz4TGRqAKG439XAxEWZKDXoXXxc4i0NvI8znBwayYDS-Zq-lO5A4OF35xAlWzfpcvBkqa9EpNgr_Q7FDUkQPSq5SKyAPzLC4auYIttAKkmuzEzig38zxdm07pefbvGnGg1bS6USXC_wSCJ2IeGtDUsdKdtS0VLAASCcQBqAERl2rymhMPTKveW1KAywTxEL2Y9YWcoRSyibENV9s5Zevty50jnI_2F5g1xKbe21Q9SCyBHMbPGwkSKLJKlGWXlCs8fxCmOZLKZZ3E4JOQ6coHF1RaJrLKTf0HmZnCQxwuZ_gzy9aOjCY2evJi7JogKi_ooBmtKFbEemdW0rGbA9jdzDdb8z4A5uE1S5nuRVwdna2xHnah8Du6TH2RZfMEtlBjCPLZ9SD1n_MYor-3wpUCuAZQ9aH-i4cT31M74nK7wFW0_LnJ6c1bNvYKdwPk8ufTB619QQ1TbIcUG5idlQB9n5shxzJ_1oMdpqXLsOExsqSR8El4hc_CGKs-FY7cj52G2t_1-GhogCLrMi5bsx2cg88HM79NzhHexqluXAkoj5veursrPlZ8DHPK_oHhEG2HDLEVaBnT53tZYTbprpWWmSWKdnhotvo8gPPnKM83hkaFZlYePLx3TWY1vfM4_FB13IJY84KY7mP1Op1gdxJTw_6dARJaGADeiJB8rHGMkpDiRehsBHESGMuS4YP_zgTk7UBuTC8ZgGQPuRRQyG_MkSghm-Cbyvm_uVbA0R_j7E8ZEy5buNJfJksDauSiootDRE3dvkvHjkubTLk6m-yxVg__bx__s.1688.com%2fselloffer%2foffer_search.htm&x5step=1",
+  "blocked_url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfTaD_OwqXctXFK6WxLKafj1m92KHRksqxBHyBrN8OyusPctQXoodXUPtKCACV6bQpdzPc3toFyBme6-Vra2_yLERpVazE4mEgpTvUKftnMJ4l7Fh_hFPQYlBNSc6WBwLRoOPRQWId3ifFKG8w6fa_sYC5vn78c1cA9_W5nMiY9iEc2_YIgU-Fg1Nvdd3Pq3zPW9Xd3KQXj6wgYFsLO88comI5WPB7yqaqPgNX7BSK3ztw-7CiY-5-jotdxMUZMGiVd6Y-KErvXiJW4FLEik4KM7rua8gfal9VMEPoyloaYyzzcXV7Y3nNGEi8u-dwS0fbg9e3EDuKohpBtgdHX_P-nkzux_IFLXU3grt-MsHFX1x61Rw4VAtiQF9jurZl3W4nnSjry8Nq9uAp6iBxDASUEusOXtYZ7mllTzqWnX_EgqcbxelmMW36GGrSAcy_HdQ9QuwZ73X5kB_UztXDkmicl6ShkDdPK1ZF3FWn2SirDwwTRAQ0gsedcXhF6xjdMGuBKwaG6kU_MU7Quj18mUt7XuCpfg1oLOgLQFzTPPrgcL09r_xO67A7hNlSj_j5oUHuCPRlJFkI7OD7rWH7KNid0HG-YUvfzpVi9tlanjUp8ySc59G-_-1zctepoJkhNbL19fVyWKN5ZNB81iT-1VqWXakEcyjydbb48AuZfFIPnvEyw223aMH6LQEfZ8jv3QQZnRa0fva3XFETMd8wMBs-ttJwE5MvFECHToHDwjqiWldYZYVm5sN-t3BapxIQR9YefM8UKfFRemutmiSTAyQTQGgOGVdyVhZILXtci2mZiz1OFEWDxdlpKbQyTSdkyAQ2z46yWO_liUl5NJPmzaoVBu5OKPTRR8z0xQe8rlAZC-jyCdtOvIqoe_V7rKCTHjEC09tvHzPslJ62FUn2XLBNWA__bx__s.1688.com%2fselloffer%2foffer_search.htm&x5step=1",
   "query": "",
   "stopped": {
     "reason": "waf",
-    "url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfEX0h0uAv8VxXargYw9lmALrfPosVopBkGFincKYqk5OlOwDjFi3Uo88n5Gz_1Gs8_k9cyza6HbhubJ9ByGOyw-IVkUK_pFqMzZYiUpaxtmEewWgkNEF-PpOI6ViIqnaLz4TGRqAKG439XAxEWZKDXoXXxc4i0NvI8znBwayYDS-Zq-lO5A4OF35xAlWzfpcvBkqa9EpNgr_Q7FDUkQPSq5SKyAPzLC4auYIttAKkmuzEzig38zxdm07pefbvGnGg1bS6USXC_wSCJ2IeGtDUsdKdtS0VLAASCcQBqAERl2rymhMPTKveW1KAywTxEL2Y9YWcoRSyibENV9s5Zevty50jnI_2F5g1xKbe21Q9SCyBHMbPGwkSKLJKlGWXlCs8fxCmOZLKZZ3E4JOQ6coHF1RaJrLKTf0HmZnCQxwuZ_gzy9aOjCY2evJi7JogKi_ooBmtKFbEemdW0rGbA9jdzDdb8z4A5uE1S5nuRVwdna2xHnah8Du6TH2RZfMEtlBjCPLZ9SD1n_MYor-3wpUCuAZQ9aH-i4cT31M74nK7wFW0_LnJ6c1bNvYKdwPk8ufTB619QQ1TbIcUG5idlQB9n5shxzJ_1oMdpqXLsOExsqSR8El4hc_CGKs-FY7cj52G2t_1-GhogCLrMi5bsx2cg88HM79NzhHexqluXAkoj5veursrPlZ8DHPK_oHhEG2HDLEVaBnT53tZYTbprpWWmSWKdnhotvo8gPPnKM83hkaFZlYePLx3TWY1vfM4_FB13IJY84KY7mP1Op1gdxJTw_6dARJaGADeiJB8rHGMkpDiRehsBHESGMuS4YP_zgTk7UBuTC8ZgGQPuRRQyG_MkSghm-Cbyvm_uVbA0R_j7E8ZEy5buNJfJksDauSiootDRE3dvkvHjkubTLk6m-yxVg__bx__s.1688.com%2fselloffer%2foffer_search.htm&x5step=1"
+    "url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfTaD_OwqXctXFK6WxLKafj1m92KHRksqxBHyBrN8OyusPctQXoodXUPtKCACV6bQpdzPc3toFyBme6-Vra2_yLERpVazE4mEgpTvUKftnMJ4l7Fh_hFPQYlBNSc6WBwLRoOPRQWId3ifFKG8w6fa_sYC5vn78c1cA9_W5nMiY9iEc2_YIgU-Fg1Nvdd3Pq3zPW9Xd3KQXj6wgYFsLO88comI5WPB7yqaqPgNX7BSK3ztw-7CiY-5-jotdxMUZMGiVd6Y-KErvXiJW4FLEik4KM7rua8gfal9VMEPoyloaYyzzcXV7Y3nNGEi8u-dwS0fbg9e3EDuKohpBtgdHX_P-nkzux_IFLXU3grt-MsHFX1x61Rw4VAtiQF9jurZl3W4nnSjry8Nq9uAp6iBxDASUEusOXtYZ7mllTzqWnX_EgqcbxelmMW36GGrSAcy_HdQ9QuwZ73X5kB_UztXDkmicl6ShkDdPK1ZF3FWn2SirDwwTRAQ0gsedcXhF6xjdMGuBKwaG6kU_MU7Quj18mUt7XuCpfg1oLOgLQFzTPPrgcL09r_xO67A7hNlSj_j5oUHuCPRlJFkI7OD7rWH7KNid0HG-YUvfzpVi9tlanjUp8ySc59G-_-1zctepoJkhNbL19fVyWKN5ZNB81iT-1VqWXakEcyjydbb48AuZfFIPnvEyw223aMH6LQEfZ8jv3QQZnRa0fva3XFETMd8wMBs-ttJwE5MvFECHToHDwjqiWldYZYVm5sN-t3BapxIQR9YefM8UKfFRemutmiSTAyQTQGgOGVdyVhZILXtci2mZiz1OFEWDxdlpKbQyTSdkyAQ2z46yWO_liUl5NJPmzaoVBu5OKPTRR8z0xQe8rlAZC-jyCdtOvIqoe_V7rKCTHjEC09tvHzPslJ62FUn2XLBNWA__bx__s.1688.com%2fselloffer%2foffer_search.htm&x5step=1"
   },
-  "navs": 20,
+  "navs": 11,
   "counts": {
+    "with_candidate": 101,
+    "conf_低": 50,
+    "q_P1_no_url_with_candidate": 23,
+    "no_candidate": 55,
+    "q_P1_no_url_no_candidate": 37,
+    "conf_高": 22,
+    "blocked_captcha": 97,
+    "q_P1_no_url_blocked_captcha": 43,
+    "conf_中": 29,
+    "q_AI2_off_shelf_no_candidate": 1,
+    "q_AI2_dead_with_candidate": 27,
+    "q_AI2_dead_no_candidate": 16,
+    "q_AI2_dead_blocked_captcha": 40,
+    "q_AI2_off_shelf_with_candidate": 2,
+    "q_AI2_off_shelf_blocked_captcha": 4,
+    "q_P3_mapping_suspect_with_candidate": 49,
+    "q_P3_mapping_suspect_blocked_captcha": 10,
+    "q_P3_mapping_suspect_no_candidate": 1
+  },
+  "before_counts": {
     "with_candidate": 100,
     "conf_低": 49,
     "q_P1_no_url_with_candidate": 22,
@@ -31,44 +51,23 @@
     "q_P3_mapping_suspect_blocked_captcha": 10,
     "q_P3_mapping_suspect_no_candidate": 1
   },
-  "before_counts": {
-    "with_candidate": 89,
-    "conf_低": 45,
-    "q_P1_no_url_with_candidate": 17,
-    "no_candidate": 44,
-    "q_P1_no_url_no_candidate": 28,
-    "blocked_captcha": 120,
-    "q_P1_no_url_blocked_captcha": 58,
-    "conf_中": 25,
-    "q_AI2_off_shelf_no_candidate": 1,
-    "q_AI2_dead_with_candidate": 21,
-    "conf_高": 19,
-    "q_AI2_dead_no_candidate": 14,
-    "q_AI2_dead_blocked_captcha": 48,
-    "q_AI2_off_shelf_with_candidate": 2,
-    "q_AI2_off_shelf_blocked_captcha": 4,
-    "q_P3_mapping_suspect_with_candidate": 49,
-    "q_P3_mapping_suspect_blocked_captcha": 10,
-    "q_P3_mapping_suspect_no_candidate": 1
-  },
   "processed_pids": [
-    "18344672033",
-    "24077547688",
-    "25811193291",
-    "18644662056",
-    "11515936363",
-    "23244459752"
+    "15323119538",
+    "22272486965",
+    "23244459752",
+    "24514999862"
   ],
   "captcha_again": true,
   "resume_after_captcha": [],
-  "note_zh": "resume3 又撞 captcha／punish（9791809096），已跳過保護貼。slow_nav≥4.2s。 分頁已導回活頁 740525848630。",
-  "still_blocked_rows": 102,
-  "still_blocked_products": 43,
+  "note_zh": "resume4 又撞 captcha／punish（15007585064），已跳過保護貼＋鏡子。slow_nav≥4.2s。 分頁已導回活頁 740525848630。",
+  "still_blocked_rows": 97,
+  "still_blocked_products": 40,
   "alive_tab": "https://detail.1688.com/offer/740525848630.html",
   "slow_nav_settle": 4.2,
   "slow_post_sleep": 3.5,
   "skip_pids": [
+    "9791809096",
     "9969182845"
   ],
-  "skip_note_zh": "本輪跳過保護貼 9969182845（及同商品所有型號列）"
+  "skip_note_zh": "本輪跳過保護貼 9969182845＋鏡子 9791809096（及同商品所有型號列）"
 }

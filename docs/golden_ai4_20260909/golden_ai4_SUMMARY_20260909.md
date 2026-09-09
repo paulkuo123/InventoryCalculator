@@ -130,3 +130,23 @@ P3 本批取建議量前 **60**；3c 對上 49 筆（含後背包白色應補 40
 - 本輪新高／中 **7** 筆可併 AI-5（見 `golden-ai4-resume3-RESULT-20260909.md`）
 - Golden SHA 不變；PR #45 OPEN
 - `CAPTCHA_AGAIN=yes`／`EXIT=2`
+
+
+---
+
+## 續跑 #4（resume4，2026-09-09 23:35–23:39 PT／15:35–15:39Z）
+
+跳過保護貼 `9969182845`＋鏡子 `9791809096`；只重跑其餘 `blocked_captcha`。slow_nav≥4.2s。處理 4 商品後於奶咖殼 `15007585064` 再撞 punish → STOP。
+
+| | 前 | 後 | 差 |
+|---|---:|---:|---:|
+| with_candidate | 100 | **101** | **+1** |
+| no_candidate | 51 | **55** | **+4** |
+| blocked_captcha | 102 | **97** | **-5** |
+| 高／中／低 | 22／29／49 | **22／29／50** | 0／0／+1 |
+
+- 保護貼 9＋鏡子 5 列仍 blocked（未強搜）
+- 本輪新高／中 **0**（僅充電器 1 低）
+- Golden SHA 不變；PR #45 OPEN
+- `CAPTCHA_AGAIN=yes`／`EXIT=2`
+- RESULT：`golden-ai4-resume4-RESULT-20260909.md`

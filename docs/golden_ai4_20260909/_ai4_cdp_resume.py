@@ -25,13 +25,13 @@ from _ai4_match import pick_shop_offers, search_query_for  # noqa: E402
 from _planC_cdp_lib import csv_safe  # noqa: E402
 
 PRIORITY_PIDS = [
-    # resume3: SKIP 保護貼 9969182845（上次立刻 punish；最後再碰）
-    "18344672033",  # Lightning 充電線
-    "24077547688",  # 冰絲安全褲
-    "25811193291",  # Type-C To Lightning 轉接
-    "18644662056",  # 雙孔快充頭
+    # resume4: SKIP 保護貼 9969182845＋鏡子 9791809096；其餘 blocked 續跑
+    "15323119538",  # 卡通泰迪狗 Airpods 殼
+    "22272486965",  # 刺繡小熊化妝包
+    "23244459752",  # 帆布袋剩餘 blocked 型號
+    "24514999862",  # 多國旅行充電器
 ]
-SKIP_PIDS = {"9969182845"}  # 保護貼：本輪不強搜
+SKIP_PIDS = {"9969182845", "9791809096"}  # 保護貼＋鏡子：本輪不強搜
 
 QUEUE_RANK = {
     "P1_no_url": 0,
@@ -87,7 +87,7 @@ class ResumeRunner(Runner):
         self.last_completed = ""
         self.processed_pids = []
         self.captcha_again = False
-        self.round_label = "resume3"
+        self.round_label = "resume4"
 
     def connect(self):
         super().connect()
@@ -289,13 +289,13 @@ class ResumeRunner(Runner):
         except Exception:
             alive = ""
         note = (
-            f"resume3 又撞 captcha／punish（{pid or self.last_attempted}），已跳過保護貼。slow_nav≥{SLOW_NAV_SETTLE}s。"
+            f"resume4 又撞 captcha／punish（{pid or self.last_attempted}），已跳過保護貼＋鏡子。slow_nav≥{SLOW_NAV_SETTLE}s。"
             if self.stopped else
-            f"resume3 3B／3c 跑完 blocked（已跳過保護貼）。slow_nav≥{SLOW_NAV_SETTLE}s。"
+            f"resume4 3B／3c 跑完 blocked（已跳過保護貼＋鏡子）。slow_nav≥{SLOW_NAV_SETTLE}s。"
         )
         payload = {
             "stopped_at": now(),
-            "round": "resume3",
+            "round": "resume4",
             "last_completed_product_id": self.last_completed or "",
             "last_attempted_product_id": pid or self.last_attempted,
             "row_index": sum(1 for r in self.rows if r.get("_done")),
@@ -319,7 +319,7 @@ class ResumeRunner(Runner):
             "slow_nav_settle": SLOW_NAV_SETTLE,
             "slow_post_sleep": SLOW_POST_SLEEP,
             "skip_pids": sorted(SKIP_PIDS),
-            "skip_note_zh": "本輪跳過保護貼 9969182845（及同商品所有型號列）",
+            "skip_note_zh": "本輪跳過保護貼 9969182845＋鏡子 9791809096（及同商品所有型號列）",
         }
         RESUME.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print("RESUME", json.dumps(payload, ensure_ascii=False)[:700], flush=True)
@@ -328,7 +328,7 @@ class ResumeRunner(Runner):
         self.load()
         self.flush()
         groups = self.blocked_groups()
-        print(f"\n=== resume3 blocked products {len(groups)} rows {sum(len(g) for _, g in groups)} priority0={PRIORITY_PIDS[0]}", flush=True)
+        print(f"\n=== resume4 blocked products {len(groups)} rows {sum(len(g) for _, g in groups)} priority0={PRIORITY_PIDS[0]}", flush=True)
         print(f"before_counts {json.dumps(self.before_counts, ensure_ascii=False)}", flush=True)
         for pid, recs in groups:
             if self.stopped:
