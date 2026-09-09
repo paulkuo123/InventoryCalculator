@@ -63,9 +63,11 @@
 - Docs 目錄：`docs/golden_ai4_20260909/`
 
 ## Docs PR（保持 OPEN，不合 main）
-- URL：（開 PR 後填）
+- URL：https://github.com/paulkuo123/InventoryCalculator/pull/45
 - Branch：`docs/golden-ai4-candidates-20260909`
-- State：**OPEN（未 merge）**
+- Commit：`ce2aa73`
+- 路徑：`docs/golden_ai4_20260909/`
+- State：**OPEN**（**未 merge**）
 
 ## 下一刀建議
 1. **庭安點完 1688 驗證碼** 後，從 resume 續 3B：先充電線（應補 520／150）、安全褲、再 P1 其餘 blocked。
