@@ -36,7 +36,7 @@
 ## Docs PR（保持 OPEN，不合 main）
 - URL：https://github.com/paulkuo123/InventoryCalculator/pull/46
 - Branch：`docs/golden-ai5-review-20260909`
-- Commit：`c17ddb4`
+- Commits：`c17ddb4`（併入）／`94ade3f`（杯套排最前）
 - State：**OPEN**（**未 merge**）
 - 主佇列 81 = 69 + 12 cups 已寫進 PR body
 
@@ -52,6 +52,7 @@
 - 杯套／愛心熊 12 筆（`source=ai4_resume`）改排在主佇列 **index 1–12** 最前面（高→中、應補量大優先）
 - 原 69 接在後面；counts 不變：MAIN=81 HIGH=19 MID=25 LOW=37
 - 審核語意／快捷鍵未改；golden 未動
+- Follow-up commit：`94ade3f`
 
 ```
 MAIN=81 HIGH=19 MID=25 LOW=37 ADDED_CUPS=12
