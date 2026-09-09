@@ -1,7 +1,7 @@
 # Golden AI-5 審核介面 RESULT（2026-09-09）
 
 ## 任務
-做給庭安「一次一案」的審核清單／靜態 HTML：主佇列 AI-4 有候選 69 筆（高／中優先），附錄 Plan C 已擱高／中 7 筆。審核結果寫獨立檔，不寫 golden。
+做給庭安「一次一案」的審核清單／靜態 HTML：主佇列現況 **81** 筆（原 AI-4 有候選 69＋杯套／愛心熊 12；高／中優先，杯套置頂），附錄 Plan C 已擱高／中 7 筆。審核結果寫獨立檔，不寫 golden。
 
 ## 約束（皆遵守）
 - **未** merge main
@@ -39,13 +39,20 @@ python3 -m http.server 8765
 
 | | n |
 |---|---:|
-| 主佇列必審 | **69** |
-| 高 | **14** |
-| 中 | **18** |
+| 主佇列必審 | **81** |
+| 高 | **19** |
+| 中 | **25** |
 | 低 | **37** |
 | 附錄 `shelved_round1` | **7**（高 2／中 5） |
 
-主佇列排序：高 → 中 → 低；預設分頁「優先（高／中）」。低信心可後審。
+主佇列排序：杯套／愛心熊 12 置頂 → 其餘高 → 中 → 低；預設分頁「優先（高／中）」。低信心可後審。
+
+
+## 現況更新（杯套併入後）
+- 主佇列必審：**81**＝原 69＋杯套／愛心熊 resume **12**（置頂，`source=ai4_resume`）
+- 信心：**高 19／中 25／低 37**
+- 附錄 `shelved_round1`：**7**（不變）
+- 細節見 `golden_ai5_merge_cups_RESULT_20260909.md`；HTML 已同步
 
 ## 產檔
 - UI：`docs/golden_ai5_20260909/golden_ai5_review.html`
@@ -54,7 +61,7 @@ python3 -m http.server 8765
 - 腳本：`/workspace/_handoff/_ai5_build_review_ui.py`
 
 ## 瀏覽器抽驗
-已用本機 `python3 -m http.server 8765` 開 UI：預設優先 32 筆、全部必審 69、低 37、附錄 7；點過核准／略過，進度會累加並寫 localStorage。**未**點 1688 購買／加入进货单。
+已用本機 `python3 -m http.server 8765` 開 UI：預設優先高／中、全部必審 81、低 37、附錄 7；點過核准／略過，進度會累加並寫 localStorage。**未**點 1688 購買／加入进货单。
 
 ## Docs PR（保持 OPEN，不合 main）
 - URL：https://github.com/paulkuo123/InventoryCalculator/pull/46
