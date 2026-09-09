@@ -60,8 +60,10 @@ off_shelf：詳情頁明確下架 **2**（734419757382 口红化妆包應補 90�
 - `/workspace/_handoff/golden-ai2-RESULT-20260909.md`
 - 腳本：`/workspace/_handoff/_ai2_cdp_health_check.py`
 
-## Docs PR
+## Docs PR #44（保持 OPEN）
+- URL：https://github.com/paulkuo123/InventoryCalculator/pull/44
 - Branch：`docs/golden-ai2-cdp-p2-20260909`
+- Commit：`c25480e`
 - 路徑：`docs/golden_ai2_20260909/`
 - State：**OPEN**（**未 merge**）
 
