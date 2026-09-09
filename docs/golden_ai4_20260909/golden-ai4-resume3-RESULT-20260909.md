@@ -78,6 +78,7 @@ CSV 主檔：`/workspace/_handoff/golden_ai4_candidates_20260909.csv`
 ## Docs PR（保持 OPEN，不合 main）
 - 追加 PR #45：https://github.com/paulkuo123/InventoryCalculator/pull/45
 - Branch：`docs/golden-ai4-candidates-20260909`
+- Commit：`5d5c346b27a7339126330047483054d120772b1c`
 - State：**OPEN**（**未 merge**）
 
 ## 下一刀建議
@@ -96,6 +97,7 @@ AI5_NEW_HIGH_MID=7
 CAPTCHA_AGAIN=yes
 SKIP_FILM=9969182845
 PR=https://github.com/paulkuo123/InventoryCalculator/pull/45
+SHA=5d5c346b27a7339126330047483054d120772b1c
 GOLDEN_SHA=8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e
 EXIT=2
 ```
