@@ -1,0 +1,25 @@
+{
+  "shopee_product_count": 353,
+  "golden_product_count": 355,
+  "shopee_ids_missing_from_golden": [],
+  "golden_only_products": [
+    {
+      "product_id": "15848359384",
+      "product_name": "隔日到貨🔥 登山扣 掛鉤 掛扣 Airpods專用掛鉤 葫蘆鉤 鑰匙掛鉤 登山掛鉤 Airpods保護殼掛鉤",
+      "model_count": "1",
+      "mapping_status_summary": "approved:1",
+      "has_url_count": "1",
+      "in_shopee": "N",
+      "note": "golden 有、最新 shopee_products 沒有（下架／未同步候選）"
+    },
+    {
+      "product_id": "5002617576",
+      "product_name": "隔日到貨🔥 韓版ins🍒卡通帆布小方包 B29 印花少女 單肩斜背包 側背包 學生斜背 熱銷款 帆布材質 可愛少女風",
+      "model_count": "4",
+      "mapping_status_summary": "missing:4",
+      "has_url_count": "0",
+      "in_shopee": "N",
+      "note": "golden 有、最新 shopee_products 沒有（下架／未同步候選）"
+    }
+  ]
+}
