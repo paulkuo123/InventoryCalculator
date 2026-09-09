@@ -1,0 +1,9 @@
+{
+  "source": "buyer_order_list",
+  "cursor": {
+    "page": 3,
+    "pageSize": 20,
+    "lastOrderId": "100000000000000002"
+  },
+  "note": "Resume cursor only. Total page count unknown; do not assume 185 pages. Do not hardcode orderStatus."
+}

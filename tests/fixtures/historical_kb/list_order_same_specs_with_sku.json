@@ -1,0 +1,25 @@
+{
+  "note": "Same specs as unresolved fixture but a later real skuId. Must NOT merge onto unresolved_id.",
+  "serviceId": "OrderListDataLineService.buyerOrderList",
+  "orders": [
+    {
+      "orderId": "200000000000000002",
+      "status": "success",
+      "gmtCreate": "2024-08-01 11:00:00",
+      "seller": "fixture-seller-b",
+      "items": [
+        {
+          "id": "line-resolved-later",
+          "sourceId": "588501688966",
+          "skuId": "4020601521999",
+          "specItems": [
+            {"specName": "颜色", "specValue": "橘红"}
+          ],
+          "price": "3.20",
+          "quantity": "4",
+          "productName": "舊版單規格"
+        }
+      ]
+    }
+  ]
+}

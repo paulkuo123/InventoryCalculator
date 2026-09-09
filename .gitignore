@@ -21,6 +21,9 @@ build/
 debug.log
 cookies.json
 data/*
+data/1688_master/
+*.kb.tmp.db
+*.kb-isolated.db
 .last_update_id
 .qwen/
 shopee_products.json

@@ -1,0 +1,26 @@
+{
+  "p-fixture": {
+    "商品名稱": "KB 測試商品",
+    "型號": [
+      {
+        "型號名稱": "白色 M",
+        "規格ID": "m-white-m",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/682877407287.html",
+        "1688_offer_id": "682877407287",
+        "1688_sku_id": "4020601521981",
+        "1688_sku_name": "白色",
+        "1688_sku_second_name": "M",
+        "1688_mapping_status": "approved",
+        "1688_verified_at": "2024-02-01T00:00:00Z"
+      },
+      {
+        "型號名稱": "未核准",
+        "規格ID": "m-pending",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/682877407287.html",
+        "1688_offer_id": "682877407287",
+        "1688_sku_id": "9999999999999",
+        "1688_mapping_status": "pending"
+      }
+    ]
+  }
+}

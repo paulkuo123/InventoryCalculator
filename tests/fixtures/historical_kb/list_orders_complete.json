@@ -1,0 +1,50 @@
+{
+  "note": "Synthetic buyerOrderList-shaped fixture. Not live 1688 data.",
+  "serviceId": "OrderListDataLineService.buyerOrderList",
+  "orders": [
+    {
+      "orderId": "100000000000000001",
+      "status": "success",
+      "gmtCreate": "2024-03-01 10:15:00",
+      "seller": "fixture-seller-a",
+      "sumPayment": "50.00",
+      "paidFee": "50.00",
+      "items": [
+        {
+          "id": "line-complete-1",
+          "sourceId": "682877407287",
+          "skuId": "4020601521981",
+          "specId": "spec-white-m",
+          "specItems": [
+            {"specName": "颜色", "specValue": "白色"},
+            {"specName": "尺码", "specValue": "M"}
+          ],
+          "price": "2.50",
+          "quantity": "20",
+          "productName": "純色棉襪"
+        }
+      ]
+    },
+    {
+      "orderId": "100000000000000002",
+      "status": "success",
+      "gmtCreate": "2024-04-02 09:00:00",
+      "seller": "fixture-seller-a",
+      "items": [
+        {
+          "id": "line-complete-2",
+          "sourceId": "682877407287",
+          "skuId": "4020601521981",
+          "specId": "spec-white-m",
+          "specItems": [
+            {"specName": "颜色", "specValue": "白色"},
+            {"specName": "尺码", "specValue": "M"}
+          ],
+          "price": "2.40",
+          "quantity": "10",
+          "productName": "純色棉襪"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "note": "List-API line with empty skuId — must stay unresolved, never fuzzy-merged.",
+  "serviceId": "OrderListDataLineService.buyerOrderList",
+  "orders": [
+    {
+      "orderId": "200000000000000001",
+      "status": "waitbuyerreceive",
+      "gmtCreate": "2024-05-10 12:00:00",
+      "seller": "fixture-seller-b",
+      "items": [
+        {
+          "id": "line-unresolved-1",
+          "sourceId": "588501688966",
+          "skuId": "",
+          "specId": "",
+          "specItems": [
+            {"specName": "颜色", "specValue": "橘红"}
+          ],
+          "price": "3.20",
+          "quantity": "8",
+          "productName": "舊版單規格"
+        }
+      ]
+    }
+  ]
+}

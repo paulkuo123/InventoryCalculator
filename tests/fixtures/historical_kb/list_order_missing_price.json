@@ -1,0 +1,24 @@
+{
+  "note": "Missing price/sumPayment/paidFee must stay SQL NULL — do not coerce to 0.",
+  "serviceId": "OrderListDataLineService.buyerOrderList",
+  "orders": [
+    {
+      "orderId": "300000000000000001",
+      "status": "waitbuyerpays",
+      "gmtCreate": "2024-06-01 08:30:00",
+      "seller": "fixture-seller-c",
+      "items": [
+        {
+          "id": "line-missing-price-1",
+          "sourceId": "789483650611",
+          "skuId": "5389631361492",
+          "specItems": [
+            {"specName": "颜色", "specValue": "黑色"}
+          ],
+          "quantity": "12",
+          "productName": "黑襪"
+        }
+      ]
+    }
+  ]
+}
