@@ -1,0 +1,27 @@
+{
+  "stopped_at": "2026-09-09T02:53:19Z",
+  "last_completed_product_id": "22561129943",
+  "last_attempted_product_id": "24077547688",
+  "row_index": 14,
+  "blocked_url": "https://s.1688.com/selloffer/offer_search.htm/_____tmd_____/punish",
+  "query": "冰丝无痕波浪安全裤睡裤平口裤打底裤宽松防走光不卷边内搭裤短裤内裤夏日冰感舒适 黑",
+  "stopped": {
+    "reason": "waf",
+    "url": "https://s.1688.com/selloffer/offer_search.htm/_____tmd_____/punish"
+  },
+  "note_zh": "3c 已跑完 82 商品。3B 全站搜第 3 個商品（安全褲 24077547688）撞 punish。充電線兩檔搜尋回空頁，一併標 blocked_captcha 待續。不要自幹驗證碼。",
+  "resume_after_captcha": [
+    "19651077286 Type-C 充電線 P1",
+    "22561129943 USB3.1 充電線 P1",
+    "24077547688 冰絲安全褲 P1",
+    "其餘 P1/AI2/P3 blocked_captcha 列"
+  ],
+  "counts": {
+    "with_candidate": 69,
+    "no_candidate": 26,
+    "blocked_captcha": 158,
+    "高": 14,
+    "中": 18,
+    "低": 37
+  }
+}
