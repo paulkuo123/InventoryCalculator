@@ -25,12 +25,13 @@ from _ai4_match import pick_shop_offers, search_query_for  # noqa: E402
 from _planC_cdp_lib import csv_safe  # noqa: E402
 
 PRIORITY_PIDS = [
-    "9969182845",   # 保護貼（上次撞 captcha）
+    # resume3: SKIP 保護貼 9969182845（上次立刻 punish；最後再碰）
     "18344672033",  # Lightning 充電線
     "24077547688",  # 冰絲安全褲
     "25811193291",  # Type-C To Lightning 轉接
     "18644662056",  # 雙孔快充頭
 ]
+SKIP_PIDS = {"9969182845"}  # 保護貼：本輪不強搜
 
 QUEUE_RANK = {
     "P1_no_url": 0,
@@ -86,7 +87,7 @@ class ResumeRunner(Runner):
         self.last_completed = ""
         self.processed_pids = []
         self.captcha_again = False
-        self.round_label = "resume2"
+        self.round_label = "resume3"
 
     def connect(self):
         super().connect()
@@ -248,16 +249,21 @@ class ResumeRunner(Runner):
             groups[pid].append(r)
             if pid not in meta:
                 meta[pid] = r
+        # Drop skip-list products from this round's work queue (keep their blocked rows).
+        for sp in list(groups.keys()):
+            if sp in SKIP_PIDS:
+                del groups[sp]
+                meta.pop(sp, None)
         ordered = []
         seen = set()
         for pid in PRIORITY_PIDS:
-            if pid in groups:
+            if pid in groups and pid not in SKIP_PIDS:
                 ordered.append(pid)
                 seen.add(pid)
         rest = []
         for r in self.rows:
             pid = r["product_id"]
-            if pid in groups and pid not in seen:
+            if pid in groups and pid not in seen and pid not in SKIP_PIDS:
                 rest.append(pid)
                 seen.add(pid)
         rest.sort(key=lambda p: (
@@ -283,13 +289,13 @@ class ResumeRunner(Runner):
         except Exception:
             alive = ""
         note = (
-            f"resume2 又撞 captcha／punish（{pid or self.last_attempted}），未自幹繞過。slow_nav≥{SLOW_NAV_SETTLE}s。"
+            f"resume3 又撞 captcha／punish（{pid or self.last_attempted}），已跳過保護貼。slow_nav≥{SLOW_NAV_SETTLE}s。"
             if self.stopped else
-            f"resume2 3B／3c 跑完 blocked 佇列。slow_nav≥{SLOW_NAV_SETTLE}s。"
+            f"resume3 3B／3c 跑完 blocked（已跳過保護貼）。slow_nav≥{SLOW_NAV_SETTLE}s。"
         )
         payload = {
             "stopped_at": now(),
-            "round": "resume2",
+            "round": "resume3",
             "last_completed_product_id": self.last_completed or "",
             "last_attempted_product_id": pid or self.last_attempted,
             "row_index": sum(1 for r in self.rows if r.get("_done")),
@@ -312,6 +318,8 @@ class ResumeRunner(Runner):
             "alive_tab": alive or ALIVE_SAFE,
             "slow_nav_settle": SLOW_NAV_SETTLE,
             "slow_post_sleep": SLOW_POST_SLEEP,
+            "skip_pids": sorted(SKIP_PIDS),
+            "skip_note_zh": "本輪跳過保護貼 9969182845（及同商品所有型號列）",
         }
         RESUME.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         print("RESUME", json.dumps(payload, ensure_ascii=False)[:700], flush=True)
@@ -320,7 +328,7 @@ class ResumeRunner(Runner):
         self.load()
         self.flush()
         groups = self.blocked_groups()
-        print(f"\n=== resume2 blocked products {len(groups)} rows {sum(len(g) for _, g in groups)} priority0={PRIORITY_PIDS[0]}", flush=True)
+        print(f"\n=== resume3 blocked products {len(groups)} rows {sum(len(g) for _, g in groups)} priority0={PRIORITY_PIDS[0]}", flush=True)
         print(f"before_counts {json.dumps(self.before_counts, ensure_ascii=False)}", flush=True)
         for pid, recs in groups:
             if self.stopped:
