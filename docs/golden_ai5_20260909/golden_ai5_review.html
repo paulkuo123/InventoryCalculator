@@ -1,0 +1,532 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Golden AI-5 審核工作台（2026-09-09）</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #5b6c80;
+      --line: #dce5f0;
+      --bg: #f4f7fb;
+      --card: #fff;
+      --blue: #1769aa;
+      --blue-dark: #12335c;
+      --green: #0a8550;
+      --red: #a32626;
+      --amber: #8a5f00;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+      color: var(--ink);
+      background: var(--bg);
+      line-height: 1.45;
+    }
+    a { color: var(--blue); }
+    .topbar {
+      background: linear-gradient(135deg, #12335c, #2b75a8);
+      color: #fff;
+      padding: 22px 24px 18px;
+    }
+    .topbar-inner { max-width: 1280px; margin: 0 auto; }
+    .eyebrow { font-size: 12px; letter-spacing: .12em; opacity: .8; }
+    h1 { margin: 4px 0 6px; font-size: 26px; }
+    .topbar p { margin: 0; color: #dcecff; max-width: 920px; }
+    .warn {
+      display: inline-block;
+      margin-top: 10px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: #ffffff22;
+      border: 1px solid #ffffff55;
+      font-size: 12px;
+    }
+    .page { max-width: 1280px; margin: 16px auto 48px; padding: 0 16px; }
+    .panel {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      box-shadow: 0 4px 18px #183b5b0d;
+    }
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      padding: 12px;
+      margin-bottom: 12px;
+    }
+    .metric { padding: 10px 12px; border-radius: 10px; background: #f5f8fc; border: 1px solid #e6edf4; }
+    .metric strong { display: block; font-size: 22px; }
+    .metric span { font-size: 12px; color: var(--muted); }
+    .tabs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+    .tab {
+      border: 1px solid #c8d4e3;
+      background: #e8eef6;
+      color: #41556d;
+      border-radius: 10px;
+      padding: 8px 14px;
+      font-weight: 800;
+      cursor: pointer;
+    }
+    .tab.active { background: var(--blue); border-color: var(--blue); color: #fff; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      margin-bottom: 12px;
+    }
+    .nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    button, input, select, textarea {
+      font: inherit;
+      border: 1px solid #c8d4e3;
+      background: #fff;
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: inherit;
+    }
+    button { cursor: pointer; }
+    button:hover { border-color: #377caf; }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    .primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .layout { display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 12px; }
+    .sidelist { padding: 10px; max-height: calc(100vh - 280px); overflow: auto; }
+    .side-item {
+      display: grid;
+      grid-template-columns: 18px minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: start;
+      padding: 8px;
+      border-radius: 10px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .side-item:hover { background: #f3f7fb; }
+    .side-item.current { border-color: var(--blue); background: #eef7ff; }
+    .side-item small { display: block; color: var(--muted); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: #cbd5e1; }
+    .dot.done { background: var(--green); }
+    .card { padding: 16px; }
+    .pair { display: grid; grid-template-columns: minmax(260px, .9fr) minmax(0, 1.2fr); gap: 16px; }
+    .col { padding: 14px; border: 1px solid #edf1f6; border-radius: 12px; background: #f8fafc; min-width: 0; }
+    .col h2 { margin: 0 0 8px; font-size: 15px; color: #123b65; }
+    .hero { display: flex; gap: 12px; align-items: flex-start; }
+    .hero img, .ph {
+      width: 112px; height: 112px; object-fit: cover; border-radius: 10px; background: #eef3f8; flex: 0 0 112px;
+    }
+    .ph { display: grid; place-items: center; color: #789; font-size: 12px; }
+    .meta { font-size: 13px; color: var(--muted); }
+    .meta div { margin: 3px 0; overflow-wrap: anywhere; }
+    .badge {
+      display: inline-block; border-radius: 99px; padding: 2px 8px; font-size: 12px; font-weight: 700;
+      background: #edf2f8; margin: 0 4px 4px 0;
+    }
+    .badge.high { background: #d9f5e7; color: #09653a; }
+    .badge.mid { background: #fff0c7; color: #7c5600; }
+    .badge.low { background: #fde0e0; color: #8c2222; }
+    .badge.shelved { background: #efe7ff; color: #5b4aa8; }
+    .reason {
+      margin-top: 10px; padding: 9px 10px; border-radius: 8px; background: #fff; border-left: 3px solid var(--blue);
+      font-size: 13px; color: #36516e; white-space: pre-wrap;
+    }
+    .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+    .actions .approve { background: var(--green); color: #fff; border-color: var(--green); }
+    .actions .reject { background: #b42318; color: #fff; border-color: #b42318; }
+    .actions .swap { background: #5b4aa8; color: #fff; border-color: #5b4aa8; }
+    .actions .skip { background: #fff; }
+    .actions .discontinued { background: #7c5600; color: #fff; border-color: #7c5600; }
+    .note-row, .swap-row { display: grid; gap: 8px; margin-top: 10px; }
+    .note-row textarea { min-height: 64px; width: 100%; }
+    .swap-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .status-line { min-height: 22px; color: var(--muted); font-size: 13px; }
+    .status-line.ok { color: var(--green); }
+    .kbd { font-size: 12px; color: #dcecff; }
+    .export-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 12px 14px; margin-top: 12px; }
+    .empty { padding: 40px; text-align: center; color: var(--muted); }
+    .open-1688 {
+      display: inline-flex; align-items: center; margin: 8px 8px 0 0; padding: 7px 12px;
+      border-radius: 8px; background: var(--blue); color: #fff; font-weight: 700; text-decoration: none;
+    }
+    .open-1688:hover { background: #0d4f83; color: #fff; }
+    .current-action { font-weight: 800; }
+    @media (max-width: 980px) {
+      .layout, .pair, .metrics { grid-template-columns: 1fr; }
+      .sidelist { max-height: 220px; }
+      .swap-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="eyebrow">莉莉安 · Golden AI-5</div>
+      <h1>1688 候選審核工作台</h1>
+      <p>一次看一案：左邊蝦皮、右邊 1688 候選。核准／駁回／改換／略過／停售只寫進本機審核結果，<b>不會</b>動 <code>golden_table.json</code>，也不加採購車。</p>
+      <div class="warn">預設先審高／中信心；低信心在「低」分頁。附錄 7 筆是先前已擱的 Plan C，非本批必審。</div>
+      <p class="kbd" style="margin-top:8px">快捷鍵：1 核准 · 2 駁回 · 3 改換 · 4 略過 · 5 停售 · ← → 上一／下一筆（輸入框內不觸發）</p>
+    </div>
+  </header>
+
+  <main class="page">
+    <section class="metrics panel" id="metrics"></section>
+    <nav class="tabs" id="tabs" aria-label="佇列篩選"></nav>
+    <section class="toolbar panel">
+      <div class="nav">
+        <button id="prevBtn" type="button">上一筆</button>
+        <strong id="posLabel">—</strong>
+        <button id="nextBtn" type="button">下一筆</button>
+        <label>跳到 <input id="jumpInput" type="number" min="1" style="width:72px"> 筆</label>
+        <button id="jumpBtn" type="button">前往</button>
+        <button id="nextOpenBtn" type="button" class="primary">下一筆未審</button>
+      </div>
+      <div class="status-line" id="filterHint"></div>
+    </section>
+    <div class="layout">
+      <aside class="panel sidelist" id="sidelist"></aside>
+      <section class="panel card" id="card"></section>
+    </div>
+    <section class="export-row panel">
+      <button id="exportCsv" type="button" class="primary">下載審核結果 CSV</button>
+      <button id="exportJson" type="button">下載審核結果 JSON</button>
+      <button id="clearLocal" type="button">清除本機紀錄</button>
+      <span class="status-line" id="exportHint">結果存在瀏覽器 localStorage；磁碟上的模板是空的，給庭安匯出後另存。</span>
+    </section>
+  </main>
+
+  <script type="application/json" id="queue-data">{"generated_at": "2026-09-09", "golden_sha256": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e", "note": "Main queue is AI-4 with_candidate only. Appendix is Plan C shelved high/mid. Decisions must not be written to golden_table.json.", "counts": {"main": {"total": 69, "高": 14, "中": 18, "低": 37}, "appendix": {"total": 7, "高": 2, "中": 5, "低": 0}}, "main": [{"case_id": "main:41207454368:280633324560", "queue": "main", "index": 1, "source_queue": "P3_mapping_suspect", "product_id": "41207454368", "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼", "spec_id": "280633324560", "model_name": "粉絲帶蝴蝶結,11", "suggested_qty": 60, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7ra0i-mbtmn86fu7g90d_tn", "old_url": "https://detail.1688.com/offer/839694750110.html", "old_offer_id": "839694750110", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/839694750110.html", "candidate_offer_id": "839694750110", "candidate_sku_name": "镜面奶油壳-三个丝带蝴蝶结", "candidate_sku_id": "5773583147699", "candidate_spec": "镜面奶油壳-三个丝带蝴蝶结>苹果11", "confidence": "高", "reason": "兄弟／原檔 839694750110：機型對上；顏色不合；款名「丝带蝴蝶结/蝴蝶/丝带」", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:43:33Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:19960782914:156212462950", "queue": "main", "index": 2, "source_queue": "P3_mapping_suspect", "product_id": "19960782914", "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果", "spec_id": "156212462950", "model_name": "抹茶綠軍規,12/12 pro", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-o1vai35xjnjvf1_tn", "old_url": "https://detail.1688.com/offer/661385649783.html", "old_offer_id": "661385649783", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/661385649783.html", "candidate_offer_id": "661385649783", "candidate_sku_name": "湖绿色", "candidate_sku_id": "5520375305863", "candidate_spec": "湖绿色>iPhone12ProMax", "confidence": "高", "reason": "兄弟／原檔 661385649783：機型對上；顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:48:18Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:24242091907:188264743039", "queue": "main", "index": 3, "source_queue": "P3_mapping_suspect", "product_id": "24242091907", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR X 保護殼 軟殼 蘋果", "spec_id": "188264743039", "model_name": "鏡面愛心,7 Plus/8 Plus", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7rbkb-m6uos0mc4q6w76_tn", "old_url": "https://detail.1688.com/offer/838528968671.html", "old_offer_id": "838528968671", "old_sku_id": "", "old_health": "alive", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/838528968671.html", "candidate_offer_id": "838528968671", "candidate_sku_name": "镜面奶油壳-透明-LUCKY彩色爱心", "candidate_sku_id": "5686794965062", "candidate_spec": "镜面奶油壳-透明-LUCKY彩色爱心>苹果 8 Plus", "confidence": "高", "reason": "兄弟／原檔 838528968671：機型對上；款名「plus/爱心/镜面」", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:49:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:25209231609:187868744259", "queue": "main", "index": 4, "source_queue": "P3_mapping_suspect", "product_id": "25209231609", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XR SE X 保護殼 軟殼 蘋果", "spec_id": "187868744259", "model_name": "怪獸大派對,16 pro", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r992-lqnla45spwpk61_tn", "old_url": "https://detail.1688.com/offer/749300142184.html", "old_offer_id": "749300142184", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/749300142184.html", "candidate_offer_id": "749300142184", "candidate_sku_name": "米白 怪兽大派对", "candidate_sku_id": "5757212474806", "candidate_spec": "米白 怪兽大派对>16pro", "confidence": "高", "reason": "兄弟／原檔 749300142184：機型對上；款名「怪兽大派对/大派/怪兽」；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:49:28Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:19960782914:157234980249", "queue": "main", "index": 5, "source_queue": "P3_mapping_suspect", "product_id": "19960782914", "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果", "spec_id": "157234980249", "model_name": "粉色軍規,14Plus/15Plus", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-8a9x1ia1jnjv22_tn", "old_url": "https://detail.1688.com/offer/661385649783.html", "old_offer_id": "661385649783", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/661385649783.html", "candidate_offer_id": "661385649783", "candidate_sku_name": "粉色", "candidate_sku_id": "5520375305818", "candidate_spec": "粉色>iPhone15Plus/14Plus通用", "confidence": "高", "reason": "兄弟／原檔 661385649783：機型對上；顏色對上；款名「plus/pl/us」", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:48:18Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:19960782914:225676862459", "queue": "main", "index": 6, "source_queue": "P3_mapping_suspect", "product_id": "19960782914", "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果", "spec_id": "225676862459", "model_name": "抹茶綠軍規,15", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-o1vai35xjnjvf1_tn", "old_url": "https://detail.1688.com/offer/661385649783.html", "old_offer_id": "661385649783", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/661385649783.html", "candidate_offer_id": "661385649783", "candidate_sku_name": "抹茶绿", "candidate_sku_id": "5053068421083", "candidate_spec": "抹茶绿>iPhone15ProMax", "confidence": "高", "reason": "兄弟／原檔 661385649783：機型對上；顏色對上；款名「抹茶」", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:48:18Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20525145965:173733287305", "queue": "main", "index": 7, "source_queue": "P3_mapping_suspect", "product_id": "20525145965", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼", "spec_id": "173733287305", "model_name": "綠頭套鴨,11", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/9424a6920b64628993d5b16caf8f9732_tn", "old_url": "https://detail.1688.com/offer/673516107834.html", "old_offer_id": "673516107834", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/673516107834.html", "candidate_offer_id": "673516107834", "candidate_sku_name": "奶白 绿头套鸭", "candidate_sku_id": "5020071107759", "candidate_spec": "奶白 绿头套鸭>11pro max 6.5", "confidence": "高", "reason": "兄弟／原檔 673516107834：機型對上；顏色對上；款名「头套鸭」；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:51:12Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:24092279273:233891894799", "queue": "main", "index": 8, "source_queue": "P3_mapping_suspect", "product_id": "24092279273", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 保護殼 軟殼 蘋果", "spec_id": "233891894799", "model_name": "銀色-小粉結滿屏,12/12 Pro", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7rbk8-m6zhpg2kb51b16_tn", "old_url": "https://detail.1688.com/offer/786835666191.html", "old_offer_id": "786835666191", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/786835666191.html", "candidate_offer_id": "786835666191", "candidate_sku_name": "银色 小粉结满屏【光油】", "candidate_sku_id": "5373758361850", "candidate_spec": "银色 小粉结满屏【光油】>12pro max(6.7)", "confidence": "高", "reason": "兄弟／原檔 786835666191：機型對上；顏色對上；款名「结满屏/银色」；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:51:31Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:24092279273:233891894802", "queue": "main", "index": 9, "source_queue": "P3_mapping_suspect", "product_id": "24092279273", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 保護殼 軟殼 蘋果", "spec_id": "233891894802", "model_name": "銀色-小粉結滿屏,13 / 14", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7rbk8-m6zhpg2kb51b16_tn", "old_url": "https://detail.1688.com/offer/786835666191.html", "old_offer_id": "786835666191", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/786835666191.html", "candidate_offer_id": "786835666191", "candidate_sku_name": "银色 小粉结满屏【光油】", "candidate_sku_id": "5373758361844", "candidate_spec": "银色 小粉结满屏【光油】>14promax", "confidence": "高", "reason": "兄弟／原檔 786835666191：機型對上；顏色對上；款名「结满屏/银色」；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:51:31Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:24242091907:188264743032", "queue": "main", "index": 10, "source_queue": "P3_mapping_suspect", "product_id": "24242091907", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR X 保護殼 軟殼 蘋果", "spec_id": "188264743032", "model_name": "鏡面愛心,15 Pro", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7rbkb-m6uos0mc4q6w76_tn", "old_url": "https://detail.1688.com/offer/838528968671.html", "old_offer_id": "838528968671", "old_sku_id": "", "old_health": "alive", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/838528968671.html", "candidate_offer_id": "838528968671", "candidate_sku_name": "镜面奶油壳-透明-涂鸦爱心", "candidate_sku_id": "5773533371050", "candidate_spec": "镜面奶油壳-透明-涂鸦爱心>苹果 15 Plus", "confidence": "高", "reason": "兄弟／原檔 838528968671：機型對上；款名「镜面/爱心」", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:49:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:25209231609:370088793892", "queue": "main", "index": 11, "source_queue": "P3_mapping_suspect", "product_id": "25209231609", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XR SE X 保護殼 軟殼 蘋果", "spec_id": "370088793892", "model_name": "怪獸大派對,17", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r992-lqnla45spwpk61_tn", "old_url": "https://detail.1688.com/offer/749300142184.html", "old_offer_id": "749300142184", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/749300142184.html", "candidate_offer_id": "749300142184", "candidate_sku_name": "米白 怪兽大派对", "candidate_sku_id": "6106310451268", "candidate_spec": "米白 怪兽大派对>17Air", "confidence": "高", "reason": "兄弟／原檔 749300142184：機型對上；款名「怪兽大派对/大派/怪兽」；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:49:28Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:25717655009:207357888387", "queue": "main", "index": 12, "source_queue": "P3_mapping_suspect", "product_id": "25717655009", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR X 保護殼 硬殼 素色殼", "spec_id": "207357888387", "model_name": "黑邊,11", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98y-lsmoznuleleace_tn", "old_url": "https://detail.1688.com/offer/738755883311.html", "old_offer_id": "738755883311", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/738755883311.html", "candidate_offer_id": "738755883311", "candidate_sku_name": "黑边", "candidate_sku_id": "5266462646733", "candidate_spec": "黑边>11pro max 6.5", "confidence": "高", "reason": "兄弟／原檔 738755883311：機型對上；顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:51:57Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:41207454368:275633329326", "queue": "main", "index": 13, "source_queue": "P3_mapping_suspect", "product_id": "41207454368", "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼", "spec_id": "275633329326", "model_name": "粉絲帶蝴蝶結,13 pro", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7ra0i-mbtmn86fu7g90d_tn", "old_url": "https://detail.1688.com/offer/839694750110.html", "old_offer_id": "839694750110", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/839694750110.html", "candidate_offer_id": "839694750110", "candidate_sku_name": "镜面奶油壳-三个丝带蝴蝶结", "candidate_sku_id": "5773583147682", "candidate_spec": "镜面奶油壳-三个丝带蝴蝶结>苹果13MINI", "confidence": "高", "reason": "兄弟／原檔 839694750110：機型對上；顏色不合；款名「丝带蝴蝶结/蝴蝶/丝带」", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:43:33Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:41207454368:280633324555", "queue": "main", "index": 14, "source_queue": "P3_mapping_suspect", "product_id": "41207454368", "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼", "spec_id": "280633324555", "model_name": "粉絲帶蝴蝶結,7/8/SE2/SE3", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7ra0i-mbtmn86fu7g90d_tn", "old_url": "https://detail.1688.com/offer/839694750110.html", "old_offer_id": "839694750110", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/839694750110.html", "candidate_offer_id": "839694750110", "candidate_sku_name": "镜面奶油壳-三个丝带蝴蝶结", "candidate_sku_id": "5773583147712", "candidate_spec": "镜面奶油壳-三个丝带蝴蝶结>苹果7", "confidence": "高", "reason": "兄弟／原檔 839694750110：機型對上；顏色不合；款名「丝带蝴蝶结/蝴蝶/丝带」", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:43:33Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23551074058:204499705550", "queue": "main", "index": 15, "source_queue": "P3_mapping_suspect", "product_id": "23551074058", "product_name": "隔日到貨🔥 韓版簡約原宿後背包 學生背包 大容量 B52 背包 百搭 防潑水 尼龍 手提 雙肩包 背包 書包 潮流 後背", "spec_id": "204499705550", "model_name": "白色", "suggested_qty": 400, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul3-lkc7izpvumja96_tn", "old_url": "https://detail.1688.com/offer/695219979754.html", "old_offer_id": "695219979754", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/695219979754.html", "candidate_offer_id": "695219979754", "candidate_sku_name": "白色", "candidate_sku_id": "5102026642396", "candidate_spec": "白色>含挂件", "confidence": "中", "reason": "兄弟／原檔 695219979754：顏色對上；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:37:43Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:15595545007:137218800599", "queue": "main", "index": 16, "source_queue": "P3_mapping_suspect", "product_id": "15595545007", "product_name": "隔日到貨🔥 Airpods 耳機清潔筆 耳機清潔 筆電清潔 鍵盤清潔 藍芽耳機清潔 手機配件 3C清潔", "spec_id": "137218800599", "model_name": "白色", "suggested_qty": 120, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-akwzbg84ookva2_tn", "old_url": "https://detail.1688.com/offer/680404213070.html", "old_offer_id": "680404213070", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/680404213070.html", "candidate_offer_id": "680404213070", "candidate_sku_name": "3in1-贰代清洁笔/白色-裸装", "candidate_sku_id": "5681685228463", "candidate_spec": "3in1-贰代清洁笔/白色-裸装", "confidence": "中", "reason": "兄弟／原檔 680404213070：顏色對上；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:39:27Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23551074058:206949496877", "queue": "main", "index": 17, "source_queue": "P3_mapping_suspect", "product_id": "23551074058", "product_name": "隔日到貨🔥 韓版簡約原宿後背包 學生背包 大容量 B52 背包 百搭 防潑水 尼龍 手提 雙肩包 背包 書包 潮流 後背", "spec_id": "206949496877", "model_name": "紫色", "suggested_qty": 90, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qukw-lkc7mamlub2u43_tn", "old_url": "https://detail.1688.com/offer/695219979754.html", "old_offer_id": "695219979754", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/695219979754.html", "candidate_offer_id": "695219979754", "candidate_sku_name": "紫色", "candidate_sku_id": "5102026642404", "candidate_spec": "紫色>含挂件", "confidence": "中", "reason": "兄弟／原檔 695219979754：顏色對上；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:37:43Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23625462276:107951396378", "queue": "main", "index": 18, "source_queue": "P3_mapping_suspect", "product_id": "23625462276", "product_name": "隔日到貨🔥 狗狗刺繡襪 女長襪 長襪 中筒襪 襪子 S30 襪子女 白長襪 女襪 女生襪子 白色襪子 白襪", "spec_id": "107951396378", "model_name": "奶油", "suggested_qty": 90, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-23020-52jrahqvgonv57_tn", "old_url": "https://detail.1688.com/offer/680520294912.html", "old_offer_id": "680520294912", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/705617695947.html", "candidate_offer_id": "705617695947", "candidate_sku_name": "3-奶油+黑色x2", "candidate_sku_id": "5508731788414", "candidate_spec": "3-奶油+黑色x2>均码", "confidence": "中", "reason": "相關檔 705617695947：顏色對上；型號字面命中", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:41:50Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23551074058:204499705551", "queue": "main", "index": 19, "source_queue": "P3_mapping_suspect", "product_id": "23551074058", "product_name": "隔日到貨🔥 韓版簡約原宿後背包 學生背包 大容量 B52 背包 百搭 防潑水 尼龍 手提 雙肩包 背包 書包 潮流 後背", "spec_id": "204499705551", "model_name": "淺藍", "suggested_qty": 70, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qukx-lkc7izpwa2s669_tn", "old_url": "https://detail.1688.com/offer/695219979754.html", "old_offer_id": "695219979754", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/695219979754.html", "candidate_offer_id": "695219979754", "candidate_sku_name": "浅蓝色", "candidate_sku_id": "5102026642403", "candidate_spec": "浅蓝色>不含挂件", "confidence": "中", "reason": "兄弟／原檔 695219979754：顏色對上；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:37:43Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:28169260786:233530649343", "queue": "main", "index": 20, "source_queue": "P3_mapping_suspect", "product_id": "28169260786", "product_name": "隔日到貨🔥 點點捲邊襪 S7 襪子 純色棉襪 素色襪 女襪 長襪 純色 點點襪 棉襪 中筒襪 襪子 韓風", "spec_id": "233530649343", "model_name": "黑色", "suggested_qty": 70, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7ras8-m37aihpxro7r8d_tn", "old_url": "https://detail.1688.com/offer/761705923692.html", "old_offer_id": "761705923692", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/761705923692.html", "candidate_offer_id": "761705923692", "candidate_sku_name": "黑色", "candidate_sku_id": "5421463503463", "candidate_spec": "黑色>均码", "confidence": "中", "reason": "兄弟／原檔 761705923692：顏色對上；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:42:08Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:25259235570:225996975633", "queue": "main", "index": 21, "source_queue": "P3_mapping_suspect", "product_id": "25259235570", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR 保護殼 軟殼 蘋果 小狗", "spec_id": "225996975633", "model_name": "堆堆小狗(單殼),12/12pro", "suggested_qty": 40, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98z-lqnkl14o5og24d_tn", "old_url": "https://detail.1688.com/offer/744336340660.html", "old_offer_id": "744336340660", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/744336340660.html", "candidate_offer_id": "744336340660", "candidate_sku_name": "磁吸 白边 堆堆小狗【光油】+陶瓷狗挂绳", "candidate_sku_id": "5440634706069", "candidate_spec": "磁吸 白边 堆堆小狗【光油】+陶瓷狗挂绳>12/12pro", "confidence": "中", "reason": "兄弟／原檔 744336340660：機型對上；款名「堆堆小狗/小狗/堆堆」；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:47:28Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:21869109391:405613043534", "queue": "main", "index": 22, "source_queue": "P3_mapping_suspect", "product_id": "21869109391", "product_name": "隔日到貨🔥 刺繡棉襪 女襪 S16 長襪 棉襪 白長襪 中筒襪 襪子 白色襪子 女生襪子 女長襪 襪子女 小熊襪", "spec_id": "405613043534", "model_name": "鬱金香", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-820l4-mlhhg5n2gfep07_tn", "old_url": "https://detail.1688.com/offer/643208627289.html", "old_offer_id": "643208627289", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/643208627289.html", "candidate_offer_id": "643208627289", "candidate_sku_name": "拍这个是郁金香", "candidate_sku_id": "5056192855137", "candidate_spec": "拍这个是郁金香>均码", "confidence": "中", "reason": "兄弟／原檔 643208627289：款名「郁金香」；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:47:52Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:22501643420:230075709675", "queue": "main", "index": 23, "source_queue": "P3_mapping_suspect", "product_id": "22501643420", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼", "spec_id": "230075709675", "model_name": "草莓藍花,11", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22100-19wlj8tptyivfa_tn", "old_url": "https://detail.1688.com/offer/671822163773.html", "old_offer_id": "671822163773", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/671822163773.html", "candidate_offer_id": "671822163773", "candidate_sku_name": "透白 蓝油彩花", "candidate_sku_id": "4882352136284", "candidate_spec": "透白 蓝油彩花>11pro 5.8", "confidence": "中", "reason": "兄弟／原檔 671822163773：機型對上；顏色對上；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:49:53Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:18396514233:245742439192", "queue": "main", "index": 24, "source_queue": "P3_mapping_suspect", "product_id": "18396514233", "product_name": "隔日到貨🔥 iPhone 立體珍珠 手機殼 17 16 15 14 13 12 11 pro 保護殼 鏡面殼 蘋果", "spec_id": "245742439192", "model_name": "鏡面珍珠結,11", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98p-luqc17tpmi8bfc_tn", "old_url": "https://detail.1688.com/offer/755744051484.html", "old_offer_id": "755744051484", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/755744051484.html", "candidate_offer_id": "755744051484", "candidate_sku_name": "电镀镜面 立体珍珠结", "candidate_sku_id": "5208872040174", "candidate_spec": "电镀镜面 立体珍珠结>11pro max 6.5", "confidence": "中", "reason": "兄弟／原檔 755744051484：機型對上；款名「镜面/珍珠」；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:50:36Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:18396514233:245742439196", "queue": "main", "index": 25, "source_queue": "P3_mapping_suspect", "product_id": "18396514233", "product_name": "隔日到貨🔥 iPhone 立體珍珠 手機殼 17 16 15 14 13 12 11 pro 保護殼 鏡面殼 蘋果", "spec_id": "245742439196", "model_name": "鏡面珍珠結,13/14", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98p-luqc17tpmi8bfc_tn", "old_url": "https://detail.1688.com/offer/755744051484.html", "old_offer_id": "755744051484", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/755744051484.html", "candidate_offer_id": "755744051484", "candidate_sku_name": "电镀镜面 立体珍珠结", "candidate_sku_id": "5208872040169", "candidate_spec": "电镀镜面 立体珍珠结>13promax", "confidence": "中", "reason": "兄弟／原檔 755744051484：機型對上；款名「镜面/珍珠」；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:50:36Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:19960782914:225676862457", "queue": "main", "index": 26, "source_queue": "P3_mapping_suspect", "product_id": "19960782914", "product_name": "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果", "spec_id": "225676862457", "model_name": "黑色軍規,15", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-u0qudeq35ljv56_tn", "old_url": "https://detail.1688.com/offer/661385649783.html", "old_offer_id": "661385649783", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/661385649783.html", "candidate_offer_id": "661385649783", "candidate_sku_name": "透明色", "candidate_sku_id": "5520375305833", "candidate_spec": "透明色>iPhone15Plus/14Plus通用", "confidence": "中", "reason": "兄弟／原檔 661385649783：機型對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:48:18Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20373719873:59258811614", "queue": "main", "index": 27, "source_queue": "P3_mapping_suspect", "product_id": "20373719873", "product_name": "隔日到貨🔥 韓版寬邊奶茶色系髮箍 髮飾 髮箍 頭飾 飾品 配件", "spec_id": "59258811614", "model_name": "米白色", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-23020-mm24ymvpkonvf6_tn", "old_url": "https://detail.1688.com/offer/678718587226.html", "old_offer_id": "678718587226", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/678718587226.html", "candidate_offer_id": "678718587226", "candidate_sku_name": "米白色", "candidate_sku_id": "5042629355335", "candidate_spec": "米白色", "confidence": "中", "reason": "兄弟／原檔 678718587226：顏色對上；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:51:00Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:25259235570:225996975638", "queue": "main", "index": 28, "source_queue": "P3_mapping_suspect", "product_id": "25259235570", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR 保護殼 軟殼 蘋果 小狗", "spec_id": "225996975638", "model_name": "堆堆小狗(單殼),14", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98z-lqnkl14o5og24d_tn", "old_url": "https://detail.1688.com/offer/744336340660.html", "old_offer_id": "744336340660", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/744336340660.html", "candidate_offer_id": "744336340660", "candidate_sku_name": "磁吸 白边 堆堆小狗【光油】+陶瓷狗挂绳", "candidate_sku_id": "5440634706064", "candidate_spec": "磁吸 白边 堆堆小狗【光油】+陶瓷狗挂绳>14", "confidence": "中", "reason": "兄弟／原檔 744336340660：機型對上；款名「堆堆小狗/小狗/堆堆」；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:47:28Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:25259235570:225996975642", "queue": "main", "index": 29, "source_queue": "P3_mapping_suspect", "product_id": "25259235570", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 pro 13 12 11 XS XR 保護殼 軟殼 蘋果 小狗", "spec_id": "225996975642", "model_name": "堆堆小狗(單殼),15", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98z-lqnkl14o5og24d_tn", "old_url": "https://detail.1688.com/offer/744336340660.html", "old_offer_id": "744336340660", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/744336340660.html", "candidate_offer_id": "744336340660", "candidate_sku_name": "磁吸 白边 堆堆小狗【光油】+陶瓷狗挂绳", "candidate_sku_id": "5440634706062", "candidate_spec": "磁吸 白边 堆堆小狗【光油】+陶瓷狗挂绳>15", "confidence": "中", "reason": "兄弟／原檔 744336340660：機型對上；款名「堆堆小狗/小狗/堆堆」；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:47:28Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:27750389092:255856434596", "queue": "main", "index": 30, "source_queue": "P3_mapping_suspect", "product_id": "27750389092", "product_name": "隔日到貨🔥 牽手襪 中筒襪 棉長襪 長襪 中筒襪 襪子 白色襪子 女襪 長襪 情侶襪 襪子女 白長襪", "spec_id": "255856434596", "model_name": "白色", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98p-lvojadbftsk2c2_tn", "old_url": "https://detail.1688.com/offer/736189419151.html", "old_offer_id": "736189419151", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/736189419151.html", "candidate_offer_id": "736189419151", "candidate_sku_name": "刺绣眼睛白色", "candidate_sku_id": "5551393201454", "candidate_spec": "刺绣眼睛白色>牵手袜【跨境专用OPP包装】", "confidence": "中", "reason": "兄弟／原檔 736189419151：顏色對上；型號字面命中", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:45:16Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:235303163998", "queue": "main", "index": 31, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "235303163998", "model_name": "14. 套裝 - 發芽碳球", "suggested_qty": 10, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qula-lhud8a6ld4262e_tn", "old_url": "https://detail.1688.com/offer/702421478513.html", "old_offer_id": "702421478513", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703936399842.html", "candidate_offer_id": "703936399842", "candidate_sku_name": "发芽煤球(4件套)", "candidate_sku_id": "4951712716679", "candidate_spec": "发芽煤球(4件套)大小头+1.4米绕线绳+硅胶扎带", "confidence": "中", "reason": "原 702421478513 404。肥猪充電套裝活頁有「发芽煤球」四件套（大小頭+繞線），煤球≈碳球、發芽也對。", "method": "planC_reuse", "alt_offer_id": "", "search_query": "同商品充電套裝兄弟檔 703936399842（派大星同源店）開詳情", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "shelved_round1", "why_not_others": "", "shelved_round1": true}, {"case_id": "main:23381311738:184609541262", "queue": "main", "index": 32, "source_queue": "P1_no_url", "product_id": "23381311738", "product_name": "隔日到貨🔥 iPhone 手機殼 15 14 pro 13 12 11 XS XR SE X 保護殼 軟殼 蘋果", "spec_id": "184609541262", "model_name": "貼貼奶狗(無吊飾),11 pro", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98x-lm4fbz8yzwkbdc_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703512173999.html", "candidate_offer_id": "703512173999", "candidate_sku_name": "菲林 奶油腊肠狗", "candidate_sku_id": "4965506528350", "candidate_spec": "菲林 奶油腊肠狗>11pro 5.8", "confidence": "中", "reason": "無 URL。塔下菲林軟殼活頁有「奶油腊肠狗」+ 11pro，臘腸狗很像貼貼奶狗，機型對。", "method": "planC_reuse", "alt_offer_id": "", "search_query": "塔下活頁 703512173999 菲林殼對「奶狗／臘腸狗」+11pro", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "shelved_round1", "why_not_others": "", "shelved_round1": true}, {"case_id": "main:20465189991:156338784744", "queue": "main", "index": 33, "source_queue": "P3_mapping_suspect", "product_id": "20465189991", "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪", "spec_id": "156338784744", "model_name": "黑色", "suggested_qty": 120, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-78qf44z6xckv61_tn", "old_url": "https://detail.1688.com/offer/616320098064.html", "old_offer_id": "616320098064", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/616320098064.html", "candidate_offer_id": "616320098064", "candidate_sku_name": "黑色-猫头鹰", "candidate_sku_id": "4516100527406", "candidate_spec": "黑色-猫头鹰>34-39码，可以挂", "confidence": "低", "reason": "兄弟／原檔 616320098064：顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:38:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20465189991:156338784745", "queue": "main", "index": 34, "source_queue": "P3_mapping_suspect", "product_id": "20465189991", "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪", "spec_id": "156338784745", "model_name": "白色", "suggested_qty": 100, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-ictc8god2ckve9_tn", "old_url": "https://detail.1688.com/offer/616320098064.html", "old_offer_id": "616320098064", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/616320098064.html", "candidate_offer_id": "616320098064", "candidate_sku_name": "白色-猫咪", "candidate_sku_id": "4516100527407", "candidate_spec": "白色-猫咪>34-39码，可以挂", "confidence": "低", "reason": "兄弟／原檔 616320098064：顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:38:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20465189991:156338784740", "queue": "main", "index": 35, "source_queue": "P3_mapping_suspect", "product_id": "20465189991", "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪", "spec_id": "156338784740", "model_name": "淺灰", "suggested_qty": 80, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-nlxed86d2ckv2d_tn", "old_url": "https://detail.1688.com/offer/616320098064.html", "old_offer_id": "616320098064", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/616320098064.html", "candidate_offer_id": "616320098064", "candidate_sku_name": "浅灰色", "candidate_sku_id": "4516101491339", "candidate_spec": "浅灰色>34-39码，可以挂", "confidence": "低", "reason": "兄弟／原檔 616320098064：顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:38:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:4011081861:11588286011", "queue": "main", "index": 36, "source_queue": "P3_mapping_suspect", "product_id": "4011081861", "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪", "spec_id": "11588286011", "model_name": "10.黑色小熊", "suggested_qty": 70, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-7wea025dfhlv40_tn", "old_url": "https://detail.1688.com/offer/653690518845.html", "old_offer_id": "653690518845", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/653690518845.html", "candidate_offer_id": "653690518845", "candidate_sku_name": "黑色.", "candidate_sku_id": "4935441191296", "candidate_spec": "黑色.>均码（35-39码", "confidence": "低", "reason": "兄弟／原檔 653690518845：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:42:27Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:4011081861:11588286002", "queue": "main", "index": 37, "source_queue": "P3_mapping_suspect", "product_id": "4011081861", "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪", "spec_id": "11588286002", "model_name": "1.深灰小熊(已停售)", "suggested_qty": 60, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-13bg7c4cfhlvd5_tn", "old_url": "https://detail.1688.com/offer/653690518845.html", "old_offer_id": "653690518845", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/899872156647.html", "candidate_offer_id": "899872156647", "candidate_sku_name": "【5双装】白色+粉色+浅蓝+浅黄+麻灰", "candidate_sku_id": "6074510581746", "candidate_spec": "【5双装】白色+粉色+浅蓝+浅黄+麻灰>均码", "confidence": "低", "reason": "相關檔 899872156647：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:43:06Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:27750389092:255856434594", "queue": "main", "index": 38, "source_queue": "P3_mapping_suspect", "product_id": "27750389092", "product_name": "隔日到貨🔥 牽手襪 中筒襪 棉長襪 長襪 中筒襪 襪子 白色襪子 女襪 長襪 情侶襪 襪子女 白長襪", "spec_id": "255856434594", "model_name": "大眼白色", "suggested_qty": 50, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98r-lvoj9z92ethz46_tn", "old_url": "https://detail.1688.com/offer/736189419151.html", "old_offer_id": "736189419151", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/736189419151.html", "candidate_offer_id": "736189419151", "candidate_sku_name": "刺绣眼睛白色", "candidate_sku_id": "5551393201454", "candidate_spec": "刺绣眼睛白色>牵手袜【跨境专用OPP包装】", "confidence": "低", "reason": "兄弟／原檔 736189419151：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:45:16Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:4011081861:11588286004", "queue": "main", "index": 39, "source_queue": "P3_mapping_suspect", "product_id": "4011081861", "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪", "spec_id": "11588286004", "model_name": "3.淺灰小熊", "suggested_qty": 50, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-rqxhajbdfhlveb_tn", "old_url": "https://detail.1688.com/offer/653690518845.html", "old_offer_id": "653690518845", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/653690518845.html", "candidate_offer_id": "653690518845", "candidate_sku_name": "浅灰.", "candidate_sku_id": "4935441191297", "candidate_spec": "浅灰.>均码（35-39码", "confidence": "低", "reason": "兄弟／原檔 653690518845：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:42:27Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:26757534364:233087223854", "queue": "main", "index": 40, "source_queue": "P3_mapping_suspect", "product_id": "26757534364", "product_name": "隔日到貨🔥 純色棉襪 花邊襪 S3 女襪 長襪 棉襪 白長襪 中筒襪 襪子 女生襪子 女長襪 襪子女 捲邊襪", "spec_id": "233087223854", "model_name": "奶黃", "suggested_qty": 40, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98x-lyrkl1w5qr6mb7_tn", "old_url": "https://detail.1688.com/offer/724231896832.html", "old_offer_id": "724231896832", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/724231896832.html", "candidate_offer_id": "724231896832", "candidate_sku_name": "黄色一双", "candidate_sku_id": "5205952231205", "candidate_spec": "黄色一双>均码", "confidence": "低", "reason": "兄弟／原檔 724231896832：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:47:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:27750389092:255856434595", "queue": "main", "index": 41, "source_queue": "P3_mapping_suspect", "product_id": "27750389092", "product_name": "隔日到貨🔥 牽手襪 中筒襪 棉長襪 長襪 中筒襪 襪子 白色襪子 女襪 長襪 情侶襪 襪子女 白長襪", "spec_id": "255856434595", "model_name": "大眼黑色", "suggested_qty": 40, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98w-lvoj9z92g82f60_tn", "old_url": "https://detail.1688.com/offer/736189419151.html", "old_offer_id": "736189419151", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/736189419151.html", "candidate_offer_id": "736189419151", "candidate_sku_name": "刺绣眼睛黑色", "candidate_sku_id": "5551251465628", "candidate_spec": "刺绣眼睛黑色>【牵手袜裸袜】均码（36-43码）", "confidence": "低", "reason": "兄弟／原檔 736189419151：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:45:16Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20465189991:156338784743", "queue": "main", "index": 42, "source_queue": "P3_mapping_suspect", "product_id": "20465189991", "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪", "spec_id": "156338784743", "model_name": "薑黃", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-crcgmgve2ckvee_tn", "old_url": "https://detail.1688.com/offer/616320098064.html", "old_offer_id": "616320098064", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/616320098064.html", "candidate_offer_id": "616320098064", "candidate_sku_name": "姜黄-兔子", "candidate_sku_id": "4516101491338", "candidate_spec": "姜黄-兔子>34-39码，可以挂", "confidence": "低", "reason": "兄弟／原檔 616320098064：顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:38:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20465189991:156338784748", "queue": "main", "index": 43, "source_queue": "P3_mapping_suspect", "product_id": "20465189991", "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪", "spec_id": "156338784748", "model_name": "淺綠", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-an0qx5yd2ckvea_tn", "old_url": "https://detail.1688.com/offer/616320098064.html", "old_offer_id": "616320098064", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/616320098064.html", "candidate_offer_id": "616320098064", "candidate_sku_name": "浅绿色", "candidate_sku_id": "4516101491341", "candidate_spec": "浅绿色>34-39码，可以挂", "confidence": "低", "reason": "兄弟／原檔 616320098064：顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:38:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20465189991:156338784749", "queue": "main", "index": 44, "source_queue": "P3_mapping_suspect", "product_id": "20465189991", "product_name": "隔日到貨🔥 韓版 ins 刺繡卡通襪 S15 女短襪 可愛動物襪 襪子 薄款棉 中筒襪 韓風 女襪 運動襪", "spec_id": "156338784749", "model_name": "皮粉", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22110-rgs79a3d2ckvb5_tn", "old_url": "https://detail.1688.com/offer/616320098064.html", "old_offer_id": "616320098064", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/616320098064.html", "candidate_offer_id": "616320098064", "candidate_sku_name": "皮粉-小羊", "candidate_sku_id": "4516101491344", "candidate_spec": "皮粉-小羊>34-39码，可以挂", "confidence": "低", "reason": "兄弟／原檔 616320098064：顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:38:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:22825472251:213884095381", "queue": "main", "index": 45, "source_queue": "P3_mapping_suspect", "product_id": "22825472251", "product_name": "隔日到貨🔥 水果襪 女襪 S33 長襪 棉襪 白長襪 中筒襪 襪子 白色襪子 女生襪子 女長襪 襪子女", "spec_id": "213884095381", "model_name": "黑色爪印🐾", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-23020-m36l196sionvfb_tn", "old_url": "https://detail.1688.com/offer/605661622159.html", "old_offer_id": "605661622159", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/1051872539926.html", "candidate_offer_id": "1051872539926", "candidate_sku_name": "牛油果黑色【中筒】", "candidate_sku_id": "6256848594407", "candidate_spec": "牛油果黑色【中筒】>包装", "confidence": "低", "reason": "相關檔 1051872539926：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:45:52Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:4011081861:11588286010", "queue": "main", "index": 46, "source_queue": "P3_mapping_suspect", "product_id": "4011081861", "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪", "spec_id": "11588286010", "model_name": "9.藍色小熊", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-uu3d6v1dfhlv32_tn", "old_url": "https://detail.1688.com/offer/653690518845.html", "old_offer_id": "653690518845", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/653690518845.html", "candidate_offer_id": "653690518845", "candidate_sku_name": "牛仔蓝", "candidate_sku_id": "4935441191300", "candidate_spec": "牛仔蓝>均码（35-39码", "confidence": "低", "reason": "兄弟／原檔 653690518845：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:42:27Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:9159438193:92291528084", "queue": "main", "index": 47, "source_queue": "P3_mapping_suspect", "product_id": "9159438193", "product_name": "隔日到貨🔥 ins風 手機氣囊 多功能指環扣 伸縮折疊 立體氣囊 手機架 適合各手機 氣囊 黏貼式 懶人氣囊", "spec_id": "92291528084", "model_name": "E08", "suggested_qty": 30, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/0aef0cbb88a9745fda274fbca2ae1a33_tn", "old_url": "https://detail.1688.com/offer/617227382511.html", "old_offer_id": "617227382511", "old_sku_id": "4521892238236", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/674486272035.html", "candidate_offer_id": "674486272035", "candidate_sku_name": "无脸男E08", "candidate_sku_id": "5047138666997", "candidate_spec": "无脸男E08", "confidence": "低", "reason": "兄弟／原檔 674486272035：型號字面命中", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:48:53Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:21070740292:183690984111", "queue": "main", "index": 48, "source_queue": "P3_mapping_suspect", "product_id": "21070740292", "product_name": "隔日到貨🔥 棋盤格長襪 S14 長襪 棉襪 中筒襪 襪子 白長襪 襪子女 女生襪子 女襪 情侶襪 女長襪", "spec_id": "183690984111", "model_name": "藍格", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-23010-3vbunz4pj1lve8_tn", "old_url": "https://detail.1688.com/offer/668788660432.html", "old_offer_id": "668788660432", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/668788660432.html", "candidate_offer_id": "668788660432", "candidate_sku_name": "蓝格", "candidate_sku_id": "5710802874190", "candidate_spec": "蓝格>散装", "confidence": "低", "reason": "兄弟／原檔 668788660432：顏色對上；型號字面命中；品類不太像", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:50:13Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:22501643420:230075709671", "queue": "main", "index": 49, "source_queue": "P3_mapping_suspect", "product_id": "22501643420", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 pro Max X XR SE 保護殼 軟殼", "spec_id": "230075709671", "model_name": "草莓藍花,XR", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22100-19wlj8tptyivfa_tn", "old_url": "https://detail.1688.com/offer/671822163773.html", "old_offer_id": "671822163773", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/676437553164.html", "candidate_offer_id": "676437553164", "candidate_sku_name": "蓝帽鸭【单帽】", "candidate_sku_id": "5035782575368", "candidate_spec": "蓝帽鸭【单帽】>AirpodsPro", "confidence": "低", "reason": "同店 676437553164：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:49:53Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:26757534364:233087223853", "queue": "main", "index": 50, "source_queue": "P3_mapping_suspect", "product_id": "26757534364", "product_name": "隔日到貨🔥 純色棉襪 花邊襪 S3 女襪 長襪 棉襪 白長襪 中筒襪 襪子 女生襪子 女長襪 襪子女 捲邊襪", "spec_id": "233087223853", "model_name": "淺綠", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98t-lyrkl1w4gefy52_tn", "old_url": "https://detail.1688.com/offer/724231896832.html", "old_offer_id": "724231896832", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/724231896832.html", "candidate_offer_id": "724231896832", "candidate_sku_name": "绿色一双", "candidate_sku_id": "5205952231204", "candidate_spec": "绿色一双>均码", "confidence": "低", "reason": "兄弟／原檔 724231896832：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:47:03Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:4011081861:11588286009", "queue": "main", "index": 51, "source_queue": "P3_mapping_suspect", "product_id": "4011081861", "product_name": "隔日到貨🔥 小熊棉襪 S1 女襪 小熊襪 長襪 中筒襪 襪子 純色棉襪 襪子女 女生襪子 女長襪 刺繡 熊熊襪", "spec_id": "11588286009", "model_name": "8.紅色小熊", "suggested_qty": 20, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/sg-11134201-22120-b24s0hwdfhlv97_tn", "old_url": "https://detail.1688.com/offer/653690518845.html", "old_offer_id": "653690518845", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/653690518845.html", "candidate_offer_id": "653690518845", "candidate_sku_name": "砖红", "candidate_sku_id": "4935441191299", "candidate_spec": "砖红>均码（35-39码", "confidence": "低", "reason": "兄弟／原檔 653690518845：顏色對上", "method": "history", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:42:27Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:204276976414", "queue": "main", "index": 52, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "204276976414", "model_name": "1. 套裝 - 綠色香腸嘴 （鐳射線套）", "suggested_qty": 10, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul4-lghmkk7mk9wq2a_tn", "old_url": "https://detail.1688.com/offer/715793566068.html", "old_offer_id": "715793566068", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703936399842.html", "candidate_offer_id": "703936399842", "candidate_sku_name": "火腿肠(4件套)", "candidate_sku_id": "4951712716630", "candidate_spec": "火腿肠(4件套)大小头+1.4米绕线绳+硅胶扎带", "confidence": "低", "reason": "原香腸嘴 offer 715793566068 404。肥猪同店四件套有「火腿肠」（大小頭+繞線），品類是充電頭套+線套，火腿腸≈香腸嘴，但沒標綠／粉、也不是鐳射線套。", "method": "planC_reuse", "alt_offer_id": "", "search_query": "充電器保護套 20W 咬線器 香肠嘴／碳球（走同店活頁，未走全站搜尋）", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "planC_reuse", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:204276976416", "queue": "main", "index": 53, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "204276976416", "model_name": "3. 套裝 - 粉色香腸嘴 （鐳射線套）", "suggested_qty": 10, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul1-lghmksg8gtgqaa_tn", "old_url": "https://detail.1688.com/offer/715793566068.html", "old_offer_id": "715793566068", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703936399842.html", "candidate_offer_id": "703936399842", "candidate_sku_name": "火腿肠(4件套)", "candidate_sku_id": "4951712716630", "candidate_spec": "火腿肠(4件套)大小头+1.4米绕线绳+硅胶扎带", "confidence": "低", "reason": "原香腸嘴 offer 715793566068 404。肥猪同店四件套有「火腿肠」（大小頭+繞線），品類是充電頭套+線套，火腿腸≈香腸嘴，但沒標綠／粉、也不是鐳射線套。", "method": "planC_reuse", "alt_offer_id": "", "search_query": "充電器保護套 20W 咬線器 香肠嘴／碳球（走同店活頁，未走全站搜尋）", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "planC_reuse", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:204276976417", "queue": "main", "index": 54, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "204276976417", "model_name": "4. 套裝 - 粉色香腸嘴（粉色線套）", "suggested_qty": 10, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul2-lghmksg8i8169f_tn", "old_url": "https://detail.1688.com/offer/715793566068.html", "old_offer_id": "715793566068", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703936399842.html", "candidate_offer_id": "703936399842", "candidate_sku_name": "火腿肠(4件套)", "candidate_sku_id": "4951712716630", "candidate_spec": "火腿肠(4件套)大小头+1.4米绕线绳+硅胶扎带", "confidence": "低", "reason": "原香腸嘴 offer 715793566068 404。肥猪同店四件套有「火腿肠」（大小頭+繞線），品類是充電頭套+線套，火腿腸≈香腸嘴，但沒標綠／粉、也不是鐳射線套。", "method": "planC_reuse", "alt_offer_id": "", "search_query": "充電器保護套 20W 咬線器 香肠嘴／碳球（走同店活頁，未走全站搜尋）", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "planC_reuse", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:25083447472:226541342229", "queue": "main", "index": 55, "source_queue": "P1_no_url", "product_id": "25083447472", "product_name": "隔日到貨🔥 ins韓風 手機殼吊飾 Airpods殼吊飾 手機殼掛飾 手機掛件 掛飾 手機吊飾 手機掛繩 掛繩", "spec_id": "226541342229", "model_name": "黃色花朵", "suggested_qty": 10, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r991-lxno9eo611d2bc_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/736640738967.html", "candidate_offer_id": "736640738967", "candidate_sku_name": "【非小号】黄云", "candidate_sku_id": "5800635676263", "candidate_spec": "【非小号】黄云", "confidence": "低", "reason": "兄弟／原檔 736640738967：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:27:44Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:11515728220:26604391185", "queue": "main", "index": 56, "source_queue": "P1_no_url", "product_id": "11515728220", "product_name": "隔日到貨🔥 ins風 手機氣囊 多功能指環扣 伸縮折疊 立體氣囊 手機架 適合各手機 氣囊 黏貼式 懶人氣囊", "spec_id": "26604391185", "model_name": "M34", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/ee1c2c875c983a1188f44105c6ba98db_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/625194998616.html", "candidate_offer_id": "625194998616", "candidate_sku_name": "M34星之卡比", "candidate_sku_id": "4596269530545", "candidate_spec": "M34星之卡比", "confidence": "低", "reason": "兄弟／原檔 625194998616：型號字面命中", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:28:33Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:11515728220:36238148048", "queue": "main", "index": 57, "source_queue": "P1_no_url", "product_id": "11515728220", "product_name": "隔日到貨🔥 ins風 手機氣囊 多功能指環扣 伸縮折疊 立體氣囊 手機架 適合各手機 氣囊 黏貼式 懶人氣囊", "spec_id": "36238148048", "model_name": "M49", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/ce52e1101063359b4647a7eb4fbf9c3b_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/625194998616.html", "candidate_offer_id": "625194998616", "candidate_sku_name": "M49抱抱熊", "candidate_sku_id": "4596269530560", "candidate_spec": "M49抱抱熊", "confidence": "低", "reason": "兄弟／原檔 625194998616：型號字面命中", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:28:33Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:12439413079:171110111462", "queue": "main", "index": 58, "source_queue": "AI2_dead", "product_id": "12439413079", "product_name": "隔日到貨🔥 iPhone 手機殼 17 16 15 14 13 12 11 XS XR SE3 X 保護殼 軟殼 蘋果", "spec_id": "171110111462", "model_name": "2.熊熊,11", "suggested_qty": 5, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/267ed1f2ca0e8508e03806fcfa22fc12_tn", "old_url": "https://detail.1688.com/offer/647266157547.html", "old_offer_id": "647266157547", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/657336800632.html", "candidate_offer_id": "657336800632", "candidate_sku_name": "古董白 睡帽熊", "candidate_sku_id": "4918342342355", "candidate_spec": "古董白 睡帽熊>11 6.1", "confidence": "低", "reason": "原熊熊殼 647266157547 404。塔下睡帽熊有 iPhone 11，僅「小熊殼」品類接近，花色不同。", "method": "planC_reuse", "alt_offer_id": "", "search_query": "塔下睡帽熊 657336800632 對機型 11", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "planC_reuse", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:204277011262", "queue": "main", "index": 59, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "204277011262", "model_name": "5. 套裝 - 淺黃大愛心", "suggested_qty": 5, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul6-lghmvju5kni9e5_tn", "old_url": "https://detail.1688.com/offer/691886666407.html", "old_offer_id": "691886666407", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/800368644953.html", "candidate_offer_id": "800368644953", "candidate_sku_name": "黄色碎花裙小猫", "candidate_sku_id": "5620147366334", "candidate_spec": "黄色碎花裙小猫", "confidence": "低", "reason": "相關檔 800368644953：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:35:46Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:204277011267", "queue": "main", "index": 60, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "204277011267", "model_name": "10. 套裝 - 粉大愛心", "suggested_qty": 5, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul9-lghmw1ub9k3led_tn", "old_url": "https://detail.1688.com/offer/691886666407.html", "old_offer_id": "691886666407", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/709498139595.html", "candidate_offer_id": "709498139595", "candidate_sku_name": "裸粉色郁金香", "candidate_sku_id": "5146025130522", "candidate_spec": "裸粉色郁金香", "confidence": "低", "reason": "兄弟／原檔 709498139595：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:35:46Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:69316974495", "queue": "main", "index": 61, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "69316974495", "model_name": "咬線器 - 粉色香腸嘴 (2個裝)", "suggested_qty": 5, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul2-lhudlambv2j440_tn", "old_url": "https://detail.1688.com/offer/715793566068.html", "old_offer_id": "715793566068", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/709498139595.html", "candidate_offer_id": "709498139595", "candidate_sku_name": "裸粉色郁金香", "candidate_sku_id": "5146025130522", "candidate_spec": "裸粉色郁金香", "confidence": "低", "reason": "兄弟／原檔 709498139595：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:35:46Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:20488473843:69316974496", "queue": "main", "index": 62, "source_queue": "AI2_dead", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "69316974496", "model_name": "咬線器 - 黑邊黃熊 (2個裝)", "suggested_qty": 5, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul4-lhudm1a2ullaed_tn", "old_url": "https://detail.1688.com/offer/716467310974.html", "old_offer_id": "716467310974", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/800368644953.html", "candidate_offer_id": "800368644953", "candidate_sku_name": "黄色碎花裙小猫", "candidate_sku_id": "5620147366334", "candidate_spec": "黄色碎花裙小猫", "confidence": "低", "reason": "相關檔 800368644953：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:35:46Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23161561299:138799819931", "queue": "main", "index": 63, "source_queue": "P1_no_url", "product_id": "23161561299", "product_name": "隔日到貨🔥 Airpods 保護套 1代 2代 3代 pro pro2 耳機套 A31 矽膠 軟殼 保護殼 蘋果", "spec_id": "138799819931", "model_name": "5.黃色白鴨子,Pro1代/Pro2代 (通用）", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98u-logxenwvfkay8c_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/684361329432.html", "candidate_offer_id": "684361329432", "candidate_sku_name": "白色招财猫", "candidate_sku_id": "4894476285590", "candidate_spec": "白色招财猫>AirpodsPro", "confidence": "低", "reason": "兄弟／原檔 684361329432：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:34:07Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23161561299:138799819932", "queue": "main", "index": 64, "source_queue": "P1_no_url", "product_id": "23161561299", "product_name": "隔日到貨🔥 Airpods 保護套 1代 2代 3代 pro pro2 耳機套 A31 矽膠 軟殼 保護殼 蘋果", "spec_id": "138799819932", "model_name": "5.黃色白鴨子,3代", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98u-logxenwvfkay8c_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/684361329432.html", "candidate_offer_id": "684361329432", "candidate_sku_name": "白色招财猫", "candidate_sku_id": "4894476285590", "candidate_spec": "白色招财猫>AirpodsPro", "confidence": "低", "reason": "兄弟／原檔 684361329432：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:34:07Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23244459752:167688526079", "queue": "main", "index": 65, "source_queue": "P1_no_url", "product_id": "23244459752", "product_name": "隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 環保袋 購物袋 收納包 簡約文青", "spec_id": "167688526079", "model_name": "小熊for you （黑）", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul3-lhliqvp3j7bie4_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/42776592594.html", "candidate_offer_id": "42776592594", "candidate_sku_name": "黑色(带铜扣)", "candidate_sku_id": "4501149630234", "candidate_spec": "黑色(带铜扣)", "confidence": "低", "reason": "兄弟／原檔 42776592594：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:27:10Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23244459752:167688526087", "queue": "main", "index": 66, "source_queue": "P1_no_url", "product_id": "23244459752", "product_name": "隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 環保袋 購物袋 收納包 簡約文青", "spec_id": "167688526087", "model_name": "小熊 for you (白）", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul6-lhlir5wgn0cw12_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/42776592594.html", "candidate_offer_id": "42776592594", "candidate_sku_name": "白色(敞口)", "candidate_sku_id": "4501149630221", "candidate_spec": "白色(敞口)", "confidence": "低", "reason": "兄弟／原檔 42776592594：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:27:10Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:23244459752:167688526090", "queue": "main", "index": 67, "source_queue": "P1_no_url", "product_id": "23244459752", "product_name": "隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 環保袋 購物袋 收納包 簡約文青", "spec_id": "167688526090", "model_name": "nice ok藍", "suggested_qty": 5, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul5-lhliqlw5vo9ce4_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/896158447887.html", "candidate_offer_id": "896158447887", "candidate_sku_name": "蓝色熊（无内袋）", "candidate_sku_id": "5915618050337", "candidate_spec": "蓝色熊（无内袋）", "confidence": "低", "reason": "兄弟／原檔 896158447887：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:8743346211:64914252592", "queue": "main", "index": 68, "source_queue": "AI2_off_shelf", "product_id": "8743346211", "product_name": "隔日到貨🔥 iPhone 手機殼 15 14 13 12 11 pro Max XS XR SE 保護殼 軟殼", "spec_id": "64914252592", "model_name": "11 pro", "suggested_qty": 5, "bucket": "url_suspect", "shopee_image": "https://deo.shopeemobile.com/shopee/shopee-seller-live-sg/mmf_portal_seller_root_dir/static/modules/product-list/image/default-item-model-image.2601159.png", "old_url": "https://detail.1688.com/offer/635124351042.html", "old_offer_id": "635124351042", "old_sku_id": "", "old_health": "off_shelf", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/657336800632.html", "candidate_offer_id": "657336800632", "candidate_sku_name": "古董白 睡帽熊", "candidate_sku_id": "4918342342354", "candidate_spec": "古董白 睡帽熊>11pro 5.8", "confidence": "低", "reason": "原側邊小熊殼已下架。同店塔下還有「睡帽熊」11pro 活頁，都是小熊軟殼，但花色不是側邊小熊。", "method": "planC_reuse", "alt_offer_id": "", "search_query": "原下架頁「查看該店其他商品」→ 塔下 657336800632 睡帽熊", "checked_at": "2026-09-09T02:27:09Z", "planC_note": "planC_reuse", "why_not_others": "", "shelved_round1": false}, {"case_id": "main:9228589144:64271483250", "queue": "main", "index": 69, "source_queue": "AI2_off_shelf", "product_id": "9228589144", "product_name": "隔日到貨🔥 iPhone 手機殼 15 14 13 12 11 pro Max XS XR SE 保護殼 軟殼", "spec_id": "64271483250", "model_name": "1.米白紅花小熊,11", "suggested_qty": 5, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/1e02f79ae5ca78f0900dca786a4d0d11_tn", "old_url": "https://detail.1688.com/offer/635124351042.html", "old_offer_id": "635124351042", "old_sku_id": "", "old_health": "off_shelf", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/670665892651.html", "candidate_offer_id": "670665892651", "candidate_sku_name": "电话库洛米", "candidate_sku_id": "5992112498629", "candidate_spec": "电话库洛米>Airpods4", "confidence": "低", "reason": "同店 670665892651：顏色對上", "method": "same_shop", "alt_offer_id": "", "search_query": "", "checked_at": "2026-09-09T02:37:22Z", "planC_note": "", "why_not_others": "", "shelved_round1": false}], "appendix": [{"case_id": "shelved_round1:19725077805:194347278765", "queue": "shelved_round1", "index": 1, "source_queue": "planC_shelved_round1", "product_id": "19725077805", "product_name": "隔日到貨🔥 ins韓風 手機殼吊飾 手機殼掛飾 手機殼掛繩 手機掛件 掛飾 手機吊飾 鍊條 手提掛飾 手機掛繩 掛繩", "spec_id": "194347278765", "model_name": "15.水晶愛心繩", "suggested_qty": 9, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qul9-lhpxc24en7bi84_tn", "old_url": "https://detail.1688.com/offer/752797767076.html", "old_offer_id": "752797767076", "old_sku_id": "", "old_health": "alive", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/676841046990.html", "candidate_offer_id": "676841046990", "candidate_sku_name": "水晶爱心绳", "candidate_sku_id": "4998466037287", "candidate_spec": "水晶爱心绳", "confidence": "高", "reason": "同商品其他型號已核准這檔塔下掛繩；活頁 SKU 名稱就是「水晶爱心绳」，庫存還有。", "method": "cdp/browser", "alt_offer_id": "", "search_query": "同商品已核准掛繩 offer 676841046990 開詳情對 SKU（未走全站搜尋）", "checked_at": "2026-09-08T17:10:00Z", "planC_note": "shelved_round1", "why_not_others": "原 offer 752797767076 也活著，但 SKU 只有水晶玫瑰花绳／粉蝶爱心绳，沒有「水晶爱心绳」這個名字，所以改推同系列 676841046990。", "shelved_round1": true}, {"case_id": "shelved_round1:9709569250:63316011363", "queue": "shelved_round1", "index": 2, "source_queue": "planC_shelved_round1", "product_id": "9709569250", "product_name": "隔日到貨🔥 學院風 字母logo針織毛帽 長毛帽 針織毛帽 情侶帽 毛帽 ins 韓系穿搭 棉質毛帽 素面毛帽", "spec_id": "63316011363", "model_name": "淺灰色 M (56-58cm)", "suggested_qty": 1, "bucket": "mapping_suspect", "shopee_image": "https://cf.shopee.tw/file/8a425cacfc2b43f2a7343c8bfd3a0cce_tn", "old_url": "https://detail.1688.com/offer/632209726101.html", "old_offer_id": "632209726101", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/628106437483.html", "candidate_offer_id": "628106437483", "candidate_sku_name": "浅灰色", "candidate_sku_id": "4629736426668", "candidate_spec": "浅灰色>均码·弹性大", "confidence": "高", "reason": "原 632209726101 已 404。同商品「米色」已核准這檔針織毛帽，活頁有「浅灰色」均碼，顏色對得上。", "method": "cdp/browser", "alt_offer_id": "", "search_query": "同商品已核准毛帽 offer 628106437483 開詳情對色", "checked_at": "2026-09-08T17:10:00Z", "planC_note": "shelved_round1", "why_not_others": "另外兩檔舊 offer 630535088632、651388920822 也是 404。尺寸是均碼彈性，不是標 M 56-58，庭安對圖時看帽圍。", "shelved_round1": true}, {"case_id": "shelved_round1:20488473843:235303163998", "queue": "shelved_round1", "index": 3, "source_queue": "planC_shelved_round1", "product_id": "20488473843", "product_name": "隔日到貨🔥 ins爆款 充電器保護套 20W 適用蘋果 線套 咬線器 集線器 iPhone 充電線套 充電套", "spec_id": "235303163998", "model_name": "14. 套裝 - 發芽碳球", "suggested_qty": 8, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7qula-lhud8a6ld4262e_tn", "old_url": "https://detail.1688.com/offer/702421478513.html", "old_offer_id": "702421478513", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703936399842.html", "candidate_offer_id": "703936399842", "candidate_sku_name": "发芽煤球(4件套)", "candidate_sku_id": "4951712716679", "candidate_spec": "发芽煤球(4件套)大小头+1.4米绕线绳+硅胶扎带", "confidence": "中", "reason": "原 702421478513 404。肥猪充電套裝活頁有「发芽煤球」四件套（大小頭+繞線），煤球≈碳球、發芽也對。", "method": "cdp/browser", "alt_offer_id": "", "search_query": "同商品充電套裝兄弟檔 703936399842（派大星同源店）開詳情", "checked_at": "2026-09-08T17:10:00Z", "planC_note": "shelved_round1", "why_not_others": "同頁還有沒發芽的「煤球」；布叮活頁是咬線器小熊／花朵，不是碳球套裝。", "shelved_round1": true}, {"case_id": "shelved_round1:23381311738:184609541262", "queue": "shelved_round1", "index": 4, "source_queue": "planC_shelved_round1", "product_id": "23381311738", "product_name": "隔日到貨🔥 iPhone 手機殼 15 14 pro 13 12 11 XS XR SE X 保護殼 軟殼 蘋果", "spec_id": "184609541262", "model_name": "貼貼奶狗(無吊飾),11 pro", "suggested_qty": 3, "bucket": "no_url", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r98x-lm4fbz8yzwkbdc_tn", "old_url": "", "old_offer_id": "", "old_sku_id": "", "old_health": "", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703512173999.html", "candidate_offer_id": "703512173999", "candidate_sku_name": "菲林 奶油腊肠狗", "candidate_sku_id": "4965506528350", "candidate_spec": "菲林 奶油腊肠狗>11pro 5.8", "confidence": "中", "reason": "無 URL。塔下菲林軟殼活頁有「奶油腊肠狗」+ 11pro，臘腸狗很像貼貼奶狗，機型對。", "method": "cdp/browser", "alt_offer_id": "", "search_query": "塔下活頁 703512173999 菲林殼對「奶狗／臘腸狗」+11pro", "checked_at": "2026-09-08T17:10:00Z", "planC_note": "shelved_round1", "why_not_others": "不是原圖確認的同一檔；紫底腊肠狗顏色不同所以不推。需對蝦皮圖。", "shelved_round1": true}, {"case_id": "shelved_round1:25127544152:176449533289", "queue": "shelved_round1", "index": 5, "source_queue": "planC_shelved_round1", "product_id": "25127544152", "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro XS XR SE 8 保護殼 軟殼 蘋果", "spec_id": "176449533289", "model_name": "小狗貼貼,7/8/SE2/SE3", "suggested_qty": 2, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r991-luqcfjziaak6f3_tn", "old_url": "https://detail.1688.com/offer/773150007998.html", "old_offer_id": "773150007998", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703512173999.html", "candidate_offer_id": "703512173999", "candidate_sku_name": "菲林 奶油腊肠狗", "candidate_sku_id": "4965506528351", "candidate_spec": "菲林 奶油腊肠狗>7/8/SE 2020", "confidence": "中", "reason": "原小狗貼貼 404。塔下「奶油腊肠狗」7/8/SE 機型在，臘腸狗≈貼貼小狗，需對圖。", "method": "cdp/browser", "alt_offer_id": "", "search_query": "塔下菲林殼 703512173999 對小狗／臘腸狗 + 7/8/SE", "checked_at": "2026-09-08T17:10:00Z", "planC_note": "shelved_round1", "why_not_others": "華禧塗鴉愛心殼花色不對；睡帽熊更不像小狗。", "shelved_round1": true}, {"case_id": "shelved_round1:25127544152:176449533290", "queue": "shelved_round1", "index": 6, "source_queue": "planC_shelved_round1", "product_id": "25127544152", "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro XS XR SE 8 保護殼 軟殼 蘋果", "spec_id": "176449533290", "model_name": "小狗貼貼,7 Plus/8 Plus", "suggested_qty": 1, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r991-luqcfjziaak6f3_tn", "old_url": "https://detail.1688.com/offer/773150007998.html", "old_offer_id": "773150007998", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703512173999.html", "candidate_offer_id": "703512173999", "candidate_sku_name": "菲林 奶油腊肠狗", "candidate_sku_id": "4965506528347", "candidate_spec": "菲林 奶油腊肠狗>7p/8plus", "confidence": "中", "reason": "同上，機型對 7Plus/8Plus。", "method": "cdp/browser", "alt_offer_id": "", "search_query": "塔下菲林殼 703512173999 對小狗／臘腸狗 + 7/8 Plus", "checked_at": "2026-09-08T17:10:00Z", "planC_note": "shelved_round1", "why_not_others": "華禧塗鴉愛心殼花色不對。", "shelved_round1": true}, {"case_id": "shelved_round1:25127544152:176449533293", "queue": "shelved_round1", "index": 7, "source_queue": "planC_shelved_round1", "product_id": "25127544152", "product_name": "隔日到貨🔥 iPhone 手機殼 16 15 14 13 12 11 pro XS XR SE 8 保護殼 軟殼 蘋果", "spec_id": "176449533293", "model_name": "小狗貼貼,XS Max", "suggested_qty": 1, "bucket": "url_suspect", "shopee_image": "https://cf.shopee.tw/file/tw-11134207-7r991-luqcfjziaak6f3_tn", "old_url": "https://detail.1688.com/offer/773150007998.html", "old_offer_id": "773150007998", "old_sku_id": "", "old_health": "dead", "candidate_status": "with_candidate", "candidate_offer_url": "https://detail.1688.com/offer/703512173999.html", "candidate_offer_id": "703512173999", "candidate_sku_name": "菲林 奶油腊肠狗", "candidate_sku_id": "4965506528341", "candidate_spec": "菲林 奶油腊肠狗>Xs max", "confidence": "中", "reason": "同上，機型對 XS Max。", "method": "cdp/browser", "alt_offer_id": "", "search_query": "塔下菲林殼 703512173999 對小狗／臘腸狗 + XS Max", "checked_at": "2026-09-08T17:10:00Z", "planC_note": "shelved_round1", "why_not_others": "華禧塗鴉愛心殼花色不對。", "shelved_round1": true}]}</script>
+  <script>
+    const STORE_KEY = "golden_ai5_decisions_20260909";
+    const ACTIONS = [
+      { id: "approve", label: "核准", klass: "approve", key: "1" },
+      { id: "reject", label: "駁回", klass: "reject", key: "2" },
+      { id: "swap", label: "改換", klass: "swap", key: "3" },
+      { id: "skip", label: "略過", klass: "skip", key: "4" },
+      { id: "discontinued", label: "停售", klass: "discontinued", key: "5" },
+    ];
+    const TABS = [
+      { id: "priority", label: "優先（高／中）" },
+      { id: "main", label: "全部必審" },
+      { id: "高", label: "高" },
+      { id: "中", label: "中" },
+      { id: "低", label: "低" },
+      { id: "appendix", label: "附錄 shelved_round1" },
+    ];
+
+    const queue = JSON.parse(document.getElementById("queue-data").textContent);
+    const mainItems = queue.main || [];
+    const appendixItems = queue.appendix || [];
+    let filterId = "priority";
+    let visible = [];
+    let cursor = 0;
+
+    function loadDecisions() {
+      try { return JSON.parse(localStorage.getItem(STORE_KEY) || "{}") || {}; }
+      catch (err) { return {}; }
+    }
+    function saveDecisions(map) {
+      localStorage.setItem(STORE_KEY, JSON.stringify(map));
+    }
+    let decisions = loadDecisions();
+
+    function confClass(conf) {
+      if (conf === "高") return "high";
+      if (conf === "中") return "mid";
+      return "low";
+    }
+    function escapeHtml(value) {
+      return String(value ?? "").replace(/[&<>"']/g, (ch) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      }[ch]));
+    }
+    function filteredItems() {
+      if (filterId === "priority") return mainItems.filter((x) => x.confidence === "高" || x.confidence === "中");
+      if (filterId === "main") return mainItems.slice();
+      if (filterId === "appendix") return appendixItems.slice();
+      if (filterId === "高" || filterId === "中" || filterId === "低") {
+        return mainItems.filter((x) => x.confidence === filterId);
+      }
+      return mainItems.slice();
+    }
+    function isDone(item) { return Boolean(decisions[item.case_id]); }
+    function mainReviewed() {
+      return mainItems.filter((x) => isDone(x)).length;
+    }
+    function appendixReviewed() {
+      return appendixItems.filter((x) => isDone(x)).length;
+    }
+    function firstUnreviewedIndex(list) {
+      const idx = list.findIndex((x) => !isDone(x));
+      return idx < 0 ? 0 : idx;
+    }
+
+    function renderMetrics() {
+      const high = mainItems.filter((x) => x.confidence === "高").length;
+      const mid = mainItems.filter((x) => x.confidence === "中").length;
+      const low = mainItems.filter((x) => x.confidence === "低").length;
+      document.getElementById("metrics").innerHTML = `
+        <div class="metric"><strong>${mainReviewed()} / ${mainItems.length}</strong><span>主佇列已審（必審 69）</span></div>
+        <div class="metric"><strong>${high}</strong><span>高信心</span></div>
+        <div class="metric"><strong>${mid}</strong><span>中信心</span></div>
+        <div class="metric"><strong>${low}</strong><span>低信心（可後審）</span></div>
+        <div class="metric"><strong>${appendixReviewed()} / ${appendixItems.length}</strong><span>附錄已擱（非必審）</span></div>
+      `;
+    }
+
+    function renderTabs() {
+      document.getElementById("tabs").innerHTML = TABS.map((tab) => {
+        const n = tab.id === "priority" ? mainItems.filter((x) => x.confidence === "高" || x.confidence === "中").length
+          : tab.id === "main" ? mainItems.length
+          : tab.id === "appendix" ? appendixItems.length
+          : mainItems.filter((x) => x.confidence === tab.id).length;
+        return `<button type="button" class="tab${filterId === tab.id ? " active" : ""}" data-tab="${tab.id}">${tab.label}（${n}）</button>`;
+      }).join("");
+    }
+
+    function renderSide() {
+      const box = document.getElementById("sidelist");
+      if (!visible.length) {
+        box.innerHTML = `<div class="empty">這個篩選沒有案件。</div>`;
+        return;
+      }
+      box.innerHTML = visible.map((item, i) => `
+        <div class="side-item${i === cursor ? " current" : ""}" data-i="${i}">
+          <i class="dot${isDone(item) ? " done" : ""}"></i>
+          <div>
+            <b>${escapeHtml(item.model_name || "（無型號）")}</b>
+            <small>${escapeHtml(item.confidence)} · 應補 ${item.suggested_qty}</small>
+          </div>
+          <span class="badge ${confClass(item.confidence)}">${escapeHtml(item.confidence)}</span>
+        </div>
+      `).join("");
+    }
+
+    function currentItem() { return visible[cursor] || null; }
+
+    function renderCard() {
+      const item = currentItem();
+      const card = document.getElementById("card");
+      const pos = document.getElementById("posLabel");
+      if (!item) {
+        pos.textContent = "0 / 0";
+        card.innerHTML = `<div class="empty">沒有可審案件。</div>`;
+        return;
+      }
+      pos.textContent = `${cursor + 1} / ${visible.length}`;
+      const dec = decisions[item.case_id] || {};
+      const img = item.shopee_image
+        ? `<img src="${escapeHtml(item.shopee_image)}" alt="蝦皮圖" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'ph',textContent:'沒圖'}))">`
+        : `<div class="ph">沒圖</div>`;
+      const alt = item.alt_offer_id
+        ? `<div><b>備選 offer（可改換）</b> ${escapeHtml(item.alt_offer_id)}</div>`
+        : `<div class="meta">這筆沒有 <code>alt_offer_id</code>；若要改換請手動填 offer／SKU。</div>`;
+      const shelved = item.shelved_round1 ? `<span class="badge shelved">已擱 round1</span>` : "";
+      const existing = dec.action ? `<div class="status-line ok">目前紀錄：<span class="current-action">${escapeHtml(dec.action)}</span>${dec.note ? " · " + escapeHtml(dec.note) : ""}</div>` : `<div class="status-line">尚未紀錄</div>`;
+      card.innerHTML = `
+        <div class="pair">
+          <div class="col">
+            <h2>蝦皮商品</h2>
+            <div class="hero">
+              ${img}
+              <div>
+                <div><span class="badge">${escapeHtml(item.source_queue || "")}</span>${shelved}<span class="badge">應補 ${item.suggested_qty}</span></div>
+                <strong>${escapeHtml(item.product_name)}</strong>
+                <div class="meta">
+                  <div><b>型號</b> ${escapeHtml(item.model_name)}</div>
+                  <div>商品 ID ${escapeHtml(item.product_id)}</div>
+                  <div>規格 ID ${escapeHtml(item.spec_id)}</div>
+                  <div>分桶 ${escapeHtml(item.bucket || "—")}</div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="col">
+            <h2>1688 候選</h2>
+            <div>
+              <span class="badge ${confClass(item.confidence)}">信心 ${escapeHtml(item.confidence)}</span>
+              <span class="badge">${escapeHtml(item.method || "")}</span>
+              ${item.candidate_offer_url ? `<a class="open-1688" href="${escapeHtml(item.candidate_offer_url)}" target="_blank" rel="noopener">開 1688 頁</a>` : ""}
+              ${item.old_url && item.old_url !== item.candidate_offer_url ? `<a class="open-1688" href="${escapeHtml(item.old_url)}" target="_blank" rel="noopener" style="background:#7c5600">開舊檔</a>` : ""}
+            </div>
+            <div class="meta">
+              <div><b>SKU</b> ${escapeHtml(item.candidate_sku_name || "—")}</div>
+              <div><b>規格</b> ${escapeHtml(item.candidate_spec || "—")}</div>
+              <div>offer ${escapeHtml(item.candidate_offer_id || "—")} · sku_id ${escapeHtml(item.candidate_sku_id || "—")}</div>
+              ${alt}
+            </div>
+            <div class="reason"><b>理由</b> ${escapeHtml(item.reason || "—")}${item.why_not_others ? "\n\n其他為何不推：" + escapeHtml(item.why_not_others) : ""}</div>
+          </div>
+        </div>
+        ${existing}
+        <div class="actions">
+          ${ACTIONS.map((a) => `<button type="button" class="${a.klass}" data-action="${a.id}">${a.key} ${a.label}</button>`).join("")}
+        </div>
+        <div class="swap-row">
+          <div class="swap-grid">
+            <label>改換 offer ID<input id="swapOffer" value="${escapeHtml(dec.swap_offer_id || item.alt_offer_id || "")}" placeholder="swap_offer_id"></label>
+            <label>改換 SKU ID<input id="swapSku" value="${escapeHtml(dec.swap_sku_id || "")}" placeholder="swap_sku_id"></label>
+          </div>
+        </div>
+        <div class="note-row">
+          <label>備註<textarea id="noteField" placeholder="對圖心得、為何駁回／改換">${escapeHtml(dec.note || "")}</textarea></label>
+        </div>
+      `;
+      document.getElementById("prevBtn").disabled = cursor <= 0;
+      document.getElementById("nextBtn").disabled = cursor >= visible.length - 1;
+    }
+
+    function applyFilter(nextId, keepCaseId) {
+      filterId = nextId;
+      visible = filteredItems();
+      if (keepCaseId) {
+        const idx = visible.findIndex((x) => x.case_id === keepCaseId);
+        cursor = idx >= 0 ? idx : firstUnreviewedIndex(visible);
+      } else {
+        cursor = firstUnreviewedIndex(visible);
+      }
+      renderTabs();
+      renderMetrics();
+      renderSide();
+      renderCard();
+      document.getElementById("filterHint").textContent =
+        filterId === "priority" ? "預設：高／中未審優先。低信心請改切「低」分頁。"
+        : filterId === "appendix" ? "附錄是 Plan C 已擱高／中 7 筆，不算本批必審。"
+        : filterId === "低" ? "低信心備選，建議高／中審完再看。"
+        : "主佇列已依高 → 中 → 低、應補量大的排前面。";
+    }
+
+    function csvEscape(value) {
+      const text = String(value ?? "");
+      if (/[",\n]/.test(text)) return `"${text.replace(/"/g, '""')}"`;
+      return text;
+    }
+
+    function decisionRow(item, patch) {
+      const now = new Date().toISOString();
+      return {
+        decision_id: item.case_id,
+        reviewed_at: now,
+        queue: item.queue,
+        product_id: item.product_id,
+        spec_id: item.spec_id,
+        model_name: item.model_name,
+        confidence: item.confidence,
+        candidate_offer_id: item.candidate_offer_id,
+        candidate_sku_id: item.candidate_sku_id,
+        action: patch.action,
+        swap_offer_id: patch.swap_offer_id || "",
+        swap_sku_id: patch.swap_sku_id || "",
+        note: patch.note || "",
+        shelved_round1: item.shelved_round1 ? "yes" : "",
+      };
+    }
+
+    function recordAction(action) {
+      const item = currentItem();
+      if (!item) return;
+      const swapOffer = (document.getElementById("swapOffer") || {}).value || "";
+      const swapSku = (document.getElementById("swapSku") || {}).value || "";
+      const note = (document.getElementById("noteField") || {}).value || "";
+      if (action === "swap" && !String(swapOffer).trim()) {
+        alert("改換需要填 swap offer ID（有 alt 就用 alt，或自己貼新的）。");
+        return;
+      }
+      decisions[item.case_id] = decisionRow(item, {
+        action,
+        swap_offer_id: String(swapOffer).trim(),
+        swap_sku_id: String(swapSku).trim(),
+        note: String(note).trim(),
+      });
+      saveDecisions(decisions);
+      const nextOpen = visible.findIndex((x, i) => i > cursor && !isDone(x));
+      if (nextOpen >= 0) cursor = nextOpen;
+      else if (cursor < visible.length - 1) cursor += 1;
+      renderMetrics();
+      renderSide();
+      renderCard();
+    }
+
+    function download(filename, text, mime) {
+      const blob = new Blob([text], { type: mime });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    function allDecisionList() {
+      return Object.values(decisions).sort((a, b) => String(a.reviewed_at).localeCompare(String(b.reviewed_at)));
+    }
+
+    function exportCsv() {
+      const fields = ["decision_id","reviewed_at","queue","product_id","spec_id","model_name","confidence","candidate_offer_id","candidate_sku_id","action","swap_offer_id","swap_sku_id","note","shelved_round1"];
+      const rows = allDecisionList();
+      const lines = [fields.join(",")].concat(rows.map((row) => fields.map((k) => csvEscape(row[k])).join(",")));
+      download("golden_ai5_decisions_20260909.csv", lines.join("\n"), "text/csv;charset=utf-8");
+    }
+    function exportJson() {
+      download("golden_ai5_decisions_20260909.json", JSON.stringify({ generated_at: new Date().toISOString(), count: allDecisionList().length, decisions: allDecisionList() }, null, 2), "application/json");
+    }
+
+    document.getElementById("tabs").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-tab]");
+      if (btn) applyFilter(btn.getAttribute("data-tab"));
+    });
+    document.getElementById("sidelist").addEventListener("click", (ev) => {
+      const row = ev.target.closest("[data-i]");
+      if (!row) return;
+      cursor = Number(row.getAttribute("data-i"));
+      renderSide();
+      renderCard();
+    });
+    document.getElementById("card").addEventListener("click", (ev) => {
+      const btn = ev.target.closest("[data-action]");
+      if (btn) recordAction(btn.getAttribute("data-action"));
+    });
+    document.getElementById("prevBtn").addEventListener("click", () => {
+      if (cursor > 0) { cursor -= 1; renderSide(); renderCard(); }
+    });
+    document.getElementById("nextBtn").addEventListener("click", () => {
+      if (cursor < visible.length - 1) { cursor += 1; renderSide(); renderCard(); }
+    });
+    document.getElementById("jumpBtn").addEventListener("click", () => {
+      const n = Number(document.getElementById("jumpInput").value);
+      if (!n) return;
+      cursor = Math.min(Math.max(n, 1), visible.length) - 1;
+      renderSide();
+      renderCard();
+    });
+    document.getElementById("nextOpenBtn").addEventListener("click", () => {
+      cursor = firstUnreviewedIndex(visible);
+      renderSide();
+      renderCard();
+    });
+    document.getElementById("exportCsv").addEventListener("click", exportCsv);
+    document.getElementById("exportJson").addEventListener("click", exportJson);
+    document.getElementById("clearLocal").addEventListener("click", () => {
+      if (!confirm("確定清掉這個瀏覽器裡的 AI-5 審核紀錄？磁碟上的空模板不會被改。")) return;
+      decisions = {};
+      localStorage.removeItem(STORE_KEY);
+      renderMetrics();
+      renderSide();
+      renderCard();
+    });
+    document.addEventListener("keydown", (ev) => {
+      const tag = (ev.target && ev.target.tagName) || "";
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+      if (ev.key === "ArrowLeft") { ev.preventDefault(); if (cursor > 0) { cursor -= 1; renderSide(); renderCard(); } }
+      if (ev.key === "ArrowRight") { ev.preventDefault(); if (cursor < visible.length - 1) { cursor += 1; renderSide(); renderCard(); } }
+      const hit = ACTIONS.find((a) => a.key === ev.key);
+      if (hit) { ev.preventDefault(); recordAction(hit.id); }
+    });
+
+    applyFilter("priority");
+  </script>
+</body>
+</html>
