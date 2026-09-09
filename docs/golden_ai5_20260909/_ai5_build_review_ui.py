@@ -11,15 +11,18 @@ import shutil
 from html import unescape
 from pathlib import Path
 
+DOCS = Path(__file__).resolve().parent
+if DOCS.name != "golden_ai5_20260909":
+    DOCS = Path("/workspace/docs/golden_ai5_20260909")
 HANDOFF = Path("/workspace/_handoff")
-REPO = Path("/workspace/InventoryCalculator")
-DOCS = REPO / "docs" / "golden_ai5_20260909"
+REPO = Path("/workspace")
 
 AI4_CSV = HANDOFF / "golden_ai4_candidates_20260909.csv"
 PLANC_CSV = HANDOFF / "golden_triage_planC_candidates_20260909.csv"
-EXISTING_QUEUE = HANDOFF / "golden_ai5_queue_20260909.json"
+EXISTING_QUEUE = DOCS / "golden_ai5_queue_20260909.json"
 CUPS_PRODUCT_ID = "19666639659"
 AI4_RESUME_SOURCE = "ai4_resume"
+AI4_RESUME3_SOURCE = "ai4_resume3"
 
 CONF_RANK = {"高": 0, "中": 1, "低": 2}
 MAIN_FIELDS = [
@@ -82,10 +85,19 @@ def _qty(row: dict) -> int:
         return 0
 
 
+def _source_rank(item: dict) -> int:
+    src = item.get("source") or ""
+    if src == AI4_RESUME_SOURCE:
+        return 0
+    if src == AI4_RESUME3_SOURCE:
+        return 1
+    return 2
+
+
 def _sort_key(item: dict) -> tuple:
-    # Steering 2026-09-09: cup/heart-bear ai4_resume 12 first for 庭安
+    # Cups (ai4_resume) stay first; resume3 high/mid follow; then original 69.
     return (
-        0 if item.get("source") == AI4_RESUME_SOURCE else 1,
+        _source_rank(item),
         CONF_RANK.get(item["confidence"], 9),
         -item["suggested_qty"],
         item["product_id"],
@@ -211,24 +223,222 @@ def load_cup_resume() -> list[dict]:
     return items
 
 
-def merge_main(existing: list[dict], cups: list[dict]) -> list[dict]:
+def _resume3_row(
+    *,
+    product_id: str,
+    product_name: str,
+    spec_id: str,
+    model_name: str,
+    suggested_qty: int,
+    bucket: str,
+    shopee_image: str,
+    old_url: str,
+    old_offer_id: str,
+    old_health: str,
+    source_queue: str,
+    offer_id: str,
+    sku_name: str,
+    confidence: str,
+    reason: str,
+    search_query: str,
+) -> dict:
+    offer_url = f"https://detail.1688.com/offer/{offer_id}.html" if offer_id else ""
+    return {
+        "case_id": f"main:{product_id}:{spec_id}",
+        "queue": "main",
+        "index": 0,
+        "source_queue": source_queue,
+        "product_id": product_id,
+        "product_name": product_name,
+        "spec_id": spec_id,
+        "model_name": model_name,
+        "suggested_qty": suggested_qty,
+        "bucket": bucket,
+        "shopee_image": shopee_image,
+        "old_url": old_url,
+        "old_offer_id": old_offer_id,
+        "old_sku_id": "",
+        "old_health": old_health,
+        "candidate_status": "with_candidate",
+        "candidate_offer_url": offer_url,
+        "candidate_offer_id": offer_id,
+        "candidate_sku_name": sku_name,
+        "candidate_sku_id": "",
+        "candidate_spec": sku_name,
+        "confidence": confidence,
+        "reason": reason,
+        "method": "site_search",
+        "alt_offer_id": "",
+        "search_query": search_query,
+        "checked_at": "2026-09-09T05:00:00Z",
+        "planC_note": "",
+        "why_not_others": "",
+        "shelved_round1": False,
+        "source": AI4_RESUME3_SOURCE,
+    }
+
+
+def load_resume3() -> list[dict]:
+    """AI-4 resume3 high/mid 7 — hardcoded so we do not read golden_table.json."""
+    pants_name = "隔日到貨🔥 冰絲無痕波浪安全褲 睡褲 平口褲 打底褲 寬鬆防走光不捲邊 內搭褲 短褲 內褲 夏日冰感舒適"
+    pants_img = "https://cf.shopee.tw/file/tw-11134207-7r990-luwx97aj6z7v03_tn"
+    charger_name = "隔日到貨🔥 雙孔快充頭 20W 30W Type-C充電頭 POLYWELL PD 充電器 豆腐頭 蘋果安卓 充電線"
+    adapter_name = "隔日到貨🔥 Type-C To Lightning母 蘋果充電線轉接器 可充電 可傳輸 寶利威爾 POLYWELL"
+    key_name = "隔日到貨🔥 韓風熱銷款🏆 韓國ins 吊飾 鑰匙扣 鑰匙圈 文青 汽車鑰匙 公仔 掛飾 吊墜 掛鉤 吊環 墜飾"
+    key_old = "https://detail.1688.com/offer/617123543564.html"
+    items = [
+        _resume3_row(
+            product_id="24077547688",
+            product_name=pants_name,
+            spec_id="137909849518",
+            model_name="黑色",
+            suggested_qty=80,
+            bucket="no_url",
+            shopee_image=pants_img,
+            old_url="",
+            old_offer_id="",
+            old_health="",
+            source_queue="P1_no_url",
+            offer_id="1039512900763",
+            sku_name="冰丝波浪一【黑色】",
+            confidence="高",
+            reason="resume3 同檔補配：冰絲安全褲黑色；SKU「冰丝波浪一【黑色】」顏色對上",
+            search_query="冰丝 安全裤 波浪 黑色",
+        ),
+        _resume3_row(
+            product_id="24077547688",
+            product_name=pants_name,
+            spec_id="137909849519",
+            model_name="白色",
+            suggested_qty=40,
+            bucket="no_url",
+            shopee_image=pants_img,
+            old_url="",
+            old_offer_id="",
+            old_health="",
+            source_queue="P1_no_url",
+            offer_id="1039512900763",
+            sku_name="冰丝波浪一【白色】",
+            confidence="高",
+            reason="resume3 同檔補配：冰絲安全褲白色；SKU「冰丝波浪一【白色】」顏色對上",
+            search_query="冰丝 安全裤 波浪 白色",
+        ),
+        _resume3_row(
+            product_id="18644662056",
+            product_name=charger_name,
+            spec_id="164420969842",
+            model_name="20W快充頭",
+            suggested_qty=20,
+            bucket="no_url",
+            shopee_image="https://cf.shopee.tw/file/aa2e94654623ac2891eef3c4b1485cbe_tn",
+            old_url="",
+            old_offer_id="",
+            old_health="",
+            source_queue="P1_no_url",
+            offer_id="1001283758278",
+            sku_name="20W快充頭",
+            confidence="高",
+            reason="resume3 同檔補配：20W快充頭；offer 1001283758278",
+            search_query="20W 快充头 PD",
+        ),
+        _resume3_row(
+            product_id="18644662056",
+            product_name=charger_name,
+            spec_id="137030286155",
+            model_name="30W快充頭",
+            suggested_qty=10,
+            bucket="no_url",
+            shopee_image="https://cf.shopee.tw/file/sg-11134201-22100-bepk6pao79ivdd_tn",
+            old_url="",
+            old_offer_id="",
+            old_health="",
+            source_queue="P1_no_url",
+            offer_id="1001283758278",
+            sku_name="30W快充頭",
+            confidence="中",
+            reason="resume3：30W快充頭功率對應不確定，需對圖確認",
+            search_query="30W 快充头 PD",
+        ),
+        _resume3_row(
+            product_id="25811193291",
+            product_name=adapter_name,
+            spec_id="250283225791",
+            model_name="10W",
+            suggested_qty=30,
+            bucket="no_url",
+            shopee_image="https://cf.shopee.tw/file/tw-11134207-7r98w-lr0jlyh3m9zcb9_tn",
+            old_url="",
+            old_offer_id="",
+            old_health="",
+            source_queue="P1_no_url",
+            offer_id="773635969692",
+            sku_name="",
+            confidence="中",
+            reason="resume3：10W 轉接器 SKU 怪異，必須對圖確認",
+            search_query="Type-C Lightning 转接头 10W",
+        ),
+        _resume3_row(
+            product_id="11515936363",
+            product_name=key_name,
+            spec_id="46254013217",
+            model_name="7. 笑臉牛奶鑰匙圈",
+            suggested_qty=5,
+            bucket="url_suspect",
+            shopee_image="https://cf.shopee.tw/file/99c871f61ef8f771196a9f9316f2006a_tn",
+            old_url=key_old,
+            old_offer_id="617123543564",
+            old_health="dead",
+            source_queue="AI2_dead",
+            offer_id="893147198403",
+            sku_name="7. 笑臉牛奶鑰匙圈",
+            confidence="中",
+            reason="resume3：笑臉牛奶鑰匙圈；舊 offer 停售，改配 893147198403",
+            search_query="笑脸 牛奶 钥匙圈",
+        ),
+        _resume3_row(
+            product_id="11515936363",
+            product_name=key_name,
+            spec_id="46254013218",
+            model_name="8. 棕色考拉鑰匙圈",
+            suggested_qty=5,
+            bucket="url_suspect",
+            shopee_image="https://cf.shopee.tw/file/b25a48dd1b2908e8480dcc10144ba2e0_tn",
+            old_url=key_old,
+            old_offer_id="617123543564",
+            old_health="dead",
+            source_queue="AI2_dead",
+            offer_id="893147198403",
+            sku_name="8. 棕色考拉鑰匙圈",
+            confidence="中",
+            reason="resume3：棕色考拉鑰匙圈；舊 offer 停售，改配 893147198403",
+            search_query="棕色 考拉 钥匙圈",
+        ),
+    ]
+    if len(items) != 7:
+        raise SystemExit(f"resume3 expected 7, got {len(items)}")
+    return items
+
+
+def merge_main(existing: list[dict], extras: list[dict]) -> list[dict]:
     by_key: dict[tuple[str, str], dict] = {}
     for item in existing:
         row = dict(item)
         row.setdefault("source", "")
         by_key[(row["product_id"], row["spec_id"])] = row
-    for cup in cups:
-        key = (cup["product_id"], cup["spec_id"])
+    for extra in extras:
+        key = (extra["product_id"], extra["spec_id"])
+        src = extra.get("source") or ""
         if key in by_key:
             merged = dict(by_key[key])
-            for field, value in cup.items():
+            for field, value in extra.items():
                 if field in {"index", "case_id", "queue"}:
                     continue
                 merged[field] = value
-            merged["source"] = AI4_RESUME_SOURCE
+            if src:
+                merged["source"] = src
             by_key[key] = merged
         else:
-            by_key[key] = dict(cup)
+            by_key[key] = dict(extra)
     items = list(by_key.values())
     items.sort(key=_sort_key)
     for i, item in enumerate(items, start=1):
@@ -440,7 +650,7 @@ HTML_TEMPLATE = r"""<!doctype html>
       <div class="eyebrow">莉莉安 · Golden AI-5</div>
       <h1>1688 候選審核工作台</h1>
       <p>一次看一案：左邊蝦皮、右邊 1688 候選。核准／駁回／改換／略過／停售只寫進本機審核結果，<b>不會</b>動 <code>golden_table.json</code>，也不加採購車。</p>
-      <div class="warn">杯套／愛心熊 resume 12（source=ai4_resume）已排在主佇列最前面方便先審；其後才是原 69。預設分頁仍是高／中；低信心在「低」分頁。主佇列 81。附錄 7 筆是先前已擱的 Plan C，非本批必審。</div>
+      <div class="warn">杯套／愛心熊 resume 12（source=ai4_resume）置頂；其後 AI-4 resume3 高／中 7 筆（冰絲安全褲、快充頭、轉接器、鑰匙圈，source=ai4_resume3）。再來才是原 69。預設分頁仍是高／中；低信心在「低」分頁。主佇列 88（高22／中29／低37）。附錄 7 筆是先前已擱的 Plan C，非本批必審。</div>
       <p class="kbd" style="margin-top:8px">快捷鍵：1 核准 · 2 駁回 · 3 改換 · 4 略過 · 5 停售 · ← → 上一／下一筆（輸入框內不觸發）</p>
     </div>
   </header>
@@ -813,25 +1023,38 @@ def write_csv_template(path: Path) -> None:
         writer.writeheader()
 
 
+def _write_targets(kind: str, docs_name: str) -> list[Path]:
+    paths = [DOCS / docs_name]
+    if HANDOFF.is_dir():
+        paths.insert(0, HANDOFF / docs_name)
+    return paths
+
+
 def main() -> None:
     existing_main, appendix_items = load_existing_or_build()
-    cups = load_cup_resume()
-    main_items = merge_main(existing_main, cups)
+    extras: list[dict] = []
+    if AI4_CSV.exists():
+        extras.extend(load_cup_resume())
+    extras.extend(load_resume3())
+    main_items = merge_main(existing_main, extras)
     main_counts = counts(main_items)
     appendix_counts = counts(appendix_items)
     resume_n = sum(1 for item in main_items if item.get("source") == AI4_RESUME_SOURCE)
+    resume3_n = sum(1 for item in main_items if item.get("source") == AI4_RESUME3_SOURCE)
 
-    if main_counts["total"] != 81 or main_counts["高"] != 19 or main_counts["中"] != 25 or main_counts["低"] != 37:
+    if main_counts["total"] != 88 or main_counts["高"] != 22 or main_counts["中"] != 29 or main_counts["低"] != 37:
         raise SystemExit(f"main queue mismatch: {main_counts}")
     if resume_n != 12:
         raise SystemExit(f"ai4_resume count mismatch: {resume_n}")
+    if resume3_n != 7:
+        raise SystemExit(f"ai4_resume3 count mismatch: {resume3_n}")
     if appendix_counts["total"] != 7 or appendix_counts["高"] != 2 or appendix_counts["中"] != 5:
         raise SystemExit(f"appendix mismatch: {appendix_counts}")
 
     payload = {
         "generated_at": "2026-09-09",
         "golden_sha256": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
-        "note": "Main queue is original AI-4 with_candidate 69 plus 12 cup/heart-bear ai4_resume rows (product 19666639659). Appendix is Plan C shelved high/mid. Decisions must not be written to golden_table.json.",
+        "note": "Main queue is original AI-4 with_candidate 69 plus 12 cup/heart-bear ai4_resume rows plus 7 ai4_resume3 high/mid rows. Appendix is Plan C shelved high/mid. Decisions must not be written to golden_table.json.",
         "counts": {
             "main": main_counts,
             "appendix": appendix_counts,
@@ -844,18 +1067,9 @@ def main() -> None:
 
     DOCS.mkdir(parents=True, exist_ok=True)
     targets = {
-        "queue": [
-            HANDOFF / "golden_ai5_queue_20260909.json",
-            DOCS / "golden_ai5_queue_20260909.json",
-        ],
-        "html": [
-            HANDOFF / "golden_ai5_review.html",
-            DOCS / "golden_ai5_review.html",
-        ],
-        "template": [
-            HANDOFF / "golden_ai5_decisions_template_20260909.csv",
-            DOCS / "golden_ai5_decisions_template_20260909.csv",
-        ],
+        "queue": _write_targets("queue", "golden_ai5_queue_20260909.json"),
+        "html": _write_targets("html", "golden_ai5_review.html"),
+        "template": _write_targets("template", "golden_ai5_decisions_template_20260909.csv"),
     }
     for path in targets["queue"]:
         path.write_text(queue_json + "\n", encoding="utf-8")
@@ -871,7 +1085,8 @@ def main() -> None:
     print("main", main_counts)
     print("appendix", appendix_counts)
     print("ai4_resume", resume_n)
-    print("wrote", targets["html"][1])
+    print("ai4_resume3", resume3_n)
+    print("wrote", targets["html"][-1])
 
 
 if __name__ == "__main__":
