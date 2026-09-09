@@ -65,6 +65,7 @@ CSV 主檔：`/workspace/_handoff/golden_ai4_candidates_20260909.csv`
 ## Docs PR（保持 OPEN，不合 main）
 - 追加 PR #45：https://github.com/paulkuo123/InventoryCalculator/pull/45
 - Branch：`docs/golden-ai4-candidates-20260909`
+- Commit：`40ef651ff377e3d29ea5b88fa4e1f54d13619af8`
 - State：**OPEN**（**未 merge**）
 
 ## 下一刀建議
@@ -72,3 +73,17 @@ CSV 主檔：`/workspace/_handoff/golden_ai4_candidates_20260909.csv`
 2. 本輪證明「剛清完 captcha、slow nav 仍可能第一槍就擋」——站点風控偏緊。
 3. 杯套 12 筆高／中可進 AI-5；**先不要寫 golden**。
 4. blocked 仍 120／48 商品，無進度屬預期（STOP 規則優先）。
+
+## EXIT
+
+```
+WITH_CANDIDATE=89
+STILL_BLOCKED=120
+BLOCKED_DELTA=0
+AI5_NEW_HIGH_MID=0
+CAPTCHA_AGAIN=yes
+PR=https://github.com/paulkuo123/InventoryCalculator/pull/45
+SHA=40ef651ff377e3d29ea5b88fa4e1f54d13619af8
+GOLDEN_SHA=8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e
+EXIT=2
+```
