@@ -18,3 +18,5 @@ Executed end to end from this skill (read-only inventory dashboard):
 | Evidence after cleanup | this directory still contains `home.png`, `home.dom.txt`, `home.bootstrap.json`, `doctor.json`, `proof.json` |
 
 Did not click `#searchButton`, cookie import, ads export, inbound apply, or SKU scan/approve. No secrets in these files.
+
+**Side effect caught during this doctor:** `GET /api/sku-mapping/summary` constructed `SkuMappingService` and rewrote `golden_table.json` (`approved` → `missing` / `legacy_repair`). The file was restored from git and is **not** in this PR. Later skill revisions removed that GET from doctor, refuse it from `http GET`, and abort it in `drive sku-mapping`. The `doctor.json` in this folder still shows the original (unsafe) doctor payload.

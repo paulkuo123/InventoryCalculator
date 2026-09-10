@@ -75,10 +75,13 @@ Doctor is read-only. It must show all of:
 - `GET /` is 200 and the body names 莉莉安蝦皮庫存管理系統
 - `GET /ads.html`, `/inbound.html`, `/sku-mapping.html`, `/products.html` are 200
 - `GET /api/inbound/status` returns JSON with `"status": "success"`
+- `golden_table.json` SHA-256 matches the hash recorded at launch
 
 Exit code 2 means do not drive. Relaunch only an instance this helper started.
 
 `GET /api/home/bootstrap` returning `"status": "error"` with `找不到 shopee_products.json` is **healthy enough to drive the empty dashboard**. That file is gitignored and often absent. Do not treat a missing snapshot as a failed doctor.
+
+**Do not** doctor with `GET /api/sku-mapping/summary` or `/api/sku-mapping/queue`. Those GETs construct `SkuMappingService`, which runs `_repair_unverified_approvals()` and can rewrite tracked `golden_table.json` (approved → `missing` / `legacy_repair`). The helper refuses those paths unless `--i-approve-golden-write`.
 
 ## Drive
 
@@ -98,7 +101,6 @@ Ad-hoc GET (POST is refused):
 .cursor/skills/verify-inventory-calculator/scripts/control-inventory http GET /api/home/bootstrap --out /tmp/home.bootstrap.json
 .cursor/skills/verify-inventory-calculator/scripts/control-inventory http GET /api/inbound/status
 .cursor/skills/verify-inventory-calculator/scripts/control-inventory http GET /openai_status
-.cursor/skills/verify-inventory-calculator/scripts/control-inventory http GET /api/sku-mapping/summary
 .cursor/skills/verify-inventory-calculator/scripts/control-inventory http GET '/api/golden-table/catalog?query=S6&limit=3'
 ```
 
@@ -123,7 +125,7 @@ Stable handles (use these, not coordinates):
 | Ads analyze (reads local CSV; AI calls OpenAI) | `#adsAnalyzeButton`, `#includeAiAnalysis` |
 | Inbound banner | `#systemStatus` |
 | Inbound import / apply (LIVE) | `#orderReference`, `#importOrderButton`, `#applyButton` |
-| SKU summary / queue | `#summary`, `#queue`, `#query`, `#reload` |
+| SKU summary / queue | `#summary`, `#queue`, `#query`, `#reload` — **do not** hit `/api/sku-mapping/*` in the default proof |
 | SKU live scan / approve (LIVE or writes golden) | `#scanAll`, `#batchApprove` |
 | Products catalog search (local Golden Table) | `#productSearchInput`, `#productSearchButton`, `#productSearchStatus` |
 
@@ -183,5 +185,7 @@ Script: `.cursor/skills/verify-inventory-calculator/scripts/control-inventory` (
 | `control-inventory cleanup` | Tear down the recorded pid; keep evidence |
 
 Forbidden unless the user explicitly asked for a live Shopee/1688 proof (the helper refuses these selectors without `--i-approve-live`, and the built-in recipes never pass that flag): `#searchButton`, `#cookieImportButton`, `#shopeeProductsImportButton`, `#openBatchRestockButton`, `#adsExportButton`, `#adsAnalyzeButton`, `#importOrderButton`, `#previewButton`, `#applyButton`, `#scanAll`, `#scanVisiblePage`, `#batchApprove`, `#checkUrlHealth`, and the other ids listed in `FORBIDDEN_SELECTORS` inside the helper.
+
+`GET /api/sku-mapping/*` is also refused (constructs `SkuMappingService` and may rewrite `golden_table.json`) unless `--i-approve-golden-write`. Doctor records `golden_table.json` SHA-256 at launch and fails if it changes.
 
 Maintenance: `/maintain-verification-skill` keeps this map honest when pages or APIs change. Do not edit product code while only maintaining this skill.

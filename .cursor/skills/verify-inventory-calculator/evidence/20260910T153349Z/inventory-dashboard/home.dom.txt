@@ -1,0 +1,10 @@
+url: http://127.0.0.1:8080/
+title: 莉莉安蝦皮庫存管理系統
+h1: 莉莉安蝦皮庫存管理系統
+overallStatusText: 尚未分析
+restockModelsCount: —
+searchInputPresent: True
+searchButtonPresent: True
+adsHref: /ads.html
+inboundHref: /inbound.html
+skuMappingHref: /sku-mapping.html

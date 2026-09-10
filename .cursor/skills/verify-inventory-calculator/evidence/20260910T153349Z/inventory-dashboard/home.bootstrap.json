@@ -1,0 +1,25 @@
+{
+  "status": "error",
+  "message": "找不到 shopee_products.json，請先匯入或執行搜尋",
+  "batchRestockEnabled": false,
+  "products": null,
+  "watchlist": null,
+  "watchlistCounts": {
+    "imported": 0,
+    "matched": 0,
+    "missed": 0
+  },
+  "shopee": {
+    "ok": false,
+    "path": "/workspace/shopee_products.json",
+    "error": "missing"
+  },
+  "watchlistInfo": {
+    "ok": false,
+    "path": "/workspace/watchlists/personal_watchlist.json"
+  },
+  "golden": {
+    "ok": false,
+    "path": "/workspace/golden_table.json"
+  }
+}
