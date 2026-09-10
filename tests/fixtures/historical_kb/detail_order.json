@@ -1,0 +1,33 @@
+{
+  "note": "Synthetic queryorder detail payload. Stronger imageUrl/unitPrice/groupEntriesMap.",
+  "api": "mtop.1688.mtoporderservice.queryorder",
+  "data": {
+    "model": {
+      "orderId": "400000000000000001",
+      "status": "success",
+      "gmtCreate": "2024-07-20 16:45:00",
+      "seller": "fixture-seller-d",
+      "groupEntriesMap": {
+        "682877407287": [
+          {
+            "id": "detail-line-1",
+            "orderId": "400000000000000001",
+            "sourceId": "682877407287",
+            "skuId": "4020601521981",
+            "specId": "spec-white-m",
+            "imageUrl": "https://example.test/white-m.jpg",
+            "unitPrice": "2.55",
+            "quantity": "6",
+            "productName": "純色棉襪",
+            "specInfoModel": {
+              "specItems": [
+                {"specName": "颜色", "specValue": "白色"},
+                {"specName": "尺码", "specValue": "M"}
+              ]
+            }
+          }
+        ]
+      }
+    }
+  }
+}

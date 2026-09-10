@@ -46,6 +46,12 @@
 - freeze／mutate 是 CDP 腳本的薄封裝，以 `runpy` 載入 `scripts/` 內現行實作（含日期戳檔名，**不可刪**）。
 - 完整說明與成功標準：[`docs/reverse_audit.md`](docs/reverse_audit.md)。
 
+### 1688 歷史採購知識庫（Phase 2 schema）
+
+- SoT：`procurement.db` 的 `kb_*` 表（與採購／入庫同一檔、加表不改舊表）。歷史訂單**不**進 `inbound_orders`。
+- 模組：`purchase_history_store.py`、`purchase_history_import.py`。預設 dry-run；寫入須 `--i-approve-kb-import` + `--allow-order-ids` + 隔離 `--db-path`。
+- **不做** live crawl／開 Chrome／寫 `golden_table.json`。說明：[`docs/1688_purchase_history_kb.md`](docs/1688_purchase_history_kb.md)。
+
 ### 廣告
 
 - 匯出：`crawler.py --mode ads-export`（寫入 `ads_exports/`）。
@@ -63,6 +69,8 @@
 | `reports/` | reverse_audit／廣告等產出（應 gitignore；含 live dump，勿提交） |
 | `alibaba_chrome_profile/`、`alibaba_browser_profile/`、`shopee_chrome_profile/` | 本機瀏覽器登入狀態（gitignore，勿提交） |
 | `debug_snapshots/` | 除錯快照（gitignore） |
+| `data/1688_master/` | 1688 歷史採購 KB 的 JSONL 匯出（gitignore；非正式 SoT） |
+| `procurement.db` | 採購／入庫／SKU mapping／`kb_*` 共用 SQLite（gitignore） |
 
 ## 環境搭建
 
@@ -352,8 +360,11 @@ InventoryCalculator/
 │   ├── mutate_remove_cdp.py
 │   ├── reconcile_cart.py
 │   └── run_watchlist_restock.py
+├── purchase_history_store.py / purchase_history_import.py
+│                           # 1688 歷史採購 KB（kb_*；Phase 2 schema／dry-run stub）
 ├── docs/
 │   ├── reverse_audit.md
+│   ├── 1688_purchase_history_kb.md
 │   ├── cart-reconciliation.md
 │   ├── ads_analysis_rules.md
 │   ├── ads_metrics_dictionary.md
