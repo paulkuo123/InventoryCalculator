@@ -1,0 +1,25 @@
+{
+  "feature": "inventory-dashboard",
+  "runId": "20260910T153042Z",
+  "baseUrl": "http://127.0.0.1:8080",
+  "capturedAt": "2026-09-10T15:30:55Z",
+  "observed": {
+    "identity": {
+      "url": "http://127.0.0.1:8080/",
+      "title": "莉莉安蝦皮庫存管理系統",
+      "h1": "莉莉安蝦皮庫存管理系統"
+    },
+    "overallStatusText": "尚未分析",
+    "restockModelsCount": "—",
+    "links": {
+      "ads": "/ads.html",
+      "inbound": "/inbound.html",
+      "skuMapping": "/sku-mapping.html",
+      "products": "/products.html",
+      "goldenImport": "/golden-import.html"
+    },
+    "bootstrapStatus": "error",
+    "bootstrapMessage": "找不到 shopee_products.json，請先匯入或執行搜尋"
+  },
+  "evidenceDir": "/workspace/.cursor/skills/verify-inventory-calculator/evidence/20260910T153042Z/inventory-dashboard"
+}

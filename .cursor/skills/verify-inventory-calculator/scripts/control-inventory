@@ -1,0 +1,781 @@
+#!/usr/bin/env python3
+"""Drive the InventoryCalculator local HTTP UI for verification.
+
+This helper starts `python main.py`, health-checks the instance it started,
+captures evidence, and tears that instance down. It never kills a process by
+name and it refuses to launch when port 8080 is already taken.
+
+Live Shopee / 1688 mutation controls are blocked unless the caller passes
+`--i-approve-live` (still refused for the built-in recipes).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+from urllib.parse import urljoin
+
+
+SKILL_DIR = Path(__file__).resolve().parent.parent
+REPO_ROOT = SKILL_DIR.parents[2]
+DEFAULT_PORT = 8080
+DEFAULT_HOST = "127.0.0.1"
+STATE_PATH = Path(os.environ.get("INVENTORY_VERIFY_STATE", "/tmp/inventory-verify/state.json"))
+EVIDENCE_ROOT = SKILL_DIR / "evidence"
+GOLDEN_TABLE_PATH = REPO_ROOT / "golden_table.json"
+APP_TITLE = "莉莉安蝦皮庫存管理系統"
+FORBIDDEN_SELECTORS = {
+    "#searchButton",
+    "#cookieImportButton",
+    "#shopeeProductsImportButton",
+    "#openBatchRestockButton",
+    "#submitBatchRestockButton",
+    "#submitRestockAdjustmentButton",
+    "#adsExportButton",
+    "#adsAnalyzeButton",
+    "#importOrderButton",
+    "#previewButton",
+    "#applyButton",
+    "#createReceiptButton",
+    "#scanAll",
+    "#scanVisiblePage",
+    "#reanalyzeExisting",
+    "#reanalyzeExistingAi",
+    "#batchApprove",
+    "#batchDefer",
+    "#batchNoMatch",
+    "#batchDiscontinued",
+    "#checkUrlHealth",
+    "#saveSkuMappingButton",
+    "#saveAlibabaEditButton",
+    "#applyUrlOfferToAllButton",
+}
+
+
+def die(message: str, code: int = 1) -> None:
+    print(f"control-inventory: {message}", file=sys.stderr)
+    raise SystemExit(code)
+
+
+def iso_now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def new_run_id() -> str:
+    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def base_url(port: int = DEFAULT_PORT) -> str:
+    return f"http://{DEFAULT_HOST}:{port}"
+
+
+def port_in_use(port: int) -> bool:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.4)
+        return sock.connect_ex((DEFAULT_HOST, port)) == 0
+
+
+def read_state() -> Dict[str, Any]:
+    if not STATE_PATH.exists():
+        die(f"no verification instance recorded at {STATE_PATH}. Run `control-inventory launch` first.")
+    try:
+        return json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        die(f"cannot read {STATE_PATH}: {error}")
+    raise AssertionError("unreachable")
+
+
+def write_state(payload: Dict[str, Any]) -> None:
+    STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STATE_PATH.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def pid_cmdline(pid: int) -> str:
+    path = Path(f"/proc/{pid}/cmdline")
+    if not path.exists():
+        return ""
+    try:
+        return path.read_bytes().replace(b"\x00", b" ").decode("utf-8", errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def http_request(path: str, port: int, timeout: float = 8.0) -> Dict[str, Any]:
+    url = urljoin(base_url(port) + "/", path.lstrip("/")) if path != "/" else base_url(port) + "/"
+    request = urllib.request.Request(url, headers={"Accept": "*/*"}, method="GET")
+    started = time.time()
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            body = response.read()
+            return {
+                "ok": True,
+                "url": url,
+                "status": response.status,
+                "content_type": response.headers.get("Content-Type", ""),
+                "body": body,
+                "elapsed_ms": int((time.time() - started) * 1000),
+            }
+    except urllib.error.HTTPError as error:
+        body = error.read() if error.fp else b""
+        return {
+            "ok": False,
+            "url": url,
+            "status": error.code,
+            "content_type": error.headers.get("Content-Type", "") if error.headers else "",
+            "body": body,
+            "elapsed_ms": int((time.time() - started) * 1000),
+            "error": str(error),
+        }
+    except (urllib.error.URLError, TimeoutError, ConnectionError, socket.timeout) as error:
+        return {
+            "ok": False,
+            "url": url,
+            "status": 0,
+            "content_type": "",
+            "body": b"",
+            "elapsed_ms": int((time.time() - started) * 1000),
+            "error": str(error),
+        }
+
+
+def decode_body(raw: bytes) -> str:
+    return raw.decode("utf-8", errors="replace")
+
+
+def maybe_json(raw: bytes) -> Any:
+    text = decode_body(raw).strip()
+    if not text:
+        return None
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return None
+
+
+def evidence_dir(run_id: str) -> Path:
+    path = EVIDENCE_ROOT / run_id
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def dump_json(path: Path, payload: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def file_sha256(path: Path) -> str:
+    if not path.exists():
+        return ""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def wait_until_ready(port: int, pid: int, timeout: float = 120.0) -> Dict[str, Any]:
+    deadline = time.time() + timeout
+    last: Dict[str, Any] = {}
+    while time.time() < deadline:
+        if not pid_alive(pid):
+            die(f"server pid {pid} exited before becoming ready")
+        last = http_request("/", port, timeout=3.0)
+        if last.get("ok") and APP_TITLE in decode_body(last.get("body") or b""):
+            return last
+        time.sleep(0.5)
+    die(f"timed out waiting for {base_url(port)}/ to serve {APP_TITLE!r}. last={last.get('error') or last.get('status')}")
+    raise AssertionError("unreachable")
+
+
+def cmd_launch(args: argparse.Namespace) -> None:
+    if STATE_PATH.exists():
+        try:
+            existing = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            existing = {}
+        old_pid = int(existing.get("pid") or 0)
+        if old_pid and pid_alive(old_pid):
+            die(
+                f"a verification instance is already recorded (pid {old_pid} at {existing.get('baseUrl')}). "
+                "Run `control-inventory cleanup` first. Refusing to start a second copy: PORT is hardcoded to 8080."
+            )
+    if port_in_use(DEFAULT_PORT):
+        die(
+            f"port {DEFAULT_PORT} is already in use. This app always binds 8080 and `main.py` would kill the occupant. "
+            "Refuse to drive a shared instance. Stop the other listener, or skip verification."
+        )
+
+    run_id = args.run_id or new_run_id()
+    log_path = Path(os.environ.get("INVENTORY_VERIFY_LOG", f"/tmp/inventory-verify/{run_id}.log"))
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ.copy()
+    env["INVENTORY_SKIP_BROWSER"] = "1"
+    env["PYTHONUNBUFFERED"] = "1"
+    python = sys.executable
+    with log_path.open("ab") as log_file:
+        process = subprocess.Popen(
+            [python, "main.py"],
+            cwd=str(REPO_ROOT),
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    state = {
+        "runId": run_id,
+        "pid": process.pid,
+        "port": DEFAULT_PORT,
+        "baseUrl": base_url(DEFAULT_PORT),
+        "repoRoot": str(REPO_ROOT),
+        "logPath": str(log_path),
+        "startedAt": iso_now(),
+        "command": [python, "main.py"],
+        "env": {"INVENTORY_SKIP_BROWSER": "1"},
+        "goldenTableSha256": file_sha256(GOLDEN_TABLE_PATH),
+    }
+    write_state(state)
+    ready = wait_until_ready(DEFAULT_PORT, process.pid)
+    state["readyAt"] = iso_now()
+    state["homeStatus"] = ready.get("status")
+    write_state(state)
+    print(json.dumps({"status": "ready", **{k: state[k] for k in ("runId", "pid", "baseUrl", "logPath")}}, ensure_ascii=False, indent=2))
+
+
+def collect_doctor(state: Dict[str, Any]) -> Dict[str, Any]:
+    pid = int(state.get("pid") or 0)
+    port = int(state.get("port") or DEFAULT_PORT)
+    cmdline = pid_cmdline(pid)
+    checks: Dict[str, Any] = {
+        "runId": state.get("runId"),
+        "pid": pid,
+        "pidAlive": pid_alive(pid),
+        "cmdline": cmdline,
+        "cmdlineLooksLikeMain": "main.py" in cmdline,
+        "port": port,
+        "portInUse": port_in_use(port),
+        "baseUrl": base_url(port),
+        "checkedAt": iso_now(),
+    }
+    pages = {
+        "home": "/",
+        "ads": "/ads.html",
+        "inbound": "/inbound.html",
+        "skuMapping": "/sku-mapping.html",
+        "products": "/products.html",
+        "goldenImport": "/golden-import.html",
+    }
+    page_results = {}
+    for name, path in pages.items():
+        result = http_request(path, port)
+        body = decode_body(result.get("body") or b"")
+        page_results[name] = {
+            "path": path,
+            "ok": bool(result.get("ok")),
+            "status": result.get("status"),
+            "bytes": len(result.get("body") or b""),
+            "hasTitleHint": any(token in body for token in (APP_TITLE, "廣告工作台", "到貨入庫", "SKU Mapping", "商品資料管理", "Golden Table")),
+            "error": result.get("error"),
+        }
+    apis = {
+        "homeBootstrap": "/api/home/bootstrap",
+        "inboundStatus": "/api/inbound/status",
+        "openaiStatus": "/openai_status",
+        "goldenCatalog": "/api/golden-table/catalog?query=S6&limit=3",
+    }
+    api_results = {}
+    for name, path in apis.items():
+        result = http_request(path, port, timeout=20.0)
+        payload = maybe_json(result.get("body") or b"")
+        api_results[name] = {
+            "path": path,
+            "ok": bool(result.get("ok")),
+            "status": result.get("status"),
+            "jsonKeys": sorted(payload.keys()) if isinstance(payload, dict) else [],
+            "error": result.get("error"),
+        }
+        if name == "inboundStatus" and isinstance(payload, dict):
+            api_results[name]["writeEnabled"] = payload.get("writeEnabled")
+            api_results[name]["message"] = payload.get("message")
+        if name == "openaiStatus" and isinstance(payload, dict):
+            api_results[name]["configured"] = payload.get("configured")
+            api_results[name]["key_source"] = payload.get("key_source")
+        if name == "homeBootstrap" and isinstance(payload, dict):
+            api_results[name]["bootstrapStatus"] = payload.get("status")
+            api_results[name]["message"] = payload.get("message")
+        if name == "goldenCatalog" and isinstance(payload, dict):
+            api_results[name]["payloadStatus"] = payload.get("status")
+            api_results[name]["totalMatches"] = payload.get("totalMatches")
+    checks["pages"] = page_results
+    checks["apis"] = api_results
+    expected_golden = str(state.get("goldenTableSha256") or "")
+    current_golden = file_sha256(GOLDEN_TABLE_PATH)
+    checks["goldenTable"] = {
+        "path": str(GOLDEN_TABLE_PATH),
+        "sha256AtLaunch": expected_golden,
+        "sha256Now": current_golden,
+        "unchanged": expected_golden == current_golden,
+    }
+    home_ok = page_results["home"]["ok"] and page_results["home"]["hasTitleHint"]
+    inbound_ok = api_results["inboundStatus"]["ok"]
+    checks["healthy"] = bool(
+        checks["pidAlive"]
+        and checks["cmdlineLooksLikeMain"]
+        and checks["portInUse"]
+        and home_ok
+        and inbound_ok
+        and checks["goldenTable"]["unchanged"]
+    )
+    checks["reason"] = (
+        "instance owned by this run is serving the local UI"
+        if checks["healthy"]
+        else "doctor failed: process, port, local UI, or golden_table.json changed during the run"
+    )
+    return checks
+
+
+def cmd_doctor(args: argparse.Namespace) -> None:
+    state = read_state()
+    report = collect_doctor(state)
+    if args.out:
+        dump_json(Path(args.out), report)
+    print(json.dumps(report, ensure_ascii=False, indent=2))
+    if not report["healthy"]:
+        raise SystemExit(2)
+
+
+def cmd_http(args: argparse.Namespace) -> None:
+    state = read_state()
+    if args.method.upper() != "GET":
+        die("only GET is allowed. POST/PUT would mutate Shopee, 1688, cookies, or local SoT files.")
+    path = args.path
+    if path.startswith("/api/sku-mapping/") and not args.i_approve_golden_write:
+        die(
+            "refusing GET /api/sku-mapping/*. Constructing SkuMappingService runs "
+            "_repair_unverified_approvals() and rewrites tracked golden_table.json. "
+            "Use `drive sku-mapping` (API calls aborted) or pass --i-approve-golden-write."
+        )
+    result = http_request(args.path, int(state["port"]), timeout=args.timeout)
+    payload = maybe_json(result.get("body") or b"")
+    output = {
+        "ok": result.get("ok"),
+        "url": result.get("url"),
+        "status": result.get("status"),
+        "content_type": result.get("content_type"),
+        "error": result.get("error"),
+        "json": payload,
+        "textPreview": None if payload is not None else decode_body(result.get("body") or b"")[:4000],
+    }
+    if args.out:
+        out_path = Path(args.out)
+        if payload is not None:
+            dump_json(out_path, payload)
+        else:
+            out_path.write_bytes(result.get("body") or b"")
+    print(json.dumps(output, ensure_ascii=False, indent=2)[:8000])
+    if not result.get("ok"):
+        raise SystemExit(2)
+
+
+def assert_selector_allowed(selector: str, allow_live: bool) -> None:
+    if selector in FORBIDDEN_SELECTORS and not allow_live:
+        die(
+            f"refusing selector {selector}. It starts a live Shopee/1688 crawl, cart mutation, cookie write, "
+            "inbound apply, SKU scan/approve, or ads export. Pass --i-approve-live only for an explicit live proof, "
+            "never in the default recipes."
+        )
+
+
+def launch_browser_page(url: str, headless: bool = True):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        die("Playwright is not installed. From the repo root run: python3 -m pip install playwright && python3 -m playwright install chromium")
+    runtime = sync_playwright().start()
+    try:
+        browser = runtime.chromium.launch(headless=headless)
+    except Exception as error:
+        runtime.stop()
+        die(f"could not launch Chromium: {error}")
+    page = browser.new_page(viewport={"width": 1440, "height": 1000})
+    page.route("**/api/sku-mapping/**", lambda route: route.abort())
+    page.goto(url, wait_until="domcontentloaded", timeout=30000)
+    return runtime, browser, page
+
+
+def page_identity(page) -> Dict[str, str]:
+    return {
+        "url": page.url,
+        "title": page.title(),
+        "h1": page.locator("h1").first.inner_text() if page.locator("h1").count() else "",
+    }
+
+
+def write_dom_snapshot(page, path: Path, extra: Optional[Dict[str, str]] = None) -> None:
+    lines = [
+        f"url: {page.url}",
+        f"title: {page.title()}",
+        f"h1: {page.locator('h1').first.inner_text() if page.locator('h1').count() else ''}",
+    ]
+    for key, value in (extra or {}).items():
+        lines.append(f"{key}: {value}")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def drive_inventory_dashboard(page, out_dir: Path, port: int) -> Dict[str, Any]:
+    page.goto(base_url(port) + "/", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_selector("h1", timeout=10000)
+    identity = page_identity(page)
+    status_text = page.locator("#overallStatusText").inner_text()
+    restock_count = page.locator("#restockModelsCount").inner_text()
+    links = {
+        "ads": page.locator('a[href="/ads.html"]').get_attribute("href"),
+        "inbound": page.locator('a[href="/inbound.html"]').get_attribute("href"),
+        "skuMapping": page.locator('a[href="/sku-mapping.html"]').get_attribute("href"),
+        "products": page.locator('a[href="/products.html"]').get_attribute("href"),
+        "goldenImport": page.locator('a[href="/golden-import.html"]').get_attribute("href"),
+    }
+    bootstrap = maybe_json(http_request("/api/home/bootstrap", port).get("body") or b"")
+    dump_json(out_dir / "home.bootstrap.json", bootstrap)
+    extra = {
+        "overallStatusText": status_text,
+        "restockModelsCount": restock_count,
+        "searchInputPresent": str(page.locator("#searchInput").count() == 1),
+        "searchButtonPresent": str(page.locator("#searchButton").count() == 1),
+        "adsHref": links["ads"] or "",
+        "inboundHref": links["inbound"] or "",
+        "skuMappingHref": links["skuMapping"] or "",
+    }
+    write_dom_snapshot(page, out_dir / "home.dom.txt", extra)
+    page.screenshot(path=str(out_dir / "home.png"), full_page=True)
+    observed = {
+        "identity": identity,
+        "overallStatusText": status_text,
+        "restockModelsCount": restock_count,
+        "links": links,
+        "bootstrapStatus": (bootstrap or {}).get("status") if isinstance(bootstrap, dict) else None,
+        "bootstrapMessage": (bootstrap or {}).get("message") if isinstance(bootstrap, dict) else None,
+    }
+    if APP_TITLE not in identity.get("h1", "") and APP_TITLE not in identity.get("title", ""):
+        die(f"inventory dashboard did not show {APP_TITLE!r}: {identity}")
+    if status_text.strip() != "尚未分析":
+        # Local import/crawler leftover is still a valid dashboard; record it.
+        observed["note"] = "dashboard already has analysis text; read-only load still succeeded"
+    return observed
+
+
+def drive_ads_workbench(page, out_dir: Path, port: int) -> Dict[str, Any]:
+    page.goto(base_url(port) + "/ads.html", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_selector("#openaiStatus", timeout=10000)
+    page.wait_for_function(
+        "() => { const n = document.querySelector('#openaiStatus'); return n && !n.classList.contains('checking'); }",
+        timeout=15000,
+    )
+    status = page.locator("#openaiStatus").inner_text()
+    heading = page.locator("h1").inner_text()
+    export_label = page.locator("#adsExportButton").inner_text()
+    analyze_label = page.locator("#adsAnalyzeButton").inner_text()
+    openai = maybe_json(http_request("/openai_status", port).get("body") or b"")
+    dump_json(out_dir / "ads.openai_status.json", openai)
+    write_dom_snapshot(page, out_dir / "ads.dom.txt", {
+        "openaiStatus": status,
+        "exportButton": export_label,
+        "analyzeButton": analyze_label,
+    })
+    page.screenshot(path=str(out_dir / "ads.png"), full_page=True)
+    if "廣告工作台" not in heading:
+        die(f"ads workbench heading missing: {heading!r}")
+    return {
+        "heading": heading,
+        "openaiStatusText": status,
+        "openaiConfigured": (openai or {}).get("configured") if isinstance(openai, dict) else None,
+        "didNotClickExport": True,
+        "didNotClickAnalyze": True,
+    }
+
+
+def drive_inbound(page, out_dir: Path, port: int) -> Dict[str, Any]:
+    page.goto(base_url(port) + "/inbound.html", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_selector("#systemStatus", timeout=10000)
+    page.wait_for_function(
+        "() => { const n = document.querySelector('#systemStatus strong'); return n && n.textContent && n.textContent !== '正在檢查入庫狀態'; }",
+        timeout=15000,
+    )
+    banner = page.locator("#systemStatus").inner_text()
+    heading = page.locator("h1").inner_text()
+    apply_disabled = page.locator("#applyButton").is_disabled()
+    status = maybe_json(http_request("/api/inbound/status", port).get("body") or b"")
+    dump_json(out_dir / "inbound.status.json", status)
+    write_dom_snapshot(page, out_dir / "inbound.dom.txt", {
+        "systemStatus": banner,
+        "applyDisabled": str(apply_disabled),
+    })
+    page.screenshot(path=str(out_dir / "inbound.png"), full_page=True)
+    if "到貨入庫" not in heading:
+        die(f"inbound heading missing: {heading!r}")
+    write_enabled = bool(isinstance(status, dict) and status.get("writeEnabled"))
+    if write_enabled:
+        observed_mode = "write-enabled-banner-only"
+    elif "唯讀" not in banner and "唯讀" not in str((status or {}).get("message") or ""):
+        die(f"inbound did not show the safe read-only mode: banner={banner!r} status={status!r}")
+    else:
+        observed_mode = "readonly"
+    return {
+        "heading": heading,
+        "banner": banner,
+        "writeEnabled": write_enabled,
+        "applyDisabled": apply_disabled,
+        "mode": observed_mode,
+        "didNotImportOrder": True,
+        "didNotApply": True,
+    }
+
+
+def drive_sku_mapping(page, out_dir: Path, port: int) -> Dict[str, Any]:
+    """Prove the workbench shell without constructing SkuMappingService.
+
+    GET /api/sku-mapping/summary (and loading the page so JS calls it) runs
+    SkuMappingService.__init__ → _repair_unverified_approvals(), which rewrites
+    tracked golden_table.json. Abort those APIs in the browser and use the
+    static HTML GET as the second view.
+    """
+    page.route("**/api/sku-mapping/**", lambda route: route.abort())
+    page.goto(base_url(port) + "/sku-mapping.html", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_selector("h1", timeout=10000)
+    heading = page.locator("h1").inner_text()
+    scan_label = page.locator("#scanAll").inner_text()
+    html = http_request("/sku-mapping.html", port)
+    html_text = decode_body(html.get("body") or b"")
+    (out_dir / "sku-mapping.html.snippet.txt").write_text(
+        "\n".join(
+            line.strip()
+            for line in html_text.splitlines()
+            if "SKU Mapping" in line or "scanAll" in line or "skuReviewTab" in line
+        ) + "\n",
+        encoding="utf-8",
+    )
+    write_dom_snapshot(page, out_dir / "sku-mapping.dom.txt", {
+        "scanAll": scan_label,
+        "apiCallsBlocked": "true",
+    })
+    page.screenshot(path=str(out_dir / "sku-mapping.png"), full_page=True)
+    if "SKU Mapping" not in heading:
+        die(f"sku-mapping heading missing: {heading!r}")
+    if "重建全部名稱 mapping" not in scan_label:
+        die(f"sku-mapping scan control missing: {scan_label!r}")
+    return {
+        "heading": heading,
+        "scanAll": scan_label,
+        "blockedSkuMappingApis": True,
+        "didNotScan": True,
+        "didNotApprove": True,
+        "note": "Browser API calls aborted; live summary/queue GET rewrites golden_table.json",
+    }
+
+
+def drive_products_catalog(page, out_dir: Path, port: int) -> Dict[str, Any]:
+    page.goto(base_url(port) + "/products.html", wait_until="domcontentloaded", timeout=30000)
+    page.wait_for_selector("#productSearchInput", timeout=10000)
+    page.fill("#productSearchInput", "S6")
+    page.click("#productSearchButton")
+    page.wait_for_function(
+        "() => { const n = document.querySelector('#productSearchStatus'); return n && n.textContent.includes('找到'); }",
+        timeout=20000,
+    )
+    status = page.locator("#productSearchStatus").inner_text()
+    heading = page.locator("h1").inner_text()
+    catalog = maybe_json(http_request("/api/golden-table/catalog?query=S6&limit=3", port).get("body") or b"")
+    dump_json(out_dir / "products.catalog.json", catalog)
+    write_dom_snapshot(page, out_dir / "products.dom.txt", {"searchStatus": status})
+    page.screenshot(path=str(out_dir / "products.png"), full_page=True)
+    if "商品資料" not in heading:
+        die(f"products heading missing: {heading!r}")
+    return {
+        "heading": heading,
+        "searchStatus": status,
+        "totalMatches": (catalog or {}).get("totalMatches") if isinstance(catalog, dict) else None,
+        "didNotSave": True,
+    }
+
+
+RECIPES = {
+    "inventory-dashboard": drive_inventory_dashboard,
+    "ads-workbench": drive_ads_workbench,
+    "inbound": drive_inbound,
+    "sku-mapping": drive_sku_mapping,
+    "products-catalog": drive_products_catalog,
+}
+
+
+def cmd_drive(args: argparse.Namespace) -> None:
+    state = read_state()
+    doctor = collect_doctor(state)
+    if not doctor["healthy"]:
+        dump_json(evidence_dir(state["runId"]) / "doctor.failed.json", doctor)
+        die(doctor["reason"])
+    recipe = args.feature
+    if recipe not in RECIPES:
+        die(f"unknown feature {recipe!r}. expected one of: {', '.join(RECIPES)}")
+    out_dir = Path(args.out) if args.out else evidence_dir(state["runId"]) / recipe
+    out_dir.mkdir(parents=True, exist_ok=True)
+    dump_json(out_dir / "doctor.json", doctor)
+    runtime = browser = page = None
+    try:
+        runtime, browser, page = launch_browser_page(base_url(int(state["port"])) + "/", headless=not args.headed)
+        observed = RECIPES[recipe](page, out_dir, int(state["port"]))
+    finally:
+        if browser is not None:
+            browser.close()
+        if runtime is not None:
+            runtime.stop()
+    proof = {
+        "feature": recipe,
+        "runId": state["runId"],
+        "baseUrl": state["baseUrl"],
+        "capturedAt": iso_now(),
+        "observed": observed,
+        "evidenceDir": str(out_dir),
+    }
+    dump_json(out_dir / "proof.json", proof)
+    print(json.dumps(proof, ensure_ascii=False, indent=2))
+
+
+def cmd_screenshot(args: argparse.Namespace) -> None:
+    if args.wait:
+        assert_selector_allowed(args.wait, args.i_approve_live)
+    state = read_state()
+    runtime = browser = page = None
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        runtime, browser, page = launch_browser_page(urljoin(state["baseUrl"] + "/", args.path.lstrip("/")))
+        if args.wait:
+            page.wait_for_selector(args.wait, timeout=15000)
+        page.screenshot(path=str(out), full_page=True)
+        snapshot = out.with_suffix(".dom.txt")
+        write_dom_snapshot(page, snapshot)
+    finally:
+        if browser is not None:
+            browser.close()
+        if runtime is not None:
+            runtime.stop()
+    print(json.dumps({"status": "ok", "screenshot": str(out), "dom": str(out.with_suffix('.dom.txt'))}, ensure_ascii=False, indent=2))
+
+
+def cmd_cleanup(args: argparse.Namespace) -> None:
+    if not STATE_PATH.exists():
+        print(json.dumps({"status": "already-clean", "statePath": str(STATE_PATH)}, ensure_ascii=False, indent=2))
+        return
+    try:
+        state = json.loads(STATE_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        STATE_PATH.unlink(missing_ok=True)
+        print(json.dumps({"status": "state-unreadable-removed"}, ensure_ascii=False, indent=2))
+        return
+    pid = int(state.get("pid") or 0)
+    port = int(state.get("port") or DEFAULT_PORT)
+    shutdown = http_request("/shutdown", port, timeout=5.0)
+    deadline = time.time() + 12
+    while pid and pid_alive(pid) and time.time() < deadline:
+        time.sleep(0.3)
+    killed = False
+    if pid and pid_alive(pid):
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed = True
+        except OSError:
+            pass
+        term_deadline = time.time() + 5
+        while pid_alive(pid) and time.time() < term_deadline:
+            time.sleep(0.2)
+        if pid_alive(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+    STATE_PATH.unlink(missing_ok=True)
+    still = pid_alive(pid) if pid else False
+    print(json.dumps({
+        "status": "cleaned" if not still else "cleanup-incomplete",
+        "pid": pid,
+        "shutdownHttp": {"ok": shutdown.get("ok"), "status": shutdown.get("status"), "error": shutdown.get("error")},
+        "sentSigterm": killed,
+        "pidAlive": still,
+        "evidenceKeptAt": str(EVIDENCE_ROOT / str(state.get("runId") or "")),
+        "note": "evidence is never deleted by cleanup",
+    }, ensure_ascii=False, indent=2))
+    if still:
+        raise SystemExit(2)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="control-inventory", description="Verification harness for the InventoryCalculator local HTTP UI.")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    launch = sub.add_parser("launch", help="Start python main.py with INVENTORY_SKIP_BROWSER=1 if port 8080 is free.")
+    launch.add_argument("--run-id", default="")
+    launch.set_defaults(func=cmd_launch)
+
+    doctor = sub.add_parser("doctor", help="Read-only check that this run still owns the instance.")
+    doctor.add_argument("--out", default="")
+    doctor.set_defaults(func=cmd_doctor)
+
+    http_cmd = sub.add_parser("http", help="GET a path on the launched instance. POST is refused.")
+    http_cmd.add_argument("method")
+    http_cmd.add_argument("path")
+    http_cmd.add_argument("--out", default="")
+    http_cmd.add_argument("--timeout", type=float, default=20.0)
+    http_cmd.add_argument(
+        "--i-approve-golden-write",
+        action="store_true",
+        help="Allow GET /api/sku-mapping/* which may rewrite golden_table.json",
+    )
+    http_cmd.set_defaults(func=cmd_http)
+
+    drive = sub.add_parser("drive", help="Drive one mapped feature with Playwright and write evidence.")
+    drive.add_argument("feature", choices=sorted(RECIPES))
+    drive.add_argument("--out", default="")
+    drive.add_argument("--headed", action="store_true")
+    drive.set_defaults(func=cmd_drive)
+
+    shot = sub.add_parser("screenshot", help="Open a path, wait, and save a full-page screenshot plus DOM text.")
+    shot.add_argument("path")
+    shot.add_argument("--out", required=True)
+    shot.add_argument("--wait", default="")
+    shot.add_argument("--i-approve-live", action="store_true")
+    shot.set_defaults(func=cmd_screenshot)
+
+    cleanup = sub.add_parser("cleanup", help="Shut down the pid recorded by launch. Never deletes evidence.")
+    cleanup.set_defaults(func=cmd_cleanup)
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> None:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

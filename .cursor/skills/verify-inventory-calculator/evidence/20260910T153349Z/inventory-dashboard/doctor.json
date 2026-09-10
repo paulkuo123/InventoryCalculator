@@ -1,0 +1,141 @@
+{
+  "runId": "20260910T153349Z",
+  "pid": 3321,
+  "pidAlive": true,
+  "cmdline": "/usr/bin/python3 main.py",
+  "cmdlineLooksLikeMain": true,
+  "port": 8080,
+  "portInUse": true,
+  "baseUrl": "http://127.0.0.1:8080",
+  "checkedAt": "2026-09-10T15:33:51Z",
+  "pages": {
+    "home": {
+      "path": "/",
+      "ok": true,
+      "status": 200,
+      "bytes": 15452,
+      "hasTitleHint": true,
+      "error": null
+    },
+    "ads": {
+      "path": "/ads.html",
+      "ok": true,
+      "status": 200,
+      "bytes": 7282,
+      "hasTitleHint": true,
+      "error": null
+    },
+    "inbound": {
+      "path": "/inbound.html",
+      "ok": true,
+      "status": 200,
+      "bytes": 4749,
+      "hasTitleHint": true,
+      "error": null
+    },
+    "skuMapping": {
+      "path": "/sku-mapping.html",
+      "ok": true,
+      "status": 200,
+      "bytes": 9681,
+      "hasTitleHint": true,
+      "error": null
+    },
+    "products": {
+      "path": "/products.html",
+      "ok": true,
+      "status": 200,
+      "bytes": 8057,
+      "hasTitleHint": true,
+      "error": null
+    },
+    "goldenImport": {
+      "path": "/golden-import.html",
+      "ok": true,
+      "status": 200,
+      "bytes": 1406,
+      "hasTitleHint": true,
+      "error": null
+    }
+  },
+  "apis": {
+    "homeBootstrap": {
+      "path": "/api/home/bootstrap",
+      "ok": true,
+      "status": 200,
+      "jsonKeys": [
+        "batchRestockEnabled",
+        "golden",
+        "message",
+        "products",
+        "shopee",
+        "status",
+        "watchlist",
+        "watchlistCounts",
+        "watchlistInfo"
+      ],
+      "error": null,
+      "bootstrapStatus": "error",
+      "message": "找不到 shopee_products.json，請先匯入或執行搜尋"
+    },
+    "inboundStatus": {
+      "path": "/api/inbound/status",
+      "ok": true,
+      "status": 200,
+      "jsonKeys": [
+        "activeJobId",
+        "busy",
+        "message",
+        "status",
+        "writeEnabled"
+      ],
+      "error": null,
+      "writeEnabled": false,
+      "message": "目前為唯讀模式；完成真實訂單預覽驗證後，再設定 SHOPEE_INBOUND_WRITE_ENABLED=true"
+    },
+    "openaiStatus": {
+      "path": "/openai_status",
+      "ok": true,
+      "status": 200,
+      "jsonKeys": [
+        "config_errors",
+        "configured",
+        "default_model",
+        "default_reasoning_effort",
+        "key_source",
+        "model_source",
+        "models",
+        "reasoning_effort_source",
+        "reasoning_efforts",
+        "setup_command",
+        "status"
+      ],
+      "error": null,
+      "configured": false,
+      "key_source": "not_configured"
+    },
+    "goldenCatalog": {
+      "path": "/api/golden-table/catalog?query=S6&limit=3",
+      "ok": true,
+      "status": 200,
+      "jsonKeys": [
+        "limit",
+        "products",
+        "query",
+        "status",
+        "totalMatches"
+      ],
+      "error": null,
+      "payloadStatus": "success",
+      "totalMatches": 1
+    }
+  },
+  "goldenTable": {
+    "path": "/workspace/golden_table.json",
+    "sha256AtLaunch": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
+    "sha256Now": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
+    "unchanged": true
+  },
+  "healthy": true,
+  "reason": "instance owned by this run is serving the local UI"
+}
