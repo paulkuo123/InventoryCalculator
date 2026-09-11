@@ -16,6 +16,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from ads_session import (
+    BROWSER_SOURCE_REMOTE,
+    normalize_browser_source,
+    resolve_cdp_endpoint,
+)
 from config_loader import load_openai_api_key, load_openai_config_value
 
 
@@ -363,6 +368,8 @@ class AdsAnalyzer:
         trend_weeks: int = 4,
         openai_model: str = "",
         reasoning_effort: str = "",
+        browser_source: str = BROWSER_SOURCE_REMOTE,
+        cdp_endpoint: str = "",
     ):
         self.ads_export_dir = ads_export_dir
         self.golden_table_path = golden_table_path
@@ -372,6 +379,8 @@ class AdsAnalyzer:
         self.html_output_path = html_output_path
         self.include_ai = include_ai
         self.refresh_source = refresh_source
+        self.browser_source = normalize_browser_source(browser_source)
+        self.cdp_endpoint = resolve_cdp_endpoint(cdp_endpoint)
         self.trend_weeks = max(1, trend_weeks)
         configured_model, _ = load_openai_config_value("OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
         configured_effort, _ = load_openai_config_value(
@@ -417,7 +426,7 @@ class AdsAnalyzer:
             self._log("WARN", f"讀取 golden_table.json 失敗: {e}")
             return {}
 
-    def _run_crawler_export_mode(self, mode: str, output_name: str, extra_args: Optional[List[str]] = None) -> Dict[str, Any]:
+    def _crawler_refresh_cmd(self, mode: str, output_name: str, extra_args: Optional[List[str]] = None) -> List[str]:
         crawler_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crawler.py")
         cmd = [
             sys.executable,
@@ -425,9 +434,16 @@ class AdsAnalyzer:
             "--mode", mode,
             "--output", output_name,
             "--headless", "true",
+            "--browser-source", self.browser_source,
+            "--cdp-endpoint", self.cdp_endpoint,
+            "--ads-export-dir", os.path.abspath(self.ads_export_dir),
         ]
         if extra_args:
             cmd.extend(extra_args)
+        return cmd
+
+    def _run_crawler_export_mode(self, mode: str, output_name: str, extra_args: Optional[List[str]] = None) -> Dict[str, Any]:
+        cmd = self._crawler_refresh_cmd(mode, output_name, extra_args)
 
         result = subprocess.run(
             cmd,
@@ -458,7 +474,10 @@ class AdsAnalyzer:
             self._log("EXPORT", "略過來源刷新，直接使用現有 ads_exports")
             return
 
-        self._log("EXPORT", "開始刷新分析來源：匯出過去一個月、昨天與 4 週趨勢，共 6 份")
+        self._log(
+            "EXPORT",
+            f"開始刷新分析來源（source={self.browser_source}）：匯出過去一個月、昨天與 4 週趨勢，共 6 份",
+        )
         export_result = self._run_crawler_export_mode(
             "ads-export",
             "ads_analysis_current_export.json",
@@ -2313,6 +2332,12 @@ def main() -> None:
     parser.add_argument("--html-output", default="ads_analysis_report.html")
     parser.add_argument("--include-ai", default="true")
     parser.add_argument("--refresh-source", default="false")
+    parser.add_argument(
+        "--source",
+        default="remote",
+        help="refresh-source 時的瀏覽器來源：remote（預設，遠端已登入 Chrome）或 mac",
+    )
+    parser.add_argument("--cdp-endpoint", default="", help="遠端 Chrome CDP URL")
     parser.add_argument("--trend-weeks", type=int, default=4)
     parser.add_argument("--model", default="")
     parser.add_argument("--reasoning-effort", default="")
@@ -2330,6 +2355,8 @@ def main() -> None:
         trend_weeks=args.trend_weeks,
         openai_model=args.model,
         reasoning_effort=args.reasoning_effort,
+        browser_source=args.source,
+        cdp_endpoint=args.cdp_endpoint,
     )
     try:
         result = analyzer.run()

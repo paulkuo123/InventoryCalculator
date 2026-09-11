@@ -126,6 +126,16 @@ description: 用於分析 Shopee 商品廣告報表，輸出只包含需要調�
 - `.env.local` 必須加入 `.gitignore`，不可提交到 GitHub。
 - repo 內若需要提供範例，只能提供 `.env.example`，不可放真實 Key。
 
+## 週報抓取（遠端盒，不走 Mac）
+
+週報數字預設從**已登入的遠端 Chrome／CDP**抓，不要再 ListMachines 打使用者 Mac。
+
+```bash
+python3 ads_weekly.py
+```
+
+輸出：`reports/ads_weekly/YYYYMMDD/`。登入牆／驗證碼／工作階段死亡會寫 `BLOCKER.md` 並非 0 結束，禁止沿用上周數字。完整 runbook：[`docs/ads_weekly_pipeline.md`](../../docs/ads_weekly_pipeline.md)。
+
 ## 系統邊界
 
 - 廣告功能應視為獨立子系統，不應混進原本的庫存補貨主流程。
