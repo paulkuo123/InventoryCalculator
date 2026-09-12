@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>1688 SKU Mapping 工作台</title>
-  <link rel="stylesheet" href="sku-mapping.css?v=20260811-summary-groups1">
+  <link rel="stylesheet" href="sku-mapping.css?v=20260912-negatives1">
   <style>.select-row{grid-column:1/-1;color:#475569;font-size:.88rem}.source-placeholder{width:100px;height:100px;border-radius:10px;background:#eef3f8;display:grid;place-items:center;color:#789}</style>
 </head>
 <body>
@@ -157,6 +157,28 @@
     </section>
   </div>
 
-  <script src="sku-mapping.js?v=20260811-summary-groups1"></script>
+  <div id="reasonModal" class="reason-modal" hidden>
+    <div class="reason-backdrop" data-reason-close="true"></div>
+    <section class="reason-dialog" role="dialog" aria-modal="true" aria-labelledby="reasonTitle">
+      <header class="reason-header">
+        <h2 id="reasonTitle">選擇否決原因</h2>
+        <button type="button" class="reason-close" data-reason-close="true" aria-label="關閉">×</button>
+      </header>
+      <div class="reason-body">
+        <p id="reasonHint">請選擇原因代碼；選「其他」時必須填寫說明。</p>
+        <label for="reasonCode">原因代碼</label>
+        <select id="reasonCode"></select>
+        <label for="reasonText">補充說明</label>
+        <textarea id="reasonText" rows="3" placeholder="選「其他」時必填；其餘可選"></textarea>
+        <p id="reasonError" class="reason-error" hidden></p>
+      </div>
+      <footer class="reason-footer">
+        <button type="button" data-reason-close="true">取消</button>
+        <button type="button" id="reasonConfirm" class="primary">確認</button>
+      </footer>
+    </section>
+  </div>
+
+  <script src="sku-mapping.js?v=20260912-negatives1"></script>
 </body>
 </html>

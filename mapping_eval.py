@@ -3,7 +3,8 @@
 Wraps ``SkuMappingService.generate_candidates`` and
 ``classify_review_tier`` (plus the optional existing AI judge).  It does
 not invent a parallel matcher, change ``golden_table.json`` schema, or
-auto-approve mappings.
+enable auto-approve.  TASK 8 reports a counterfactual auto-approve
+precision against ``mapping_knowledge/config.json`` (SPEC 5.1) only.
 
 Reports are written under ``data/mapping_eval/`` (gitignored) or ``--out``.
 Never point this tool at a path you intend to commit.
@@ -24,9 +25,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
+from mapping_knowledge import DEFAULT_CONFIG, load_config
 from sku_mapping_service import (
     AI_SUCCESS_SOURCES,
+    PROMPT_VERSION,
+    SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS,
+    SUGGESTION_EVIDENCE_REQUIRED_FIELDS,
     SkuMappingService,
+    missing_suggestion_evidence_fields,
     normalize_id,
     normalize_text,
     parse_offer_id,
@@ -39,8 +45,18 @@ DEFAULT_SAMPLE_SEED = 42
 DEFAULT_AI_LIMIT = 50
 EXIT_USAGE = 2
 
+# SPEC 5.1 auto-approve gates (counterfactual only; enabled stays false).
+AUTO_APPROVE_CONDITION_ORDER = (
+    "require_unique_complete_strict_match",
+    "require_no_hard_rule_violation",
+    "require_no_negative_example",
+    "require_snapshot_status_ok",
+    "min_historical_support",
+)
+
 # Product-name fallback used only when mapping_knowledge/categories.json is
-# absent (TASK 2/3).  Order is first-match; keep phone-case ahead of generic
+# missing or unreadable.  TASK 3 committed a keyword map; this remains the
+# offline fallback.  Order is first-match; keep phone-case ahead of generic
 # 殼 tokens that also appear on watch cases.
 _CATEGORY_HEURISTICS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("phone_case", ("手機殼", "手机壳", "保護殼", "保护壳", "手機套", "手机套")),
@@ -97,7 +113,7 @@ def infer_category(product_name: str, categories_path: Optional[Path] = None) ->
     If ``mapping_knowledge/categories.json`` exists it is used.  Supported
     shapes: ``{"rules": [{"category": "socks", "keywords": ["襪"]}]}`` or
     ``{"socks": ["襪", "袜"]}``.  Otherwise the built-in product-name
-    heuristics above apply.  Missing TASK 2/3 files do not block eval.
+    heuristics above apply.  Missing knowledge-pack files do not block eval.
     """
     name = str(product_name or "")
     lowered = name.casefold()
@@ -413,6 +429,168 @@ def call_existing_ai_judge(
     return ai
 
 
+def auto_approve_settings(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return SPEC 5.1 auto-approve gates from config (defaults if missing)."""
+    payload = config if isinstance(config, dict) else load_config()
+    raw = payload.get("auto_approve") if isinstance(payload.get("auto_approve"), dict) else {}
+    defaults = DEFAULT_CONFIG["auto_approve"]
+    return {key: raw[key] if key in raw else defaults[key] for key in defaults}
+
+
+def _candidate_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    evidence = candidate.get("evidence")
+    return evidence if isinstance(evidence, dict) else {}
+
+
+def is_unique_complete_strict_match(candidates: Sequence[Dict[str, Any]]) -> bool:
+    """True when exactly one candidate is complete and strictly matches every source part."""
+    if len(candidates) != 1:
+        return False
+    candidate = candidates[0]
+    evidence = _candidate_evidence(candidate)
+    complete = evidence.get("complete") is True or candidate.get("complete") is True
+    if not complete:
+        return False
+    source_parts = evidence.get("source_parts") or []
+    try:
+        required = max(1, int(evidence.get("required") or 0), len(source_parts))
+    except (TypeError, ValueError):
+        required = max(1, len(source_parts))
+    try:
+        strict_exact = int(evidence.get("strict_exact") or 0)
+    except (TypeError, ValueError):
+        strict_exact = 0
+    return strict_exact >= required
+
+
+def _has_hard_rule_violation(
+    candidates: Sequence[Dict[str, Any]],
+    *,
+    false_negative: bool = False,
+) -> bool:
+    if false_negative:
+        return True
+    for candidate in candidates:
+        evidence = _candidate_evidence(candidate)
+        for rule in evidence.get("applied_rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            effect = str(rule.get("effect") or "")
+            rule_type = str(rule.get("rule_type") or "")
+            if effect == "reject" and (rule_type == "hard" or str(rule.get("rule_id") or "").startswith("RULE-")):
+                return True
+    return False
+
+
+def _has_negative_example(candidates: Sequence[Dict[str, Any]]) -> bool:
+    for candidate in candidates:
+        if isinstance(candidate.get("negative_example"), dict):
+            return True
+        evidence = _candidate_evidence(candidate)
+        if isinstance(evidence.get("negative_example"), dict):
+            return True
+        if evidence.get("negative_hits"):
+            return True
+        for rule in evidence.get("applied_rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            if str(rule.get("rule_id") or "").upper() == "NEGATIVE" and str(rule.get("effect") or "") == "reject":
+                return True
+    return False
+
+
+def _historical_support_count(candidate: Optional[Dict[str, Any]]) -> int:
+    if not isinstance(candidate, dict):
+        return 0
+    if candidate.get("historical_support_count") is not None:
+        try:
+            return int(candidate.get("historical_support_count") or 0)
+        except (TypeError, ValueError):
+            return 0
+    evidence = _candidate_evidence(candidate)
+    try:
+        return int(evidence.get("historical_support_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def assess_auto_approve_counterfactual(
+    candidates: Sequence[Dict[str, Any]],
+    *,
+    truth_matched: bool = False,
+    false_negative: bool = False,
+    snapshot_status: str = "ok",
+    config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """If auto-approve were enabled, would this case pass SPEC 5.1?
+
+    Never flips ``auto_approve.enabled``.  The production flag stays false;
+    this only scores the other gates for reporting.
+    """
+    settings = auto_approve_settings(config)
+    failed: List[str] = []
+    rows = list(candidates or [])
+    if settings.get("require_unique_complete_strict_match") and not is_unique_complete_strict_match(rows):
+        failed.append("require_unique_complete_strict_match")
+    if settings.get("require_no_hard_rule_violation") and _has_hard_rule_violation(
+        rows, false_negative=false_negative
+    ):
+        failed.append("require_no_hard_rule_violation")
+    if settings.get("require_no_negative_example") and _has_negative_example(rows):
+        failed.append("require_no_negative_example")
+    if settings.get("require_snapshot_status_ok") and str(snapshot_status or "") != "ok":
+        failed.append("require_snapshot_status_ok")
+    support = _historical_support_count(rows[0]) if len(rows) == 1 else 0
+    try:
+        min_hist = int(settings.get("min_historical_support") or 0)
+    except (TypeError, ValueError):
+        min_hist = 0
+    if min_hist > 0 and len(rows) == 1 and support < min_hist:
+        failed.append("min_historical_support")
+    would_pass = not failed
+    return {
+        "enabled": bool(settings.get("enabled")),
+        "would_auto_approve": would_pass,
+        "correct": bool(would_pass and truth_matched),
+        "failed_conditions": failed,
+        "historical_support_count": support,
+        "conditions": {
+            key: settings.get(key) for key in ("enabled",) + AUTO_APPROVE_CONDITION_ORDER if key in settings
+        },
+    }
+
+
+def summarize_auto_approve(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate counterfactual auto-approve precision.  Does not enable it."""
+    settings = auto_approve_settings()
+    n_would = 0
+    n_correct = 0
+    failed_counts: Dict[str, int] = defaultdict(int)
+    n_with = 0
+    for record in records:
+        row = record.get("auto_approve")
+        if not isinstance(row, dict):
+            continue
+        n_with += 1
+        if row.get("would_auto_approve"):
+            n_would += 1
+            if row.get("correct"):
+                n_correct += 1
+        for cond in row.get("failed_conditions") or []:
+            failed_counts[str(cond)] += 1
+    return {
+        "enabled": bool(settings.get("enabled")),
+        "n_evaluated": n_with,
+        "n_would_pass": n_would,
+        "n_correct": n_correct,
+        "precision": _rate(n_correct, n_would),
+        "failed_condition_counts": {key: failed_counts[key] for key in AUTO_APPROVE_CONDITION_ORDER if key in failed_counts},
+        "conditions": {
+            key: settings.get(key) for key in ("enabled",) + AUTO_APPROVE_CONDITION_ORDER
+        },
+    }
+
+
 def evaluate_case(
     service: SkuMappingService,
     case: Dict[str, Any],
@@ -460,6 +638,12 @@ def evaluate_case(
         "candidate_count": len(candidates),
         "candidates": [public_candidate(item, index) for index, item in enumerate(candidates, start=1)],
         "ai": None,
+        "auto_approve": assess_auto_approve_counterfactual(
+            candidates,
+            truth_matched=rank == 1,
+            false_negative=false_negative,
+            snapshot_status="ok",
+        ),
     }
     if isinstance(ai_result, dict):
         decision = str(ai_result.get("decision") or "abstain")
@@ -609,6 +793,7 @@ def compute_metrics(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "by_category": {key: _finalize_group(value) for key, value in sorted(by_category.items())},
         "by_mapping_source": {key: _finalize_group(value) for key, value in sorted(by_source.items())},
         "ai": None,
+        "auto_approve": summarize_auto_approve(records),
     }
     if ai_called:
         metrics["ai"] = {
@@ -682,6 +867,12 @@ def write_report(out_dir: Path, metrics: Dict[str, Any], records: Sequence[Dict[
             }
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     (out_dir / "summary.md").write_text(render_summary_markdown(metrics, meta), encoding="utf-8")
+    auto_approve = metrics.get("auto_approve")
+    if isinstance(auto_approve, dict):
+        (out_dir / "auto_approve.json").write_text(
+            json.dumps(auto_approve, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _pct(value: Optional[float]) -> str:
@@ -718,9 +909,31 @@ def render_summary_markdown(metrics: Dict[str, Any], meta: Optional[Dict[str, An
         f"- Red truth coverage: **{_pct((metrics.get('red') or {}).get('truth_coverage'))}** "
         f"({(metrics.get('red') or {}).get('n', 0)} cases)",
         "",
+    ]
+    auto_approve = metrics.get("auto_approve")
+    if isinstance(auto_approve, dict):
+        lines.extend([
+            "## Auto-approve counterfactual (not enabled)",
+            "",
+            f"- config `auto_approve.enabled`: **{str(auto_approve.get('enabled')).lower()}**",
+            f"- would auto-pass if enabled: **{auto_approve.get('n_would_pass', 0)}** / "
+            f"{auto_approve.get('n_evaluated', 0)}",
+            f"- correct among those: **{auto_approve.get('n_correct', 0)}**",
+            f"- Auto-approve precision: **{_pct(auto_approve.get('precision'))}** "
+            f"({auto_approve.get('n_correct', 0)}/{auto_approve.get('n_would_pass', 0)})",
+            "",
+        ])
+        failed_counts = auto_approve.get("failed_condition_counts") or {}
+        if failed_counts:
+            lines.append("Failed SPEC 5.1 gates (counts):")
+            for name in AUTO_APPROVE_CONDITION_ORDER:
+                if name in failed_counts:
+                    lines.append(f"- `{name}`: {failed_counts[name]}")
+            lines.append("")
+    lines.extend([
         "## By category",
         "",
-    ]
+    ])
     by_category = metrics.get("by_category") or {}
     if not by_category:
         lines.append("_no cases_")
@@ -765,10 +978,49 @@ def render_summary_markdown(metrics: Dict[str, Any], meta: Optional[Dict[str, An
             f"- sample: {meta.get('sample')}",
             f"- seed: {meta.get('seed')}",
             f"- ai: {meta.get('ai')} (limit {meta.get('ai_limit')})",
+            f"- ai_dry: {meta.get('ai_dry')}",
+            f"- prompt_version: {meta.get('prompt_version')}",
             f"- category grouping: {meta.get('category_mode')}",
         ])
     lines.append("")
     return "\n".join(lines)
+
+
+def _ai_dry_payload_row(
+    service: SkuMappingService,
+    case: Dict[str, Any],
+    candidates: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Document the TASK 5 judge payload without calling a provider."""
+    model = {
+        "product_id": case.get("product_id") or "",
+        "model_id": case.get("model_id") or "",
+        "product_name": case["product_name"],
+        "model_name": case["model_name"],
+        "offer_id": case.get("offer_id") or "",
+    }
+    payload = service._ai_user_payload(model, list(candidates))
+    return {
+        "product_id": model["product_id"],
+        "model_id": model["model_id"],
+        "model_name": model["model_name"],
+        "offer_id": model["offer_id"],
+        "prompt_version": PROMPT_VERSION,
+        "historical_examples": payload.get("historical_examples") or [],
+        "negative_examples": payload.get("negative_examples") or [],
+        "applied_rules": payload.get("applied_rules") or [],
+        "candidate_keys": [str(item.get("candidate_key") or "") for item in candidates],
+        "historical_support_counts": [
+            int(item.get("historical_support_count") or 0) for item in candidates
+        ],
+    }
+
+
+def write_ai_dry_payloads(out_dir: Path, rows: Sequence[Dict[str, Any]]) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with (out_dir / "ai_dry_payloads.jsonl").open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def run_evaluation(
@@ -778,6 +1030,7 @@ def run_evaluation(
     sample: Optional[int] = None,
     seed: int = DEFAULT_SAMPLE_SEED,
     use_ai: bool = False,
+    ai_dry: bool = False,
     ai_limit: int = DEFAULT_AI_LIMIT,
     assume_yes: bool = False,
     categories_path: Optional[Path] = None,
@@ -790,20 +1043,24 @@ def run_evaluation(
         if categories_path and Path(categories_path).is_file()
         else "product_name_heuristics"
     )
-    estimated_ai = min(max(0, int(ai_limit)), len(selected)) if use_ai else 0
-    if use_ai:
+    estimated_ai = min(max(0, int(ai_limit)), len(selected)) if (use_ai or ai_dry) else 0
+    if use_ai and not ai_dry:
         confirm_ai_calls(estimated_ai, ai_limit, assume_yes)
     started = time.time()
     records: List[Dict[str, Any]] = []
+    dry_payloads: List[Dict[str, Any]] = []
     with isolated_mapping_service() as service:
         for index, case in enumerate(selected):
             ai_result = None
-            if use_ai and index < estimated_ai:
-                model = {
-                    "product_name": case["product_name"],
-                    "model_name": case["model_name"],
-                    "offer_id": case.get("offer_id") or "",
-                }
+            model = {
+                "product_name": case["product_name"],
+                "model_name": case["model_name"],
+                "offer_id": case.get("offer_id") or "",
+            }
+            if ai_dry and index < estimated_ai:
+                candidates = service.generate_candidates(model, case.get("skus") or [])
+                dry_payloads.append(_ai_dry_payload_row(service, case, candidates))
+            elif use_ai and index < estimated_ai:
                 candidates = service.generate_candidates(model, case.get("skus") or [])
                 ai_result = call_existing_ai_judge(service, model, case.get("skus") or [], candidates)
             records.append(
@@ -821,9 +1078,11 @@ def run_evaluation(
         "n_evaluated": len(selected),
         "sample": sample,
         "seed": seed,
-        "ai": use_ai,
+        "ai": use_ai and not ai_dry,
+        "ai_dry": ai_dry,
         "ai_limit": ai_limit,
         "ai_estimated": estimated_ai,
+        "prompt_version": PROMPT_VERSION,
         "category_mode": category_mode,
         "elapsed_seconds": round(time.time() - started, 3),
         "out_dir": str(out_dir),
@@ -831,6 +1090,8 @@ def run_evaluation(
     if extra_meta:
         meta.update(extra_meta)
     write_report(out_dir, metrics, records, meta)
+    if ai_dry:
+        write_ai_dry_payloads(out_dir, dry_payloads)
     return {"metrics": metrics, "records": records, "meta": meta, "out_dir": str(out_dir)}
 
 
@@ -844,6 +1105,9 @@ def _metric_pairs() -> List[Tuple[str, str]]:
         ("green.precision", "green.precision"),
         ("yellow.truth_coverage", "yellow.truth_coverage"),
         ("red.truth_coverage", "red.truth_coverage"),
+        ("auto_approve.n_would_pass", "auto_approve.n_would_pass"),
+        ("auto_approve.n_correct", "auto_approve.n_correct"),
+        ("auto_approve.precision", "auto_approve.precision"),
         ("ai.match_precision", "ai.match_precision"),
         ("ai.abstain_rate", "ai.abstain_rate"),
         ("ai.ai_wrong_det_right", "ai.ai_wrong_det_right"),
@@ -937,6 +1201,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--sample", type=int, default=None, help="Optional random sample size")
     run_p.add_argument("--seed", type=int, default=DEFAULT_SAMPLE_SEED, help="Sample RNG seed")
     run_p.add_argument("--ai", action="store_true", help="Also call the existing AI judge")
+    run_p.add_argument(
+        "--ai-dry",
+        action="store_true",
+        help="Build AI prompt payloads (historical/negative/applied_rules) without calling providers",
+    )
     run_p.add_argument("--ai-limit", type=int, default=DEFAULT_AI_LIMIT, help="Max AI calls")
     run_p.add_argument("--yes", action="store_true", help="Skip interactive AI confirmation")
     run_p.add_argument(
@@ -949,6 +1218,19 @@ def build_parser() -> argparse.ArgumentParser:
     compare_p.add_argument("--baseline", required=True, help="Baseline run directory (has metrics.json)")
     compare_p.add_argument("--candidate", required=True, help="Candidate run directory")
     compare_p.add_argument("--out", default=None, help="Optional directory to write compare.md")
+
+    audit_p = sub.add_parser(
+        "audit",
+        help="Count suggestions whose evidence_json is missing required TASK 7 fields",
+    )
+    audit_p.add_argument("--db-path", default=DEFAULT_DB_PATH, help="procurement.db path")
+    audit_p.add_argument(
+        "--since",
+        type=int,
+        required=True,
+        help="Only scan rows updated in the last N days (0 = all rows)",
+    )
+    audit_p.add_argument("--out", default=None, help="Optional directory to write audit.md / audit.json")
     return parser
 
 
@@ -978,6 +1260,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         sample=args.sample,
         seed=args.seed,
         use_ai=bool(args.ai),
+        ai_dry=bool(getattr(args, "ai_dry", False)),
         ai_limit=int(args.ai_limit),
         assume_yes=bool(args.yes),
         categories_path=categories_path,
@@ -986,6 +1269,126 @@ def cmd_run(args: argparse.Namespace) -> int:
     )
     print(f"Wrote mapping_eval report to {out_dir}")
     print(render_summary_markdown(result["metrics"], result["meta"]))
+    return 0
+
+
+def audit_cutoff(since_days: int, now: Optional[int] = None) -> int:
+    days = int(since_days)
+    if days <= 0:
+        return 0
+    return int(now if now is not None else time.time()) - days * 86400
+
+
+def audit_suggestions(db_path: Path, since_days: int, now: Optional[int] = None) -> Dict[str, Any]:
+    """Scan sku_mapping_suggestions for missing TASK 7 evidence fields.
+
+    Old rows may be incomplete.  New ``_save_suggestion()`` writes must have
+    zero missing fields.  Null ``ai.provider`` / ``ai.model`` / ``ai.effort``
+    count as present (documented no-AI).
+    """
+    if not db_path.is_file():
+        raise MappingEvalError(f"procurement database not found: {db_path}")
+    cutoff = audit_cutoff(since_days, now)
+    try:
+        conn = _open_sqlite_readonly(db_path)
+    except sqlite3.Error as exc:
+        raise MappingEvalError(f"cannot open procurement database {db_path}: {exc}") from exc
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, product_id, model_id, created_at, updated_at, evidence_json
+              FROM sku_mapping_suggestions
+             WHERE COALESCE(updated_at, created_at, 0) >= ?
+             ORDER BY updated_at DESC, id DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise MappingEvalError(
+            f"{db_path} has no usable sku_mapping_suggestions table: {exc}"
+        ) from exc
+    finally:
+        conn.close()
+
+    incomplete: List[Dict[str, Any]] = []
+    missing_counts: Dict[str, int] = defaultdict(int)
+    for row in rows:
+        evidence = _json_load(row["evidence_json"], {})
+        missing = missing_suggestion_evidence_fields(evidence)
+        if not missing:
+            continue
+        for field in missing:
+            missing_counts[field] += 1
+        incomplete.append({
+            "id": row["id"],
+            "product_id": row["product_id"],
+            "model_id": row["model_id"],
+            "updated_at": row["updated_at"],
+            "missing": missing,
+        })
+    return {
+        "db_path": str(db_path),
+        "since_days": int(since_days),
+        "cutoff": cutoff,
+        "required_fields": list(SUGGESTION_EVIDENCE_REQUIRED_FIELDS)
+        + [f"ai.{key}" for key in SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS],
+        "n_scanned": len(rows),
+        "n_missing": len(incomplete),
+        "missing_field_counts": dict(sorted(missing_counts.items())),
+        "incomplete": incomplete,
+    }
+
+
+def render_audit_markdown(report: Dict[str, Any]) -> str:
+    lines = [
+        "# mapping_eval audit",
+        "",
+        "Required ``evidence_json`` fields for new ``_save_suggestion()`` writes. "
+        "Old rows may be incomplete; null ``ai.provider`` / ``ai.model`` / ``ai.effort`` "
+        "are documented no-AI values and do not count as missing.",
+        "",
+        f"- db: `{report.get('db_path')}`",
+        f"- since: **{report.get('since_days')}** days (cutoff {report.get('cutoff')})",
+        f"- scanned: **{report.get('n_scanned', 0)}**",
+        f"- missing any required field: **{report.get('n_missing', 0)}**",
+        "",
+    ]
+    counts = report.get("missing_field_counts") or {}
+    if counts:
+        lines.extend(["## Missing-field counts", ""])
+        for field, count in counts.items():
+            lines.append(f"- `{field}`: {count}")
+        lines.append("")
+    incomplete = report.get("incomplete") or []
+    if not incomplete:
+        lines.append("All scanned suggestions have the required evidence fields.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.extend([
+        "## Incomplete suggestions",
+        "",
+        "| product_id | model_id | missing |",
+        "|---|---|---|",
+    ])
+    for row in incomplete:
+        missing = ", ".join(row.get("missing") or [])
+        lines.append(f"| {row.get('product_id')} | {row.get('model_id')} | {missing} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    report = audit_suggestions(Path(args.db_path), int(args.since))
+    text = render_audit_markdown(report)
+    print(text)
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "audit.md").write_text(text, encoding="utf-8")
+        (out_dir / "audit.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
     return 0
 
 
@@ -1014,6 +1417,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return cmd_run(args)
         if args.command == "compare":
             return cmd_compare(args)
+        if args.command == "audit":
+            return cmd_audit(args)
         parser.error("unknown command")
         return EXIT_USAGE
     except MappingEvalError as exc:
