@@ -743,11 +743,10 @@
     return { reasonCode: reasonCode || 'OTHER', reasonText: reasonText || (reasonCode && reasonCode !== 'OTHER' ? '' : '人工選擇其他候選') };
   }
 
-  async function decide(cardElement, action, explicitSkuId = '', triggerButton = null) {
+  async function decide(cardElement, action, triggerButton = null) {
     const item = state.items.find(row => String(row.id) === String(cardElement.dataset.id));
     if (!item) return;
     const selection = selectionFromCard(cardElement);
-    if (explicitSkuId && !selection.skuId) selection.skuId = explicitSkuId;
     if (['approve','replace'].includes(action) && !selection.candidateKey && !selection.skuName && !selection.skuId) { message('請先選擇完整規格名稱，或從完整 SKU 清單手動指定。', 'error'); return; }
     if (action === 'reject_candidate' && !selection.candidateKey && !selection.skuName && !selection.skuId) { message('請先選擇要否決的候選。', 'error'); return; }
     let reason = { reasonCode: '', reasonText: '' };
@@ -1336,7 +1335,7 @@
         candidate.classList.add('selected');
         rememberSelection(cardElement);
       }
-      return decide(cardElement, 'reject_candidate', '', rejectButton);
+      return decide(cardElement, 'reject_candidate', rejectButton);
     }
     if (event.target.closest('.why-panel')) return;
     const candidate = event.target.closest('.candidate');
@@ -1344,14 +1343,13 @@
     const button = event.target.closest('button[data-action]');
     if (!button) return;
     const cardElement = button.closest('.card');
-    if (button.dataset.action === 'load_catalog') return loadCatalog(cardElement);
     if (button.dataset.action === 'rescan') {
       const item = state.items.find(row => String(row.id) === String(cardElement?.dataset.id));
       if (item) return scan('all', item);
     }
     if (button.dataset.action === 'rerun-ai') return rerunAi(cardElement, button, false);
     if (button.dataset.action === 'rerun-ai-forced') return rerunAi(cardElement, button, true);
-    decide(cardElement, button.dataset.action, '', button);
+    decide(cardElement, button.dataset.action, button);
   });
   $('queue').addEventListener('change', event => {
     const catalogSelect = event.target.closest('.catalog-select');
