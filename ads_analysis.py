@@ -61,6 +61,9 @@ DEFAULT_OPENAI_REASONING_EFFORT = "xhigh"
 OPENAI_BACKGROUND_POLL_INTERVAL_SECONDS = 5
 OPENAI_BACKGROUND_MAX_WAIT_SECONDS = 5000
 CRAWLER_ADS_EXPORT_MODE = "ads-export"
+# _classify_product 的兩條「立即加碼」路徑分別要求 stable_strong_weeks >= 3 / >= 2，
+# 少於這個週數時規則層不可能產出加碼建議。
+MIN_TREND_WEEKS_FOR_SCALE_UP = 2
 
 
 OPENAI_ANALYSIS_SCHEMA = {
@@ -1239,7 +1242,23 @@ class AdsAnalyzer:
 
         return "忽略", 0, "不輸出", "", [], "暫無明顯調整需求"
 
-    def _build_rule_summary(self, account_summary: Dict[str, Any], product_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    def _loaded_trend_week_count(self, report_runs: List[Dict[str, Any]]) -> int:
+        return sum(1 for item in report_runs if item.get("window_key") in self.trend_window_order)
+
+    def _trend_weeks_insufficient_note(self, loaded_trend_weeks: int) -> str:
+        if loaded_trend_weeks >= MIN_TREND_WEEKS_FOR_SCALE_UP:
+            return ""
+        return (
+            f"本趟只載入 {loaded_trend_weeks} 週滾動趨勢報表（加碼判定至少需要 {MIN_TREND_WEEKS_FOR_SCALE_UP} 週），"
+            "規則層本趟不評估加碼。"
+        )
+
+    def _build_rule_summary(
+        self,
+        account_summary: Dict[str, Any],
+        product_analysis: Dict[str, Any],
+        report_runs: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         scale_count = len(product_analysis["rankings"]["scale_up"])
         reduce_count = len(product_analysis["rankings"]["reduce_budget"])
         indirect_count = len(product_analysis["rankings"]["indirect_dependency"])
@@ -1269,6 +1288,10 @@ class AdsAnalyzer:
             )
         if not action_points:
             action_points.append("目前帳戶沒有明顯異常，可先維持投放並持續累積歷史資料。")
+        if report_runs is not None:
+            trend_note = self._trend_weeks_insufficient_note(self._loaded_trend_week_count(report_runs))
+            if trend_note:
+                action_points.append(trend_note)
 
         return {
             "overall_health": account_summary.get("health", "穩健"),
@@ -2166,6 +2189,9 @@ class AdsAnalyzer:
         rankings = report["report"]["rankings"]
         runtime = report.get("analysis_runtime", {})
         current = account.get("current_window", {})
+        trend_note = self._trend_weeks_insufficient_note(
+            self._loaded_trend_week_count(report["report"].get("report_runs", []))
+        )
         image_cache: Dict[str, str] = {}
         actionable_total = sum(
             len(rankings.get(key, []))
@@ -2382,6 +2408,7 @@ class AdsAnalyzer:
             <div class="note">生成時間：{report['generated_at']}</div>
             <div class="note">分析來源：{'OpenAI API' if narrative.get('source') == 'openai' else '本機規則'} ｜ 實際模型：{runtime.get('response_model') or runtime.get('model') or '未使用'} ｜ 推理強度：{runtime.get('reasoning_effort') or '-'} ｜ API 耗時：{runtime.get('api_latency_seconds', 0)} 秒</div>
             <div class="note">主要決策基準：昨天完整日報表，最近一週（week_01）與過去一個月用來驗證穩定性，另納入近 {self.trend_weeks} 週滾動 7 天趨勢判斷。</div>
+            {f'<div class="note">{trend_note}</div>' if trend_note else ''}
             <div class="summary">
               <div class="summary-box"><strong>觀察視窗</strong><br>{current.get('window_label', '-')}</div>
               <div class="summary-box"><strong>總花費</strong><br>{current.get('spend', 0):,.2f}</div>
@@ -2421,7 +2448,7 @@ class AdsAnalyzer:
 
         account_summary = self._build_account_summary(metrics)
         product_analysis = self._build_product_analysis(metrics)
-        rule_summary = self._build_rule_summary(account_summary, product_analysis)
+        rule_summary = self._build_rule_summary(account_summary, product_analysis, report_runs)
         ai_payload = self._build_ai_payload(report_runs, account_summary, product_analysis, rule_summary)
         ai_sections = self._call_openai(ai_payload)
         narrative = self._build_narrative(rule_summary, ai_sections)
