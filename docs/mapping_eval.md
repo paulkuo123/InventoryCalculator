@@ -97,6 +97,18 @@ python -m mapping_eval run \
 
 Headline 數字應仍為：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%`、Top-3 `75.0%`、FN `25.0%`、Green precision `100.0%`。其中 `watch-blue-45` 是尺寸 FN（RULE-0001 剔除 45mm vs 49mm）。
 
+## TASK 4 負例與原因代碼
+
+`mapping_negative_examples`（SPEC 5.2）由 `SkuMappingService._init_db()` 建立，不改 `golden_table.json` schema。共用原因代碼（SPEC 5.3）在 `mapping_knowledge.NEGATIVE_REASON_CODES`：`MODEL_MISMATCH`／`SIZE_MISMATCH`／`COLOR_MISMATCH`／`VERSION_MISMATCH`／`PACKAGE_QTY_MISMATCH`／`LOOKALIKE_DIFFERENT`／`DISCONTINUED`／`OTHER`（OTHER 必須填 `reasonText`）。
+
+`_apply_decision()` 寫入三種 origin：
+
+- `no_match`：該 suggestion 的所有候選（`reason_code` 必填；缺省時相容舊呼叫記為 OTHER＋「人工標記無匹配」）
+- `approve`／`replace` 且 AI `suggested_candidate_key` ≠ 人工選擇：只寫 AI 建議候選（`chose_other_candidate`）
+- `reject_candidate`：只否決單一候選，不改 suggestion 狀態（`explicit_reject`）
+
+API：`POST /api/sku-mapping/decisions` 接受 `reasonCode`／`reasonText`；OTHER 無說明 → 400。`GET /api/sku-mapping/negative-examples?productId&modelId` 或 `?offerId`。審核 `after_json` 含 `negative_example_ids`。本任務**不**把負例接進 judging（TASK 5）。
+
 停用 RULE-0001 後，同一 fixture 的尺寸 FN 必須可觀測地下降（`watch-blue-45` 不再被剔除）：
 
 ```bash

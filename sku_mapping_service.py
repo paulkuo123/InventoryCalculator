@@ -30,6 +30,9 @@ import requests
 
 from config_loader import load_deepseek_api_key, load_gemini_api_key, load_openai_api_key, load_openai_config_value, load_xai_api_key
 from mapping_knowledge import (
+    NEGATIVE_ORIGINS,
+    NEGATIVE_REASON_CODES,
+    NEGATIVE_REASON_LABELS,
     ai_green_confidence,
     ai_verified_green_confidence,
     color_alias_groups,
@@ -38,6 +41,8 @@ from mapping_knowledge import (
     knowledge_version,
     load_config,
     max_review_candidates,
+    normalize_reason_code,
+    reason_code_catalog,
     reset_match_category,
     rule_is_active,
     set_match_category,
@@ -757,9 +762,37 @@ class SkuMappingService:
                     created_at INTEGER NOT NULL,
                     FOREIGN KEY(suggestion_id) REFERENCES sku_mapping_suggestions(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS mapping_negative_examples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    model_name TEXT NOT NULL DEFAULT '',
+                    product_name TEXT NOT NULL DEFAULT '',
+                    offer_id TEXT NOT NULL DEFAULT '',
+                    candidate_key TEXT NOT NULL DEFAULT '',
+                    sku_id TEXT NOT NULL DEFAULT '',
+                    sku_name TEXT NOT NULL DEFAULT '',
+                    second_name TEXT NOT NULL DEFAULT '',
+                    reason_code TEXT NOT NULL,
+                    reason_text TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL,
+                    suggestion_id INTEGER,
+                    review_id INTEGER,
+                    reviewer TEXT NOT NULL DEFAULT 'local_user',
+                    created_at INTEGER NOT NULL,
+                    UNIQUE(product_id, model_id, offer_id, candidate_key),
+                    FOREIGN KEY(suggestion_id) REFERENCES sku_mapping_suggestions(id),
+                    FOREIGN KEY(review_id) REFERENCES sku_mapping_reviews(id)
+                );
                 CREATE INDEX IF NOT EXISTS idx_sku_suggestions_status ON sku_mapping_suggestions(status);
                 CREATE INDEX IF NOT EXISTS idx_sku_suggestions_offer ON sku_mapping_suggestions(offer_id);
                 CREATE INDEX IF NOT EXISTS idx_rule_hits_suggestion ON mapping_rule_hits(suggestion_id);
+                CREATE INDEX IF NOT EXISTS idx_negative_examples_product_model
+                    ON mapping_negative_examples(product_id, model_id);
+                CREATE INDEX IF NOT EXISTS idx_negative_examples_offer
+                    ON mapping_negative_examples(offer_id);
+                CREATE INDEX IF NOT EXISTS idx_negative_examples_suggestion
+                    ON mapping_negative_examples(suggestion_id);
                 """
             )
             snapshot_columns = {row["name"] for row in conn.execute("PRAGMA table_info(alibaba_offer_snapshots)").fetchall()}
@@ -1617,6 +1650,7 @@ class SkuMappingService:
             "knowledge": {
                 "config_version": config_version(),
                 "knowledge_version": knowledge_version(),
+                "reason_codes": reason_code_catalog(),
             },
         }
 
@@ -2438,6 +2472,7 @@ class SkuMappingService:
         ))
         total = len(result)
         result = result[(page - 1) * page_size: page * page_size]
+        self._attach_negative_examples(result)
         return {
             "status": "success",
             "items": result,
@@ -4565,6 +4600,209 @@ class SkuMappingService:
                 rows,
             )
 
+    def negative_examples(
+        self,
+        product_id: str = "",
+        model_id: str = "",
+        offer_id: str = "",
+    ) -> Dict[str, Any]:
+        product_id = normalize_id(product_id)
+        model_id = normalize_id(model_id) or str(model_id or "").strip()
+        offer_id = normalize_id(offer_id)
+        if not offer_id and (not product_id or not model_id):
+            raise ValueError("請提供 productId 與 modelId，或 offerId")
+        clauses = []
+        params: List[Any] = []
+        if product_id and model_id:
+            clauses.append("product_id=? AND model_id=?")
+            params.extend([product_id, model_id])
+        if offer_id:
+            clauses.append("offer_id=?")
+            params.append(offer_id)
+        where = " AND ".join(clauses)
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM mapping_negative_examples WHERE {where} ORDER BY created_at DESC, id DESC",
+                params,
+            ).fetchall()
+        return {
+            "status": "success",
+            "reasonCodes": reason_code_catalog(),
+            "items": [self._negative_public(dict(row)) for row in rows],
+        }
+
+    @staticmethod
+    def _negative_public(row: Dict[str, Any]) -> Dict[str, Any]:
+        reason_code = str(row.get("reason_code") or "")
+        return {
+            "id": int(row.get("id") or 0),
+            "product_id": str(row.get("product_id") or ""),
+            "model_id": str(row.get("model_id") or ""),
+            "model_name": str(row.get("model_name") or ""),
+            "product_name": str(row.get("product_name") or ""),
+            "offer_id": str(row.get("offer_id") or ""),
+            "candidate_key": str(row.get("candidate_key") or ""),
+            "sku_id": str(row.get("sku_id") or ""),
+            "sku_name": str(row.get("sku_name") or ""),
+            "second_name": str(row.get("second_name") or ""),
+            "reason_code": reason_code,
+            "reason_text": str(row.get("reason_text") or ""),
+            "reason_label": NEGATIVE_REASON_LABELS.get(reason_code, reason_code),
+            "origin": str(row.get("origin") or ""),
+            "suggestion_id": row.get("suggestion_id"),
+            "review_id": row.get("review_id"),
+            "reviewer": str(row.get("reviewer") or ""),
+            "created_at": int(row.get("created_at") or 0),
+        }
+
+    def _attach_negative_examples(self, items: Sequence[Dict[str, Any]]) -> None:
+        pairs = {
+            (str(item.get("product_id") or ""), str(item.get("model_id") or ""))
+            for item in items
+            if item.get("product_id") and item.get("model_id")
+        }
+        if not pairs:
+            return
+        clauses = " OR ".join("(product_id=? AND model_id=?)" for _ in pairs)
+        params: List[Any] = []
+        for product_id, model_id in pairs:
+            params.extend([product_id, model_id])
+        with self.connect() as conn:
+            rows = conn.execute(
+                f"SELECT * FROM mapping_negative_examples WHERE {clauses} ORDER BY created_at DESC, id DESC",
+                params,
+            ).fetchall()
+        grouped: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
+        for row in rows:
+            public = self._negative_public(dict(row))
+            grouped[(public["product_id"], public["model_id"])].append(public)
+        for item in items:
+            negatives = grouped.get((str(item.get("product_id") or ""), str(item.get("model_id") or "")), [])
+            item["negative_examples"] = negatives
+            by_key = {row["candidate_key"]: row for row in negatives if row.get("candidate_key")}
+            for candidate in item.get("candidates") or []:
+                if not isinstance(candidate, dict):
+                    continue
+                match = by_key.get(str(candidate.get("candidate_key") or ""))
+                if match:
+                    candidate["negative_example"] = match
+
+    @staticmethod
+    def _decision_reason(item: Dict[str, Any], action: str) -> Tuple[str, str]:
+        reason_code = normalize_reason_code(
+            item.get("reasonCode") if item.get("reasonCode") is not None else item.get("reason_code")
+        )
+        reason_text = str(
+            item.get("reasonText") if item.get("reasonText") is not None else item.get("reason_text") or ""
+        ).strip()
+        if reason_code and reason_code not in NEGATIVE_REASON_CODES:
+            raise ValueError(f"不支援的否決原因代碼：{reason_code}")
+        if reason_code == "OTHER" and not reason_text:
+            raise ValueError("OTHER 必須填寫原因說明")
+        if action == "no_match":
+            if not reason_code:
+                return "OTHER", reason_text or "人工標記無匹配"
+            return reason_code, reason_text
+        if action == "reject_candidate":
+            if not reason_code:
+                raise ValueError("否決候選必須選擇原因代碼")
+            return reason_code, reason_text
+        if not reason_code:
+            return "OTHER", reason_text or "人工選擇其他候選"
+        return reason_code, reason_text
+
+    def _upsert_negative_example(
+        self,
+        conn: sqlite3.Connection,
+        suggestion: Dict[str, Any],
+        candidate: Dict[str, Any],
+        *,
+        origin: str,
+        reason_code: str,
+        reason_text: str,
+        reviewer: str,
+        review_id: Optional[int],
+        created_at: int,
+    ) -> int:
+        if origin not in NEGATIVE_ORIGINS:
+            raise ValueError(f"不支援的負例來源：{origin}")
+        offer_id = str(suggestion.get("offer_id") or "")
+        candidate_key = str(candidate.get("candidate_key") or "").strip()
+        if not candidate_key:
+            candidate_key = mapping_candidate_key(
+                offer_id, candidate.get("sku_name", ""), candidate.get("second_name", "")
+            )
+        conn.execute(
+            """INSERT INTO mapping_negative_examples
+               (product_id, model_id, model_name, product_name, offer_id, candidate_key,
+                sku_id, sku_name, second_name, reason_code, reason_text, origin,
+                suggestion_id, review_id, reviewer, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(product_id, model_id, offer_id, candidate_key) DO UPDATE SET
+                model_name=excluded.model_name,
+                product_name=excluded.product_name,
+                sku_id=excluded.sku_id,
+                sku_name=excluded.sku_name,
+                second_name=excluded.second_name,
+                reason_code=excluded.reason_code,
+                reason_text=excluded.reason_text,
+                origin=excluded.origin,
+                suggestion_id=excluded.suggestion_id,
+                review_id=excluded.review_id,
+                reviewer=excluded.reviewer,
+                created_at=excluded.created_at""",
+            (
+                str(suggestion.get("product_id") or ""),
+                str(suggestion.get("model_id") or ""),
+                str(suggestion.get("model_name") or ""),
+                str(suggestion.get("product_name") or ""),
+                offer_id,
+                candidate_key,
+                normalize_id(candidate.get("sku_id")),
+                display_text(candidate.get("sku_name") or ""),
+                display_text(candidate.get("second_name") or ""),
+                reason_code,
+                reason_text,
+                origin,
+                suggestion.get("id"),
+                review_id,
+                reviewer,
+                created_at,
+            ),
+        )
+        row = conn.execute(
+            """SELECT id FROM mapping_negative_examples
+               WHERE product_id=? AND model_id=? AND offer_id=? AND candidate_key=?""",
+            (
+                str(suggestion.get("product_id") or ""),
+                str(suggestion.get("model_id") or ""),
+                offer_id,
+                candidate_key,
+            ),
+        ).fetchone()
+        return int(row["id"]) if row else 0
+
+    def _ai_suggested_candidate(self, row: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        suggested_key = str(row.get("suggested_candidate_key") or "").strip()
+        evidence = self._json_load(row.get("evidence_json"), {})
+        ai = evidence.get("ai") if isinstance(evidence, dict) else {}
+        if not suggested_key and isinstance(ai, dict):
+            suggested_key = str(ai.get("selected_candidate_key") or "").strip()
+        if not suggested_key:
+            return None
+        match = next(
+            (candidate for candidate in candidates if str(candidate.get("candidate_key") or "") == suggested_key),
+            None,
+        )
+        if match:
+            return match
+        return {
+            "candidate_key": suggested_key,
+            "sku_id": row.get("suggested_sku_id", ""),
+            "sku_name": row.get("suggested_sku_name", ""),
+            "second_name": row.get("suggested_second_name", ""),
+        }
+
     def decisions(self, items: Iterable[Dict[str, Any]], reviewer: str = "local_user", batch: bool = False) -> Dict[str, Any]:
         items = list(items or [])
         if not items:
@@ -4676,23 +4914,91 @@ class SkuMappingService:
             selected_parts = selected.get("parts") or self._json_load(selected.get("parts_json"), []) or _spec_parts(selected.get("spec_text"))
             if max(int(selected.get("dimension_count") or 0), len(selected_parts), 1) >= 2 and not display_text(selected.get("second_name")):
                 raise ValueError("此商品有第二規格，但核准資料缺少 1688_sku_second_name")
-            self._write_approved_mapping(row, selected, action, reviewer)
+            ai_suggested = self._ai_suggested_candidate(row, candidates)
+            rejected = None
+            reason_code = reason_text = ""
+            if ai_suggested and str(ai_suggested.get("candidate_key") or "") != str(selected.get("candidate_key") or ""):
+                reason_code, reason_text = self._decision_reason(item, action)
+                rejected = ai_suggested
+            self._write_approved_mapping(
+                row, selected, action, reviewer,
+                rejected_candidate=rejected, reason_code=reason_code, reason_text=reason_text,
+            )
             new_status = "approved"
         elif action == "discontinued":
             self._write_status_mapping(row, "discontinued", reviewer)
             new_status = "discontinued"
+        elif action == "reject_candidate":
+            if not selected:
+                raise ValueError("否決的 1688 規格名稱組合不在候選清單")
+            reason_code, reason_text = self._decision_reason(item, action)
+            now = int(time.time())
+            after_payload = {"status": row.get("status"), "negative_example_ids": []}
+            with self.connect() as conn:
+                review = conn.execute(
+                    "INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)",
+                    (row["id"], action, json.dumps(row, ensure_ascii=False), json.dumps(after_payload, ensure_ascii=False), reviewer, now),
+                )
+                review_id = int(review.lastrowid)
+                negative_id = self._upsert_negative_example(
+                    conn, row, selected,
+                    origin="explicit_reject",
+                    reason_code=reason_code,
+                    reason_text=reason_text,
+                    reviewer=reviewer,
+                    review_id=review_id,
+                    created_at=now,
+                )
+                after_payload["negative_example_ids"] = [negative_id]
+                conn.execute(
+                    "UPDATE sku_mapping_reviews SET after_json=? WHERE id=?",
+                    (json.dumps(after_payload, ensure_ascii=False), review_id),
+                )
+            new_status = str(row.get("status") or "pending")
         elif action in {"no_match", "defer"}:
             new_status = "no_match" if action == "no_match" else "pending"
             new_tier = "red" if action == "no_match" or not candidates else "yellow"
             new_reason = "人工標記無匹配" if action == "no_match" else DEFERRED_REVIEW_REASON
+            now = int(time.time())
+            after_payload: Dict[str, Any] = {"status": new_status, "review_tier": new_tier}
+            if action == "no_match":
+                reason_code, reason_text = self._decision_reason(item, action)
+                after_payload["negative_example_ids"] = []
             with self.connect() as conn:
-                conn.execute("UPDATE sku_mapping_suggestions SET status=?, review_tier=?, review_reason=?, version=version+1, updated_at=? WHERE id=?", (new_status, new_tier, new_reason, int(time.time()), row["id"]))
-                conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (row["id"], action, json.dumps(row, ensure_ascii=False), json.dumps({"status": new_status, "review_tier": new_tier}, ensure_ascii=False), reviewer, int(time.time())))
+                conn.execute("UPDATE sku_mapping_suggestions SET status=?, review_tier=?, review_reason=?, version=version+1, updated_at=? WHERE id=?", (new_status, new_tier, new_reason, now, row["id"]))
+                review = conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (row["id"], action, json.dumps(row, ensure_ascii=False), json.dumps(after_payload, ensure_ascii=False), reviewer, now))
+                if action == "no_match":
+                    review_id = int(review.lastrowid)
+                    negative_ids = []
+                    for candidate in candidates:
+                        negative_ids.append(self._upsert_negative_example(
+                            conn, row, candidate,
+                            origin="no_match",
+                            reason_code=reason_code,
+                            reason_text=reason_text,
+                            reviewer=reviewer,
+                            review_id=review_id,
+                            created_at=now,
+                        ))
+                    after_payload["negative_example_ids"] = negative_ids
+                    conn.execute(
+                        "UPDATE sku_mapping_reviews SET after_json=? WHERE id=?",
+                        (json.dumps(after_payload, ensure_ascii=False), review_id),
+                    )
         else:
             raise ValueError("不支援的 mapping action")
         return {"productId": product_id, "modelId": model_id, "status": new_status, "candidateKey": str(selected.get("candidate_key") or "") if selected else "", "skuId": selected_id, "skuName": str(selected.get("sku_name") or "") if selected else "", "skuSecondName": str(selected.get("second_name") or "") if selected else ""}
 
-    def _write_approved_mapping(self, suggestion: Dict[str, Any], candidate: Dict[str, Any], action: str, reviewer: str) -> None:
+    def _write_approved_mapping(
+        self,
+        suggestion: Dict[str, Any],
+        candidate: Dict[str, Any],
+        action: str,
+        reviewer: str,
+        rejected_candidate: Optional[Dict[str, Any]] = None,
+        reason_code: str = "",
+        reason_text: str = "",
+    ) -> None:
         golden = self._golden()
         product = golden.get(str(suggestion["product_id"]))
         if not isinstance(product, dict):
@@ -4743,7 +5049,25 @@ class SkuMappingService:
             self._sync_alibaba_binding(suggestion, target, candidate, now)
             with self.connect() as conn:
                 conn.execute("UPDATE sku_mapping_suggestions SET status='approved', review_tier='approved', review_reason='已核准', snapshot_id=COALESCE(?, snapshot_id), suggested_candidate_key=?, suggested_sku_id=?, suggested_sku_name=?, suggested_second_name=?, version=version+1, updated_at=? WHERE id=?", (snapshot_id, candidate.get("candidate_key", ""), candidate.get("sku_id", ""), candidate.get("sku_name", ""), target.get("1688_sku_second_name", ""), now, suggestion["id"]))
-                conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (suggestion["id"], action, json.dumps(before_mapping, ensure_ascii=False), json.dumps({key: target.get(key, "") for key in before_mapping}, ensure_ascii=False), reviewer, now))
+                after_payload = {key: target.get(key, "") for key in before_mapping}
+                after_payload["negative_example_ids"] = []
+                review = conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (suggestion["id"], action, json.dumps(before_mapping, ensure_ascii=False), json.dumps(after_payload, ensure_ascii=False), reviewer, now))
+                if rejected_candidate:
+                    review_id = int(review.lastrowid)
+                    negative_id = self._upsert_negative_example(
+                        conn, suggestion, rejected_candidate,
+                        origin="chose_other_candidate",
+                        reason_code=reason_code or "OTHER",
+                        reason_text=reason_text or "人工選擇其他候選",
+                        reviewer=reviewer,
+                        review_id=review_id,
+                        created_at=now,
+                    )
+                    after_payload["negative_example_ids"] = [negative_id]
+                    conn.execute(
+                        "UPDATE sku_mapping_reviews SET after_json=? WHERE id=?",
+                        (json.dumps(after_payload, ensure_ascii=False), review_id),
+                    )
         except Exception:
             restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
             restore_tmp.write_bytes(original_bytes)

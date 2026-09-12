@@ -387,6 +387,21 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json_response(500, {"status": "error", "message": str(e)})
             return
 
+        if request_path == '/api/sku-mapping/negative-examples':
+            try:
+                params = urllib.parse.parse_qs(parsed_path.query)
+                self._send_json_response(200, self._sku_mapping_store().negative_examples(
+                    product_id=params.get("productId", [""])[0],
+                    model_id=params.get("modelId", [""])[0],
+                    offer_id=params.get("offerId", [""])[0],
+                ))
+            except ValueError as e:
+                self._send_json_response(400, {"status": "error", "message": str(e)})
+            except Exception as e:
+                logger.exception(f"載入 SKU mapping 負例失敗: {e}")
+                self._send_json_response(500, {"status": "error", "message": str(e)})
+            return
+
         mapping_job_match = re.match(r'^/api/sku-mapping/jobs/([^/]+)$', request_path)
         if mapping_job_match:
             try:

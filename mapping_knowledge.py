@@ -5,7 +5,8 @@ Existing ``sku_mapping_service`` constants remain the defaults.  A valid
 falls back to those defaults and must not crash the mapping engine.
 
 TASK 3 adds aliases / rules / categories loaders and
-``python -m mapping_knowledge seed-aliases``.  This is not a second matcher
+``python -m mapping_knowledge seed-aliases``.  TASK 4 adds the shared
+negative-example reason-code catalog.  This is not a second matcher
 and does not enable auto-approve.
 """
 
@@ -97,6 +98,35 @@ DEFAULT_MAX_REVIEW_CANDIDATES = 4
 
 SCORE_WEIGHT_KEYS = ("feature", "historical", "rule", "llm")
 
+# SPEC 5.3 — shared UI/API reason-code catalog.  OTHER requires reason_text.
+NEGATIVE_REASON_CODES = (
+    "MODEL_MISMATCH",
+    "SIZE_MISMATCH",
+    "COLOR_MISMATCH",
+    "VERSION_MISMATCH",
+    "PACKAGE_QTY_MISMATCH",
+    "LOOKALIKE_DIFFERENT",
+    "DISCONTINUED",
+    "OTHER",
+)
+
+NEGATIVE_REASON_LABELS = {
+    "MODEL_MISMATCH": "型號不符",
+    "SIZE_MISMATCH": "尺寸不符",
+    "COLOR_MISMATCH": "顏色不符",
+    "VERSION_MISMATCH": "版本不符",
+    "PACKAGE_QTY_MISMATCH": "包裝數量不符",
+    "LOOKALIKE_DIFFERENT": "外觀相似但不同商品",
+    "DISCONTINUED": "已停售／下架",
+    "OTHER": "其他",
+}
+
+NEGATIVE_ORIGINS = (
+    "explicit_reject",
+    "chose_other_candidate",
+    "no_match",
+)
+
 DEFAULT_CONFIG: Dict[str, Any] = {
     "version": 1,
     "thresholds": {
@@ -119,6 +149,18 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "min_historical_support": 1,
     },
 }
+
+
+def reason_code_catalog() -> List[Dict[str, str]]:
+    """Return the shared reason-code list for API and UI."""
+    return [
+        {"code": code, "label": NEGATIVE_REASON_LABELS[code]}
+        for code in NEGATIVE_REASON_CODES
+    ]
+
+
+def normalize_reason_code(value: Any) -> str:
+    return str(value or "").strip().upper()
 
 
 def default_config() -> Dict[str, Any]:

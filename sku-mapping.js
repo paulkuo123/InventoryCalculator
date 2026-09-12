@@ -1,6 +1,16 @@
 (() => {
   const $ = id => document.getElementById(id);
-  const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '', inventorySource: null };
+  const NEGATIVE_REASON_CODES = [
+    { code: 'MODEL_MISMATCH', label: '型號不符' },
+    { code: 'SIZE_MISMATCH', label: '尺寸不符' },
+    { code: 'COLOR_MISMATCH', label: '顏色不符' },
+    { code: 'VERSION_MISMATCH', label: '版本不符' },
+    { code: 'PACKAGE_QTY_MISMATCH', label: '包裝數量不符' },
+    { code: 'LOOKALIKE_DIFFERENT', label: '外觀相似但不同商品' },
+    { code: 'DISCONTINUED', label: '已停售／下架' },
+    { code: 'OTHER', label: '其他' },
+  ];
+  const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '', inventorySource: null, reasonCodes: NEGATIVE_REASON_CODES };
   const urlState = { groups: [], activeGroup: null, preview: null, busy: false, healthBusy: false, healthJobId: '', loadRequest: 0 };
   const baseTitle = document.title;
   let operationDismissTimer = null;
@@ -156,7 +166,19 @@
     const selected = item.review_tier === 'green' && suggested;
     return `<div class="candidate ${selected ? 'selected' : ''} ${suggested ? 'suggested' : ''}" data-key="${esc(candidate.candidate_key || '')}" data-sku="${esc(candidate.sku_id)}" data-name="${esc(skuName)}" data-second="${esc(secondName)}" data-item="${esc(item.id)}">
       <span class="rank">${rank}</span>${candidate.image_url ? `<img src="${esc(candidate.image_url)}" loading="lazy" alt="">` : ''}
-      <strong>${esc(skuName || '未命名規格')}${secondName ? ` → ${esc(secondName)}` : ''}</strong><small class="full-spec"><b>完整規格（含型號／第二規格）：</b><br>${esc(candidate.spec_text || [skuName, secondName].filter(Boolean).join(' → ') || skuName || '')}</small><small>SKU ID（輔助）：${esc(candidate.sku_id || '—')}</small><small>價格：${esc(candidate.price ?? '—')}　庫存：${esc(candidate.stock ?? '—')}</small><small>規則分數：${esc(candidate.deterministic_score)}</small>${approvedFallback ? '<small class="suggested-label">目前已核准 mapping（顯示用）</small>' : suggested ? '<small class="suggested-label">系統建議</small>' : ''}</div>`;
+      <strong>${esc(skuName || '未命名規格')}${secondName ? ` → ${esc(secondName)}` : ''}</strong><small class="full-spec"><b>完整規格（含型號／第二規格）：</b><br>${esc(candidate.spec_text || [skuName, secondName].filter(Boolean).join(' → ') || skuName || '')}</small><small>SKU ID（輔助）：${esc(candidate.sku_id || '—')}</small><small>價格：${esc(candidate.price ?? '—')}　庫存：${esc(candidate.stock ?? '—')}</small><small>規則分數：${esc(candidate.deterministic_score)}</small>${approvedFallback ? '<small class="suggested-label">目前已核准 mapping（顯示用）</small>' : suggested ? '<small class="suggested-label">系統建議</small>' : ''}${rejectedBanner(candidate)}<button type="button" class="reject-candidate" data-action="reject_candidate">否決此候選</button></div>`;
+  }
+
+  function reasonLabel(code, text) {
+    const row = (state.reasonCodes || NEGATIVE_REASON_CODES).find(item => item.code === code);
+    const label = row ? row.label : (code || '其他');
+    return text ? `${label}（${text}）` : label;
+  }
+
+  function rejectedBanner(candidate) {
+    const neg = candidate.negative_example;
+    if (!neg) return '';
+    return `<small class="rejected-label">曾被否決：${esc(reasonLabel(neg.reason_code, neg.reason_text))}</small>`;
   }
 
   function isSuggestedCandidate(item, candidate) {
@@ -277,6 +299,9 @@
     const response = await fetch(`/api/sku-mapping/summary?_=${Date.now()}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || data.status !== 'success') throw new Error(data.message || '摘要載入失敗');
+    if (Array.isArray(data.knowledge?.reason_codes) && data.knowledge.reason_codes.length) {
+      state.reasonCodes = data.knowledge.reason_codes;
+    }
     renderSummary(data);
     return data;
   }
@@ -645,17 +670,88 @@
     return { candidateKey: fallback.dataset.key || '', skuId: fallback.dataset.sku || '', skuName: fallback.dataset.name || '', skuSecondName: fallback.dataset.second || '' };
   }
 
+  function fillReasonOptions() {
+    const select = $('reasonCode');
+    if (!select) return;
+    const codes = state.reasonCodes || NEGATIVE_REASON_CODES;
+    select.innerHTML = codes.map(row => `<option value="${esc(row.code)}">${esc(row.label)}</option>`).join('');
+  }
+
+  function closeReasonModal() {
+    const modal = $('reasonModal');
+    if (modal) modal.hidden = true;
+    if (state.reasonResolver) {
+      const resolve = state.reasonResolver;
+      state.reasonResolver = null;
+      resolve(null);
+    }
+  }
+
+  function promptMappingReason({ title, hint, optional = false } = {}) {
+    fillReasonOptions();
+    $('reasonTitle').textContent = title || '選擇否決原因';
+    $('reasonHint').textContent = hint || (optional ? '可選原因；未選時會記為「其他」。選「其他」時必須填寫說明。' : '請選擇原因代碼；選「其他」時必須填寫原因說明。');
+    $('reasonText').value = '';
+    $('reasonError').hidden = true;
+    if (optional && [...$('reasonCode').options].some(option => option.value === 'OTHER')) {
+      $('reasonCode').value = 'OTHER';
+    }
+    $('reasonModal').hidden = false;
+    $('reasonCode').focus();
+    state.reasonOptional = Boolean(optional);
+    return new Promise(resolve => {
+      state.reasonResolver = resolve;
+    });
+  }
+
+  function readReasonForm(optional = false) {
+    const reasonCode = String($('reasonCode')?.value || '').trim();
+    const reasonText = String($('reasonText')?.value || '').trim();
+    if (!optional && !reasonCode) {
+      $('reasonError').hidden = false;
+      $('reasonError').textContent = '請選擇原因代碼。';
+      return null;
+    }
+    if (reasonCode === 'OTHER' && !reasonText) {
+      if (optional) return { reasonCode: 'OTHER', reasonText: '人工選擇其他候選' };
+      $('reasonError').hidden = false;
+      $('reasonError').textContent = '選「其他」時必須填寫原因說明。';
+      return null;
+    }
+    return { reasonCode: reasonCode || 'OTHER', reasonText: reasonText || (reasonCode && reasonCode !== 'OTHER' ? '' : '人工選擇其他候選') };
+  }
+
   async function decide(cardElement, action, explicitSkuId = '', triggerButton = null) {
     const item = state.items.find(row => String(row.id) === String(cardElement.dataset.id));
     if (!item) return;
     const selection = selectionFromCard(cardElement);
     if (explicitSkuId && !selection.skuId) selection.skuId = explicitSkuId;
     if (['approve','replace'].includes(action) && !selection.candidateKey && !selection.skuName && !selection.skuId) { message('請先選擇完整規格名稱，或從完整 SKU 清單手動指定。', 'error'); return; }
-    if (['replace','discontinued','no_match'].includes(action) && !window.confirm(`確定要${action === 'replace' ? '取代既有 mapping' : action === 'discontinued' ? '標記停售' : '標記無匹配'}嗎？`)) return;
+    if (action === 'reject_candidate' && !selection.candidateKey && !selection.skuName && !selection.skuId) { message('請先選擇要否決的候選。', 'error'); return; }
+    let reason = { reasonCode: '', reasonText: '' };
+    if (action === 'no_match' || action === 'reject_candidate') {
+      reason = await promptMappingReason({
+        title: action === 'no_match' ? '標記無匹配' : '否決此候選',
+        hint: action === 'no_match' ? '這會把此型號的所有候選記為負例。選「其他」時必須填寫說明。' : '只否決這一個候選，不會改 suggestion 狀態。選「其他」時必須填寫說明。',
+      });
+      if (!reason) return;
+    } else if (['replace','discontinued'].includes(action) && !window.confirm(`確定要${action === 'replace' ? '取代既有 mapping' : '標記停售'}嗎？`)) {
+      return;
+    } else if (['approve','replace'].includes(action)) {
+      const suggestedKey = String(item.suggested_candidate_key || item.evidence?.ai?.selected_candidate_key || '');
+      if (suggestedKey && selection.candidateKey && suggestedKey !== selection.candidateKey) {
+        reason = await promptMappingReason({
+          title: '系統建議與此不同',
+          hint: '請選擇否決系統建議的原因；未填且選「其他」時必須說明。可直接確認以「其他」紀錄。',
+          optional: true,
+        });
+        if (!reason) return;
+      }
+    }
     if (triggerButton) triggerButton.disabled = true;
     message(action === 'approve' ? '正在儲存 SKU mapping…' : '正在更新 mapping 狀態…');
     try {
-      const response = await fetch('/api/sku-mapping/decisions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ items: [{ productId: item.product_id, modelId: item.model_id, action, candidateKey: selection.candidateKey, skuId: selection.skuId, skuName: selection.skuName, skuSecondName: selection.skuSecondName, version: item.version }] }) });
+      const response = await fetch('/api/sku-mapping/decisions', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ items: [{ productId: item.product_id, modelId: item.model_id, action, candidateKey: selection.candidateKey, skuId: selection.skuId, skuName: selection.skuName, skuSecondName: selection.skuSecondName, version: item.version, reasonCode: reason.reasonCode, reasonText: reason.reasonText }] }) });
       const data = await response.json();
       if (response.status === 409) { await reload(); message('這筆資料剛重新掃描，頁面版本已更新；請使用重新載入後的候選再操作。', 'error'); return; }
       if (!response.ok || !['success'].includes(data.status)) throw new Error(data.message || '儲存 mapping 失敗');
@@ -713,7 +809,15 @@
       ? `確定將 ${rows.length} 筆標記為「無匹配」？這不會刪除 1688 快照，之後仍可重新掃描或重跑 AI。`
       : `確定將 ${rows.length} 筆標記為「停售」？這些項目會被阻擋採購。`;
     if (!window.confirm(prompt)) return;
-    const items = rows.map(row => ({ productId: row.product_id, modelId: row.model_id, action, version: row.version }));
+    let reason = { reasonCode: '', reasonText: '' };
+    if (action === 'no_match') {
+      reason = await promptMappingReason({
+        title: '批次標記無匹配',
+        hint: '同一組原因會套用到所有勾選型號的候選。選「其他」時必須填寫說明。',
+      });
+      if (!reason) return;
+    }
+    const items = rows.map(row => ({ productId: row.product_id, modelId: row.model_id, action, version: row.version, reasonCode: reason.reasonCode, reasonText: reason.reasonText }));
     setBatchBusy(true, `${label}進行中：已送出 ${rows.length} 筆`);
     try {
       const response = await fetch('/api/sku-mapping/decisions', {
@@ -1201,6 +1305,17 @@
       loadCatalog(catalogSelect.closest('.card'));
       return;
     }
+    const rejectButton = event.target.closest('[data-action="reject_candidate"]');
+    if (rejectButton) {
+      const candidate = rejectButton.closest('.candidate');
+      const cardElement = rejectButton.closest('.card');
+      if (candidate && cardElement) {
+        cardElement.querySelectorAll('.candidate').forEach(node => node.classList.remove('selected'));
+        candidate.classList.add('selected');
+        rememberSelection(cardElement);
+      }
+      return decide(cardElement, 'reject_candidate', '', rejectButton);
+    }
     const candidate = event.target.closest('.candidate');
     if (candidate) { const parent = candidate.closest('.card'); parent.querySelectorAll('.candidate').forEach(node => node.classList.remove('selected')); candidate.classList.add('selected'); rememberSelection(parent); return; }
     const button = event.target.closest('button[data-action]');
@@ -1268,6 +1383,10 @@
   });
   ['status', 'tier', 'urlPresence', 'restockOnly'].forEach(id => $(id).addEventListener('change', () => { clearSelections(); state.page = 1; reload(); }));
   document.addEventListener('keydown', event => {
+    if (event.key === 'Escape' && !$('reasonModal')?.hidden) {
+      closeReasonModal();
+      return;
+    }
     if (event.key === 'Escape' && !$('urlChangeModal').hidden) {
       closeUrlChange();
       return;
@@ -1276,6 +1395,17 @@
     if (!active || ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
     if (/^[1-5]$/.test(event.key)) active.querySelectorAll('.candidate')[Number(event.key) - 1]?.click();
     if (event.key === 'Enter') active.querySelector('[data-action="approve"]')?.click();
+  });
+  $('reasonConfirm')?.addEventListener('click', () => {
+    const reason = readReasonForm(Boolean(state.reasonOptional));
+    if (!reason) return;
+    const resolve = state.reasonResolver;
+    state.reasonResolver = null;
+    $('reasonModal').hidden = true;
+    if (resolve) resolve(reason);
+  });
+  $('reasonModal')?.addEventListener('click', event => {
+    if (event.target.closest('[data-reason-close]')) closeReasonModal();
   });
   $('skuReviewTab').addEventListener('click', () => switchWorkbench('sku'));
   $('urlManagerTab').addEventListener('click', () => switchWorkbench('urls'));
