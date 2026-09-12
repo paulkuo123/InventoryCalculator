@@ -259,6 +259,8 @@ python3 crawler.py --mode ads-export --output ads_export_result.json --headless 
 
 每個範圍都會先等待 Shopee 產出檔案，再下載 CSV 到 `ads_exports/`。
 
+**週報（營運顧問）請改跑遠端盒上的 `python3 ads_weekly.py`**，不要再透過 ListMachines 打 Mac。預設連已登入的 Chrome CDP（`http://127.0.0.1:9232` 或 `SHOPEE_ADS_CDP`）。輸出在 `reports/ads_weekly/YYYYMMDD/`。登入牆／驗證碼會寫 `BLOCKER.md` 並失敗結束。見 [`docs/ads_weekly_pipeline.md`](docs/ads_weekly_pipeline.md)。
+
 ### 廣告分析
 當 `ads_exports/` 內已有廣告 CSV 後，可手動執行分析：
 
@@ -351,6 +353,8 @@ InventoryCalculator/
 ├── restock_batch.py / restock_rules.py
 ├── sku_mapping_service.py  # SKU 快照、候選、AI 與審核
 ├── ads_analysis.py         # Shopee 廣告分析
+├── ads_weekly.py           # 週報抓取（預設遠端 CDP，不走 Mac）
+├── ads_session.py          # 遠端工作階段／BLOCKER 輔助
 ├── crawler.py              # 蝦皮爬蟲與廣告匯出
 ├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / mutate）
 ├── scripts/                # 現行 CDP 輔助腳本（freeze／mutate 以 runpy 載入，勿刪）
@@ -368,7 +372,8 @@ InventoryCalculator/
 │   ├── cart-reconciliation.md
 │   ├── ads_analysis_rules.md
 │   ├── ads_metrics_dictionary.md
-│   └── ads_report_prompt_spec.md
+│   ├── ads_report_prompt_spec.md
+│   └── ads_weekly_pipeline.md
 ├── tests/                  # pytest（含 reverse_audit 離線安全測試）
 ├── watchlists/             # 個人關注與排除清單
 ├── golden_table.json       # 已核准 mapping（納入 git）

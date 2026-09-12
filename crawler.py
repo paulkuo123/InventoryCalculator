@@ -11,6 +11,15 @@ import os
 import random
 import shutil
 
+from ads_session import (
+    BROWSER_SOURCE_MAC,
+    BROWSER_SOURCE_REMOTE,
+    detect_session_blocker,
+    is_blocker_error,
+    normalize_browser_source,
+    resolve_cdp_endpoint,
+    safe_url_for_log,
+)
 from housekeeping import prune_generated_files
 from restock_rules import round_calculated_restock_qty
 
@@ -43,7 +52,10 @@ class ShopeeCrawler:
                  output_path="shopee_products.json",
                  search_keyword="",
                  headless=False,
-                 inventory_month=4):
+                 inventory_month=4,
+                 browser_source=BROWSER_SOURCE_MAC,
+                 cdp_endpoint=None,
+                 ads_export_dir=None):
         self.shopee_url = shopee_url
         self.cookies_path = cookies_path
         self.my_products_url = my_products_url
@@ -51,10 +63,16 @@ class ShopeeCrawler:
         self.search_keyword = search_keyword  # 保存搜尋關鍵字
         self.headless = headless
         self.inventory_month = inventory_month
+        self.browser_source = normalize_browser_source(browser_source)
+        self.cdp_endpoint = resolve_cdp_endpoint(cdp_endpoint)
         self.products_data = {}
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
-        self.ads_export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ads_exports")
+        self._owns_browser = True
+        self._owns_page = True
+        self._cdp_attached = False
+        default_export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ads_exports")
+        self.ads_export_dir = ads_export_dir or default_export_dir
         # 初始化 Playwright 瀏覽器
         self._init_browser()
 
@@ -70,6 +88,10 @@ class ShopeeCrawler:
 
     def _init_browser(self):
         """使用 Playwright 初始化瀏覽器"""
+        if self.browser_source == BROWSER_SOURCE_REMOTE:
+            self._init_remote_cdp_browser()
+            return
+
         # 動態選擇 User Agent，避免硬編碼單一版本
         user_agent = random.choice(USER_AGENTS)
 
@@ -118,12 +140,56 @@ class ShopeeCrawler:
         self.driver = PlaywrightDriver(self.page)
         print("Playwright 瀏覽器啟動成功")
 
+    def _init_remote_cdp_browser(self):
+        """Attach to an already-logged-in remote Chrome. Never launch a new profile."""
+        endpoint = self.cdp_endpoint
+        print(f"正在連線遠端 Chrome CDP: {endpoint}")
+        self.playwright = sync_playwright().start()
+        try:
+            self.browser = self.playwright.chromium.connect_over_cdp(endpoint)
+        except Exception as e:
+            try:
+                self.playwright.stop()
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"CDP_UNAVAILABLE: 無法連線遠端 Chrome ({endpoint}): {e}"
+            ) from e
+        if not self.browser.contexts:
+            raise RuntimeError("CDP_UNAVAILABLE: 遠端 Chrome 沒有可用的 browser context")
+        self.context = self.browser.contexts[0]
+        self._owns_browser = False
+        self._cdp_attached = True
+        self.page, self._owns_page = self._pick_or_create_ads_page(self.context)
+        self.driver = PlaywrightDriver(self.page)
+        print("已連線遠端已登入 Chrome（不載入 cookies.json，也不會關閉遠端瀏覽器）")
+
+    def _pick_or_create_ads_page(self, context):
+        for page in context.pages:
+            try:
+                url = page.url or ""
+            except Exception:
+                continue
+            if "seller.shopee.tw" in url and detect_session_blocker(url) is None:
+                return page, False
+        return context.new_page(), True
+
     def cleanup(self):
         """清理 Playwright 資源（防重入）"""
         if self._cleaned_up:
             return
         self._cleaned_up = True
         try:
+            if self._cdp_attached:
+                if self._owns_page and hasattr(self, "page") and self.page:
+                    try:
+                        self.page.close()
+                    except Exception:
+                        pass
+                if hasattr(self, "playwright") and self.playwright:
+                    self.playwright.stop()
+                print("已中斷 CDP 連線（遠端 Chrome 保持開啟）")
+                return
             if hasattr(self, 'page') and self.page:
                 self.page.close()
             if hasattr(self, 'context') and self.context:
@@ -657,6 +723,9 @@ class ShopeeCrawler:
             print(f"⚠️ 回存 Cookies 失敗: {e}")
 
     def login(self):
+        if self.browser_source == BROWSER_SOURCE_REMOTE:
+            self._ensure_remote_seller_session()
+            return
         try:
             # 前往蝦皮賣家中心登入頁面
             self.page.goto(self.shopee_url, wait_until="domcontentloaded")
@@ -698,6 +767,7 @@ class ShopeeCrawler:
 
             # 關閉可能的通知視窗
             self.close_all_shopee_popups()
+            self._raise_if_session_blocked()
             print("成功進入賣家中心")
 
             # ✅ 登入成功後立刻回存最新 Cookies，延長有效期
@@ -710,6 +780,47 @@ class ShopeeCrawler:
             print(f"登入過程中發生錯誤: {e}")
             import traceback
             traceback.print_exc()
+            raise RuntimeError(f"SESSION_DEAD: 登入過程失敗: {e}") from e
+
+    def _seller_center_url(self):
+        return self.my_products_url or "https://seller.shopee.tw/portal/product/list/live/all"
+
+    def _safe_page_text(self):
+        try:
+            return (self.page.inner_text("body", timeout=3000) or "")[:4000]
+        except Exception:
+            return ""
+
+    def _raise_if_session_blocked(self):
+        url = ""
+        try:
+            url = self.page.url or ""
+        except Exception:
+            url = ""
+        reason = detect_session_blocker(url, self._safe_page_text())
+        if reason:
+            print(f"SESSION_BLOCKER: {reason} url={safe_url_for_log(url)}")
+            raise RuntimeError(reason)
+
+    def _ensure_remote_seller_session(self):
+        target = self._seller_center_url()
+        print(f"遠端 CDP 工作階段：前往賣家中心（不載入 cookies.json）{safe_url_for_log(target)}")
+        try:
+            self.page.goto(target, wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            raise RuntimeError(f"SESSION_DEAD: 無法開啟賣家中心: {e}") from e
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            print("networkidle 等待超時，繼續檢查登入狀態")
+        self._raise_if_session_blocked()
+        current_url = self.page.url or ""
+        if "seller.shopee.tw" not in current_url:
+            raise RuntimeError(
+                f"SESSION_DEAD: 遠端 Chrome 未停在賣家中心 ({safe_url_for_log(current_url)})"
+            )
+        self.close_all_shopee_popups()
+        print("遠端 Chrome 已確認賣家中心工作階段")
 
     def _navigate_to_datacenter(self):
         url = "https://seller.shopee.tw/datacenter/product/performance"
@@ -894,7 +1005,8 @@ class ShopeeCrawler:
                 print(f"進入 {url} 時出錯: {e}")
                 continue
 
-            print(f"目前頁面 URL: {self.page.url}")
+            print(f"目前頁面 URL: {safe_url_for_log(self.page.url)}")
+            self._raise_if_session_blocked()
             self.close_all_shopee_popups()
             try:
                 self._open_marketing_menu()
@@ -927,7 +1039,7 @@ class ShopeeCrawler:
         print(f"{prefix} {message}")
 
     def _build_ads_range_configs(self):
-        today = datetime.now().date()
+        today = datetime.now(ZoneInfo("Asia/Taipei")).date()
         yesterday = today - timedelta(days=1)
         anchor_date = yesterday
         if anchor_date.month == 1:
@@ -977,7 +1089,7 @@ class ShopeeCrawler:
         }
 
     def _build_ads_trend_range_configs(self, week_count=DEFAULT_TREND_EXPORT_WEEKS):
-        anchor_date = datetime.now().date() - timedelta(days=1)
+        anchor_date = datetime.now(ZoneInfo("Asia/Taipei")).date() - timedelta(days=1)
 
         def fmt(date_value):
             return date_value.strftime("%Y/%m/%d")
@@ -1110,6 +1222,7 @@ class ShopeeCrawler:
             except Exception as e:
                 navigation_error = e
                 self._ads_log("RANGE", f"{range_config['label']} 報表頁導頁逾時，改用頁面元素確認是否已進入: {e}", range_config["label"])
+            self._raise_if_session_blocked()
 
             try:
                 self.page.wait_for_load_state("networkidle", timeout=10000)
@@ -1593,7 +1706,16 @@ class ShopeeCrawler:
             return False
         start_date, end_date = self._extract_report_date_range(report_name)
         if start_date and end_date:
-            return start_date == range_config["start_date"] and end_date == range_config["end_date"]
+            expected_start = range_config["start_date"]
+            expected_end = range_config["end_date"]
+            if end_date != expected_end:
+                return False
+            # Shopee 預設「近 7 天／過去一個月」起日常與我方算法差 1 天
+            if start_date == expected_start:
+                return True
+            if expected_start != expected_end and abs((start_date - expected_start).days) <= 1:
+                return True
+            return False
         return any(re.search(pattern, report_name) for pattern in range_config["report_patterns"])
 
     def _extract_report_date_range(self, report_name):
@@ -1881,8 +2003,10 @@ class ShopeeCrawler:
             self._ads_log("INIT", "開始初始化廣告匯出流程（2 份摘要 + 4 週趨勢，共 6 份）")
             self.login()
             self._ads_log("LOGIN", "登入賣家中心成功")
+            self._raise_if_session_blocked()
             self._navigate_to_ads_center()
             self._ads_log("NAV", "已進入蝦皮廣告頁面")
+            self._raise_if_session_blocked()
 
             summary_configs = self._build_ads_range_configs()
             trend_configs = self._build_ads_trend_range_configs(DEFAULT_TREND_EXPORT_WEEKS)
@@ -1895,8 +2019,8 @@ class ShopeeCrawler:
             return summary
 
         except RuntimeError as e:
-            if "COOKIES_EXPIRED" in str(e):
-                print("COOKIES_EXPIRED: Cookies 已失效，請重新取得並更新 cookies.json")
+            if is_blocker_error(e):
+                print(str(e))
                 import sys
                 sys.exit(77)
             raise
@@ -1906,8 +2030,10 @@ class ShopeeCrawler:
             self._ads_log("INIT", f"開始初始化廣告趨勢匯出流程（{week_count} 週）")
             self.login()
             self._ads_log("LOGIN", "登入賣家中心成功")
+            self._raise_if_session_blocked()
             self._navigate_to_ads_center()
             self._ads_log("NAV", "已進入蝦皮廣告頁面")
+            self._raise_if_session_blocked()
 
             range_configs = self._build_ads_trend_range_configs(week_count)
             range_order = list(range_configs.keys())
@@ -1918,8 +2044,8 @@ class ShopeeCrawler:
             return summary
 
         except RuntimeError as e:
-            if "COOKIES_EXPIRED" in str(e):
-                print("COOKIES_EXPIRED: Cookies 已失效，請重新取得並更新 cookies.json")
+            if is_blocker_error(e):
+                print(str(e))
                 import sys
                 sys.exit(77)
             raise
@@ -2948,6 +3074,16 @@ def main():
                             type=int,
                             default=DEFAULT_TREND_EXPORT_WEEKS,
                             help='廣告趨勢匯出週數')
+        parser.add_argument('--browser-source',
+                            choices=['remote', 'mac'],
+                            default='mac',
+                            help='remote=連已登入 Chrome CDP；mac=本機 Chromium + cookies.json')
+        parser.add_argument('--cdp-endpoint',
+                            default='',
+                            help='CDP URL，預設 SHOPEE_ADS_CDP 或 http://127.0.0.1:9232')
+        parser.add_argument('--ads-export-dir',
+                            default='',
+                            help='廣告 CSV 下載目錄（週報請指向 reports/ads_weekly/YYYYMMDD/ads_exports）')
 
         args = parser.parse_args()
 
@@ -2974,7 +3110,10 @@ def main():
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
                                 driver_path, args.output, args.keyword.strip(),
                                 headless=headless_mode,
-                                inventory_month=args.inventory_month)
+                                inventory_month=args.inventory_month,
+                                browser_source=args.browser_source,
+                                cdp_endpoint=args.cdp_endpoint or None,
+                                ads_export_dir=args.ads_export_dir or None)
 
         # 運行指定流程
         if args.mode == 'ads-export':
