@@ -16,6 +16,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import requests
 
+from ads_scope import (
+    DEFAULT_SCOPE_EXTRA_IDS,
+    RANKING_CATEGORY_LIMIT,
+    REPORT_PRODUCT_CAP,
+    SCOPE_DECISION_WINDOWS,
+    SCOPE_KEYWORD_GROUPS,
+    collect_scope_products,
+    is_in_scope,
+    is_scope_active,
+    ranking_items_for_text,
+    restore_missing_scope_products,
+    select_report_products,
+    take_category_with_scope,
+)
 from config_loader import load_openai_api_key, load_openai_config_value
 
 
@@ -890,6 +904,20 @@ class AdsAnalyzer:
             yesterday = window_map.get("yesterday", {})
             recent_week = window_map.get("week_01", {})
             past_month = window_map.get("past_month", {})
+            ad_name = next(
+                (str(item.get("ad_name") or "") for item in rows if item.get("ad_name")),
+                str(stable.get("ad_name") or ""),
+            )
+            in_scope, scope_group = is_in_scope(
+                product_name=stable.get("product_name", ""),
+                ad_name=ad_name,
+                product_id=product_id,
+                extra_ids=DEFAULT_SCOPE_EXTRA_IDS,
+            )
+            decision_rows = [
+                item for item in rows if item.get("window_key") in SCOPE_DECISION_WINDOWS
+            ]
+            scope_active = in_scope and is_scope_active(decision_rows or rows)
 
             direct_share = (
                 stable["direct_sales_amount"] / stable["sales_amount"]
@@ -921,12 +949,37 @@ class AdsAnalyzer:
                 spend_growth_pct=spend_growth_pct,
                 yesterday_vs_month_sales_pct=yesterday_vs_month_sales_pct,
             )
+            rule_category = category
+            if category == "忽略" and in_scope and scope_active:
+                category = "先觀察"
+                priority = max(priority, 55)
+                action_title = "焦點商品"
+                action_detail = (
+                    f"此商品在分析焦點範圍（{scope_group}），"
+                    "昨天／近一週／近月有花費或狀態為投放中，"
+                    "雖未達調整門檻，仍列入報告以免被 36 件上限裁掉。"
+                )
+                action_steps = [
+                    "先維持投放，不要因為報告新列入就立刻改預算。",
+                    "連續看 2 到 3 天昨天與近一週直接 ROAS。",
+                    "若接下來一週直接 ROAS 仍弱於 3，再依既有規則轉入降預算。",
+                ]
+                primary_issue = "需繼續觀察"
 
             diagnostics.append({
                 "product_id": product_id,
                 "product_name": stable.get("product_name", ""),
+                "ad_name": ad_name,
+                "status": next(
+                    (str(item.get("status") or "") for item in decision_rows if item.get("status")),
+                    str(stable.get("status") or ""),
+                ),
                 "product_image_url": stable.get("product_image_url", ""),
                 "variant_count": stable.get("variant_count", 0),
+                "in_scope": in_scope,
+                "scope_group": scope_group,
+                "scope_active": scope_active,
+                "rule_category": rule_category,
                 "category": category,
                 "priority": priority,
                 "action_title": action_title,
@@ -1024,12 +1077,16 @@ class AdsAnalyzer:
         diagnostics.sort(key=lambda item: (-item["priority"], item["product_name"]))
 
         rankings = {
-            "scale_up": diagnostics_by_category(diagnostics, "立即加碼", limit=8),
-            "reduce_budget": diagnostics_by_category(diagnostics, "優先降預算", limit=8),
-            "indirect_dependency": diagnostics_by_category(diagnostics, "依賴間接轉換", limit=8),
-            "watchlist": diagnostics_by_category(diagnostics, "先觀察", limit=8),
+            "scale_up": take_category_with_scope(diagnostics, "立即加碼", limit=RANKING_CATEGORY_LIMIT),
+            "reduce_budget": take_category_with_scope(diagnostics, "優先降預算", limit=RANKING_CATEGORY_LIMIT),
+            "indirect_dependency": take_category_with_scope(diagnostics, "依賴間接轉換", limit=RANKING_CATEGORY_LIMIT),
+            "watchlist": take_category_with_scope(diagnostics, "先觀察", limit=RANKING_CATEGORY_LIMIT),
         }
-        return {"products": diagnostics, "rankings": rankings}
+        return {
+            "products": diagnostics,
+            "rankings": rankings,
+            "scope_products": collect_scope_products(diagnostics),
+        }
 
     def _classify_product(
         self,
@@ -1191,6 +1248,11 @@ class AdsAnalyzer:
         watch_count = len(product_analysis["rankings"]["watchlist"])
         if watch_count:
             action_points.append(f"有 {watch_count} 個商品屬於短期波動，建議先觀察 2 到 3 天再決定是否大調。")
+        scope_count = len(product_analysis.get("scope_products") or [])
+        if scope_count:
+            action_points.append(
+                f"焦點範圍（{'／'.join(SCOPE_KEYWORD_GROUPS)}）有 {scope_count} 個商品已強制列入報告，不會因 36 件上限被裁掉。"
+            )
         if not action_points:
             action_points.append("目前帳戶沒有明顯異常，可先維持投放並持續累積歷史資料。")
 
@@ -1204,6 +1266,7 @@ class AdsAnalyzer:
         snapshot = item.get("decision_snapshot", {}).get("yesterday", {})
         month_snapshot = item.get("decision_snapshot", {}).get("past_month", {})
         return any([
+            item.get("in_scope") and item.get("scope_active"),
             item.get("category") in ("立即加碼", "優先降預算", "依賴間接轉換"),
             snapshot.get("spend", 0) >= 80,
             snapshot.get("clicks", 0) >= 20,
@@ -1258,34 +1321,44 @@ class AdsAnalyzer:
 
     def _build_must_review_products(self, products: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         must_review: List[Dict[str, Any]] = []
+        seen_ids = set()
         for item in products:
             y = item.get("decision_snapshot", {}).get("yesterday", {})
-            if not y:
+            force_scope = bool(item.get("in_scope") and item.get("scope_active"))
+            if not y and not force_scope:
                 continue
-            if (
-                (y.get("spend", 0) >= 150 and y.get("direct_roas", 0) < 3)
+            if not (
+                force_scope
+                or (y.get("spend", 0) >= 150 and y.get("direct_roas", 0) < 3)
                 or (y.get("clicks", 0) >= 40 and y.get("ctr", 0) < 2.2)
                 or (y.get("clicks", 0) >= 40 and y.get("cvr", 0) < 5)
                 or (y.get("roas", 0) >= 3 and y.get("direct_roas", 0) < 3)
             ):
-                must_review.append({
-                    "product_id": item["product_id"],
-                    "product_name": item["product_name"],
-                    "rule_category": item.get("category", ""),
-                    "primary_issue": item.get("primary_issue", ""),
-                    "signals": item.get("signals", [])[:4],
-                    "yesterday": {
-                        "spend": y.get("spend", 0),
-                        "clicks": y.get("clicks", 0),
-                        "ctr": y.get("ctr", 0),
-                        "cvr": y.get("cvr", 0),
-                        "roas": y.get("roas", 0),
-                        "direct_roas": y.get("direct_roas", 0),
-                        "cpc": y.get("cpc", 0),
-                        "cpa": y.get("cpa", 0),
-                        "direct_sales_share": y.get("direct_sales_share", 0),
-                    },
-                })
+                continue
+            product_id = str(item.get("product_id", ""))
+            if product_id in seen_ids:
+                continue
+            seen_ids.add(product_id)
+            must_review.append({
+                "product_id": item["product_id"],
+                "product_name": item["product_name"],
+                "rule_category": item.get("category", ""),
+                "in_scope": bool(item.get("in_scope")),
+                "scope_group": item.get("scope_group", ""),
+                "primary_issue": item.get("primary_issue", ""),
+                "signals": item.get("signals", [])[:4],
+                "yesterday": {
+                    "spend": y.get("spend", 0),
+                    "clicks": y.get("clicks", 0),
+                    "ctr": y.get("ctr", 0),
+                    "cvr": y.get("cvr", 0),
+                    "roas": y.get("roas", 0),
+                    "direct_roas": y.get("direct_roas", 0),
+                    "cpc": y.get("cpc", 0),
+                    "cpa": y.get("cpa", 0),
+                    "direct_sales_share": y.get("direct_sales_share", 0),
+                },
+            })
         return must_review
 
     def _apply_openai_overrides(
@@ -1352,9 +1425,35 @@ class AdsAnalyzer:
         if not merged_products:
             return product_analysis
 
+        merged_products = restore_missing_scope_products(
+            merged_products,
+            product_analysis.get("products", []),
+        )
+        ranking_by_category = {
+            "立即加碼": "scale_up",
+            "優先降預算": "reduce_budget",
+            "依賴間接轉換": "indirect_dependency",
+            "先觀察": "watchlist",
+        }
+        ranked_ids = {
+            str(item.get("product_id", ""))
+            for bucket in merged_rankings.values()
+            for item in bucket
+        }
+        for item in merged_products:
+            if not (item.get("in_scope") and item.get("scope_active")):
+                continue
+            product_id = str(item.get("product_id", ""))
+            if product_id in ranked_ids:
+                continue
+            target_key = ranking_by_category.get(item.get("category", ""), "watchlist")
+            merged_rankings[target_key].append(item)
+            ranked_ids.add(product_id)
+
         return {
             "products": merged_products,
             "rankings": merged_rankings,
+            "scope_products": collect_scope_products(merged_products),
         }
 
     def _build_ai_payload(
@@ -1365,21 +1464,31 @@ class AdsAnalyzer:
         rule_summary: Dict[str, Any],
     ) -> Dict[str, Any]:
         compact_products = []
+        all_products = list(product_analysis.get("products") or [])
         llm_candidates = sorted(
-            [item for item in product_analysis["products"] if self._should_include_for_llm(item)],
+            [item for item in all_products if self._should_include_for_llm(item)],
             key=self._llm_candidate_sort_key,
             reverse=True,
         )
         preliminary_must_review = self._build_must_review_products(llm_candidates)
         must_review_ids = {str(item["product_id"]) for item in preliminary_must_review}
+        scope_ids = {
+            str(item["product_id"])
+            for item in all_products
+            if item.get("in_scope") and item.get("scope_active")
+        }
+        must_review_ids.update(scope_ids)
         selected_candidates = [
-            item for item in llm_candidates if str(item["product_id"]) in must_review_ids
+            item for item in all_products if str(item["product_id"]) in must_review_ids
         ]
         selected_ids = {str(item["product_id"]) for item in selected_candidates}
         selected_candidates.extend(
             item for item in llm_candidates if str(item["product_id"]) not in selected_ids
         )
-        selected_candidates = selected_candidates[:max(36, len(must_review_ids))]
+        selected_candidates = select_report_products(
+            selected_candidates,
+            cap=max(REPORT_PRODUCT_CAP, len(must_review_ids)),
+        )
 
         for item in selected_candidates:
             yesterday = item.get("decision_snapshot", {}).get("yesterday", {})
@@ -1472,7 +1581,11 @@ class AdsAnalyzer:
                 "total_products_in_reports": len(product_analysis.get("products", [])),
                 "candidate_pool_size": len(llm_candidates),
                 "candidate_count_sent_to_model": len(compact_products),
-                "selection_logic": "先納入所有必看商品，再依花費、點擊與月花費排序補足至少 36 個；其餘未送入模型，不可聲稱已逐項 AI 審核",
+                "selection_logic": (
+                    "先納入所有必看商品與焦點範圍商品（airpods／氣囊／吊飾），"
+                    "再依花費、點擊與月花費排序補足至少 36 個；"
+                    "焦點範圍商品不得因 36 件上限被裁掉；其餘未送入模型，不可聲稱已逐項 AI 審核"
+                ),
             },
             "must_review_count": len(must_review_products),
             "candidate_products": compact_products,
@@ -1983,21 +2096,40 @@ class AdsAnalyzer:
             f"- 健康度: {account.get('health', '-')}",
             f"- 執行摘要: {narrative.get('executive_summary', '')}",
             "",
-            "## 建議擴量商品",
+            "## 焦點商品（必看範圍）",
             "",
         ]
-        for item in rankings["scale_up"][:5]:
+        scope_products = report["report"].get("scope_products") or []
+        if scope_products:
+            for item in scope_products:
+                yesterday = (item.get("decision_snapshot") or {}).get("yesterday") or {}
+                spend = yesterday.get("spend", item.get("windows", {}).get("yesterday", {}).get("spend", 0))
+                lines.append(
+                    f"- {item['product_name']} ({item['product_id']}) "
+                    f"[{item.get('category', '')}/{item.get('scope_group', '')}] "
+                    f"花費 {spend} 狀態 {item.get('status', '-')}"
+                )
+        else:
+            lines.append("- 本趟沒有昨天／近一週／近月仍在花費或投放中的焦點商品。")
+        lines.extend(["", "## 建議擴量商品", ""])
+        for item in ranking_items_for_text(rankings.get("scale_up") or []):
             detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
             issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
             lines.append(f"- {item['product_name']} ({item['product_id']}) [{issue}]: {detail}")
         lines.extend(["", "## 建議控預算商品", ""])
-        for item in rankings["reduce_budget"][:5]:
+        for item in ranking_items_for_text(rankings.get("reduce_budget") or []):
             detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
             issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
             lines.append(f"- {item['product_name']} ({item['product_id']}) [{issue}]: {detail}")
+        if rankings.get("indirect_dependency"):
+            lines.extend(["", "## 依賴間接轉換", ""])
+            for item in ranking_items_for_text(rankings.get("indirect_dependency") or []):
+                detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
+                issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
+                lines.append(f"- {item['product_name']} ({item['product_id']}) [{issue}]: {detail}")
         if rankings.get("watchlist"):
             lines.extend(["", "## 建議先觀察", ""])
-            for item in rankings["watchlist"][:5]:
+            for item in ranking_items_for_text(rankings.get("watchlist") or []):
                 detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
                 issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
                 trend = item.get("trend_summary", "")
@@ -2102,6 +2234,30 @@ class AdsAnalyzer:
             return f'<img src="{product_image_url}" alt="product" />'
 
         sections = []
+        scope_products = report["report"].get("scope_products") or []
+        if scope_products:
+            scope_cards = []
+            for item in scope_products:
+                snapshot = (item.get("decision_snapshot") or {}).get("yesterday") or {}
+                scope_cards.append(
+                    f"""
+                <div class="card">
+                  <div class="action-banner">焦點商品</div>
+                  <div class="card-top">
+                    {render_product_image(item)}
+                    <div>
+                      <div class="name">{item.get('product_name', '')}</div>
+                      <div class="meta">商品 ID: {item.get('product_id', '')}</div>
+                      <div class="meta">判斷類別：{item.get('category', '-')}</div>
+                      <div class="meta">焦點關鍵字：{item.get('scope_group', '-')}</div>
+                      <div class="meta">狀態：{item.get('status', '-')}</div>
+                      <div class="meta">昨天花費：{snapshot.get('spend', 0):,.2f}</div>
+                    </div>
+                  </div>
+                </div>
+                    """
+                )
+            sections.append(f"<h2>焦點商品（必看範圍）</h2>{''.join(scope_cards)}")
         for title, items in [
             ("立即加碼", rankings.get("scale_up", [])),
             ("優先降預算", rankings.get("reduce_budget", [])),
@@ -2232,6 +2388,7 @@ class AdsAnalyzer:
               <div class="summary-box"><strong>優先降預算</strong><br>{len(rankings.get('reduce_budget', []))}</div>
               <div class="summary-box"><strong>依賴間接轉換</strong><br>{len(rankings.get('indirect_dependency', []))}</div>
               <div class="summary-box"><strong>先觀察</strong><br>{len(rankings.get('watchlist', []))}</div>
+              <div class="summary-box"><strong>焦點商品</strong><br>{len(report['report'].get('scope_products') or [])}</div>
             </div>
             <h2>整體判讀</h2>
             <p>{narrative.get('executive_summary', '')}</p>
@@ -2267,6 +2424,11 @@ class AdsAnalyzer:
         if narrative.get("source") == "openai":
             product_analysis = self._apply_openai_overrides(product_analysis, narrative)
 
+        report_products = select_report_products(product_analysis.get("products") or [])
+        scope_products = product_analysis.get("scope_products") or collect_scope_products(
+            product_analysis.get("products") or []
+        )
+
         report = {
             "status": "success",
             "message": "廣告分析完成",
@@ -2285,7 +2447,8 @@ class AdsAnalyzer:
                 "report_runs": report_runs,
                 "account_summary": account_summary,
                 "rankings": product_analysis["rankings"],
-                "products": product_analysis["products"][:36],
+                "products": report_products,
+                "scope_products": scope_products,
                 "narrative": narrative,
                 "chart_series": account_summary["windows"],
                 "trend_window_count": self.trend_weeks,
@@ -2300,7 +2463,7 @@ class AdsAnalyzer:
 
 
 def diagnostics_by_category(products: List[Dict[str, Any]], category: str, limit: int = 8) -> List[Dict[str, Any]]:
-    return [item for item in products if item["category"] == category][:limit]
+    return take_category_with_scope(products, category, limit=limit)
 
 
 def main() -> None:
