@@ -75,6 +75,19 @@ PROMPT_VERSION = "2026-09-v2"
 HISTORICAL_EXAMPLE_LIMIT = 5
 FEATURE_SCORE_NORMALIZER = 100.0
 HISTORICAL_SUPPORT_SATURATION = 3
+# TASK 7 — every _save_suggestion() evidence_json must persist these keys.
+# ai.provider / ai.model / ai.effort are required too; null when AI did not run.
+SUGGESTION_EVIDENCE_REQUIRED_FIELDS = (
+    "knowledge_version",
+    "prompt_version",
+    "applied_rules",
+    "historical_support",
+    "negative_hits",
+    "score_breakdown",
+    "snapshot_id",
+    "fingerprint",
+)
+SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS = ("provider", "model", "effort")
 WHY_KINDS = ("rule", "alias", "historical", "negative", "feature", "llm")
 WHY_KIND_LABELS = {
     "rule": "規則",
@@ -637,6 +650,65 @@ def offer_fingerprint(offer_id: str, skus: Sequence[Dict[str, Any]]) -> str:
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _ai_value_present(value: Any) -> bool:
+    return value not in (None, "", [], {})
+
+
+def ai_evidence_ran(ai: Any) -> bool:
+    """True when persisted AI evidence represents an actual provider call."""
+    if not isinstance(ai, dict):
+        return False
+    return any(
+        _ai_value_present(ai.get(key))
+        for key in ("decision", "source", "provider", "model", "confidence", "selected_candidate_key")
+    )
+
+
+def normalize_ai_evidence(ai: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Always persist ai.provider / ai.model / ai.effort; null when AI did not run."""
+    if not isinstance(ai, dict) or not ai_evidence_ran(ai):
+        return {"provider": None, "model": None, "effort": None}
+    payload = dict(ai)
+    provider = payload.get("provider")
+    if not _ai_value_present(provider):
+        source = str(payload.get("source") or "").strip()
+        if source.endswith("_error"):
+            provider = source[: -len("_error")] or None
+        elif source in AI_SUCCESS_SOURCES:
+            provider = source
+        else:
+            provider = None
+    model = payload.get("model")
+    if not _ai_value_present(model):
+        model = payload.get("response_model")
+    if not _ai_value_present(model):
+        model = None
+    effort = payload.get("effort")
+    if not _ai_value_present(effort):
+        effort = None
+    payload["provider"] = provider
+    payload["model"] = model
+    payload["effort"] = effort
+    return payload
+
+
+def missing_suggestion_evidence_fields(evidence: Any) -> List[str]:
+    """Return required TASK 7 evidence keys that are absent (nulls are present)."""
+    missing: List[str] = []
+    payload = evidence if isinstance(evidence, dict) else {}
+    for field in SUGGESTION_EVIDENCE_REQUIRED_FIELDS:
+        if field not in payload:
+            missing.append(field)
+    ai = payload.get("ai")
+    if not isinstance(ai, dict):
+        missing.extend(f"ai.{key}" for key in SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS)
+        return missing
+    for key in SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS:
+        if key not in ai:
+            missing.append(f"ai.{key}")
+    return missing
+
+
 class MappingConflict(RuntimeError):
     pass
 
@@ -733,6 +805,7 @@ class SkuMappingService:
                     confidence REAL NOT NULL DEFAULT 0,
                     final_score REAL NOT NULL DEFAULT 0,
                     score_breakdown_json TEXT NOT NULL DEFAULT '{}',
+                    knowledge_version TEXT NOT NULL DEFAULT '',
                     evidence_json TEXT NOT NULL DEFAULT '{}',
                     review_tier TEXT NOT NULL DEFAULT 'red',
                     review_reason TEXT NOT NULL DEFAULT '',
@@ -842,6 +915,7 @@ class SkuMappingService:
                 "review_reason": "TEXT NOT NULL DEFAULT ''",
                 "final_score": "REAL NOT NULL DEFAULT 0",
                 "score_breakdown_json": "TEXT NOT NULL DEFAULT '{}'",
+                "knowledge_version": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 if name not in suggestion_columns:
                     conn.execute(f"ALTER TABLE sku_mapping_suggestions ADD COLUMN {name} {declaration}")
@@ -2350,6 +2424,10 @@ class SkuMappingService:
                 if restock_only and float(metadata.get("restockQty") or 0) <= 0:
                     continue
                 item["evidence"] = self._json_load(item.pop("evidence_json", "{}"), {})
+                # Persist null ai.provider/model/effort for audit, but keep the
+                # historical empty-ai queue shape when no provider ran.
+                if isinstance(item["evidence"], dict) and not ai_evidence_ran(item["evidence"].get("ai")):
+                    item["evidence"]["ai"] = {}
                 item["score_breakdown"] = self._json_load(item.pop("score_breakdown_json", "{}"), {})
                 try:
                     item["final_score"] = float(item.get("final_score") or 0)
@@ -4625,7 +4703,7 @@ class SkuMappingService:
                 ),
             })
         ai = ai if isinstance(ai, dict) else {}
-        if ai:
+        if ai_evidence_ran(ai):
             ai_decision = str(ai.get("decision") or decision or "abstain")
             try:
                 confidence = float(ai.get("confidence") or 0)
@@ -5003,12 +5081,17 @@ class SkuMappingService:
             result = self._validate_ai_selection(result, candidates)
             result["source"] = provider
             result["provider"] = provider
+            result["model"] = data.get("model", model_name)
+            result["effort"] = effort
             result["response_model"] = data.get("model", model_name)
             return self._stamp_prompt_version(result)
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             status_text = f"HTTP {status}" if status else type(exc).__name__
-            return self._stamp_prompt_version({"source": f"{provider}_error", "provider": provider, "decision": "abstain", "confidence": 0, "warnings": [f"{provider} API {status_text}"]})
+            return self._stamp_prompt_version({
+                "source": f"{provider}_error", "provider": provider, "model": model_name, "effort": effort,
+                "decision": "abstain", "confidence": 0, "warnings": [f"{provider} API {status_text}"],
+            })
 
     @staticmethod
     def _gemini_image_part(image_url: str) -> Optional[Dict[str, Any]]:
@@ -5083,6 +5166,8 @@ class SkuMappingService:
             result = self._validate_ai_selection(result, candidates)
             result["source"] = "gemini"
             result["provider"] = "gemini"
+            result["model"] = data.get("model") or data.get("modelVersion") or model_name
+            result["effort"] = None
             result["response_model"] = data.get("model", model_name)
             return self._stamp_prompt_version(result)
         except Exception as exc:
@@ -5096,7 +5181,10 @@ class SkuMappingService:
                     detail = ""
                 if detail:
                     status_text = f"{status_text}: {detail[:240]}"
-            return self._stamp_prompt_version({"source": "gemini_error", "provider": "gemini", "decision": "abstain", "confidence": 0, "warnings": [f"Gemini API {status_text}"]})
+            return self._stamp_prompt_version({
+                "source": "gemini_error", "provider": "gemini", "model": model_name, "effort": None,
+                "decision": "abstain", "confidence": 0, "warnings": [f"Gemini API {status_text}"],
+            })
 
     @staticmethod
     def _ai_failure(provider: str, warnings: Sequence[str], force_match: bool = False) -> Dict[str, Any]:
@@ -5104,6 +5192,7 @@ class SkuMappingService:
         if force_match:
             return SkuMappingService._stamp_prompt_version({
                 "source": f"{provider}_error", "provider": provider,
+                "model": None, "effort": None,
                 "decision": "abstain", "selected_sku_id": None,
                 "confidence": 0, "force_match": True,
                 # The UI already labels this as "強制最接近未完成".  Keep
@@ -5113,6 +5202,7 @@ class SkuMappingService:
             })
         return SkuMappingService._stamp_prompt_version({
             "source": "rules", "provider": provider, "fallback": "rules",
+            "model": None, "effort": None,
             "decision": "abstain", "selected_sku_id": None,
             "confidence": 0, "warnings": [f"{warning}；已回退規則初判" for warning in warnings],
         })
@@ -5191,6 +5281,8 @@ class SkuMappingService:
             result = self._validate_ai_selection(result, candidates)
             result["source"] = "deepseek"
             result["provider"] = "deepseek"
+            result["model"] = data.get("model", model_name)
+            result["effort"] = None
             result["response_model"] = data.get("model", model_name)
             return self._stamp_prompt_version(result)
         except Exception as exc:
@@ -5207,7 +5299,10 @@ class SkuMappingService:
                 status_text = f"{status_text}: {detail[:240]}"
             elif str(exc).strip():
                 status_text = f"{status_text}: {str(exc).strip()[:240]}"
-            return self._stamp_prompt_version({"source": "deepseek_error", "provider": "deepseek", "decision": "abstain", "confidence": 0, "warnings": [f"DeepSeek API {status_text}"]})
+            return self._stamp_prompt_version({
+                "source": "deepseek_error", "provider": "deepseek", "model": model_name, "effort": None,
+                "decision": "abstain", "confidence": 0, "warnings": [f"DeepSeek API {status_text}"],
+            })
 
     def _deepseek_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
         api_key, _ = load_deepseek_api_key()
@@ -5285,6 +5380,143 @@ class SkuMappingService:
             return failure
         warnings = result.get("warnings") or ["Grok API 沒有回傳結果"]
         return self._ai_failure("grok", warnings, force_match)
+
+    def _suggestion_applied_rules(self, candidates: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        return self._prompt_applied_rules(candidates)
+
+    def _suggestion_historical_support(
+        self,
+        model: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        candidates: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        offer_id = normalize_id((snapshot or {}).get("offer_id") or (model or {}).get("offer_id"))
+        rows: List[Dict[str, Any]] = []
+        annotated = True
+        for candidate in candidates or []:
+            evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+            if "historical_support_count" not in candidate and "historical_support_count" not in evidence:
+                annotated = False
+                break
+            count = candidate.get("historical_support_count")
+            if count is None:
+                count = evidence.get("historical_support_count") or 0
+            rows.append({
+                "candidate_key": str(candidate.get("candidate_key") or ""),
+                "historical_support_count": int(count or 0),
+                "historical_examples": list(
+                    candidate.get("historical_examples")
+                    or evidence.get("historical_examples")
+                    or []
+                ),
+            })
+        if not annotated:
+            return self.historical_support(model or {}, offer_id, candidates or [])
+        return rows
+
+    def _suggestion_negative_hits(
+        self,
+        model: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        candidates: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        hits: List[Dict[str, Any]] = []
+        seen = set()
+
+        def add(row: Dict[str, Any]) -> None:
+            token = (
+                str(row.get("candidate_key") or ""),
+                str(row.get("rule_id") or "NEGATIVE"),
+                str(row.get("effect") or "reject"),
+                str(row.get("origin") or ""),
+                str(row.get("reason_code") or ""),
+            )
+            if token in seen:
+                return
+            seen.add(token)
+            hits.append(row)
+
+        for hit in getattr(self, "_last_rule_hits", []) or []:
+            if str(hit.get("rule_type") or "") != "negative" and str(hit.get("rule_id") or "") != "NEGATIVE":
+                continue
+            detail = hit.get("detail") if isinstance(hit.get("detail"), dict) else {}
+            add({
+                "candidate_key": hit.get("candidate_key") or "",
+                "rule_id": hit.get("rule_id") or "NEGATIVE",
+                "rule_type": hit.get("rule_type") or "negative",
+                "effect": hit.get("effect") or "reject",
+                "origin": detail.get("origin") or "",
+                "reason_code": detail.get("reason_code") or "",
+            })
+        for candidate in candidates or []:
+            evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+            for rule in evidence.get("applied_rules") or []:
+                if not isinstance(rule, dict):
+                    continue
+                if str(rule.get("rule_id") or "") != "NEGATIVE" and str(rule.get("rule_type") or "") != "negative":
+                    continue
+                add({
+                    "candidate_key": candidate.get("candidate_key") or "",
+                    "rule_id": rule.get("rule_id") or "NEGATIVE",
+                    "rule_type": rule.get("rule_type") or "negative",
+                    "effect": rule.get("effect") or "reject",
+                    "origin": (rule.get("detail") or {}).get("origin") if isinstance(rule.get("detail"), dict) else "",
+                    "reason_code": rule.get("reason_code") or "",
+                })
+            negative = candidate.get("negative_example")
+            if isinstance(negative, dict):
+                add({
+                    "candidate_key": candidate.get("candidate_key") or "",
+                    "rule_id": "NEGATIVE",
+                    "rule_type": "negative",
+                    "effect": "reject",
+                    "origin": negative.get("origin") or "",
+                    "reason_code": negative.get("reason_code") or "",
+                })
+        for row in self._prompt_negative_examples(model or {}, candidates or []):
+            if not (row.get("gated") or row.get("same_model")):
+                continue
+            add({
+                "candidate_key": row.get("candidate_key") or "",
+                "rule_id": "NEGATIVE",
+                "rule_type": "negative",
+                "effect": "reject",
+                "origin": row.get("origin") or "",
+                "reason_code": row.get("reason_code") or "",
+            })
+        return hits
+
+    def _build_suggestion_evidence(
+        self,
+        model: Dict[str, Any],
+        snapshot: Dict[str, Any],
+        candidates: Sequence[Dict[str, Any]],
+        ai: Optional[Dict[str, Any]],
+        extra: Optional[Dict[str, Any]],
+        score_breakdown: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        breakdown = score_breakdown if isinstance(score_breakdown, dict) else {}
+        if not breakdown:
+            for candidate in candidates or []:
+                nested = candidate.get("score_breakdown")
+                if isinstance(nested, dict) and nested:
+                    breakdown = nested
+                    break
+        extra = extra if isinstance(extra, dict) else {}
+        snapshot = snapshot if isinstance(snapshot, dict) else {}
+        return {
+            "rules": [item.get("evidence", {}) for item in candidates or []],
+            **extra,
+            "ai": normalize_ai_evidence(ai),
+            "knowledge_version": knowledge_version(),
+            "prompt_version": PROMPT_VERSION,
+            "applied_rules": self._suggestion_applied_rules(candidates or []),
+            "historical_support": self._suggestion_historical_support(model or {}, snapshot, candidates or []),
+            "negative_hits": self._suggestion_negative_hits(model or {}, snapshot, candidates or []),
+            "score_breakdown": breakdown,
+            "snapshot_id": snapshot.get("id"),
+            "fingerprint": str(snapshot.get("fingerprint") or ""),
+        }
 
     def _save_suggestion(self, model: Dict[str, Any], snapshot: Dict[str, Any], candidates: List[Dict[str, Any]], ai: Optional[Dict[str, Any]], extra: Dict[str, Any]) -> None:
         ai = ai or {}
@@ -5389,7 +5621,10 @@ class SkuMappingService:
             persisted_final_score = float(selected_breakdown.get("final_score") or selected.get("final_score") or 0)
         except (TypeError, ValueError):
             persisted_final_score = 0.0
-        evidence = {"ai": ai, "rules": [item.get("evidence", {}) for item in candidates], "score_breakdown": selected_breakdown, **extra}
+        evidence = self._build_suggestion_evidence(
+            model, snapshot, candidates, ai, extra, selected_breakdown,
+        )
+        knowledge_ver = str(evidence.get("knowledge_version") or knowledge_version())
         verified_ai_candidate_keys: List[str] = []
         if (
             ai.get("decision") == "match"
@@ -5431,8 +5666,8 @@ class SkuMappingService:
                 """INSERT INTO sku_mapping_suggestions
                 (product_id,model_id,model_name,product_name,offer_id,snapshot_id,
                  suggested_candidate_key,suggested_sku_id,suggested_sku_name,suggested_second_name,status,decision,
-                 confidence,final_score,score_breakdown_json,evidence_json,review_tier,review_reason,version,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 confidence,final_score,score_breakdown_json,knowledge_version,evidence_json,review_tier,review_reason,version,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(product_id,model_id) DO UPDATE SET
                  model_name=excluded.model_name, product_name=excluded.product_name,
                  offer_id=excluded.offer_id, snapshot_id=excluded.snapshot_id,
@@ -5440,13 +5675,14 @@ class SkuMappingService:
                  suggested_second_name=excluded.suggested_second_name, status=excluded.status,
                  decision=excluded.decision, confidence=excluded.confidence,
                  final_score=excluded.final_score, score_breakdown_json=excluded.score_breakdown_json,
+                 knowledge_version=excluded.knowledge_version,
                  evidence_json=excluded.evidence_json, review_tier=excluded.review_tier,
                  review_reason=excluded.review_reason, version=excluded.version, updated_at=excluded.updated_at""",
                  (
                      model["product_id"], model["model_id"], model["model_name"], model["product_name"], model["offer_id"], snapshot.get("id"),
                      selected_key, selected_id, selected.get("sku_name", ""), selected.get("second_name", ""), status, decision,
                      confidence, persisted_final_score, json.dumps(selected_breakdown, ensure_ascii=False),
-                     json.dumps(evidence, ensure_ascii=False), review_tier, review_reason, version, now, now,
+                     knowledge_ver, json.dumps(evidence, ensure_ascii=False), review_tier, review_reason, version, now, now,
                  ),
             )
             suggestion = conn.execute("SELECT id FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?", (model["product_id"], model["model_id"])).fetchone()
