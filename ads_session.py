@@ -22,7 +22,6 @@ CDP_ENV_VAR = "SHOPEE_ADS_CDP"
 
 WEEKLY_OUTPUT_ROOT = "reports/ads_weekly"
 REQUIRED_WINDOWS = ("yesterday", "week_01", "past_month")
-TREND_WINDOWS = ("week_01", "week_02", "week_03", "week_04")
 ALL_EXPORT_WINDOWS = ("past_month", "yesterday", "week_01", "week_02", "week_03", "week_04")
 
 A1_CAMPAIGN_ID = "18025139892"
@@ -76,7 +75,6 @@ _LOGIN_TEXT_RE = re.compile(
     r"請登入|請先登入|使用密碼登入|登入你的帳號|登入您的帳號|Log in to Seller Centre",
     re.IGNORECASE,
 )
-_SELLER_OK_RE = re.compile(r"seller\.shopee\.(tw|com)", re.IGNORECASE)
 
 
 class AdsWeeklyBlocker(RuntimeError):
@@ -297,7 +295,7 @@ def write_scope_md(out_dir: Path) -> Path:
             "",
             "- 昨天（主要決策）",
             "- 最近一週 `week_01`（滾動 7 天）",
-            "- 過去一個月（約 28 天穩定性）",
+            "- 過去一個月（上月同日至昨天，29–32 天，驗證穩定性）",
             "- `week_02` ~ `week_04`（趨勢層）",
             "",
             "本流程只抓取與分析，不得改預算或廣告設定。",
