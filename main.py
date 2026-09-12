@@ -72,8 +72,6 @@ import urllib.parse
 import tempfile
 import signal
 import psutil  # 需要安裝: pip install psutil
-import atexit
-import socket
 import logging
 import datetime
 import shutil
@@ -679,26 +677,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
                 # 執行爬蟲並獲取結果，無論關鍵字是否為空
                 result = self.run_crawler(keyword, showBrowser, inventoryMonth)
-
-                # 設置響應頭
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-
-                # 發送JSON響應
-                self.wfile.write(
-                    json.dumps(result, ensure_ascii=False).encode('utf-8'))
-
+                self._send_json_response(200, result)
                 return
             except Exception as e:
-                # 處理錯誤
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps({
-                        "error": str(e)
-                    }, ensure_ascii=False).encode('utf-8'))
+                self._send_json_response(500, {"error": str(e)})
                 return
 
         if self.path.startswith('/export_ads'):
@@ -787,41 +769,14 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         # 處理阿里巴巴連結查詢
         if self.path == '/api/alibaba-links':
             try:
-                links_map = self._load_alibaba_links()
-                self.send_response(200)
-                self.send_header('Content-type', 'application/json; charset=utf-8')
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps(links_map, ensure_ascii=False).encode('utf-8'))
+                self._send_json_response(200, self._load_alibaba_links())
                 return
             except Exception as e:
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps({
-                        "status": "error",
-                        "message": str(e)
-                    }, ensure_ascii=False).encode('utf-8'))
+                self._send_json_response(500, {
+                    "status": "error",
+                    "message": str(e)
+                })
                 return
-
-        # 處理中斷爬蟲請求
-        if self.path == '/stop_crawler':
-            self.send_response(200)
-            self.send_header('Content-type', 'application/json')
-            self.end_headers()
-
-            # 嘗試中斷爬蟲
-            success = self.stop_running_crawler()
-
-            # 發送JSON響應
-            response = {
-                "status": "success" if success else "failed",
-                "message": "爬蟲已中斷" if success else "中斷爬蟲失敗"
-            }
-            self.wfile.write(
-                json.dumps(response, ensure_ascii=False).encode('utf-8'))
-            return
 
         # 處理關閉請求
         if self.path == '/shutdown':
@@ -1526,38 +1481,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     "status": "error",
                     "message": str(e)
                 })
-            return
-
-        # 處理中斷爬蟲請求
-        if self.path == '/stop_crawler':
-            content_length = int(self.headers['Content-Length'])
-            post_data = self.rfile.read(content_length).decode('utf-8')
-
-            try:
-                data = json.loads(post_data)
-                if data.get('action') == 'stop':
-                    # 嘗試中斷爬蟲
-                    success = self.stop_running_crawler()
-
-                    self.send_response(200)
-                    self.send_header('Content-type', 'application/json')
-                    self.end_headers()
-
-                    response = {
-                        "status": "success" if success else "failed",
-                        "message": "爬蟲已中斷" if success else "中斷爬蟲失敗"
-                    }
-                    self.wfile.write(
-                        json.dumps(response,
-                                   ensure_ascii=False).encode('utf-8'))
-            except Exception as e:
-                self.send_response(500)
-                self.send_header('Content-type', 'application/json')
-                self.end_headers()
-                self.wfile.write(
-                    json.dumps({
-                        "error": str(e)
-                    }, ensure_ascii=False).encode('utf-8'))
             return
 
     def log_message(self, format, *args):
@@ -3202,7 +3125,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         return None
 
     def shutdown_server(self):
-        """關閉伺服器並釋放端口"""
+        """關閉伺服器並釋放端口（在 handler 之外的執行緒呼叫）"""
         # 等待一小段時間確保回應已發送
         time.sleep(0.5)
 
@@ -3211,19 +3134,17 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
         logger.info("正在關閉伺服器並釋放端口...")
 
-        # 嘗試正常關閉伺服器
+        # sys.exit() 在子執行緒只會結束該執行緒，不會停掉 serve_forever；
+        # 必須從 serve_forever 以外的執行緒呼叫 httpd.shutdown()，
+        # 讓 start_server 正常返回，主執行緒的 finally 才會接手清理。
+        server = httpd
+        if server is None:
+            logger.warning("找不到 httpd 實例，改以 os._exit 結束程序")
+            os._exit(0)
         try:
-            # 使用 threading.Timer 延遲關閉，確保回應已發送
-            def delayed_exit():
-                logger.info("程序正常退出")
-                # 使用 sys.exit 代替 os._exit 以允許正常的清理
-                import sys
-                sys.exit(0)
-
-            threading.Timer(1.0, delayed_exit).start()
+            server.shutdown()
         except Exception as e:
             logger.exception(f"關閉伺服器時出錯: {e}")
-            # 如果正常關閉失敗，使用強制關閉
             os._exit(0)
 
     @staticmethod
@@ -3639,21 +3560,6 @@ def kill_process_on_port(port):
         return False
 
 
-def find_free_port(start_port):
-    port = start_port
-    max_port = start_port + 100  # 嘗試 100 個端口
-
-    while port < max_port:
-        try:
-            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-                s.bind(("", port))
-                return port
-        except OSError:
-            port += 1
-
-    raise RuntimeError("無法找到可用的端口")
-
-
 # 啟動 HTTP 伺服器
 def start_server():
     global httpd  # 將 httpd 設為全局變量，以便其他函數可以訪問
@@ -3673,8 +3579,6 @@ def start_server():
             daemon_threads = True
 
         with TCPServerReuse(("", PORT), CustomHandler) as httpd:
-            # 獲取實際分配的端口
-            actual_port = httpd.server_address[1]
             logger.info(f"✅ 伺服器啟動於 http://localhost:{PORT}")
 
             try:
@@ -3742,24 +3646,5 @@ finally:
         CustomHandler.stop_running_crawler()
     except Exception as e:
         logger.exception(f"清理資源時出錯: {e}")
-    # 如果還有其他需要清理的資源，在這裡添加
     logger.info("===== 程序結束於 %s =====" %
                 datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-
-
-# 註冊退出時的清理函數
-def cleanup_resources():
-    logger.info("程式退出，正在清理資源...")
-    # 嘗試終止所有爬蟲進程
-    try:
-        if 'current_crawler_process' in globals(
-        ) and current_crawler_process is not None:
-            CustomHandler.stop_running_crawler()
-    except Exception as e:
-        logger.exception(f"退出時清理資源出錯: {e}")
-    # 如果還有其他需要清理的資源，在這裡添加
-    logger.info("===== 程序結束於 %s =====" %
-                datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-
-
-atexit.register(cleanup_resources)
