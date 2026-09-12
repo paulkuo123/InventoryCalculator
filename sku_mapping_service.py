@@ -32,10 +32,15 @@ from config_loader import load_deepseek_api_key, load_gemini_api_key, load_opena
 from mapping_knowledge import (
     ai_green_confidence,
     ai_verified_green_confidence,
+    color_alias_groups,
     config_version,
+    detect_category,
     knowledge_version,
     load_config,
     max_review_candidates,
+    reset_match_category,
+    rule_is_active,
+    set_match_category,
 )
 
 
@@ -317,6 +322,8 @@ def _size_tokens(value: Any) -> List[str]:
 
 def _explicit_size_compatible(source: Any, candidate: Any) -> bool:
     """Treat an explicit physical size as a hard SKU identity boundary."""
+    if not rule_is_active("RULE-0001"):
+        return True
     source_sizes = set(_size_tokens(source))
     if not source_sizes:
         return True
@@ -342,6 +349,8 @@ def _alphanumeric_code_tokens(value: Any) -> List[str]:
 
 
 def _alphanumeric_code_mismatch(source: Any, candidate: Any) -> bool:
+    if not rule_is_active("RULE-0003"):
+        return False
     source_codes = _alphanumeric_code_tokens(source)
     candidate_codes = _alphanumeric_code_tokens(candidate)
     if not source_codes or not candidate_codes:
@@ -368,6 +377,8 @@ def _is_phone_product(product_name: str, model_name: str) -> bool:
 
 
 def _phone_mismatch(source: str, candidate: str) -> bool:
+    if not rule_is_active("RULE-0002"):
+        return False
     source_tokens = _phone_tokens(source)
     candidate_tokens = _phone_tokens(candidate)
     if not source_tokens or not candidate_tokens:
@@ -407,21 +418,42 @@ def _model_identity_mismatch(model: Dict[str, Any], candidate: Any) -> bool:
     return _alphanumeric_code_mismatch(model_name, candidate)
 
 
+PARENTHETICAL_NOISE_RE = re.compile(
+    r"\((?:單顆|单颗|單個|单个|單只|单只|\d+(?:顆|颗|個|个))\)"
+)
+
+
+def _has_parenthetical_noise(value: Any) -> bool:
+    return bool(PARENTHETICAL_NOISE_RE.search(normalize_text(value)))
+
+
 def _strip_sku_code(value: Any) -> str:
     """Remove an Alibaba product-code prefix before comparing a dimension."""
     text = normalize_text(value)
     # Quantity/packaging notes attached to a colour are not part of the colour
     # identity.  Without stripping them, ``藍色(單顆)`` only matches the phone
     # dimension and the exact blue SKU can be crowded out by other colours.
-    text = re.sub(
-        r"\((?:單顆|单颗|單個|单个|單只|单只|\d+(?:顆|颗|個|个))\)",
-        "",
-        text,
-    )
+    # RULE-0004 (soft): disabled rules must not strip this noise.
+    if rule_is_active("RULE-0004"):
+        text = PARENTHETICAL_NOISE_RE.sub("", text)
     return re.sub(r"^[a-z0-9._-]+(?=[\u3400-\u9fff])", "", text)
 
 
-def _synonym_equal(left: str, right: str) -> bool:
+def _color_synonym_groups(category: Optional[str] = None) -> List[Tuple[str, set]]:
+    """Alias groups for the current category, else ``COLOR_SYNONYMS`` fallback."""
+    groups = color_alias_groups(category)
+    if groups:
+        return [
+            (key, {normalize_text(term) for term in terms if str(term).strip()})
+            for key, terms in groups
+        ]
+    return [
+        (family, {normalize_text(value) for value in values})
+        for family, values in COLOR_SYNONYMS.items()
+    ]
+
+
+def _synonym_equal(left: str, right: str, category: Optional[str] = None) -> bool:
     left = _strip_sku_code(left)
     right = _strip_sku_code(right)
     if left == right:
@@ -433,8 +465,7 @@ def _synonym_equal(left: str, right: str) -> bool:
     right_segments = {right, *re.findall(r"\(([^()]+)\)", right)}
     if any(segment and segment in right_segments for segment in left_segments):
         return True
-    for values in COLOR_SYNONYMS.values():
-        normalized_values = {normalize_text(value) for value in values}
+    for _family, normalized_values in _color_synonym_groups(category):
         if left in normalized_values and right in normalized_values:
             return True
         # Alibaba often prefixes a colour with a product code, for example
@@ -453,18 +484,18 @@ def _synonym_equal(left: str, right: str) -> bool:
     return False
 
 
-def _color_families(value: Any) -> List[str]:
+def _color_families(value: Any, category: Optional[str] = None) -> List[str]:
     """Return canonical colour families present in a human SKU label."""
     normalized = normalize_text(value)
     families = []
-    for family, values in COLOR_SYNONYMS.items():
-        meaningful_values = [normalize_text(term) for term in values if len(normalize_text(term)) > 1]
+    for family, values in _color_synonym_groups(category):
+        meaningful_values = [term for term in values if len(term) > 1]
         if any(term in normalized for term in meaningful_values):
             families.append(family)
     return families
 
 
-def _color_match_rank(source: Any, candidate: Any) -> int:
+def _color_match_rank(source: Any, candidate: Any, category: Optional[str] = None) -> int:
     """Rank candidate colour against the source: exact > synonym > unknown.
 
     The AI prompt communicates this priority, while this numeric rank gives
@@ -473,7 +504,8 @@ def _color_match_rank(source: Any, candidate: Any) -> int:
     """
     source_text = normalize_text(source)
     candidate_text = normalize_text(candidate)
-    source_families = _color_families(source_text)
+    groups = {family: values for family, values in _color_synonym_groups(category)}
+    source_families = _color_families(source_text, category)
     # Before relying on the synonym dictionary, honor an exact multi-character
     # colour/style token (e.g. 淺卡其、藕粉、霧藍) that appears verbatim in the
     # Alibaba option.  Ignore phone/model tokens so an iPhone number cannot be
@@ -487,14 +519,14 @@ def _color_match_rank(source: Any, candidate: Any) -> int:
             return 3
     if not source_families:
         return 0
-    candidate_families = _color_families(candidate_text)
+    candidate_families = _color_families(candidate_text, category)
     if not candidate_families:
         return -1
     common = set(source_families) & set(candidate_families)
     if not common:
         return -2
     for family in common:
-        source_terms = [normalize_text(term) for term in COLOR_SYNONYMS.get(family, set()) if len(normalize_text(term)) > 1]
+        source_terms = [term for term in groups.get(family, set()) if len(term) > 1]
         if any(term in candidate_text for term in source_terms if term in source_text):
             return 3
     return 2
@@ -714,8 +746,20 @@ class SkuMappingService:
                     created_at INTEGER NOT NULL,
                     FOREIGN KEY(suggestion_id) REFERENCES sku_mapping_suggestions(id)
                 );
+                CREATE TABLE IF NOT EXISTS mapping_rule_hits (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    suggestion_id INTEGER NOT NULL,
+                    candidate_key TEXT NOT NULL DEFAULT '',
+                    rule_id TEXT NOT NULL,
+                    rule_type TEXT NOT NULL,
+                    effect TEXT NOT NULL,
+                    detail_json TEXT NOT NULL DEFAULT '{}',
+                    created_at INTEGER NOT NULL,
+                    FOREIGN KEY(suggestion_id) REFERENCES sku_mapping_suggestions(id) ON DELETE CASCADE
+                );
                 CREATE INDEX IF NOT EXISTS idx_sku_suggestions_status ON sku_mapping_suggestions(status);
                 CREATE INDEX IF NOT EXISTS idx_sku_suggestions_offer ON sku_mapping_suggestions(offer_id);
+                CREATE INDEX IF NOT EXISTS idx_rule_hits_suggestion ON mapping_rule_hits(suggestion_id);
                 """
             )
             snapshot_columns = {row["name"] for row in conn.execute("PRAGMA table_info(alibaba_offer_snapshots)").fetchall()}
@@ -3752,37 +3796,67 @@ class SkuMappingService:
                     conn.execute("UPDATE sku_mapping_suggestions SET status='stale', review_tier='red', review_reason='已核准名稱組合已從 1688 消失', version=version+1, updated_at=? WHERE id=?", (now, row["id"]))
                 conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,after_json,reviewer,created_at) VALUES(?,?,?,?,?)", (row["id"], "offer_changed", json.dumps({"fingerprint": new_fingerprint}, ensure_ascii=False), "scanner", now))
 
-    def generate_candidates(self, model: Dict[str, Any], skus: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        source = f"{model.get('model_name', '')},{model.get('product_name', '')}"
-        # Commas separate actual SKU dimensions. Slashes inside one dimension
-        # often describe compatible generations (40mm(4/5/SE/6代適用)) or
-        # phone alternatives, and must not become standalone numeric tokens.
-        raw_source_parts = _spec_parts(model.get("model_name"))
-        source_phones = _phone_tokens(model.get("model_name"))
-        phone_product = _is_phone_product(str(model.get("product_name") or ""), str(model.get("model_name") or ""))
-        # Slash-separated phone variants are alternatives (17/17pro/17proMax),
-        # not three independent dimensions that a single SKU must contain.
-        phone_parts = [part for part in raw_source_parts if _phone_tokens(part)] if phone_product and source_phones else []
-        source_parts = [part for part in raw_source_parts if part not in phone_parts]
-        if phone_parts:
-            source_parts.append("手機型號")
-        scored = []
+    def _score_mapping_candidates(
+        self,
+        model: Dict[str, Any],
+        skus: Sequence[Dict[str, Any]],
+        source_parts: List[str],
+        source_phones: List[str],
+        phone_product: bool,
+        generation_hits: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        scored: List[Dict[str, Any]] = []
+        model_name = model.get("model_name", "")
         for sku in skus:
             candidate_text = display_text(sku.get("spec_text") or "")
             candidate_parts = list(sku.get("parts") or _spec_parts(candidate_text))
+            candidate_key = str(
+                sku.get("candidate_key")
+                or mapping_candidate_key(
+                    sku.get("offer_id") or model.get("offer_id"),
+                    candidate_parts[0] if candidate_parts else candidate_text,
+                    candidate_parts[1] if len(candidate_parts) > 1 else "",
+                )
+            )
+            applied_rules: List[Dict[str, str]] = []
+
+            def record(rule_id: str, effect: str, rule_type: str, **detail: Any) -> None:
+                applied_rules.append({"rule_id": rule_id, "effect": effect})
+                generation_hits.append({
+                    "candidate_key": candidate_key,
+                    "rule_id": rule_id,
+                    "rule_type": rule_type,
+                    "effect": effect,
+                    "detail": detail,
+                })
+
             # Physical sizes such as 45mm and 49mm are mutually exclusive SKU
             # identities.  Do not keep a colour-only partial match when the
-            # source explicitly names a size.
-            if not _explicit_size_compatible(model.get("model_name", ""), candidate_text):
-                continue
-            if phone_product and source_phones and _phone_mismatch(model.get("model_name", ""), candidate_text):
-                continue
+            # source explicitly names a size.  Disabled RULE-0001 must not apply.
+            if rule_is_active("RULE-0001") and _size_tokens(model_name):
+                if not _explicit_size_compatible(model_name, candidate_text):
+                    record("RULE-0001", "reject", "hard", source=str(model_name), candidate=candidate_text)
+                    continue
+                record("RULE-0001", "support", "hard")
+            if phone_product and source_phones and rule_is_active("RULE-0002"):
+                if _phone_mismatch(model_name, candidate_text):
+                    record("RULE-0002", "reject", "hard", source=str(model_name), candidate=candidate_text)
+                    continue
+                record("RULE-0002", "support", "hard")
             # Phone variants already use the stricter family-aware matcher
             # above.  The generic code-prefix check sees iPhone16Pro and
             # 16ProMax as conflicting tokens and would incorrectly discard a
             # valid slash-separated 16Pro/16ProMax SKU.
-            if not phone_product and _alphanumeric_code_mismatch(model.get("model_name", ""), candidate_text):
-                continue
+            if not phone_product and rule_is_active("RULE-0003"):
+                if _alphanumeric_code_mismatch(model_name, candidate_text):
+                    record("RULE-0003", "reject", "hard", source=str(model_name), candidate=candidate_text)
+                    continue
+                if _alphanumeric_code_tokens(model_name) and _alphanumeric_code_tokens(candidate_text):
+                    record("RULE-0003", "support", "hard")
+            if rule_is_active("RULE-0004") and (
+                _has_parenthetical_noise(model_name) or _has_parenthetical_noise(candidate_text)
+            ):
+                record("RULE-0004", "penalty", "soft")
             exact = 0
             strict_exact = 0
             loose = 0
@@ -3830,22 +3904,50 @@ class SkuMappingService:
                 "spec_text": candidate_text,
                 "parts": candidate_parts,
                 "dimension_count": len(candidate_parts),
-                "candidate_key": str(sku.get("candidate_key") or mapping_candidate_key(sku.get("offer_id") or model.get("offer_id"), candidate_parts[0] if candidate_parts else candidate_text, candidate_parts[1] if len(candidate_parts) > 1 else "")),
+                "candidate_key": candidate_key,
                 "image_url": str(sku.get("image_url") or ""),
                 "price": sku.get("price"),
                 "stock": sku.get("stock"),
                 "deterministic_score": score,
-                    "evidence": {
-                        "matched": matched,
-                        "complete": complete,
-                        "source_parts": source_parts,
-                        "exact": exact,
-                        "strict_exact": strict_exact,
-                        "loose": loose,
+                "evidence": {
+                    "matched": matched,
+                    "complete": complete,
+                    "source_parts": source_parts,
+                    "exact": exact,
+                    "strict_exact": strict_exact,
+                    "loose": loose,
                     "required": required,
                     "candidate_parts": candidate_parts,
+                    "applied_rules": applied_rules,
                 },
             })
+        return scored
+
+    def generate_candidates(self, model: Dict[str, Any], skus: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        source = f"{model.get('model_name', '')},{model.get('product_name', '')}"
+        # Commas separate actual SKU dimensions. Slashes inside one dimension
+        # often describe compatible generations (40mm(4/5/SE/6代適用)) or
+        # phone alternatives, and must not become standalone numeric tokens.
+        raw_source_parts = _spec_parts(model.get("model_name"))
+        source_phones = _phone_tokens(model.get("model_name"))
+        phone_product = _is_phone_product(str(model.get("product_name") or ""), str(model.get("model_name") or ""))
+        category = detect_category(str(model.get("product_name") or ""))
+        category_token = set_match_category(category)
+        generation_hits: List[Dict[str, Any]] = []
+        # Slash-separated phone variants are alternatives (17/17pro/17proMax),
+        # not three independent dimensions that a single SKU must contain.
+        phone_parts = [part for part in raw_source_parts if _phone_tokens(part)] if phone_product and source_phones else []
+        source_parts = [part for part in raw_source_parts if part not in phone_parts]
+        if phone_parts:
+            source_parts.append("手機型號")
+        scored = []
+        try:
+            scored = self._score_mapping_candidates(
+                model, skus, source_parts, source_phones, phone_product, generation_hits,
+            )
+        finally:
+            reset_match_category(category_token)
+            self._last_rule_hits = generation_hits
         # Once any candidate accounts for every source dimension, discard
         # partial candidates that only match a phone family or a generic
         # keyword.  Otherwise an exact black/graphite SKU can be crowded out
@@ -4409,6 +4511,59 @@ class SkuMappingService:
                     "INSERT INTO sku_mapping_candidates(suggestion_id,rank,candidate_key,sku_id,sku_name,second_name,spec_text,dimension_count,parts_json,image_url,price,stock,deterministic_score,evidence_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (suggestion["id"], rank, candidate.get("candidate_key") or mapping_candidate_key(model.get("offer_id"), candidate.get("sku_name", ""), candidate.get("second_name", "")), candidate.get("sku_id", ""), candidate.get("sku_name", ""), candidate.get("second_name", ""), candidate.get("spec_text", ""), int(candidate.get("dimension_count") or len(candidate.get("parts") or _spec_parts(candidate.get("spec_text")))), json.dumps(candidate.get("parts") or _spec_parts(candidate.get("spec_text")), ensure_ascii=False), candidate.get("image_url", ""), candidate.get("price"), candidate.get("stock"), candidate.get("deterministic_score", 0), json.dumps(candidate.get("evidence", {}), ensure_ascii=False)),
                 )
+            self._persist_rule_hits(conn, int(suggestion["id"]), candidates, getattr(self, "_last_rule_hits", []))
+
+    def _persist_rule_hits(
+        self,
+        conn: sqlite3.Connection,
+        suggestion_id: int,
+        candidates: Sequence[Dict[str, Any]],
+        generation_hits: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> None:
+        """Write generate_candidates rule hits into mapping_rule_hits."""
+        conn.execute("DELETE FROM mapping_rule_hits WHERE suggestion_id=?", (suggestion_id,))
+        now = int(time.time())
+        rows: List[Tuple[Any, ...]] = []
+        seen = set()
+
+        def add(candidate_key: Any, rule_id: Any, effect: Any, rule_type: Any = "", detail: Any = None) -> None:
+            key = (str(candidate_key or ""), str(rule_id or ""), str(effect or ""))
+            if not key[1] or not key[2] or key in seen:
+                return
+            seen.add(key)
+            if not isinstance(detail, dict):
+                detail = {}
+            rows.append((
+                suggestion_id,
+                key[0],
+                key[1],
+                str(rule_type or ""),
+                key[2],
+                json.dumps(detail, ensure_ascii=False),
+                now,
+            ))
+
+        for hit in generation_hits or []:
+            add(hit.get("candidate_key"), hit.get("rule_id"), hit.get("effect"), hit.get("rule_type"), hit.get("detail"))
+        for candidate in candidates:
+            evidence = candidate.get("evidence") or {}
+            for rule in evidence.get("applied_rules") or []:
+                if not isinstance(rule, dict):
+                    continue
+                add(
+                    candidate.get("candidate_key"),
+                    rule.get("rule_id"),
+                    rule.get("effect"),
+                    rule.get("rule_type"),
+                    rule.get("detail"),
+                )
+        if rows:
+            conn.executemany(
+                """INSERT INTO mapping_rule_hits
+                   (suggestion_id, candidate_key, rule_id, rule_type, effect, detail_json, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                rows,
+            )
 
     def decisions(self, items: Iterable[Dict[str, Any]], reviewer: str = "local_user", batch: bool = False) -> Dict[str, Any]:
         items = list(items or [])

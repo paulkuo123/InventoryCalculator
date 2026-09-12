@@ -1,0 +1,34 @@
+[
+  {
+    "rule_id": "RULE-0001",
+    "type": "hard",
+    "field": "size",
+    "description": "明確尺寸（40mm/42mm/45mm/49mm）不同者不可對應",
+    "impl": "explicit_size_compatible",
+    "status": "active"
+  },
+  {
+    "rule_id": "RULE-0002",
+    "type": "hard",
+    "field": "phone_model",
+    "description": "手機代數 / Pro 與 Pro Max / Air 與非 Air 不同者不可對應",
+    "impl": "phone_mismatch",
+    "status": "active"
+  },
+  {
+    "rule_id": "RULE-0003",
+    "type": "hard",
+    "field": "product_code",
+    "description": "英數商品代碼衝突不可對應（非手機商品）",
+    "impl": "alphanumeric_code_mismatch",
+    "status": "active"
+  },
+  {
+    "rule_id": "RULE-0004",
+    "type": "soft",
+    "field": "name",
+    "description": "括號內單顆/數量/包裝文字視為噪音",
+    "impl": "ignore_parenthetical_noise",
+    "status": "active"
+  }
+]

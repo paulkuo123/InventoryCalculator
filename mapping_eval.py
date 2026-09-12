@@ -40,7 +40,8 @@ DEFAULT_AI_LIMIT = 50
 EXIT_USAGE = 2
 
 # Product-name fallback used only when mapping_knowledge/categories.json is
-# absent (TASK 3).  Order is first-match; keep phone-case ahead of generic
+# missing or unreadable.  TASK 3 committed a keyword map; this remains the
+# offline fallback.  Order is first-match; keep phone-case ahead of generic
 # 殼 tokens that also appear on watch cases.
 _CATEGORY_HEURISTICS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("phone_case", ("手機殼", "手机壳", "保護殼", "保护壳", "手機套", "手机套")),
@@ -97,7 +98,7 @@ def infer_category(product_name: str, categories_path: Optional[Path] = None) ->
     If ``mapping_knowledge/categories.json`` exists it is used.  Supported
     shapes: ``{"rules": [{"category": "socks", "keywords": ["襪"]}]}`` or
     ``{"socks": ["襪", "袜"]}``.  Otherwise the built-in product-name
-    heuristics above apply.  Missing TASK 2/3 files do not block eval.
+    heuristics above apply.  Missing knowledge-pack files do not block eval.
     """
     name = str(product_name or "")
     lowered = name.casefold()
