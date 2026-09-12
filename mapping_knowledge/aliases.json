@@ -1,0 +1,174 @@
+[
+  {
+    "alias_id": "ALIAS-0001",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "奶白",
+      "本白",
+      "杏色",
+      "米白",
+      "米色",
+      "米黄"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0002",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "纯白",
+      "白",
+      "白色"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0003",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "黑色",
+      "墨黑",
+      "曜石黑",
+      "深黑",
+      "炭黑",
+      "石墨黑",
+      "黑"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0004",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "銀色",
+      "銀",
+      "银",
+      "银色"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0005",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "金色",
+      "金"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0006",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "灰色",
+      "灰"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0007",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "卡其"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0008",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "駝色",
+      "浅驼",
+      "深駝",
+      "深驼",
+      "淺駝",
+      "驼色"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0009",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "咖啡",
+      "咖啡色",
+      "棕",
+      "棕色",
+      "深咖"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0010",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "粉色",
+      "粉"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0011",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "蓝色",
+      "蓝"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0012",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "绿色",
+      "绿"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0013",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "黄色",
+      "黄"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  },
+  {
+    "alias_id": "ALIAS-0014",
+    "field": "color",
+    "category": "*",
+    "terms": [
+      "红色",
+      "红"
+    ],
+    "source": "seed_from_COLOR_SYNONYMS",
+    "status": "active"
+  }
+]

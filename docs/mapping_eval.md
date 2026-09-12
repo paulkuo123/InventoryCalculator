@@ -65,7 +65,7 @@ python -m unittest tests.test_mapping_eval tests.test_sku_mapping_service
 
 ## 類別分組
 
-若 `mapping_knowledge/categories.json` 尚不存在（TASK 3），評估不會失敗：改用商品名稱啟發式（`手機殼`／`袜`／`錶`／`吊飾` 等，否則 `other`）。檔案若存在，支援 `{"rules":[{"category":"socks","keywords":["襪"]}]}` 或 `{"socks":["襪"]}`。
+`mapping_knowledge/categories.json` 是商品名稱關鍵字對類別的對照（TASK 3）。評估與 alias 類別過濾共用這份對照。檔案支援 `{"rules":[{"category":"socks","keywords":["襪"]}]}` 或 `{"socks":["襪"]}`。缺檔或無效時改用商品名稱啟發式（`手機殼`／`袜`／`錶`／`吊飾` 等，否則 `other`），評估不會失敗。預設檔的類別 id 與 TASK 1 啟發式相同（`phone_case`／`watch`／`socks`／`charm`），因此 fixture 分組標籤不變。
 
 ## TASK 2 設定（thresholds／weights）
 
@@ -81,6 +81,28 @@ python -m unittest tests.test_mapping_knowledge tests.test_mapping_eval tests.te
 ```
 
 比對 `/tmp/mapping_eval_task2_defaults/metrics.json` 與 TASK 1 fixture 基線：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)、Top-3 `75.0%` (3/4)、FN `25.0%` (1/4)、Green precision `100.0%` (2/2)。
+
+## TASK 3 規則／同義詞資料化
+
+- `mapping_knowledge/aliases.json`：由 `python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出（`category: "*"`，不得手抄）。`_synonym_equal()`／`_color_match_rank()` 讀 alias（含類別過濾）；缺檔回退 `COLOR_SYNONYMS`。
+- `mapping_knowledge/rules.json`：登錄既有函式（RULE-0001 size／RULE-0002 phone／RULE-0003 alphanumeric code／RULE-0004 parenthetical noise）。`impl` 指向既有函式名，不是 DSL。`status: "disabled"` 的規則不會生效。
+- `generate_candidates()` 在剔除或命中時把 `(rule_id, effect)` 寫入候選 `evidence.applied_rules`，並在 `_save_suggestion()` 寫入 `mapping_rule_hits`。
+- 預設（全部 active + seed aliases）必須與 TASK 1／2 fixture 結果一致。覆核：
+
+```bash
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --out /tmp/mapping_eval_task3_defaults
+```
+
+Headline 數字應仍為：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%`、Top-3 `75.0%`、FN `25.0%`、Green precision `100.0%`。其中 `watch-blue-45` 是尺寸 FN（RULE-0001 剔除 45mm vs 49mm）。
+
+停用 RULE-0001 後，同一 fixture 的尺寸 FN 必須可觀測地下降（`watch-blue-45` 不再被剔除）：
+
+```bash
+# 見 tests.test_mapping_knowledge.DisabledRuleTests
+python -m unittest tests.test_mapping_knowledge.DisabledRuleTests tests.test_mapping_knowledge.FixtureParityTests
+```
 
 ## Fixture 報告摘錄（無秘密）
 
