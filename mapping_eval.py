@@ -40,7 +40,7 @@ DEFAULT_AI_LIMIT = 50
 EXIT_USAGE = 2
 
 # Product-name fallback used only when mapping_knowledge/categories.json is
-# absent (TASK 2/3).  Order is first-match; keep phone-case ahead of generic
+# absent (TASK 3).  Order is first-match; keep phone-case ahead of generic
 # 殼 tokens that also appear on watch cases.
 _CATEGORY_HEURISTICS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     ("phone_case", ("手機殼", "手机壳", "保護殼", "保护壳", "手機套", "手机套")),

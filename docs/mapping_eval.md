@@ -65,7 +65,22 @@ python -m unittest tests.test_mapping_eval tests.test_sku_mapping_service
 
 ## 類別分組
 
-若 `mapping_knowledge/categories.json` 尚不存在（TASK 2/3），評估不會失敗：改用商品名稱啟發式（`手機殼`／`袜`／`錶`／`吊飾` 等，否則 `other`）。檔案若存在，支援 `{"rules":[{"category":"socks","keywords":["襪"]}]}` 或 `{"socks":["襪"]}`。
+若 `mapping_knowledge/categories.json` 尚不存在（TASK 3），評估不會失敗：改用商品名稱啟發式（`手機殼`／`袜`／`錶`／`吊飾` 等，否則 `other`）。檔案若存在，支援 `{"rules":[{"category":"socks","keywords":["襪"]}]}` 或 `{"socks":["襪"]}`。
+
+## TASK 2 設定（thresholds／weights）
+
+`mapping_knowledge/config.json` 外置門檻與權重；`mapping_knowledge.py::load_config()` 讀檔。檔案缺失或 JSON 無效時改用 `sku_mapping_service` 既有常數（`AI_GREEN_CONFIDENCE_THRESHOLD=0.95`、`AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD=0.90`、`MAX_REVIEW_CANDIDATES=4`），並在無效 JSON 時記 warning，不中斷評估或審核。`score_weights` 沒有 `semantic`；`auto_approve.enabled` 維持 `false`（本任務不啟用 auto-approve）。
+
+預設設定必須與 TASK 1 fixture 結果 bit-for-bit 相同。覆核：
+
+```bash
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --out /tmp/mapping_eval_task2_defaults
+python -m unittest tests.test_mapping_knowledge tests.test_mapping_eval tests.test_sku_mapping_service
+```
+
+比對 `/tmp/mapping_eval_task2_defaults/metrics.json` 與 TASK 1 fixture 基線：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)、Top-3 `75.0%` (3/4)、FN `25.0%` (1/4)、Green precision `100.0%` (2/2)。
 
 ## Fixture 報告摘錄（無秘密）
 
