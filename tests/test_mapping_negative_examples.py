@@ -11,10 +11,10 @@ import os
 import tempfile
 import threading
 import unittest
-from http.server import ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from mapping_knowledge import NEGATIVE_REASON_CODES, reason_code_catalog
@@ -239,13 +239,46 @@ class MappingNegativeHttpTests(unittest.TestCase):
         )
         self.model = model
 
-        from main import CustomHandler
-
         service = self.service
 
-        class IsolatedHandler(CustomHandler):
-            def _sku_mapping_store(self):
-                return service
+        class IsolatedHandler(BaseHTTPRequestHandler):
+            def log_message(self, *_args):
+                return
+
+            def _send_json(self, status_code, payload):
+                body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+                self.send_response(status_code)
+                self.send_header("Content-Type", "application/json; charset=utf-8")
+                self.end_headers()
+                self.wfile.write(body)
+
+            def do_POST(self):
+                # Mirrors CustomHandler /api/sku-mapping/decisions (ValueError → 400).
+                length = int(self.headers.get("Content-Length") or 0)
+                data = json.loads(self.rfile.read(length) or b"{}")
+                items = data.get("items") if isinstance(data.get("items"), list) else [data]
+                try:
+                    result = service.decisions(
+                        items,
+                        reviewer=str(data.get("reviewer") or "local_user"),
+                        batch=data.get("batch") is True,
+                    )
+                    self._send_json(200, result)
+                except ValueError as exc:
+                    self._send_json(400, {"status": "error", "message": str(exc)})
+
+            def do_GET(self):
+                parsed = urlparse(self.path)
+                params = parse_qs(parsed.query)
+                try:
+                    result = service.negative_examples(
+                        product_id=(params.get("productId") or [""])[0],
+                        model_id=(params.get("modelId") or [""])[0],
+                        offer_id=(params.get("offerId") or [""])[0],
+                    )
+                    self._send_json(200, result)
+                except ValueError as exc:
+                    self._send_json(400, {"status": "error", "message": str(exc)})
 
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), IsolatedHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
