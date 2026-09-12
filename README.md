@@ -35,7 +35,7 @@
 - 核心：`alibaba_restocker.py`（1688 加採購車、SKU 選擇、MOQ／包裝倍數）。
 - 數量規則：`restock_rules.py`（手機殼／手机壳 **3 個月**，其餘 **4 個月**；吊飾／掛繩／明確加購除外）。
 - 批次與關注清單：`restock_batch.py`、`scripts/run_watchlist_restock.py`。
-- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。
+- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。
 - 離線購物車數量核對（不連瀏覽器）：`scripts/reconcile_cart.py`，說明見 [`docs/cart-reconciliation.md`](docs/cart-reconciliation.md)。
 - 瀏覽器優先 ego-lite，否則 Chrome／Playwright Chromium。
 
@@ -70,6 +70,7 @@
 | `alibaba_chrome_profile/`、`alibaba_browser_profile/`、`shopee_chrome_profile/` | 本機瀏覽器登入狀態（gitignore，勿提交） |
 | `debug_snapshots/` | 除錯快照（gitignore） |
 | `data/1688_master/` | 1688 歷史採購 KB 的 JSONL 匯出（gitignore；非正式 SoT） |
+| `data/mapping_eval/` | SKU mapping 離線評估報告（gitignore；勿提交） |
 | `procurement.db` | 採購／入庫／SKU mapping／`kb_*` 共用 SQLite（gitignore） |
 
 ## 環境搭建
@@ -352,6 +353,7 @@ InventoryCalculator/
 ├── alibaba_restocker.py    # 正向 1688 加採購車
 ├── restock_batch.py / restock_rules.py
 ├── sku_mapping_service.py  # SKU 快照、候選、AI 與審核
+├── mapping_eval.py         # 離線 mapping 評估 baseline（不改 golden、不 auto-approve）
 ├── ads_analysis.py         # Shopee 廣告分析
 ├── ads_weekly.py           # 週報抓取（預設遠端 CDP，不走 Mac）
 ├── ads_session.py          # 遠端工作階段／BLOCKER 輔助
@@ -373,7 +375,8 @@ InventoryCalculator/
 │   ├── ads_analysis_rules.md
 │   ├── ads_metrics_dictionary.md
 │   ├── ads_report_prompt_spec.md
-│   └── ads_weekly_pipeline.md
+│   ├── ads_weekly_pipeline.md
+│   └── mapping_eval.md
 ├── tests/                  # pytest（含 reverse_audit 離線安全測試）
 ├── watchlists/             # 個人關注與排除清單
 ├── golden_table.json       # 已核准 mapping（納入 git）
@@ -402,6 +405,7 @@ InventoryCalculator/
 - 批次核准 API 必須帶 `batch=true`；使用者勾選的項目才會送出，未手動點候選的項目會在確認提示後使用第 1 個候選，沒有候選的項目則整批拒絕。
 - 工作台會顯示既有 SKU mapping。人工從完整 SKU 清單選擇並核准時，該選擇就是最高優先，會直接寫入並覆蓋既有 mapping；不再另外提供容易混淆的「取代既有 mapping」按鈕。
 
+- 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
 - 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。

@@ -1,0 +1,24 @@
+{
+  "cases": [
+    {
+      "product_id": "p-watch",
+      "model_id": "watch-blue-45",
+      "product_name": "Apple Watch 一體式錶殼",
+      "model_name": "單排鑽—藍色,45mm(7/8代適用)",
+      "offer_id": "300",
+      "1688_sku_id": "blue-49",
+      "1688_sku_name": "藍色",
+      "1688_sku_second_name": "49mm膠盒包裝",
+      "1688_mapping_source": "legacy_user_approved",
+      "skus": [
+        {
+          "sku_id": "blue-49",
+          "sku_name": "藍色",
+          "second_name": "49mm膠盒包裝",
+          "spec_text": "藍色,49mm膠盒包裝",
+          "parts": ["藍色", "49mm膠盒包裝"]
+        }
+      ]
+    }
+  ]
+}
