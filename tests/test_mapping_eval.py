@@ -77,6 +77,14 @@ class HeuristicCategoryTests(unittest.TestCase):
             )
             self.assertEqual(infer_category("純色棉襪 女襪", path), "demo")
 
+    def test_invalid_categories_json_falls_back_to_heuristics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "categories.json"
+            path.write_text("{not json", encoding="utf-8")
+            with self.assertLogs("mapping_knowledge", level="WARNING"):
+                self.assertEqual(infer_category("純色棉襪 女襪", path), "socks")
+            self.assertEqual(infer_category("神秘商品", path), "other")
+
 
 class EvaluationMetricsTests(unittest.TestCase):
     def test_fixture_metrics_cover_top1_fn_green_and_sources(self):
