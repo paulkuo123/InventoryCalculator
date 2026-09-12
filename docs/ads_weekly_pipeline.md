@@ -74,7 +74,7 @@ python3 ads_analysis.py --refresh-source true --source remote
 ```text
 reports/ads_weekly/20260911/
   ads_exports/
-    ads_overall_past_month_*.csv      # 過去一個月（約 28 天）
+    ads_overall_past_month_*.csv      # 過去一個月（上月同日至昨天，29–32 天）
     ads_overall_yesterday_*.csv       # 昨天（主決策視窗）
     ads_overall_week_01_*_*.csv       # 滾動近 7 天
     ads_overall_week_02_*_*.csv

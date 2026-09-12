@@ -1,22 +1,14 @@
 """Shared Shopee ads focus-product matcher (airpods / 氣囊 / 吊飾 family).
 
-Keyword groups must stay identical to ads_session.SCOPE_KEYWORD_GROUPS when that
-module exists (weekly pipeline on PR #49). Do not invent a second keyword list.
+Keyword groups come from ads_session.SCOPE_KEYWORD_GROUPS; do not invent a
+second keyword list here.
 """
 from __future__ import annotations
 
 import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-try:
-    from ads_session import A1_CAMPAIGN_ID, SCOPE_KEYWORD_GROUPS
-except ImportError:  # weekly helper lives on the ads-weekly branch
-    A1_CAMPAIGN_ID = "18025139892"
-    SCOPE_KEYWORD_GROUPS = (
-        "airpods",
-        "氣囊",
-        "吊飾|掛飾|掛件|掛繩",
-    )
+from ads_session import SCOPE_KEYWORD_GROUPS
 
 REPORT_PRODUCT_CAP = 36
 RANKING_CATEGORY_LIMIT = 8
