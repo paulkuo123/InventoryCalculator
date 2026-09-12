@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Playwright CDP freeze — read-only cart + order pools (retry 2026-09-05).
 
-Prefer CDP 9223 (shared chrome-profile); fall back to 9227.
+CDP endpoint: ALIBABA_RESTOCK_CDP if set (e.g. via `--cdp`), else prefer
+9223 (shared chrome-profile) and fall back to 9227.
 No cart mutations, no deletes, do not kill Chrome.
 """
 from __future__ import annotations
-import json, re, time, os, sys, traceback
+import json, re, time, os, sys
 from datetime import datetime, timezone, timedelta
-from collections import defaultdict
 from playwright.sync_api import sync_playwright
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,11 +24,16 @@ TZ = timezone(timedelta(hours=8))
 os.makedirs(OUT, exist_ok=True)
 os.makedirs(DEBUG, exist_ok=True)
 
-STATUS_MAP = {
-    "pending_pay": ("waitbuyerpay", ["待付款"]),
-    "pending_ship": ("waitsellersend", ["待发货", "待發貨"]),
-    "pending_receive": ("waitbuyerreceive", ["待收货", "待收貨"]),
+POOL_FILES = {
+    "pending_pay": "live_orders_pending_pay.json",
+    "pending_ship": "live_orders_pending_ship.json",
+    "pending_receive": "live_orders_pending_receive.json",
 }
+
+# Python-side regexes (raw strings: single backslash). The JS snippets below are
+# plain triple-quoted strings and therefore need `\\` to reach the browser as `\`.
+PAGE_META_RE = re.compile(r'"pageSize"\s*:\s*(\d+).*?"pages"\s*:\s*(\d+).*?"total"\s*:\s*(\d+)')
+ACCOUNT_HINT_RE = re.compile(r"yngsuao\w*", re.I)
 
 def now_iso():
     return datetime.now(TZ).isoformat()
@@ -570,24 +575,35 @@ def write(name, data):
     print("wrote", path, flush=True)
 
 
-def connect_cdp(p):
+def cdp_candidates(env=None):
+    """(endpoint, userDataDir, timeout_ms) in try order; env override goes first."""
+    env = os.environ if env is None else env
+    candidates = []
+    override = str(env.get("ALIBABA_RESTOCK_CDP") or "").strip()
+    if override:
+        candidates.append((override, None, 20000))
     # Prefer 9223; Origin handshake often hangs — short timeout then 9227.
+    candidates.extend(
+        [
+            ("http://127.0.0.1:9223", "/home/box/chrome-profile", 6000),
+            ("http://127.0.0.1:9227", "/home/box/chrome-profile-5", 20000),
+        ]
+    )
+    return candidates
+
+
+def connect_cdp(p):
     notes = []
-    for port, udd, timeout_ms in (
-        (9223, "/home/box/chrome-profile", 6000),
-        (9227, "/home/box/chrome-profile-5", 20000),
-    ):
+    for endpoint, udd, timeout_ms in cdp_candidates():
         try:
-            print(f"[cdp] trying {port} timeout={timeout_ms}ms", flush=True)
-            browser = p.chromium.connect_over_cdp(
-                f"http://127.0.0.1:{port}", timeout=timeout_ms
-            )
-            notes.append(f"connected {port}")
-            return browser, port, udd, notes
+            print(f"[cdp] trying {endpoint} timeout={timeout_ms}ms", flush=True)
+            browser = p.chromium.connect_over_cdp(endpoint, timeout=timeout_ms)
+            notes.append(f"connected {endpoint}")
+            return browser, endpoint, udd, notes
         except Exception as e:
-            notes.append(f"fail {port}: {type(e).__name__}: {e}")
-            print(f"[cdp] {port} failed: {e}", flush=True)
-    raise RuntimeError("No CDP port available: " + "; ".join(notes))
+            notes.append(f"fail {endpoint}: {type(e).__name__}: {e}")
+            print(f"[cdp] {endpoint} failed: {e}", flush=True)
+    raise RuntimeError("No CDP endpoint available: " + "; ".join(notes))
 
 
 def safe_body(resp):
@@ -600,7 +616,7 @@ def safe_body(resp):
             raise e
 
 
-def capture_cart(page, cdp_port, udd, retries=3):
+def capture_cart(page, cdp_endpoint, udd, retries=3):
     best = None
     for attempt in range(1, retries + 1):
         by_cid = {}
@@ -613,8 +629,7 @@ def capture_cart(page, cdp_port, udd, retries=3):
             if "mtoppurchaseastoreservice" not in ul and not (
                 "mtop" in ul and "buycenter" in ul and "cart" in ul
             ):
-                if "mtoppurchaseastoreservice" not in ul:
-                    return
+                return
             try:
                 body = safe_body(resp)
                 txt = body.decode("utf-8", errors="replace")
@@ -721,7 +736,7 @@ def capture_cart(page, cdp_port, udd, retries=3):
         m2 = re.search(r"(\d+)/300", compact)
         of300 = int(m2.group(1)) if m2 else sku
         account = None
-        mm = re.search(r"yngsuao\\w*", body, re.I)
+        mm = ACCOUNT_HINT_RE.search(body)
         if mm:
             account = mm.group(0)
         else:
@@ -755,7 +770,7 @@ def capture_cart(page, cdp_port, udd, retries=3):
             "timezone": "Asia/Taipei",
             "source": "mtop+dom",
             "readOnly": True,
-            "cdpPort": cdp_port,
+            "cdpEndpoint": cdp_endpoint,
             "userDataDir": udd,
             "header": {
                 "label": f"现货({sku})" if sku is not None else None,
@@ -785,7 +800,7 @@ def capture_cart(page, cdp_port, udd, retries=3):
     return best
 
 
-def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
+def capture_orders(page, pool, status_code, labels, cdp_endpoint, udd, retries=3):
     urls = [
         f"https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?orderStatus={status_code}&page=1&pageSize=50",
         "https://air.1688.com/app/ctf-page/trade-order-list/buyer-order-list.html?page=1&pageSize=50",
@@ -831,8 +846,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
                 # unwrap nested json strings once
                 parsed2 = unwrap_jsonish(parsed)
                 extract_orders_from_dataline(parsed2, found, pool)
-                # page meta
-                m = re.search(r'"pageSize"\\s*:\\s*(\\d+).*?"pages"\\s*:\\s*(\\d+).*?"total"\\s*:\\s*(\\d+)', txt)
+                m = PAGE_META_RE.search(txt)
                 if m:
                     page_meta.update(
                         {"pageSize": int(m.group(1)), "pages": int(m.group(2)), "total": int(m.group(3))}
@@ -949,20 +963,13 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
                 "attempt": attempt,
                 "notes": notes,
                 "pageUrl": final_url,
-                "cdpPort": cdp_port,
+                "cdpEndpoint": cdp_endpoint,
                 "userDataDir": udd,
                 "readOnly": True,
                 "mtopHits": hits,
             }
             print(f"[orders:{pool}] nav failed attempt {attempt}", flush=True)
-            write(
-                {
-                    "pending_pay": "live_orders_pending_pay.json",
-                    "pending_ship": "live_orders_pending_ship.json",
-                    "pending_receive": "live_orders_pending_receive.json",
-                }[pool],
-                best,
-            )
+            write(POOL_FILES[pool], best)
             continue
 
         # Click status tab (shadow)
@@ -1141,7 +1148,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
             "readOnly": True,
             "notes": notes,
             "domSample": (dom or {}).get("sample"),
-            "cdpPort": cdp_port,
+            "cdpEndpoint": cdp_endpoint,
             "userDataDir": udd,
             "domStubsRemoved": n_dom_stubs,
         }
@@ -1149,12 +1156,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
             f"[orders:{pool}] orders={len(order_ids)} lines={len(lines)} tab={expected} complete={complete} reason={reason}",
             flush=True,
         )
-        fname = {
-            "pending_pay": "live_orders_pending_pay.json",
-            "pending_ship": "live_orders_pending_ship.json",
-            "pending_receive": "live_orders_pending_receive.json",
-        }[pool]
-        write(fname, best)
+        write(POOL_FILES[pool], best)
         if complete:
             break
         time.sleep(1)
@@ -1163,7 +1165,7 @@ def capture_orders(page, pool, status_code, labels, cdp_port, udd, retries=3):
 
 def main():
     with sync_playwright() as p:
-        browser, cdp_port, udd, cdp_notes = connect_cdp(p)
+        browser, cdp_endpoint, udd, cdp_notes = connect_cdp(p)
         ctx = browser.contexts[0]
         # Prefer existing 1688 page
         page = None
@@ -1179,9 +1181,9 @@ def main():
                     break
         if page is None:
             page = ctx.pages[0] if ctx.pages else ctx.new_page()
-        print("using page", (page.url or "")[:140], "cdp", cdp_port, flush=True)
+        print("using page", (page.url or "")[:140], "cdp", cdp_endpoint, flush=True)
 
-        cart = capture_cart(page, cdp_port, udd, retries=3)
+        cart = capture_cart(page, cdp_endpoint, udd, retries=3)
         # dedicated page for orders to avoid clobbering cart mid-debug
         try:
             opage = ctx.new_page()
@@ -1189,14 +1191,14 @@ def main():
             opage = page
 
         pay = capture_orders(
-            opage, "pending_pay", "waitbuyerpay", ["待付款"], cdp_port, udd, retries=3
+            opage, "pending_pay", "waitbuyerpay", ["待付款"], cdp_endpoint, udd, retries=3
         )
         ship = capture_orders(
             opage,
             "pending_ship",
             "waitsellersend",
             ["待发货", "待發貨"],
-            cdp_port,
+            cdp_endpoint,
             udd,
             retries=3,
         )
@@ -1205,7 +1207,7 @@ def main():
             "pending_receive",
             "waitbuyerreceive",
             ["待收货", "待收貨"],
-            cdp_port,
+            cdp_endpoint,
             udd,
             retries=3,
         )
@@ -1213,7 +1215,7 @@ def main():
         meta = {
             "capturedAt": now_iso(),
             "timezone": "Asia/Taipei",
-            "cdpPort": cdp_port,
+            "cdpEndpoint": cdp_endpoint,
             "userDataDir": udd,
             "cdpConnectNotes": cdp_notes,
             "accountHint": cart.get("accountHint"),
@@ -1289,7 +1291,7 @@ def main():
             "SUMMARY",
             json.dumps(
                 {
-                    "cdpPort": cdp_port,
+                    "cdpEndpoint": cdp_endpoint,
                     "现货": (cart.get("header") or {}).get("skuCount"),
                     "cartLines": cart.get("nItems"),
                     "cartComplete": cart.get("complete"),

@@ -9,7 +9,6 @@ unique cart name/spec match resolves live skuId for qty diff.
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -1325,7 +1324,7 @@ def run_dry_run(
         f"- 狀態：**{status}**"
         + (" — 車內不足，已暫停、不改量" if paused else " — 可待核准後 mutate")
     )
-    lines.append(f"- 模式：offline dry-run（不加車／不改量）")
+    lines.append("- 模式：offline dry-run（不加車／不改量）")
     lines.append(f"- 輸出目錄：`{out_dir}`")
     lines.append("")
     lines.append("## 人工交付（請先看這份）")
