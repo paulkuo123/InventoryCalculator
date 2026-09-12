@@ -249,7 +249,16 @@ logger.info(
 logger.info(f"操作系統: {os.name}, Python版本: {sys.version}")
 
 PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
+# 預設只聽本機。這個伺服器會回傳 cookies 相關狀態、能觸發爬蟲與 1688 下單，
+# 不該預設暴露在區網；真的要給其他裝置連時，設 INVENTORY_BIND_HOST=0.0.0.0。
+BIND_HOST = os.environ.get("INVENTORY_BIND_HOST", "127.0.0.1")
 FILE_NAME = get_resource_path("index.html")
+# do_GET 靜態檔白名單：只服務專案根目錄下這幾種副檔名
+STATIC_ASSET_TYPES = {
+    '.html': 'text/html; charset=utf-8',
+    '.css': 'text/css; charset=utf-8',
+    '.js': 'application/javascript; charset=utf-8',
+}
 current_crawler_process = None
 ALIBABA_RESTOCK_SESSION_CLOSED_MARKER = "__INVENTORY_1688_SESSION_CLOSED__"
 
@@ -789,39 +798,53 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             threading.Thread(target=self.shutdown_server, daemon=True).start()
             return
 
-        # 處理其他請求
-        # 處理靜態文件與首頁請求
-        if self.path == '/' or any(self.path.endswith(ext) for ext in ['.html', '.css', '.js', '.pdf', '.json', '.md']):
-            if self.path == '/':
-                target_file = FILE_NAME
-            else:
-                # 移除開頭的 /，並獲取絕對資源路徑
-                target_file = get_resource_path(self.path.lstrip('/'))
-            
-            if os.path.exists(target_file):
-                self.send_response(200)
-                if target_file.endswith('.css'):
-                    self.send_header('Content-type', 'text/css; charset=utf-8')
-                elif target_file.endswith('.js'):
-                    self.send_header('Content-type', 'application/javascript; charset=utf-8')
-                elif target_file.endswith('.pdf'):
-                    self.send_header('Content-type', 'application/pdf')
-                elif target_file.endswith('.json'):
-                    self.send_header('Content-type', 'application/json; charset=utf-8')
-                elif target_file.endswith('.md'):
-                    self.send_header('Content-type', 'text/markdown; charset=utf-8')
-                else:
-                    self.send_header('Content-type', 'text/html; charset=utf-8')
-                self.end_headers()
-                
-                try:
-                    with open(target_file, 'rb') as f:
-                        self.wfile.write(f.read())
-                except Exception as e:
-                    logger.error(f"讀取文件失敗: {e}")
-                return
-            
-        return http.server.SimpleHTTPRequestHandler.do_GET(self)
+        # 靜態頁面：只放行專案根目錄的 .html/.css/.js，其餘一律 404，
+        # 不再落回 SimpleHTTPRequestHandler（那會把 cookies.json、.env.local、
+        # 原始碼等整個工作目錄都端出去）。
+        target_file, content_type = self._resolve_static_asset(request_path)
+        if target_file is None:
+            self.send_error(404)
+            return
+        try:
+            with open(target_file, 'rb') as f:
+                body = f.read()
+        except OSError as e:
+            logger.error(f"讀取文件失敗: {e}")
+            self.send_error(500)
+            return
+        self.send_response(200)
+        self.send_header('Content-type', content_type)
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_HEAD(self):
+        target_file, content_type = self._resolve_static_asset(
+            urllib.parse.urlparse(self.path).path
+        )
+        if target_file is None:
+            self.send_error(404)
+            return
+        self.send_response(200)
+        self.send_header('Content-type', content_type)
+        self.send_header('Content-Length', str(os.path.getsize(target_file)))
+        self.end_headers()
+
+    def _resolve_static_asset(self, request_path):
+        """回傳 (檔案路徑, Content-Type)；不在白名單內回傳 (None, None)。"""
+        if request_path == '/':
+            return FILE_NAME, STATIC_ASSET_TYPES['.html']
+        name = request_path.lstrip('/')
+        # 只接受根目錄單層檔名，排除子目錄、隱藏檔與任何路徑穿越
+        if not re.fullmatch(r'[A-Za-z0-9_-][A-Za-z0-9_.-]*', name):
+            return None, None
+        content_type = STATIC_ASSET_TYPES.get(os.path.splitext(name)[1].lower())
+        if not content_type:
+            return None, None
+        target_file = get_resource_path(name)
+        if not os.path.isfile(target_file):
+            return None, None
+        return target_file, content_type
 
     def do_POST(self):
         request_path = urllib.parse.urlparse(self.path).path
@@ -1482,6 +1505,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     "message": str(e)
                 })
             return
+
+        # 沒有對應 handler 的 POST 原本會不回應直接斷線，改為明確 404
+        self.send_error(404)
 
     def log_message(self, format, *args):
         try:
@@ -3578,8 +3604,8 @@ def start_server():
             # summary refreshes, or other local API calls.
             daemon_threads = True
 
-        with TCPServerReuse(("", PORT), CustomHandler) as httpd:
-            logger.info(f"✅ 伺服器啟動於 http://localhost:{PORT}")
+        with TCPServerReuse((BIND_HOST, PORT), CustomHandler) as httpd:
+            logger.info(f"✅ 伺服器啟動於 http://localhost:{PORT}（bind {BIND_HOST}）")
 
             try:
                 httpd.serve_forever()
