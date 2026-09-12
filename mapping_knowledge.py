@@ -6,7 +6,8 @@ falls back to those defaults and must not crash the mapping engine.
 
 TASK 3 adds aliases / rules / categories loaders and
 ``python -m mapping_knowledge seed-aliases``.  TASK 4 adds the shared
-negative-example reason-code catalog.  This is not a second matcher
+negative-example reason-code catalog.  TASK 6 reads ``score_weights``
+for the composite ranker.  This is not a second matcher
 and does not enable auto-approve.
 """
 
@@ -243,6 +244,14 @@ def max_review_candidates(config: Optional[Dict[str, Any]] = None) -> int:
     if value < 1:
         return DEFAULT_MAX_REVIEW_CANDIDATES
     return value
+
+
+def score_weights(config: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
+    """Return the four composite-score weights (feature/historical/rule/llm)."""
+    payload = config if isinstance(config, dict) else load_config()
+    raw = _section(payload, "score_weights")
+    defaults = DEFAULT_CONFIG["score_weights"]
+    return {key: _as_float(raw.get(key), defaults[key]) for key in SCORE_WEIGHT_KEYS}
 
 
 def _section(payload: Dict[str, Any], name: str) -> Dict[str, Any]:

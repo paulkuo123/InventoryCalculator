@@ -155,6 +155,29 @@ python -m mapping_eval run \
 
 比對欄位見 `python -m mapping_eval compare`：`top1_accuracy`、`green.precision`、以及（若有 AI）`ai.match_precision`／`ai.abstain_rate`／`ai.ai_wrong_det_right`／`ai.det_wrong_ai_right`。不要把 key 或 `procurement.db` 提交進 git。
 
+## TASK 6 複合分數與 explain
+
+`final_score = Σ weight_i × component_i`，分量皆在 0–1：
+
+- `feature`：`deterministic_score / 100`（截斷）
+- `historical`：`historical_support_count` 飽和（3 筆 → 1.0）
+- `rule`：沒有 soft-rule penalty 為 1，否則 0
+- `llm`：AI 信心；`abstain` 或未選中為 0
+
+權重來自 `mapping_knowledge/config.json` 的 `score_weights`。硬閘門剔除的候選不計分。`final_score` **只**用來排候選與黃燈佇列，**不**改 `classify_review_tier` 的綠色條件。
+
+`sku_mapping_suggestions` 以 `ALTER ADD` 補 `final_score`、`score_breakdown_json`。`SkuMappingService.explain(product_id, model_id)` 與 `GET /api/sku-mapping/explain?productId&modelId` 回傳 `decision`、`selected_candidate`、`why[]`（`rule`／`alias`／`historical`／`negative`／`feature`／`llm`）、`score_breakdown`、`knowledge_version`。審核卡可展開「為什麼」。
+
+預設 fixture 數字必須 ≥ TASK 1–5 基線（綠色條件不變，應持平）：
+
+```bash
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --out /tmp/mapping_eval_task6_defaults
+```
+
+Headline：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)、Top-3 `75.0%` (3/4)、FN `25.0%` (1/4)、Green precision `100.0%` (2/2)。
+
 停用 RULE-0001 後，同一 fixture 的尺寸 FN 必須可觀測地下降（`watch-blue-45` 不再被剔除）：
 
 ```bash
