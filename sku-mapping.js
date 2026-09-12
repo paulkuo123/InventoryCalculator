@@ -158,15 +158,37 @@
     ].join('');
   }
 
+  function whyKindLabel(kind) {
+    return ({
+      rule: '規則',
+      alias: '同義詞',
+      historical: '歷史核准',
+      negative: '負例',
+      feature: '特徵',
+      llm: 'AI',
+    })[kind] || kind;
+  }
+
+  function whyPanel(candidate) {
+    const entries = Array.isArray(candidate.why) ? candidate.why : [];
+    if (!entries.length) return '';
+    const items = entries.map(entry => {
+      const kind = String(entry.kind || '');
+      return `<li class="why-item" data-kind="${esc(kind)}"><b>${esc(whyKindLabel(kind))}</b>${esc(entry.text || '')}</li>`;
+    }).join('');
+    return `<details class="why-panel"><summary>為什麼</summary><ul>${items}</ul></details>`;
+  }
+
   function candidateCard(item, candidate, rank) {
     const skuName = cleanLegacyName(candidate.sku_name || '');
     const secondName = cleanLegacyName(candidate.second_name || '');
     const approvedFallback = candidate.evidence?.approved_mapping === true;
     const suggested = isSuggestedCandidate(item, candidate);
     const selected = item.review_tier === 'green' && suggested;
+    const finalScore = candidate.final_score ?? candidate.score_breakdown?.final_score;
     return `<div class="candidate ${selected ? 'selected' : ''} ${suggested ? 'suggested' : ''}" data-key="${esc(candidate.candidate_key || '')}" data-sku="${esc(candidate.sku_id)}" data-name="${esc(skuName)}" data-second="${esc(secondName)}" data-item="${esc(item.id)}">
       <span class="rank">${rank}</span>${candidate.image_url ? `<img src="${esc(candidate.image_url)}" loading="lazy" alt="">` : ''}
-      <strong>${esc(skuName || '未命名規格')}${secondName ? ` → ${esc(secondName)}` : ''}</strong><small class="full-spec"><b>完整規格（含型號／第二規格）：</b><br>${esc(candidate.spec_text || [skuName, secondName].filter(Boolean).join(' → ') || skuName || '')}</small><small>SKU ID（輔助）：${esc(candidate.sku_id || '—')}</small><small>價格：${esc(candidate.price ?? '—')}　庫存：${esc(candidate.stock ?? '—')}</small><small>規則分數：${esc(candidate.deterministic_score)}</small>${approvedFallback ? '<small class="suggested-label">目前已核准 mapping（顯示用）</small>' : suggested ? '<small class="suggested-label">系統建議</small>' : ''}${rejectedBanner(candidate)}<button type="button" class="reject-candidate" data-action="reject_candidate">否決此候選</button></div>`;
+      <strong>${esc(skuName || '未命名規格')}${secondName ? ` → ${esc(secondName)}` : ''}</strong><small class="full-spec"><b>完整規格（含型號／第二規格）：</b><br>${esc(candidate.spec_text || [skuName, secondName].filter(Boolean).join(' → ') || skuName || '')}</small><small>SKU ID（輔助）：${esc(candidate.sku_id || '—')}</small><small>價格：${esc(candidate.price ?? '—')}　庫存：${esc(candidate.stock ?? '—')}</small><small>規則分數：${esc(candidate.deterministic_score)}</small>${finalScore == null || finalScore === '' ? '' : `<small>綜合分數：${esc(Number(finalScore).toFixed(3))}</small>`}${approvedFallback ? '<small class="suggested-label">目前已核准 mapping（顯示用）</small>' : suggested ? '<small class="suggested-label">系統建議</small>' : ''}${rejectedBanner(candidate)}${whyPanel(candidate)}<button type="button" class="reject-candidate" data-action="reject_candidate">否決此候選</button></div>`;
   }
 
   function reasonLabel(code, text) {
@@ -1316,6 +1338,7 @@
       }
       return decide(cardElement, 'reject_candidate', '', rejectButton);
     }
+    if (event.target.closest('.why-panel')) return;
     const candidate = event.target.closest('.candidate');
     if (candidate) { const parent = candidate.closest('.card'); parent.querySelectorAll('.candidate').forEach(node => node.classList.remove('selected')); candidate.classList.add('selected'); rememberSelection(parent); return; }
     const button = event.target.closest('button[data-action]');

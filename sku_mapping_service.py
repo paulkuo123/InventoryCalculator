@@ -33,6 +33,7 @@ from mapping_knowledge import (
     NEGATIVE_ORIGINS,
     NEGATIVE_REASON_CODES,
     NEGATIVE_REASON_LABELS,
+    SCORE_WEIGHT_KEYS,
     ai_green_confidence,
     ai_verified_green_confidence,
     color_alias_groups,
@@ -40,11 +41,13 @@ from mapping_knowledge import (
     detect_category,
     knowledge_version,
     load_config,
+    load_rules,
     max_review_candidates,
     normalize_reason_code,
     reason_code_catalog,
     reset_match_category,
     rule_is_active,
+    score_weights,
     set_match_category,
 )
 
@@ -70,6 +73,17 @@ MAX_REVIEW_CANDIDATES = 4
 GOLDEN_BACKUP_KEEP = 3
 PROMPT_VERSION = "2026-09-v2"
 HISTORICAL_EXAMPLE_LIMIT = 5
+FEATURE_SCORE_NORMALIZER = 100.0
+HISTORICAL_SUPPORT_SATURATION = 3
+WHY_KINDS = ("rule", "alias", "historical", "negative", "feature", "llm")
+WHY_KIND_LABELS = {
+    "rule": "規則",
+    "alias": "同義詞",
+    "historical": "歷史核准",
+    "negative": "負例",
+    "feature": "特徵",
+    "llm": "AI",
+}
 _GOLDEN_BACKUP_RE = re.compile(r"^golden_table\.json\.backup_before_(.+)_(\d+)$")
 
 
@@ -717,6 +731,8 @@ class SkuMappingService:
                     status TEXT NOT NULL DEFAULT 'pending',
                     decision TEXT NOT NULL DEFAULT 'abstain',
                     confidence REAL NOT NULL DEFAULT 0,
+                    final_score REAL NOT NULL DEFAULT 0,
+                    score_breakdown_json TEXT NOT NULL DEFAULT '{}',
                     evidence_json TEXT NOT NULL DEFAULT '{}',
                     review_tier TEXT NOT NULL DEFAULT 'red',
                     review_reason TEXT NOT NULL DEFAULT '',
@@ -824,6 +840,8 @@ class SkuMappingService:
                 "suggested_candidate_key": "TEXT NOT NULL DEFAULT ''",
                 "review_tier": "TEXT NOT NULL DEFAULT 'red'",
                 "review_reason": "TEXT NOT NULL DEFAULT ''",
+                "final_score": "REAL NOT NULL DEFAULT 0",
+                "score_breakdown_json": "TEXT NOT NULL DEFAULT '{}'",
             }.items():
                 if name not in suggestion_columns:
                     conn.execute(f"ALTER TABLE sku_mapping_suggestions ADD COLUMN {name} {declaration}")
@@ -2332,6 +2350,11 @@ class SkuMappingService:
                 if restock_only and float(metadata.get("restockQty") or 0) <= 0:
                     continue
                 item["evidence"] = self._json_load(item.pop("evidence_json", "{}"), {})
+                item["score_breakdown"] = self._json_load(item.pop("score_breakdown_json", "{}"), {})
+                try:
+                    item["final_score"] = float(item.get("final_score") or 0)
+                except (TypeError, ValueError):
+                    item["final_score"] = 0.0
                 snapshot_skus = self._json_load(item.pop("snapshot_skus_json", "[]"), [])
                 candidates = conn.execute(
                     "SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank",
@@ -2462,14 +2485,24 @@ class SkuMappingService:
                     "modelImageUrl": str(metadata.get("modelImageUrl") or ""),
                     "updated_at": 0,
                 })
+        for item in result:
+            if float(item.get("final_score") or 0) <= 0:
+                ai_payload = item.get("evidence", {}).get("ai") if isinstance(item.get("evidence"), dict) else {}
+                self._apply_composite_scores(
+                    item.get("candidates") or [],
+                    ai=ai_payload if isinstance(ai_payload, dict) else None,
+                )
+                item["final_score"] = self._item_final_score(item)
         tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
         # Keep each product together.  Products are ordered by total monthly
         # sales (falling back to the sum of their model sales); variants inside
         # a product are then ordered by their own monthly sales.
+        # Yellow rows then prefer higher composite scores (TASK 6).
         result.sort(key=lambda item: (
             -float(item.get("productMonthlySales") or 0),
             int(item.get("productOrder") or 0),
             -float(item.get("monthlySales") or 0),
+            -float(item.get("final_score") or 0) if str(item.get("review_tier") or "") == "yellow" else 0.0,
             int(item.get("modelOrder") or 0),
             tier_order.get(str(item.get("review_tier") or "red"), 2),
             -int(item.get("updated_at") or 0),
@@ -2477,6 +2510,7 @@ class SkuMappingService:
         total = len(result)
         result = result[(page - 1) * page_size: page * page_size]
         self._attach_negative_examples(result)
+        self._decorate_score_explanations(result)
         return {
             "status": "success",
             "items": result,
@@ -3073,6 +3107,13 @@ class SkuMappingService:
         row["dimension_count"] = max(int(row.get("dimension_count") or 0), len(parts), 1)
         if not row.get("candidate_key"):
             row["candidate_key"] = mapping_candidate_key(offer_id, row.get("sku_name", ""), row.get("second_name", ""))
+        evidence = row.get("evidence") if isinstance(row.get("evidence"), dict) else {}
+        if row.get("final_score") is None and evidence.get("final_score") is not None:
+            row["final_score"] = evidence.get("final_score")
+        if not row.get("score_breakdown") and isinstance(evidence.get("score_breakdown"), dict):
+            row["score_breakdown"] = evidence.get("score_breakdown")
+        if not row.get("why") and isinstance(evidence.get("why"), list):
+            row["why"] = evidence.get("why")
         return row
 
     def start_scan(
@@ -4292,6 +4333,386 @@ class SkuMappingService:
             result["prompt_version"] = PROMPT_VERSION
         return result
 
+    @staticmethod
+    def _soft_rule_penalty(candidate: Dict[str, Any]) -> bool:
+        evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+        for rule in (evidence.get("applied_rules") or []):
+            if not isinstance(rule, dict):
+                continue
+            effect = str(rule.get("effect") or "").strip().lower()
+            rule_type = str(rule.get("rule_type") or "").strip().lower()
+            if effect == "penalty" or (rule_type == "soft" and effect in {"penalty", "demote"}):
+                return True
+        return False
+
+    @staticmethod
+    def _feature_component(candidate: Dict[str, Any]) -> float:
+        try:
+            score = float(candidate.get("deterministic_score") or 0)
+        except (TypeError, ValueError):
+            score = 0.0
+        if score <= 0:
+            evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+            try:
+                score = float((evidence or {}).get("deterministic_score") or 0)
+            except (TypeError, ValueError):
+                score = 0.0
+        return max(0.0, min(1.0, score / FEATURE_SCORE_NORMALIZER))
+
+    @staticmethod
+    def _historical_component(candidate: Dict[str, Any]) -> float:
+        evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+        raw = candidate.get("historical_support_count")
+        if raw is None:
+            raw = (evidence or {}).get("historical_support_count") or 0
+        try:
+            count = max(0, int(raw or 0))
+        except (TypeError, ValueError):
+            count = 0
+        if HISTORICAL_SUPPORT_SATURATION <= 0:
+            return 0.0
+        return max(0.0, min(1.0, count / float(HISTORICAL_SUPPORT_SATURATION)))
+
+    @staticmethod
+    def _rule_component(candidate: Dict[str, Any]) -> float:
+        return 0.0 if SkuMappingService._soft_rule_penalty(candidate) else 1.0
+
+    @staticmethod
+    def _llm_component(candidate: Dict[str, Any], ai: Optional[Dict[str, Any]] = None) -> float:
+        ai = ai if isinstance(ai, dict) else {}
+        if str(ai.get("decision") or "").strip() != "match":
+            return 0.0
+        selected_key = str(ai.get("selected_candidate_key") or "").strip()
+        selected_id = normalize_id(ai.get("selected_sku_id"))
+        is_selected = bool(
+            (selected_key and str(candidate.get("candidate_key") or "") == selected_key)
+            or (selected_id and normalize_id(candidate.get("sku_id")) == selected_id)
+        )
+        if not is_selected:
+            return 0.0
+        try:
+            return max(0.0, min(1.0, float(ai.get("confidence") or 0)))
+        except (TypeError, ValueError):
+            return 0.0
+
+    @staticmethod
+    def composite_score_breakdown(
+        candidate: Dict[str, Any],
+        ai: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
+        weights: Optional[Dict[str, float]] = None,
+    ) -> Dict[str, Any]:
+        """Weighted 0–1 composite used only for ranking, never for green tier."""
+        resolved = weights if isinstance(weights, dict) else score_weights(config)
+        components = {
+            "feature": SkuMappingService._feature_component(candidate),
+            "historical": SkuMappingService._historical_component(candidate),
+            "rule": SkuMappingService._rule_component(candidate),
+            "llm": SkuMappingService._llm_component(candidate, ai),
+        }
+        weighted = {key: float(resolved.get(key) or 0) * components[key] for key in SCORE_WEIGHT_KEYS}
+        final_score = sum(weighted.values())
+        return {
+            "feature": components["feature"],
+            "historical": components["historical"],
+            "rule": components["rule"],
+            "llm": components["llm"],
+            "weights": {key: float(resolved.get(key) or 0) for key in SCORE_WEIGHT_KEYS},
+            "weighted": weighted,
+            "final_score": final_score,
+        }
+
+    @staticmethod
+    def _apply_composite_scores(
+        candidates: Sequence[Dict[str, Any]],
+        ai: Optional[Dict[str, Any]] = None,
+        config: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        weights = score_weights(config)
+        for candidate in candidates or []:
+            if not isinstance(candidate, dict):
+                continue
+            breakdown = SkuMappingService.composite_score_breakdown(candidate, ai=ai, weights=weights)
+            candidate["final_score"] = breakdown["final_score"]
+            candidate["score_breakdown"] = breakdown
+            evidence = dict(candidate.get("evidence") or {})
+            evidence["final_score"] = breakdown["final_score"]
+            evidence["score_breakdown"] = breakdown
+            candidate["evidence"] = evidence
+
+    @staticmethod
+    def _candidate_sort_key(candidate: Dict[str, Any]) -> Tuple[float, float, str]:
+        try:
+            final_score = float(candidate.get("final_score") or 0)
+        except (TypeError, ValueError):
+            final_score = 0.0
+        try:
+            deterministic = float(candidate.get("deterministic_score") or 0)
+        except (TypeError, ValueError):
+            deterministic = 0.0
+        return (-final_score, -deterministic, str(candidate.get("sku_id") or ""))
+
+    @staticmethod
+    def _item_final_score(item: Dict[str, Any]) -> float:
+        try:
+            stored = float(item.get("final_score") or 0)
+        except (TypeError, ValueError):
+            stored = 0.0
+        if stored:
+            return stored
+        breakdown = item.get("score_breakdown") if isinstance(item.get("score_breakdown"), dict) else {}
+        try:
+            stored = float(breakdown.get("final_score") or 0)
+        except (TypeError, ValueError):
+            stored = 0.0
+        if stored:
+            return stored
+        scores = []
+        for candidate in item.get("candidates") or []:
+            if not isinstance(candidate, dict):
+                continue
+            try:
+                scores.append(float(candidate.get("final_score") or 0))
+            except (TypeError, ValueError):
+                continue
+            nested = candidate.get("score_breakdown") if isinstance(candidate.get("score_breakdown"), dict) else {}
+            try:
+                scores.append(float(nested.get("final_score") or 0))
+            except (TypeError, ValueError):
+                continue
+        return max(scores) if scores else 0.0
+
+    def _decorate_score_explanations(self, items: Sequence[Dict[str, Any]]) -> None:
+        cfg = load_config()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            ai = item.get("evidence", {}).get("ai") if isinstance(item.get("evidence"), dict) else {}
+            if not isinstance(ai, dict):
+                ai = {}
+            candidates = [row for row in (item.get("candidates") or []) if isinstance(row, dict)]
+            self._apply_composite_scores(candidates, ai=ai, config=cfg)
+            for candidate in candidates:
+                candidate["why"] = self._explain_why(
+                    candidate,
+                    ai=ai,
+                    decision=str(item.get("decision") or ""),
+                )
+            selected = self._selected_candidate_from_item(item, candidates)
+            if selected:
+                item["score_breakdown"] = selected.get("score_breakdown") or item.get("score_breakdown") or {}
+                item["final_score"] = float((item["score_breakdown"] or {}).get("final_score") or item.get("final_score") or 0)
+            elif not item.get("score_breakdown"):
+                item["score_breakdown"] = (candidates[0].get("score_breakdown") if candidates else {}) or {}
+                item["final_score"] = self._item_final_score(item)
+
+    @staticmethod
+    def _selected_candidate_from_item(
+        item: Dict[str, Any],
+        candidates: Sequence[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        selected_key = str(item.get("suggested_candidate_key") or "").strip()
+        selected_id = normalize_id(item.get("suggested_sku_id"))
+        ai = item.get("evidence", {}).get("ai") if isinstance(item.get("evidence"), dict) else {}
+        if isinstance(ai, dict):
+            selected_key = selected_key or str(ai.get("selected_candidate_key") or "").strip()
+            selected_id = selected_id or normalize_id(ai.get("selected_sku_id"))
+        for candidate in candidates or []:
+            if selected_key and str(candidate.get("candidate_key") or "") == selected_key:
+                return candidate
+            if selected_id and normalize_id(candidate.get("sku_id")) == selected_id:
+                return candidate
+        if len(list(candidates or [])) == 1:
+            return candidates[0]
+        return None
+
+    def _explain_why(
+        self,
+        candidate: Dict[str, Any],
+        ai: Optional[Dict[str, Any]] = None,
+        decision: str = "",
+        rule_hits: Optional[Sequence[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Build explain entries. Kinds: rule / alias / historical / negative / feature / llm."""
+        why: List[Dict[str, Any]] = []
+        evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
+        applied = list(evidence.get("applied_rules") or [])
+        if rule_hits:
+            seen = {(str(row.get("rule_id") or ""), str(row.get("effect") or "")) for row in applied if isinstance(row, dict)}
+            for hit in rule_hits:
+                if not isinstance(hit, dict):
+                    continue
+                token = (str(hit.get("rule_id") or ""), str(hit.get("effect") or ""))
+                if not token[0] or token in seen:
+                    continue
+                if str(hit.get("candidate_key") or "") and str(hit.get("candidate_key") or "") != str(candidate.get("candidate_key") or ""):
+                    continue
+                applied.append(hit)
+                seen.add(token)
+        descriptions = {
+            str(row.get("rule_id") or ""): str(row.get("description") or "")
+            for row in load_rules()
+            if isinstance(row, dict) and row.get("rule_id")
+        }
+        for rule in applied:
+            if not isinstance(rule, dict) or not rule.get("rule_id"):
+                continue
+            rule_id = str(rule.get("rule_id") or "")
+            effect = str(rule.get("effect") or "")
+            detail = rule.get("description") or descriptions.get(rule_id) or ""
+            text = f"{rule_id}（{effect}）"
+            if detail:
+                text = f"{text}：{detail}"
+            why.append({
+                "kind": "rule",
+                "rule_id": rule_id,
+                "effect": effect,
+                "rule_type": str(rule.get("rule_type") or ""),
+                "text": text,
+            })
+        exact = int(evidence.get("exact") or 0)
+        strict_exact = int(evidence.get("strict_exact") or 0)
+        if exact > strict_exact:
+            matched = [str(part) for part in (evidence.get("matched") or []) if str(part).strip()]
+            why.append({
+                "kind": "alias",
+                "text": "來源規格透過同義詞對上候選" + (f"：{'／'.join(matched)}" if matched else ""),
+                "matched": matched,
+            })
+        try:
+            support_count = int(candidate.get("historical_support_count") if candidate.get("historical_support_count") is not None else (evidence.get("historical_support_count") or 0))
+        except (TypeError, ValueError):
+            support_count = 0
+        examples = candidate.get("historical_examples")
+        if examples is None:
+            examples = evidence.get("historical_examples") or []
+        if support_count > 0:
+            why.append({
+                "kind": "historical",
+                "support_count": support_count,
+                "examples": list(examples or [])[:HISTORICAL_EXAMPLE_LIMIT],
+                "text": f"歷史核准支持 {support_count} 筆",
+            })
+        negative = candidate.get("negative_example")
+        if isinstance(negative, dict) and (negative.get("reason_code") or negative.get("reason_text")):
+            code = str(negative.get("reason_code") or "")
+            label = NEGATIVE_REASON_LABELS.get(code, code or "負例")
+            extra = str(negative.get("reason_text") or "").strip()
+            why.append({
+                "kind": "negative",
+                "reason_code": code,
+                "origin": str(negative.get("origin") or ""),
+                "text": f"曾被否決：{label}" + (f"（{extra}）" if extra else ""),
+            })
+        try:
+            det_score = float(candidate.get("deterministic_score") or 0)
+        except (TypeError, ValueError):
+            det_score = 0.0
+        if det_score or evidence.get("complete") is not None or evidence.get("exact") is not None:
+            required = int(evidence.get("required") or 0)
+            loose = int(evidence.get("loose") or 0)
+            complete = evidence.get("complete") is True
+            why.append({
+                "kind": "feature",
+                "deterministic_score": det_score,
+                "exact": exact,
+                "loose": loose,
+                "complete": complete,
+                "text": (
+                    f"特徵分數 {det_score:g}（exact={exact}"
+                    + (f"/{required}" if required else "")
+                    + f" loose={loose} complete={'是' if complete else '否'}）"
+                ),
+            })
+        ai = ai if isinstance(ai, dict) else {}
+        if ai:
+            ai_decision = str(ai.get("decision") or decision or "abstain")
+            try:
+                confidence = float(ai.get("confidence") or 0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+            selected = bool(self._llm_component(candidate, ai) > 0)
+            if ai_decision == "abstain":
+                text = "AI 棄權，llm 分量為 0"
+            elif selected:
+                text = f"AI 選中此候選，信心 {confidence:.2f}"
+            else:
+                text = f"AI 決策為 {ai_decision}，此候選未獲選"
+            why.append({
+                "kind": "llm",
+                "decision": ai_decision,
+                "confidence": confidence,
+                "selected": selected,
+                "text": text,
+            })
+        return why
+
+    def explain(self, product_id: str, model_id: str) -> Dict[str, Any]:
+        """Explain the persisted mapping decision for one model."""
+        product_id = normalize_id(product_id) or str(product_id or "").strip()
+        model_id = normalize_id(model_id) or str(model_id or "").strip()
+        if not product_id or not model_id:
+            raise ValueError("productId 與 modelId 必填")
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                (product_id, model_id),
+            ).fetchone()
+            if row is None:
+                raise FileNotFoundError("找不到對應的 mapping 建議")
+            item = dict(row)
+            candidate_rows = conn.execute(
+                "SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank",
+                (item["id"],),
+            ).fetchall()
+            rule_hits = [
+                dict(hit)
+                for hit in conn.execute(
+                    "SELECT * FROM mapping_rule_hits WHERE suggestion_id=? ORDER BY id",
+                    (item["id"],),
+                ).fetchall()
+            ]
+        item["evidence"] = self._json_load(item.pop("evidence_json", "{}"), {})
+        item["score_breakdown"] = self._json_load(item.pop("score_breakdown_json", "{}"), {})
+        try:
+            item["final_score"] = float(item.get("final_score") or 0)
+        except (TypeError, ValueError):
+            item["final_score"] = 0.0
+        candidates = [self._candidate_public(dict(row), item.get("offer_id", "")) for row in candidate_rows]
+        item["candidates"] = candidates
+        self._attach_negative_examples([item])
+        ai = item["evidence"].get("ai") if isinstance(item.get("evidence"), dict) else {}
+        if not isinstance(ai, dict):
+            ai = {}
+        self._apply_composite_scores(candidates, ai=ai)
+        for candidate in candidates:
+            candidate["why"] = self._explain_why(
+                candidate,
+                ai=ai,
+                decision=str(item.get("decision") or ""),
+                rule_hits=rule_hits,
+            )
+        selected = self._selected_candidate_from_item(item, candidates)
+        if selected is None and candidates:
+            selected = candidates[0]
+        breakdown = (selected or {}).get("score_breakdown") or item.get("score_breakdown") or {}
+        why = list((selected or {}).get("why") or [])
+        if not why and selected:
+            why = self._explain_why(selected, ai=ai, decision=str(item.get("decision") or ""), rule_hits=rule_hits)
+        return {
+            "status": "success",
+            "product_id": product_id,
+            "model_id": model_id,
+            "decision": str(item.get("decision") or ""),
+            "review_tier": str(item.get("review_tier") or ""),
+            "review_reason": str(item.get("review_reason") or ""),
+            "selected_candidate": selected,
+            "why": why,
+            "score_breakdown": breakdown,
+            "knowledge_version": knowledge_version(),
+            "candidates": candidates,
+        }
+
     def _score_mapping_candidates(
         self,
         model: Dict[str, Any],
@@ -4467,9 +4888,10 @@ class SkuMappingService:
         ]
         if strict_candidates:
             scored = strict_candidates
-        scored.sort(key=lambda item: (-float(item["deterministic_score"]), item["sku_id"]))
+        self._annotate_historical_support(model, model.get("offer_id"), scored)
+        self._apply_composite_scores(scored)
+        scored.sort(key=self._candidate_sort_key)
         limited = scored[:max_review_candidates()]
-        self._annotate_historical_support(model, model.get("offer_id"), limited)
         return limited
 
     @staticmethod
@@ -4908,6 +5330,19 @@ class SkuMappingService:
             selected = next((item for item in candidates if normalize_id(item.get("sku_id")) == selected_id), None)
         if selected is None and len(candidates) == 1:
             selected = candidates[0]
+        self._apply_composite_scores(candidates, ai=ai)
+        candidates.sort(key=self._candidate_sort_key)
+        if selected:
+            selected_key = str(selected.get("candidate_key") or "")
+            selected_id = normalize_id(selected.get("sku_id"))
+            selected = next(
+                (
+                    item for item in candidates
+                    if (selected_key and str(item.get("candidate_key") or "") == selected_key)
+                    or (selected_id and normalize_id(item.get("sku_id")) == selected_id)
+                ),
+                selected,
+            )
         selected = selected or {}
         if preserve_existing_mapping:
             # Prefer the exact current candidate when it is present, otherwise
@@ -4947,7 +5382,14 @@ class SkuMappingService:
         if preserve_discontinued:
             status = "discontinued"
         now = int(time.time())
-        evidence = {"ai": ai, "rules": [item.get("evidence", {}) for item in candidates], **extra}
+        selected_breakdown = selected.get("score_breakdown") if isinstance(selected.get("score_breakdown"), dict) else {}
+        if not selected_breakdown and candidates:
+            selected_breakdown = candidates[0].get("score_breakdown") or {}
+        try:
+            persisted_final_score = float(selected_breakdown.get("final_score") or selected.get("final_score") or 0)
+        except (TypeError, ValueError):
+            persisted_final_score = 0.0
+        evidence = {"ai": ai, "rules": [item.get("evidence", {}) for item in candidates], "score_breakdown": selected_breakdown, **extra}
         verified_ai_candidate_keys: List[str] = []
         if (
             ai.get("decision") == "match"
@@ -4989,17 +5431,23 @@ class SkuMappingService:
                 """INSERT INTO sku_mapping_suggestions
                 (product_id,model_id,model_name,product_name,offer_id,snapshot_id,
                  suggested_candidate_key,suggested_sku_id,suggested_sku_name,suggested_second_name,status,decision,
-                 confidence,evidence_json,review_tier,review_reason,version,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 confidence,final_score,score_breakdown_json,evidence_json,review_tier,review_reason,version,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(product_id,model_id) DO UPDATE SET
                  model_name=excluded.model_name, product_name=excluded.product_name,
                  offer_id=excluded.offer_id, snapshot_id=excluded.snapshot_id,
                  suggested_candidate_key=excluded.suggested_candidate_key, suggested_sku_id=excluded.suggested_sku_id, suggested_sku_name=excluded.suggested_sku_name,
                  suggested_second_name=excluded.suggested_second_name, status=excluded.status,
                  decision=excluded.decision, confidence=excluded.confidence,
+                 final_score=excluded.final_score, score_breakdown_json=excluded.score_breakdown_json,
                  evidence_json=excluded.evidence_json, review_tier=excluded.review_tier,
                  review_reason=excluded.review_reason, version=excluded.version, updated_at=excluded.updated_at""",
-                 (model["product_id"], model["model_id"], model["model_name"], model["product_name"], model["offer_id"], snapshot.get("id"), selected_key, selected_id, selected.get("sku_name", ""), selected.get("second_name", ""), status, decision, confidence, json.dumps(evidence, ensure_ascii=False), review_tier, review_reason, version, now, now),
+                 (
+                     model["product_id"], model["model_id"], model["model_name"], model["product_name"], model["offer_id"], snapshot.get("id"),
+                     selected_key, selected_id, selected.get("sku_name", ""), selected.get("second_name", ""), status, decision,
+                     confidence, persisted_final_score, json.dumps(selected_breakdown, ensure_ascii=False),
+                     json.dumps(evidence, ensure_ascii=False), review_tier, review_reason, version, now, now,
+                 ),
             )
             suggestion = conn.execute("SELECT id FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?", (model["product_id"], model["model_id"])).fetchone()
             conn.execute("DELETE FROM sku_mapping_candidates WHERE suggestion_id=?", (suggestion["id"],))
