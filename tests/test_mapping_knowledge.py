@@ -199,6 +199,22 @@ class SummaryKnowledgeTests(unittest.TestCase):
         self.assertEqual(ai_verified_green_confidence(), AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD)
         self.assertEqual(max_review_candidates(), MAX_REVIEW_CANDIDATES)
 
+    def test_summary_exposes_shared_reason_code_catalog(self):
+        from mapping_knowledge import NEGATIVE_REASON_CODES, reason_code_catalog
+
+        with tempfile.TemporaryDirectory() as tmp:
+            golden = {
+                "p1": {
+                    "商品名稱": "測試",
+                    "型號": [{"規格ID": "m1", "型號名稱": "白", "阿里巴巴商品URL": "https://detail.1688.com/offer/1.html"}],
+                }
+            }
+            Path(tmp, "golden_table.json").write_text(json.dumps(golden, ensure_ascii=False), encoding="utf-8")
+            Path(tmp, "shopee_products.json").write_text(json.dumps(golden, ensure_ascii=False), encoding="utf-8")
+            knowledge = SkuMappingService(tmp).summary()["knowledge"]
+        self.assertEqual([row["code"] for row in knowledge["reason_codes"]], list(NEGATIVE_REASON_CODES))
+        self.assertEqual(knowledge["reason_codes"], reason_code_catalog())
+
 
 class FixtureParityTests(unittest.TestCase):
     """Default config must keep TASK 1 fixture results bit-for-bit."""

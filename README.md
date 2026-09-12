@@ -35,7 +35,7 @@
 - 核心：`alibaba_restocker.py`（1688 加採購車、SKU 選擇、MOQ／包裝倍數）。
 - 數量規則：`restock_rules.py`（手機殼／手机壳 **3 個月**，其餘 **4 個月**；吊飾／掛繩／明確加購除外）。
 - 批次與關注清單：`restock_batch.py`、`scripts/run_watchlist_restock.py`。
-- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。知識包：`mapping_knowledge/`（`config.json` 門檻、`aliases.json` 同義詞、`rules.json` 規則登錄、`categories.json` 類別關鍵字）；載入見 `mapping_knowledge.py`。`python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出 aliases。
+- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。知識包：`mapping_knowledge/`（`config.json` 門檻、`aliases.json` 同義詞、`rules.json` 規則登錄、`categories.json` 類別關鍵字）；載入見 `mapping_knowledge.py`。`python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出 aliases。人工否決寫入 `mapping_negative_examples`（原因代碼見 SPEC 5.3）。
 - 離線購物車數量核對（不連瀏覽器）：`scripts/reconcile_cart.py`，說明見 [`docs/cart-reconciliation.md`](docs/cart-reconciliation.md)。
 - 瀏覽器優先 ego-lite，否則 Chrome／Playwright Chromium。
 
