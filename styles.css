@@ -2296,9 +2296,7 @@ input:checked + .toggle-slider:before {
 }
 
 .ads-analysis-summary-card,
-.ads-ranking-card,
-.ads-analysis-section,
-.ads-product-card {
+.ads-analysis-section {
     background: #ffffff;
     border: 1px solid #f1dfcf;
     border-radius: 18px;
@@ -2328,12 +2326,6 @@ input:checked + .toggle-slider:before {
     font-size: 14px;
 }
 
-.ads-analysis-narrative {
-    display: grid;
-    grid-template-columns: 1.4fr 1fr;
-    gap: 16px;
-}
-
 .ads-analysis-section {
     padding: 20px;
 }
@@ -2347,12 +2339,6 @@ input:checked + .toggle-slider:before {
     gap: 10px;
 }
 
-.ads-analysis-note {
-    margin-top: 14px;
-    color: #846955;
-    font-size: 13px;
-}
-
 .ads-analysis-action-list {
     margin: 0;
     padding-left: 20px;
@@ -2361,193 +2347,6 @@ input:checked + .toggle-slider:before {
 
 .ads-analysis-action-list li + li {
     margin-top: 10px;
-}
-
-.ads-chart-series {
-    display: grid;
-    gap: 12px;
-}
-
-.ads-chart-row {
-    display: grid;
-    grid-template-columns: 88px 1fr 140px;
-    align-items: center;
-    gap: 12px;
-}
-
-.ads-chart-label,
-.ads-chart-value {
-    font-size: 13px;
-    color: #5c5047;
-}
-
-.ads-chart-bar-wrap {
-    height: 14px;
-    background: #f7ebdf;
-    border-radius: 999px;
-    overflow: hidden;
-}
-
-.ads-chart-bar {
-    height: 100%;
-    background: linear-gradient(90deg, #ff8d3a, #ffb25c);
-    border-radius: 999px;
-}
-
-.ads-ranking-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 16px;
-}
-
-.ads-ranking-card {
-    overflow: hidden;
-}
-
-.ads-ranking-header {
-    padding: 14px 16px;
-    background: #fff2e5;
-    color: #6f4b2a;
-    font-weight: 700;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-}
-
-.ads-ranking-body {
-    padding: 14px 16px;
-    display: grid;
-    gap: 12px;
-}
-
-.ads-ranking-item {
-    display: grid;
-    grid-template-columns: 60px 1fr;
-    gap: 12px;
-    align-items: center;
-}
-
-.ads-ranking-image,
-.ads-product-card-image {
-    width: 60px;
-    height: 60px;
-    border-radius: 14px;
-    object-fit: cover;
-    background: #f5f5f5;
-}
-
-.ads-ranking-text {
-    display: grid;
-    gap: 4px;
-}
-
-.ads-ranking-text strong {
-    font-size: 14px;
-    line-height: 1.35;
-}
-
-.ads-ranking-text span {
-    color: #6d6156;
-    font-size: 12px;
-}
-
-.ads-empty-text {
-    color: #8d8177;
-    font-size: 13px;
-}
-
-.ads-product-cards {
-    display: grid;
-    gap: 16px;
-}
-
-.ads-product-card {
-    padding: 18px;
-}
-
-.ads-product-card.success {
-    border-color: #d5efdc;
-}
-
-.ads-product-card.danger {
-    border-color: #f1d4d4;
-}
-
-.ads-product-card-top {
-    display: grid;
-    grid-template-columns: 80px 1fr;
-    gap: 14px;
-    align-items: center;
-}
-
-.ads-product-card-image {
-    width: 80px;
-    height: 80px;
-}
-
-.ads-product-card-meta h4 {
-    margin: 0 0 8px;
-    font-size: 18px;
-}
-
-.ads-product-submeta {
-    font-size: 13px;
-    color: #74685e;
-    margin-top: 4px;
-}
-
-.ads-product-metrics-grid,
-.ads-window-metrics-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-    gap: 12px;
-    margin-top: 16px;
-}
-
-.ads-product-metric,
-.ads-window-metric {
-    background: #fbf6f1;
-    border-radius: 14px;
-    padding: 12px;
-}
-
-.ads-product-metric span,
-.ads-window-title {
-    display: block;
-    color: #8b7767;
-    font-size: 12px;
-    margin-bottom: 6px;
-}
-
-.ads-product-metric strong,
-.ads-window-metric strong {
-    font-size: 18px;
-    color: #252525;
-}
-
-.ads-window-metric div + div {
-    margin-top: 4px;
-    font-size: 13px;
-    color: #5b5047;
-}
-
-.ads-product-action {
-    margin-top: 16px;
-    background: #fff2e5;
-    border-radius: 14px;
-    padding: 14px;
-}
-
-.ads-product-action strong {
-    display: block;
-    margin-bottom: 8px;
-    color: #734c24;
-}
-
-.ads-product-action p {
-    margin: 0;
-    color: #5a4a3d;
-    line-height: 1.6;
 }
 
 .ads-analysis-files {
@@ -2565,21 +2364,12 @@ input:checked + .toggle-slider:before {
     color: #8d2a2a;
 }
 
-@media (max-width: 900px) {
-    .ads-analysis-narrative {
-        grid-template-columns: 1fr;
-    }
-}
-
 @media (max-width: 768px) {
     .ads-analysis-actions {
         width: 100%;
         justify-content: flex-start;
     }
 
-    .ads-chart-row {
-        grid-template-columns: 1fr;
-    }
 }
 
 /* Inventory homepage modernization --------------------------------------
