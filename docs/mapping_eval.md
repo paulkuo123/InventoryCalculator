@@ -215,7 +215,7 @@ python -m unittest tests.test_mapping_evidence_audit
 
 ## TASK 8 對照評估與 auto-approve 反事實（不啟用）
 
-總覽與架構見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)。本任務只重跑 fixture 評估、用 `compare` 對 TASK 1 baseline，以及**報告** SPEC 5.1 auto-approve 精度。`auto_approve.enabled` 維持 `false`，沒有 UI toggle，不改 Golden schema，不做 TASK 9。
+總覽與架構見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)。本任務只重跑 fixture 評估、用 `compare` 對 TASK 1 baseline，以及**報告** SPEC 5.1 auto-approve 精度。`auto_approve.enabled` 維持 `false`，沒有 UI toggle，不改 Golden schema。TASK 9 設計見 [`offer_discovery_spike.md`](offer_discovery_spike.md)，不在本評估 CLI 範圍。
 
 凍結的 TASK 1 fixture 指標：`tests/fixtures/mapping_eval/task1_baseline/metrics.json`。
 
