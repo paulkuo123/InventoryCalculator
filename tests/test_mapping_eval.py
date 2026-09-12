@@ -271,6 +271,47 @@ class ReportAndCliTests(unittest.TestCase):
             self.assertEqual(metrics["ai"]["n"], 1)
             self.assertEqual(metrics["ai"]["match"], 1)
 
+    def test_ai_dry_writes_prompt_payload_fields_without_calling_judge(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+            "mapping_eval.call_existing_ai_judge",
+            side_effect=AssertionError("ai-dry must not call the judge"),
+        ):
+            out = Path(tmp) / "ai-dry"
+            code = main([
+                "run",
+                "--fixture",
+                str(FIX / "cases.json"),
+                "--out",
+                str(out),
+                "--ai-dry",
+                "--ai-limit",
+                "50",
+                "--categories-path",
+                str(Path(tmp) / "missing.json"),
+            ])
+            self.assertEqual(code, 0)
+            payload_path = out / "ai_dry_payloads.jsonl"
+            self.assertTrue(payload_path.is_file())
+            rows = [
+                json.loads(line)
+                for line in payload_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            self.assertEqual(len(rows), 5)
+            for row in rows:
+                self.assertEqual(row["prompt_version"], "2026-09-v2")
+                self.assertIn("historical_examples", row)
+                self.assertIn("negative_examples", row)
+                self.assertIn("applied_rules", row)
+                self.assertIn("historical_support_counts", row)
+            meta = json.loads((out / "run_meta.json").read_text(encoding="utf-8"))
+            self.assertTrue(meta["ai_dry"])
+            self.assertFalse(meta["ai"])
+            self.assertEqual(meta["prompt_version"], "2026-09-v2")
+            metrics = json.loads((out / "metrics.json").read_text(encoding="utf-8"))
+            self.assertAlmostEqual(metrics["top1_accuracy"], 0.5)
+            self.assertAlmostEqual(metrics["green"]["precision"], 1.0)
+
 
 class DbModeCollectionTests(unittest.TestCase):
     def test_collects_approved_rows_with_ok_snapshot_only(self):

@@ -26,6 +26,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tupl
 
 from sku_mapping_service import (
     AI_SUCCESS_SOURCES,
+    PROMPT_VERSION,
     SkuMappingService,
     normalize_id,
     normalize_text,
@@ -766,10 +767,49 @@ def render_summary_markdown(metrics: Dict[str, Any], meta: Optional[Dict[str, An
             f"- sample: {meta.get('sample')}",
             f"- seed: {meta.get('seed')}",
             f"- ai: {meta.get('ai')} (limit {meta.get('ai_limit')})",
+            f"- ai_dry: {meta.get('ai_dry')}",
+            f"- prompt_version: {meta.get('prompt_version')}",
             f"- category grouping: {meta.get('category_mode')}",
         ])
     lines.append("")
     return "\n".join(lines)
+
+
+def _ai_dry_payload_row(
+    service: SkuMappingService,
+    case: Dict[str, Any],
+    candidates: Sequence[Dict[str, Any]],
+) -> Dict[str, Any]:
+    """Document the TASK 5 judge payload without calling a provider."""
+    model = {
+        "product_id": case.get("product_id") or "",
+        "model_id": case.get("model_id") or "",
+        "product_name": case["product_name"],
+        "model_name": case["model_name"],
+        "offer_id": case.get("offer_id") or "",
+    }
+    payload = service._ai_user_payload(model, list(candidates))
+    return {
+        "product_id": model["product_id"],
+        "model_id": model["model_id"],
+        "model_name": model["model_name"],
+        "offer_id": model["offer_id"],
+        "prompt_version": PROMPT_VERSION,
+        "historical_examples": payload.get("historical_examples") or [],
+        "negative_examples": payload.get("negative_examples") or [],
+        "applied_rules": payload.get("applied_rules") or [],
+        "candidate_keys": [str(item.get("candidate_key") or "") for item in candidates],
+        "historical_support_counts": [
+            int(item.get("historical_support_count") or 0) for item in candidates
+        ],
+    }
+
+
+def write_ai_dry_payloads(out_dir: Path, rows: Sequence[Dict[str, Any]]) -> None:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    with (out_dir / "ai_dry_payloads.jsonl").open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def run_evaluation(
@@ -779,6 +819,7 @@ def run_evaluation(
     sample: Optional[int] = None,
     seed: int = DEFAULT_SAMPLE_SEED,
     use_ai: bool = False,
+    ai_dry: bool = False,
     ai_limit: int = DEFAULT_AI_LIMIT,
     assume_yes: bool = False,
     categories_path: Optional[Path] = None,
@@ -791,20 +832,24 @@ def run_evaluation(
         if categories_path and Path(categories_path).is_file()
         else "product_name_heuristics"
     )
-    estimated_ai = min(max(0, int(ai_limit)), len(selected)) if use_ai else 0
-    if use_ai:
+    estimated_ai = min(max(0, int(ai_limit)), len(selected)) if (use_ai or ai_dry) else 0
+    if use_ai and not ai_dry:
         confirm_ai_calls(estimated_ai, ai_limit, assume_yes)
     started = time.time()
     records: List[Dict[str, Any]] = []
+    dry_payloads: List[Dict[str, Any]] = []
     with isolated_mapping_service() as service:
         for index, case in enumerate(selected):
             ai_result = None
-            if use_ai and index < estimated_ai:
-                model = {
-                    "product_name": case["product_name"],
-                    "model_name": case["model_name"],
-                    "offer_id": case.get("offer_id") or "",
-                }
+            model = {
+                "product_name": case["product_name"],
+                "model_name": case["model_name"],
+                "offer_id": case.get("offer_id") or "",
+            }
+            if ai_dry and index < estimated_ai:
+                candidates = service.generate_candidates(model, case.get("skus") or [])
+                dry_payloads.append(_ai_dry_payload_row(service, case, candidates))
+            elif use_ai and index < estimated_ai:
                 candidates = service.generate_candidates(model, case.get("skus") or [])
                 ai_result = call_existing_ai_judge(service, model, case.get("skus") or [], candidates)
             records.append(
@@ -822,9 +867,11 @@ def run_evaluation(
         "n_evaluated": len(selected),
         "sample": sample,
         "seed": seed,
-        "ai": use_ai,
+        "ai": use_ai and not ai_dry,
+        "ai_dry": ai_dry,
         "ai_limit": ai_limit,
         "ai_estimated": estimated_ai,
+        "prompt_version": PROMPT_VERSION,
         "category_mode": category_mode,
         "elapsed_seconds": round(time.time() - started, 3),
         "out_dir": str(out_dir),
@@ -832,6 +879,8 @@ def run_evaluation(
     if extra_meta:
         meta.update(extra_meta)
     write_report(out_dir, metrics, records, meta)
+    if ai_dry:
+        write_ai_dry_payloads(out_dir, dry_payloads)
     return {"metrics": metrics, "records": records, "meta": meta, "out_dir": str(out_dir)}
 
 
@@ -938,6 +987,11 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument("--sample", type=int, default=None, help="Optional random sample size")
     run_p.add_argument("--seed", type=int, default=DEFAULT_SAMPLE_SEED, help="Sample RNG seed")
     run_p.add_argument("--ai", action="store_true", help="Also call the existing AI judge")
+    run_p.add_argument(
+        "--ai-dry",
+        action="store_true",
+        help="Build AI prompt payloads (historical/negative/applied_rules) without calling providers",
+    )
     run_p.add_argument("--ai-limit", type=int, default=DEFAULT_AI_LIMIT, help="Max AI calls")
     run_p.add_argument("--yes", action="store_true", help="Skip interactive AI confirmation")
     run_p.add_argument(
@@ -979,6 +1033,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         sample=args.sample,
         seed=args.seed,
         use_ai=bool(args.ai),
+        ai_dry=bool(getattr(args, "ai_dry", False)),
         ai_limit=int(args.ai_limit),
         assume_yes=bool(args.yes),
         categories_path=categories_path,
