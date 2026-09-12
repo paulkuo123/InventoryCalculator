@@ -166,6 +166,27 @@ class AdsExportTests(unittest.TestCase):
         self.assertGreaterEqual(self.crawler._dismiss_ads_blocking_modals.call_count, 3)
         self.crawler._capture_debug_snapshot.assert_not_called()
 
+    def test_session_blocker_raises_login_wall(self):
+        self.crawler.page = MagicMock()
+        self.crawler.page.url = "https://accounts.shopee.tw/login"
+        self.crawler.page.inner_text.return_value = "請登入"
+        with self.assertRaisesRegex(RuntimeError, "LOGIN_WALL"):
+            self.crawler._raise_if_session_blocked()
+
+    def test_remote_cleanup_does_not_close_browser(self):
+        self.crawler._cleaned_up = False
+        self.crawler._cdp_attached = True
+        self.crawler._owns_page = True
+        self.crawler.page = MagicMock()
+        self.crawler.browser = MagicMock()
+        self.crawler.context = MagicMock()
+        self.crawler.playwright = MagicMock()
+        self.crawler.cleanup()
+        self.crawler.page.close.assert_called_once()
+        self.crawler.browser.close.assert_not_called()
+        self.crawler.context.close.assert_not_called()
+        self.crawler.playwright.stop.assert_called_once()
+
 
 if __name__ == "__main__":
     unittest.main()

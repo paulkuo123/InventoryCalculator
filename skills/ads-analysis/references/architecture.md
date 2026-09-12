@@ -29,6 +29,8 @@
   - `crawler.py`
 - 廣告分析：
   - `ads_analysis.py`
+  - `ads_weekly.py`（週報抓取，預設遠端 CDP）
+  - `ads_session.py`
   - `config_loader.py`
   - `setup_openai_key.py`
 
