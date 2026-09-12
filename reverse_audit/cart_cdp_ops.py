@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 CART_URL = "https://cart.1688.com/cart.htm"
 TZ = timezone(timedelta(hours=8))
@@ -42,67 +42,6 @@ def connect_browser(playwright):
     page = ctx.new_page()
     return browser, ctx, page, cdp
 
-
-# JS: locate a cart line by cartId and/or offerId+skuId, then read qty input.
-_LOCATE_AND_READ_JS = """
-({ cartId, offerId, skuId }) => {
-  const offerRe = /offer\\/(\\d+)/i;
-  const norm = (s) => String(s || '').trim();
-  const rows = [];
-  const candidates = Array.from(document.querySelectorAll(
-    '[data-cart-id], [data-cartid], [cartid], tr, [class*="cart"], [class*="item"]'
-  ));
-  const seen = new Set();
-  for (const el of candidates) {
-    let root = el;
-    const text = String(root.innerText || '');
-    if (text.length < 4 || text.length > 4000) continue;
-    const html = String(root.outerHTML || '').slice(0, 8000);
-    const attrCid = norm(
-      root.getAttribute('data-cart-id') ||
-      root.getAttribute('data-cartid') ||
-      root.getAttribute('cartid') ||
-      ''
-    );
-    let cid = attrCid;
-    if (!cid && cartId) {
-      if (html.includes(cartId) || text.includes(cartId)) cid = cartId;
-    }
-    let oid = '';
-    const a = root.querySelector('a[href*="offer"]');
-    if (a) {
-      const m = String(a.href || '').match(offerRe);
-      if (m) oid = m[1];
-    }
-    if (!oid && offerId && (html.includes(offerId) || text.includes(offerId))) {
-      oid = offerId;
-    }
-    let sid = '';
-    if (skuId && (html.includes(skuId) || text.includes(skuId))) sid = skuId;
-    const input = root.querySelector(
-      'input.ant-input-number-input, input[role="spinbutton"], input[aria-valuemin], input[class*="quantity" i], input[name*="quantity" i]'
-    );
-    if (!input && !cid) continue;
-    const key = cid + '|' + oid + '|' + sid + '|' + (input ? '1' : '0');
-    if (seen.has(key)) continue;
-    seen.add(key);
-    rows.push({
-      cartId: cid,
-      offerId: oid,
-      skuId: sid,
-      qty: input ? Number(input.value) || 0 : null,
-      hasInput: !!input,
-    });
-  }
-  const match = rows.find(r => {
-    if (cartId && r.cartId === cartId) return true;
-    if (offerId && skuId && r.offerId === offerId && r.skuId === skuId) return true;
-    if (offerId && r.offerId === offerId && (!skuId || r.skuId === skuId || !r.skuId)) return true;
-    return false;
-  });
-  return { match: match || null, candidates: rows.slice(0, 20) };
-}
-"""
 
 _SET_QTY_JS = """
 ({ cartId, offerId, skuId, targetQty }) => {
