@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -1612,14 +1613,81 @@ class RefreshCliTests(unittest.TestCase):
         self.assertFalse(calls[1][2])
 
 
+FREEZE_SCRIPT = ROOT / "scripts" / "freeze_reverse_audit_pools_20260905.py"
+
+try:
+    import playwright  # noqa: F401
+
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
+
+
 def _load_deep_order_dom() -> str:
-    text = (ROOT / "scripts" / "freeze_reverse_audit_pools_20260905.py").read_text(
-        encoding="utf-8"
-    )
+    text = FREEZE_SCRIPT.read_text(encoding="utf-8")
     marker = 'DEEP_ORDER_DOM = """'
     start = text.index(marker) + len(marker)
     end = text.index('"""', start)
     return text[start:end]
+
+
+def _import_freeze_script(out_dir: Path):
+    """Import the dated freeze script as a module (it mkdirs REVERSE_AUDIT_OUT)."""
+    import importlib.util
+
+    with mock.patch.dict(os.environ, {"REVERSE_AUDIT_OUT": str(out_dir)}):
+        spec = importlib.util.spec_from_file_location(
+            "freeze_reverse_audit_pools_under_test", FREEZE_SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
+
+
+@unittest.skipUnless(HAS_PLAYWRIGHT, "freeze script imports playwright at module top")
+class FreezeScriptRegexAndCdpTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.mod = _import_freeze_script(Path(cls._tmp.name))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_page_meta_regex_matches_mtop_json(self):
+        txt = '{"data":{"pageSize": 50,"pages":3, "total" :123,"list":[]}}'
+        m = self.mod.PAGE_META_RE.search(txt)
+        self.assertIsNotNone(m)
+        self.assertEqual(tuple(m.groups()), ("50", "3", "123"))
+
+    def test_account_hint_regex_matches_login_id(self):
+        m = self.mod.ACCOUNT_HINT_RE.search("你好, YngSuao_88 欢迎回来")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(0), "YngSuao_88")
+
+    def test_cdp_candidates_prefer_env_override_then_fallback_ports(self):
+        default = self.mod.cdp_candidates(env={})
+        self.assertEqual(
+            [c[0] for c in default],
+            ["http://127.0.0.1:9223", "http://127.0.0.1:9227"],
+        )
+        override = self.mod.cdp_candidates(
+            env={"ALIBABA_RESTOCK_CDP": " http://127.0.0.1:9333 "}
+        )
+        self.assertEqual(override[0][0], "http://127.0.0.1:9333")
+        self.assertEqual([c[0] for c in override[1:]], [c[0] for c in default])
+        self.assertEqual(self.mod.cdp_candidates(env={"ALIBABA_RESTOCK_CDP": ""}), default)
+
+    def test_pool_files_match_mutate_and_dry_run_inputs(self):
+        self.assertEqual(
+            set(self.mod.POOL_FILES.values()),
+            {
+                "live_orders_pending_pay.json",
+                "live_orders_pending_ship.json",
+                "live_orders_pending_receive.json",
+            },
+        )
 
 
 class DeepOrderDomFreezeTests(unittest.TestCase):

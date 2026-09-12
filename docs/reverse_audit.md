@@ -98,7 +98,7 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 | `--i-approve-set-qty` | **只改量**到 expected（shortfall 上補＋excess 下砍）；不隱含加車／刪除 |
 | `--i-approve-remove` | **只刪** `removable=true`；庭安須真的說刪；預設不刪 |
 | `--sources-only` | freeze／refresh 只凍本地來源，不跑 CDP |
-| `--cdp URL` | 可選，設 `ALIBABA_RESTOCK_CDP` |
+| `--cdp URL` | 可選，設 `ALIBABA_RESTOCK_CDP`；freeze 會優先連此端點（連不上才退回內建 9223／9227），mutate 腳本直接使用 |
 
 ## 水位與範圍
 
