@@ -68,6 +68,8 @@ DEFERRED_REVIEW_REASON = "人工保留，稍後比較候選"
 REVIEW_TIERS = {"green", "yellow", "red", "approved"}
 MAX_REVIEW_CANDIDATES = 4
 GOLDEN_BACKUP_KEEP = 3
+PROMPT_VERSION = "2026-09-v2"
+HISTORICAL_EXAMPLE_LIMIT = 5
 _GOLDEN_BACKUP_RE = re.compile(r"^golden_table\.json\.backup_before_(.+)_(\d+)$")
 
 
@@ -219,13 +221,15 @@ def _ai_system_text(force_match: bool = False) -> str:
             "黑色與石墨黑屬同一黑色系，若清單有顏色相同或同義色候選，必須優先該候選，不得因型號文字較像就改選銀色或其他顏色。"
             "型號／商品代碼是第二判別；若同色候選型號不一致，仍可在強制模式選它，但必須在 warnings 說明型號不符並降低 confidence；"
             "斜線型號代表替代選項，括號內單顆／數量是噪音；"
-            "規格不完全一致時降低 confidence 並在 warnings 說明。輸出前確認 candidate_key、名稱與 SKU ID 全部屬於同一候選列。只輸出指定 JSON。"
+            "規格不完全一致時降低 confidence 並在 warnings 說明。輸出前確認 candidate_key、名稱與 SKU ID 全部屬於同一候選列。"
+            "歷史人工核准優先於相似度；負例中的候選不得選。只輸出指定 JSON。"
         )
     return (
         "你是 1688 SKU 對應助手。只能選候選清單中的 candidate_key 與完整名稱組合；"
         "第一優先比對顏色／款式，第二優先比對手機型號／商品代碼，第三優先比對尺寸／包裝；"
         "黑色與石墨黑屬同一黑色系，斜線型號代表替代選項；型號／商品代碼是第二判別，若只能找到同色但不同型號候選，需降低 confidence 並在 warnings 說明；"
-        "括號內單顆／數量是噪音；規格不完整或有疑問就 abstain。輸出前確認 candidate_key、名稱與 SKU ID 全部屬於同一候選列。只輸出指定 JSON。"
+        "括號內單顆／數量是噪音；規格不完整或有疑問就 abstain。輸出前確認 candidate_key、名稱與 SKU ID 全部屬於同一候選列。"
+        "歷史人工核准優先於相似度；負例中的候選不得選。只輸出指定 JSON。"
     )
 
 
@@ -3831,6 +3835,463 @@ class SkuMappingService:
                     conn.execute("UPDATE sku_mapping_suggestions SET status='stale', review_tier='red', review_reason='已核准名稱組合已從 1688 消失', version=version+1, updated_at=? WHERE id=?", (now, row["id"]))
                 conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,after_json,reviewer,created_at) VALUES(?,?,?,?,?)", (row["id"], "offer_changed", json.dumps({"fingerprint": new_fingerprint}, ensure_ascii=False), "scanner", now))
 
+    def _safe_golden(self) -> Dict[str, Any]:
+        try:
+            if not getattr(self, "golden_path", None):
+                return {}
+            return self._golden()
+        except Exception:
+            return {}
+
+    def _current_model_identity(self, model: Optional[Dict[str, Any]]) -> Tuple[str, str, str]:
+        model = model or {}
+        product_id = normalize_id(model.get("product_id"))
+        model_id = normalize_id(model.get("model_id")) or str(model.get("model_id") or "").strip()
+        model_name = normalize_text(model.get("model_name"))
+        return product_id, model_id, model_name
+
+    def _is_current_historical_row(
+        self,
+        model: Dict[str, Any],
+        product_id: str,
+        model_id: str,
+        row_offer_id: str,
+        row_model_name: str,
+        offer_id: str,
+    ) -> bool:
+        current_product, current_model_id, current_name = self._current_model_identity(model)
+        if current_product and current_model_id:
+            return str(product_id) == current_product and str(model_id) == current_model_id
+        # Eval / incomplete models omit ids: treat same-offer + same name as self
+        # so the hidden approved answer cannot leak into judging.
+        return bool(offer_id) and row_offer_id == offer_id and normalize_text(row_model_name) == current_name
+
+    def _historical_name_match(
+        self,
+        hist_name: Any,
+        hist_second: Any,
+        candidate: Dict[str, Any],
+    ) -> bool:
+        cand_name = candidate.get("sku_name") or ""
+        cand_second = candidate.get("second_name") or ""
+        if not cand_name:
+            parts = list(candidate.get("parts") or [])
+            cand_name = parts[0] if parts else candidate.get("spec_text") or ""
+            cand_second = parts[1] if len(parts) > 1 else cand_second
+        hist_name_text = display_text(hist_name)
+        hist_second_text = display_text(hist_second)
+        if not hist_name_text:
+            return False
+        name_ok = (
+            normalize_text(hist_name_text) == normalize_text(cand_name)
+            or _synonym_equal(hist_name_text, cand_name)
+        )
+        if not name_ok:
+            return False
+        if not hist_second_text:
+            return True
+        return (
+            normalize_text(hist_second_text) == normalize_text(cand_second)
+            or _synonym_equal(hist_second_text, cand_second)
+            or _is_neutral_dimension(hist_second_text)
+            or _is_neutral_dimension(cand_second)
+        )
+
+    def _historical_example_summary(self, row: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "scope": str(row.get("scope") or ""),
+            "source": str(row.get("source") or "golden_approved"),
+            "product_id": str(row.get("product_id") or ""),
+            "model_id": str(row.get("model_id") or ""),
+            "model_name": str(row.get("model_name") or ""),
+            "1688_sku_name": str(row.get("1688_sku_name") or ""),
+            "1688_sku_second_name": str(row.get("1688_sku_second_name") or ""),
+            "offer_id": str(row.get("offer_id") or ""),
+        }
+
+    def _iter_golden_approved_rows(self) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
+        golden = self._safe_golden()
+        for product_id, product in golden.items():
+            if not isinstance(product, dict):
+                continue
+            product_name = str(product.get("商品名稱") or "")
+            for model in product.get("型號") or []:
+                if not isinstance(model, dict):
+                    continue
+                if str(model.get("1688_mapping_status") or "").strip() != "approved":
+                    continue
+                sku_name = display_text(model.get("1688_sku_name"))
+                if not sku_name:
+                    continue
+                url = canonical_url(model.get("阿里巴巴商品URL"))
+                offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(url)
+                model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+                rows.append({
+                    "product_id": str(product_id),
+                    "model_id": model_id,
+                    "product_name": product_name,
+                    "model_name": str(model.get("型號名稱") or ""),
+                    "offer_id": offer_id,
+                    "1688_sku_name": sku_name,
+                    "1688_sku_second_name": display_text(model.get("1688_sku_second_name")),
+                    "source": "golden_approved",
+                })
+        return rows
+
+    def _split_kb_spec(self, spec_text: Any) -> Tuple[str, str]:
+        text = display_text(spec_text)
+        if text.startswith("{") or text.startswith("["):
+            try:
+                payload = json.loads(text)
+            except (TypeError, ValueError):
+                payload = None
+            if isinstance(payload, dict):
+                name = payload.get("sku_name") or payload.get("name") or payload.get("value") or ""
+                second = payload.get("second_name") or payload.get("second") or ""
+                return display_text(name), display_text(second)
+            if isinstance(payload, list) and payload:
+                return display_text(payload[0]), display_text(payload[1] if len(payload) > 1 else "")
+        parts = _spec_parts(text)
+        return (parts[0] if parts else text, parts[1] if len(parts) > 1 else "")
+
+    def _kb_historical_rows(self, model: Dict[str, Any], offer_id: str) -> List[Dict[str, Any]]:
+        """Optional same-DB kb_mappings rows. Missing tables are ignored."""
+        if not getattr(self, "db_path", None):
+            return []
+        try:
+            with self.connect() as conn:
+                tables = {
+                    row[0] for row in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    ).fetchall()
+                }
+                if "kb_mappings" not in tables or "kb_skus" not in tables:
+                    return []
+                rows = conn.execute(
+                    """
+                    SELECT m.offer_id, m.sku_key, m.shopee_product_id, m.shopee_model_id, m.source,
+                           COALESCE(s.raw_specs, '') AS raw_specs,
+                           COALESCE(s.title, '') AS title
+                      FROM kb_mappings m
+                      LEFT JOIN kb_skus s
+                        ON s.offer_id = m.offer_id AND s.sku_key = m.sku_key
+                     WHERE m.source = 'golden_approved'
+                    """
+                ).fetchall()
+        except Exception:
+            return []
+        golden_lookup = {
+            (str(row["product_id"]), str(row["model_id"])): row
+            for row in self._iter_golden_approved_rows()
+        }
+        current_name = normalize_text(model.get("model_name"))
+        out: List[Dict[str, Any]] = []
+        for row in rows:
+            product_id = str(row["shopee_product_id"] or "")
+            model_id = str(row["shopee_model_id"] or "")
+            row_offer = normalize_id(row["offer_id"])
+            if self._is_current_historical_row(model, product_id, model_id, row_offer, "", offer_id):
+                continue
+            sku_name, second_name = self._split_kb_spec(row["raw_specs"] or row["title"])
+            if not sku_name:
+                continue
+            golden = golden_lookup.get((product_id, model_id), {})
+            model_name = str(golden.get("model_name") or "")
+            if row_offer == offer_id:
+                scope = "same_offer"
+            elif current_name and model_name and normalize_text(model_name) == current_name:
+                scope = "cross_offer"
+            else:
+                continue
+            out.append({
+                "product_id": product_id,
+                "model_id": model_id,
+                "product_name": str(golden.get("product_name") or ""),
+                "model_name": model_name,
+                "offer_id": row_offer,
+                "1688_sku_name": sku_name,
+                "1688_sku_second_name": second_name,
+                "source": "kb_mappings",
+                "scope": scope,
+            })
+        return out
+
+    def _collect_historical_rows(self, model: Dict[str, Any], offer_id: str) -> List[Dict[str, Any]]:
+        offer_id = normalize_id(offer_id or (model or {}).get("offer_id"))
+        current_name = normalize_text((model or {}).get("model_name"))
+        rows: List[Dict[str, Any]] = []
+        seen = set()
+        for raw in self._iter_golden_approved_rows():
+            if self._is_current_historical_row(
+                model or {},
+                raw["product_id"],
+                raw["model_id"],
+                raw["offer_id"],
+                raw["model_name"],
+                offer_id,
+            ):
+                continue
+            if offer_id and raw["offer_id"] == offer_id:
+                raw = dict(raw)
+                raw["scope"] = "same_offer"
+            elif current_name and normalize_text(raw.get("model_name")) == current_name:
+                raw = dict(raw)
+                raw["scope"] = "cross_offer"
+            else:
+                continue
+            key = (
+                raw["scope"], raw["product_id"], raw["model_id"], raw["offer_id"],
+                normalize_text(raw.get("1688_sku_name")), normalize_text(raw.get("1688_sku_second_name")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(raw)
+        for raw in self._kb_historical_rows(model or {}, offer_id):
+            key = (
+                raw.get("scope"), raw.get("product_id"), raw.get("model_id"), raw.get("offer_id"),
+                normalize_text(raw.get("1688_sku_name")), normalize_text(raw.get("1688_sku_second_name")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(raw)
+        return rows
+
+    def historical_support(
+        self,
+        model: Dict[str, Any],
+        offer_id: str,
+        candidates: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Per-candidate historical positives from golden approved (and kb_mappings).
+
+        Same-offer: other approved models on this offer, using
+        ``model_name ↔ 1688_sku_name`` as naming-convention evidence.
+        Cross-offer: past approved ``1688_sku_name`` for the same
+        ``normalize_text(model_name)``.  The current model is never included.
+        """
+        rows = self._collect_historical_rows(model or {}, offer_id)
+        out: List[Dict[str, Any]] = []
+        for candidate in candidates or []:
+            matched = [
+                row for row in rows
+                if self._historical_name_match(row.get("1688_sku_name"), row.get("1688_sku_second_name"), candidate)
+            ]
+            out.append({
+                "candidate_key": str(candidate.get("candidate_key") or ""),
+                "historical_support_count": len(matched),
+                "historical_examples": [
+                    self._historical_example_summary(row) for row in matched[:HISTORICAL_EXAMPLE_LIMIT]
+                ],
+            })
+        return out
+
+    def _annotate_historical_support(
+        self,
+        model: Dict[str, Any],
+        offer_id: Any,
+        candidates: Sequence[Dict[str, Any]],
+    ) -> None:
+        supports = self.historical_support(model or {}, offer_id, candidates)
+        by_key = {row["candidate_key"]: row for row in supports if row.get("candidate_key")}
+        for index, candidate in enumerate(candidates or []):
+            row = by_key.get(str(candidate.get("candidate_key") or ""))
+            if row is None and index < len(supports):
+                row = supports[index]
+            row = row or {"historical_support_count": 0, "historical_examples": []}
+            candidate["historical_support_count"] = int(row.get("historical_support_count") or 0)
+            candidate["historical_examples"] = list(row.get("historical_examples") or [])
+            evidence = dict(candidate.get("evidence") or {})
+            evidence["historical_support_count"] = candidate["historical_support_count"]
+            evidence["historical_examples"] = candidate["historical_examples"]
+            candidate["evidence"] = evidence
+
+    def _same_model_negative_keys(self, model: Optional[Dict[str, Any]], offer_id: Any) -> set:
+        product_id, model_id, _ = self._current_model_identity(model)
+        offer_id = normalize_id(offer_id or (model or {}).get("offer_id"))
+        if not product_id or not model_id or not offer_id or not getattr(self, "db_path", None):
+            return set()
+        try:
+            with self.connect() as conn:
+                rows = conn.execute(
+                    """SELECT candidate_key FROM mapping_negative_examples
+                        WHERE product_id=? AND model_id=? AND offer_id=?""",
+                    (product_id, model_id, offer_id),
+                ).fetchall()
+        except Exception:
+            return set()
+        return {str(row["candidate_key"] or "") for row in rows if row["candidate_key"]}
+
+    def _offer_negative_rows(self, offer_id: Any) -> List[Dict[str, Any]]:
+        offer_id = normalize_id(offer_id)
+        if not offer_id or not getattr(self, "db_path", None):
+            return []
+        try:
+            with self.connect() as conn:
+                rows = conn.execute(
+                    """SELECT * FROM mapping_negative_examples
+                        WHERE offer_id=? ORDER BY created_at DESC, id DESC""",
+                    (offer_id,),
+                ).fetchall()
+        except Exception:
+            return []
+        return [dict(row) for row in rows]
+
+    def _apply_negative_gate(
+        self,
+        model: Dict[str, Any],
+        offer_id: Any,
+        candidates: Sequence[Dict[str, Any]],
+        generation_hits: Optional[List[Dict[str, Any]]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Drop same-model negatives. Other-model (offer, key) pairs stay."""
+        blocked = self._same_model_negative_keys(model, offer_id)
+        if not blocked:
+            return list(candidates or [])
+        hits = generation_hits
+        if hits is None:
+            hits = getattr(self, "_last_rule_hits", None)
+            if hits is None:
+                hits = []
+                self._last_rule_hits = hits
+        kept: List[Dict[str, Any]] = []
+        for candidate in candidates or []:
+            key = str(candidate.get("candidate_key") or "")
+            if key and key in blocked:
+                hits.append({
+                    "candidate_key": key,
+                    "rule_id": "NEGATIVE",
+                    "rule_type": "negative",
+                    "effect": "reject",
+                    "detail": {"origin": "mapping_negative_examples"},
+                })
+                continue
+            kept.append(candidate)
+        return kept
+
+    def _prompt_negative_examples(
+        self,
+        model: Dict[str, Any],
+        candidates: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        offer_id = normalize_id((model or {}).get("offer_id"))
+        product_id, model_id, _ = self._current_model_identity(model)
+        out: List[Dict[str, Any]] = []
+        seen = set()
+        for row in self._offer_negative_rows(offer_id):
+            key = str(row.get("candidate_key") or "")
+            token = (row.get("product_id"), row.get("model_id"), key)
+            if token in seen:
+                continue
+            seen.add(token)
+            same_model = bool(
+                product_id and model_id
+                and str(row.get("product_id") or "") == product_id
+                and str(row.get("model_id") or "") == model_id
+            )
+            out.append({
+                "candidate_key": key,
+                "sku_name": str(row.get("sku_name") or ""),
+                "second_name": str(row.get("second_name") or ""),
+                "reason_code": str(row.get("reason_code") or ""),
+                "reason_text": str(row.get("reason_text") or ""),
+                "origin": str(row.get("origin") or ""),
+                "model_name": str(row.get("model_name") or ""),
+                "product_id": str(row.get("product_id") or ""),
+                "model_id": str(row.get("model_id") or ""),
+                "same_model": same_model,
+                "gated": same_model,
+            })
+        return out
+
+    def _prompt_applied_rules(self, candidates: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        out: List[Dict[str, Any]] = []
+        seen = set()
+        for candidate in candidates or []:
+            for rule in (candidate.get("evidence") or {}).get("applied_rules") or []:
+                if not isinstance(rule, dict):
+                    continue
+                token = (candidate.get("candidate_key"), rule.get("rule_id"), rule.get("effect"))
+                if token in seen:
+                    continue
+                seen.add(token)
+                out.append({
+                    "candidate_key": candidate.get("candidate_key"),
+                    "rule_id": rule.get("rule_id"),
+                    "effect": rule.get("effect"),
+                    "rule_type": rule.get("rule_type") or "",
+                })
+        for hit in getattr(self, "_last_rule_hits", []) or []:
+            token = (hit.get("candidate_key"), hit.get("rule_id"), hit.get("effect"))
+            if token in seen:
+                continue
+            seen.add(token)
+            out.append({
+                "candidate_key": hit.get("candidate_key"),
+                "rule_id": hit.get("rule_id"),
+                "effect": hit.get("effect"),
+                "rule_type": hit.get("rule_type") or "",
+            })
+        return out
+
+    def _ai_user_payload(
+        self,
+        model: Dict[str, Any],
+        candidates: List[Dict[str, Any]],
+        force_match: bool = False,
+    ) -> Dict[str, Any]:
+        historical: List[Dict[str, Any]] = []
+        seen = set()
+        for candidate in candidates or []:
+            examples = candidate.get("historical_examples")
+            if examples is None:
+                examples = (candidate.get("evidence") or {}).get("historical_examples") or []
+            for example in examples or []:
+                token = (
+                    example.get("scope"),
+                    example.get("product_id"),
+                    example.get("model_id"),
+                    example.get("1688_sku_name"),
+                    candidate.get("candidate_key"),
+                )
+                if token in seen:
+                    continue
+                seen.add(token)
+                historical.append({**example, "candidate_key": candidate.get("candidate_key")})
+        return {
+            "task": _ai_task_text(force_match),
+            "shopee": {"product_name": model.get("product_name"), "model_name": model.get("model_name")},
+            "source_hints": _ai_source_hints(model),
+            "candidates": candidates,
+            "historical_examples": historical,
+            "negative_examples": self._prompt_negative_examples(model, candidates),
+            "applied_rules": self._prompt_applied_rules(candidates),
+        }
+
+    def _prepare_ai_candidates(
+        self,
+        model: Dict[str, Any],
+        snapshot: Optional[Dict[str, Any]],
+        candidates: Sequence[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        offer_id = normalize_id((model or {}).get("offer_id") or (snapshot or {}).get("offer_id"))
+        working_model = dict(model or {})
+        if offer_id and not working_model.get("offer_id"):
+            working_model["offer_id"] = offer_id
+        prepared = self._apply_negative_gate(working_model, offer_id, list(candidates or []))
+        self._annotate_historical_support(working_model, offer_id, prepared)
+        if isinstance(candidates, list):
+            candidates[:] = prepared
+        return prepared
+
+    @staticmethod
+    def _stamp_prompt_version(result: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if isinstance(result, dict):
+            result["prompt_version"] = PROMPT_VERSION
+        return result
+
     def _score_mapping_candidates(
         self,
         model: Dict[str, Any],
@@ -3842,6 +4303,8 @@ class SkuMappingService:
     ) -> List[Dict[str, Any]]:
         scored: List[Dict[str, Any]] = []
         model_name = model.get("model_name", "")
+        offer_id = normalize_id(model.get("offer_id"))
+        blocked_negative_keys = self._same_model_negative_keys(model, offer_id)
         for sku in skus:
             candidate_text = display_text(sku.get("spec_text") or "")
             candidate_parts = list(sku.get("parts") or _spec_parts(candidate_text))
@@ -3864,6 +4327,10 @@ class SkuMappingService:
                     "effect": effect,
                     "detail": detail,
                 })
+
+            if candidate_key in blocked_negative_keys:
+                record("NEGATIVE", "reject", "negative", origin="mapping_negative_examples")
+                continue
 
             # Physical sizes such as 45mm and 49mm are mutually exclusive SKU
             # identities.  Do not keep a colour-only partial match when the
@@ -4001,7 +4468,9 @@ class SkuMappingService:
         if strict_candidates:
             scored = strict_candidates
         scored.sort(key=lambda item: (-float(item["deterministic_score"]), item["sku_id"]))
-        return scored[:max_review_candidates()]
+        limited = scored[:max_review_candidates()]
+        self._annotate_historical_support(model, model.get("offer_id"), limited)
+        return limited
 
     @staticmethod
     def _validate_ai_selection(result: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
@@ -4079,7 +4548,7 @@ class SkuMappingService:
         return result
 
     def _request_structured_ai(self, provider: str, api_key: str, endpoint: str, model_name: str, effort: str, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
-        content: List[Dict[str, Any]] = [{"type": "input_text", "text": json.dumps({"task": _ai_task_text(force_match), "shopee": {"product_name": model.get("product_name"), "model_name": model.get("model_name")}, "source_hints": _ai_source_hints(model), "candidates": candidates}, ensure_ascii=False)}]
+        content: List[Dict[str, Any]] = [{"type": "input_text", "text": json.dumps(self._ai_user_payload(model, candidates, force_match), ensure_ascii=False)}]
         for image_url in (model.get("model_image_url"), model.get("product_image_url")):
             if image_url:
                 content.append({"type": "input_image", "image_url": image_url, "detail": "low"})
@@ -4113,11 +4582,11 @@ class SkuMappingService:
             result["source"] = provider
             result["provider"] = provider
             result["response_model"] = data.get("model", model_name)
-            return result
+            return self._stamp_prompt_version(result)
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             status_text = f"HTTP {status}" if status else type(exc).__name__
-            return {"source": f"{provider}_error", "provider": provider, "decision": "abstain", "confidence": 0, "warnings": [f"{provider} API {status_text}"]}
+            return self._stamp_prompt_version({"source": f"{provider}_error", "provider": provider, "decision": "abstain", "confidence": 0, "warnings": [f"{provider} API {status_text}"]})
 
     @staticmethod
     def _gemini_image_part(image_url: str) -> Optional[Dict[str, Any]]:
@@ -4148,12 +4617,7 @@ class SkuMappingService:
             return None
 
     def _request_gemini_structured_ai(self, api_key: str, model_name: str, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
-        payload_data = {
-            "task": _ai_task_text(force_match),
-            "shopee": {"product_name": model.get("product_name"), "model_name": model.get("model_name")},
-            "source_hints": _ai_source_hints(model),
-            "candidates": candidates,
-        }
+        payload_data = self._ai_user_payload(model, candidates, force_match)
         parts: List[Dict[str, Any]] = [{"text": json.dumps(payload_data, ensure_ascii=False)}]
         source_images = [model.get("model_image_url"), model.get("product_image_url")]
         for label, image_url in [("Shopee 商品／型號圖片", url) for url in source_images] + [(f"候選規格組合 {candidate.get('candidate_key')} 圖片", candidate.get("image_url")) for candidate in candidates[:5]]:
@@ -4198,7 +4662,7 @@ class SkuMappingService:
             result["source"] = "gemini"
             result["provider"] = "gemini"
             result["response_model"] = data.get("model", model_name)
-            return result
+            return self._stamp_prompt_version(result)
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             status_text = f"HTTP {status}" if status else type(exc).__name__
@@ -4210,13 +4674,13 @@ class SkuMappingService:
                     detail = ""
                 if detail:
                     status_text = f"{status_text}: {detail[:240]}"
-            return {"source": "gemini_error", "provider": "gemini", "decision": "abstain", "confidence": 0, "warnings": [f"Gemini API {status_text}"]}
+            return self._stamp_prompt_version({"source": "gemini_error", "provider": "gemini", "decision": "abstain", "confidence": 0, "warnings": [f"Gemini API {status_text}"]})
 
     @staticmethod
     def _ai_failure(provider: str, warnings: Sequence[str], force_match: bool = False) -> Dict[str, Any]:
         warnings = [str(warning) for warning in warnings if str(warning).strip()] or [f"{provider} API 沒有回傳結果"]
         if force_match:
-            return {
+            return SkuMappingService._stamp_prompt_version({
                 "source": f"{provider}_error", "provider": provider,
                 "decision": "abstain", "selected_sku_id": None,
                 "confidence": 0, "force_match": True,
@@ -4224,12 +4688,12 @@ class SkuMappingService:
                 # the provider's original diagnostic here so it is not shown
                 # twice (e.g. "未完成：AI 強制最接近未完成：Gemini ...").
                 "warnings": warnings,
-            }
-        return {
+            })
+        return SkuMappingService._stamp_prompt_version({
             "source": "rules", "provider": provider, "fallback": "rules",
             "decision": "abstain", "selected_sku_id": None,
             "confidence": 0, "warnings": [f"{warning}；已回退規則初判" for warning in warnings],
-        }
+        })
 
     def _openai_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
         api_key, _ = load_openai_api_key()
@@ -4267,10 +4731,7 @@ class SkuMappingService:
         complete-dimension constraints in the deterministic matcher.
         """
         request_data = {
-            "task": _ai_task_text(force_match),
-            "shopee": {"product_name": model.get("product_name"), "model_name": model.get("model_name")},
-            "source_hints": _ai_source_hints(model),
-            "candidates": candidates,
+            **self._ai_user_payload(model, candidates, force_match),
             "required_json_schema": _mapping_response_schema(force_match),
         }
         request_payload = {
@@ -4309,7 +4770,7 @@ class SkuMappingService:
             result["source"] = "deepseek"
             result["provider"] = "deepseek"
             result["response_model"] = data.get("model", model_name)
-            return result
+            return self._stamp_prompt_version(result)
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             status_text = f"HTTP {status}" if status else type(exc).__name__
@@ -4324,7 +4785,7 @@ class SkuMappingService:
                 status_text = f"{status_text}: {detail[:240]}"
             elif str(exc).strip():
                 status_text = f"{status_text}: {str(exc).strip()[:240]}"
-            return {"source": "deepseek_error", "provider": "deepseek", "decision": "abstain", "confidence": 0, "warnings": [f"DeepSeek API {status_text}"]}
+            return self._stamp_prompt_version({"source": "deepseek_error", "provider": "deepseek", "decision": "abstain", "confidence": 0, "warnings": [f"DeepSeek API {status_text}"]})
 
     def _deepseek_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
         api_key, _ = load_deepseek_api_key()
@@ -4335,6 +4796,7 @@ class SkuMappingService:
         return self._request_deepseek_structured_ai(api_key, model_name, model, candidates, force_match=force_match)
 
     def _maybe_ai_decide(self, model: Dict[str, Any], snapshot: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Optional[Dict[str, Any]]:
+        candidates = self._prepare_ai_candidates(model, snapshot, candidates)
         if not candidates:
             return None
         provider, _ = load_openai_config_value("SKU_MAPPING_AI_PROVIDER", "gemini")

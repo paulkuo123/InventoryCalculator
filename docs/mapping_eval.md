@@ -107,7 +107,53 @@ Headline 數字應仍為：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%`、Top-3 
 - `approve`／`replace` 且 AI `suggested_candidate_key` ≠ 人工選擇：只寫 AI 建議候選（`chose_other_candidate`）
 - `reject_candidate`：只否決單一候選，不改 suggestion 狀態（`explicit_reject`）
 
-API：`POST /api/sku-mapping/decisions` 接受 `reasonCode`／`reasonText`；OTHER 無說明 → 400。`GET /api/sku-mapping/negative-examples?productId&modelId` 或 `?offerId`。審核 `after_json` 含 `negative_example_ids`。本任務**不**把負例接進 judging（TASK 5）。
+API：`POST /api/sku-mapping/decisions` 接受 `reasonCode`／`reasonText`；OTHER 無說明 → 400。`GET /api/sku-mapping/negative-examples?productId&modelId` 或 `?offerId`。審核 `after_json` 含 `negative_example_ids`。
+
+## TASK 5 歷史正負例進入 judging
+
+`SkuMappingService.historical_support()` 把 Golden 已核准列（可選 `kb_mappings`）餵進既有 `generate_candidates()`／AI judge，**不是**第二套引擎、不改 ranking 公式、不啟用 auto-approve。
+
+- **Same-offer**：同一 offer 上**其他**已核准型號的 `model_name ↔ 1688_sku_name` 作為命名慣例證據。
+- **Cross-offer**：`normalize_text(model_name)` 相同的過去核准 `1688_sku_name`。
+- 每個候選附 `historical_support_count` 與最多 5 筆 example summaries。目前列自己的核准答案不會算進去（避免評估洩漏）。
+- **負例閘門**：`(product_id, model_id, offer_id, candidate_key)` 命中 `mapping_negative_examples` → 剔除候選並記 `rule_type='negative'`。同一 `(offer_id, candidate_key)` 但**不同型號**不剔除，只進 prompt context。
+- LLM payload（`_request_structured_ai`／Gemini／DeepSeek）新增 `historical_examples`、`negative_examples`、`applied_rules`。`_ai_system_text`：歷史人工核准優先於相似度；負例中的候選不得選。`PROMPT_VERSION = "2026-09-v2"` 寫入 `evidence_json.ai.prompt_version`。
+
+預設 fixture 數字必須 ≥ TASK 1／2／3／4 基線（isolated eval 的 golden／負例是空的，規則層結果不變）：
+
+```bash
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --out /tmp/mapping_eval_task5_defaults
+```
+
+Headline：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)、Top-3 `75.0%` (3/4)、FN `25.0%` (1/4)、Green precision `100.0%` (2/2)。
+
+無 API key 時用 dry-run 檢查 prompt 欄位（不呼叫供應商）：
+
+```bash
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --out /tmp/mapping_eval_task5_ai_dry \
+  --ai-dry \
+  --ai-limit 50
+```
+
+產出 `ai_dry_payloads.jsonl`，每列含 `prompt_version`、`historical_examples`、`negative_examples`、`applied_rules`、`historical_support_counts`。本機有 key 時才跑真 AI：
+
+```bash
+python -m mapping_eval run \
+  --db-path procurement.db \
+  --golden-path golden_table.json \
+  --out data/mapping_eval/task5-ai/ \
+  --sample 50 \
+  --seed 42 \
+  --ai \
+  --ai-limit 50 \
+  --yes
+```
+
+比對欄位見 `python -m mapping_eval compare`：`top1_accuracy`、`green.precision`、以及（若有 AI）`ai.match_precision`／`ai.abstain_rate`／`ai.ai_wrong_det_right`／`ai.det_wrong_ai_right`。不要把 key 或 `procurement.db` 提交進 git。
 
 停用 RULE-0001 後，同一 fixture 的尺寸 FN 必須可觀測地下降（`watch-blue-45` 不再被剔除）：
 
