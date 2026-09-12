@@ -31,6 +31,7 @@ from reverse_audit.dry_run import (  # noqa: E402
     run_dry_run,
 )
 from reverse_audit.mutate import (  # noqa: E402
+    load_order_keys_from_live,
     plan_remove_rows,
     plan_set_qty_rows,
     refuse_no_flags_message,
@@ -1180,6 +1181,88 @@ class RemovePlannerTests(unittest.TestCase):
             )
             self.assertEqual(code, 0)
             self.assertEqual(calls, ["mutate_remove_cdp.py"])
+
+
+class LiveOrderKeysTests(unittest.TestCase):
+    """load_order_keys_from_live must read the `orders` key freeze actually writes."""
+
+    def test_reads_orders_from_freeze_fixture(self):
+        keys = load_order_keys_from_live(FIX)
+        self.assertIn(("20002", "sku-sock"), keys)
+        expected = set()
+        for pool in _load_pools(FIX).values():
+            for line in pool["orders"]:
+                expected.add((str(line["offerId"]), str(line["skuId"])))
+        self.assertEqual(keys, expected)
+
+    def test_accepts_legacy_items_key_and_skips_bad_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            (out / "live_orders_pending_pay.json").write_text(
+                json.dumps(
+                    {"items": [{"offer_id": "1", "sku_id": "a"}, {"offerId": "2"}]}
+                ),
+                encoding="utf-8",
+            )
+            (out / "live_orders_pending_ship.json").write_text(
+                "{not json", encoding="utf-8"
+            )
+            (out / "live_orders_pending_receive.json").write_text(
+                json.dumps([{"offerId": "9", "skuId": "z"}]), encoding="utf-8"
+            )
+            self.assertEqual(load_order_keys_from_live(out), {("1", "a")})
+
+    def test_remove_plan_protects_key_seen_in_live_orders(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = _stage_fixture(Path(td))
+            fields = [
+                "offer_id",
+                "sku_id",
+                "cart_ids",
+                "in_order_pools",
+                "in_uncertain_expected",
+                "in_skip_expected",
+                "removable",
+                "reason",
+                "multi_cart_line_fail",
+            ]
+            with (out / "unexpected_in_cart.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as f:
+                w = csv.DictWriter(f, fieldnames=fields)
+                w.writeheader()
+                # Hand-edited: CSV claims removable and no order pool, but the
+                # frozen live orders still contain this key.
+                w.writerow(
+                    {
+                        "offer_id": "20002",
+                        "sku_id": "sku-sock",
+                        "cart_ids": "c-sock",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "false",
+                    }
+                )
+            calls = []
+            code = run_mutate_actions(
+                out,
+                approve_add=False,
+                approve_set_qty=False,
+                approve_remove=True,
+                dispatch=lambda script, out_dir: calls.append(script.name) or 0,
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(calls, [])
+            plan = json.loads(
+                (out / "mutate_remove_plan.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(plan["counts"]["accepted"], 0)
+            self.assertEqual(
+                plan["skipped"][0]["skip_reason"], "order_pool_snapshot_protected"
+            )
 
 
 class CliDryRunSmokeTests(unittest.TestCase):

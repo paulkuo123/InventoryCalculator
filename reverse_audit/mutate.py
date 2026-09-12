@@ -291,7 +291,11 @@ def plan_remove_rows(
 
 
 def load_order_keys_from_live(out_dir: Path) -> set:
-    """Cheap cross-check against freeze order live JSON (fail-closed on doubt)."""
+    """Cheap cross-check against freeze order live JSON (fail-closed on doubt).
+
+    Freeze writes order lines under ``orders``; ``items`` is accepted for
+    older hand-written dumps.
+    """
     keys: set = set()
     out_dir = Path(out_dir)
     for name in (
@@ -307,7 +311,11 @@ def load_order_keys_from_live(out_dir: Path) -> set:
         except (OSError, json.JSONDecodeError):
             # Doubt → treat as cannot verify; caller still has CSV reason checks
             continue
-        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            continue
+        items = data.get("orders")
+        if not isinstance(items, list):
+            items = data.get("items")
         if not isinstance(items, list):
             continue
         for it in items:
