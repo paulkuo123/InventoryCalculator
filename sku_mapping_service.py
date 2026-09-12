@@ -1496,11 +1496,20 @@ class SkuMappingService:
         return "yellow", f"有 {len(candidates)} 個候選，需人工比較完整規格"
 
     def _refresh_review_tiers(self) -> None:
-        """Backfill tier metadata for rows created before tiered review existed."""
+        """Backfill tier metadata for rows created before tiered review existed.
+
+        A manual 稍後處理 decision is stored as ``status='pending'`` plus the
+        ``DEFERRED_REVIEW_REASON`` marker; the 待處理／稍後處理 queues are split on
+        that marker alone.  Recomputing those rows would replace the marker with
+        an automatic reason and silently move every deferred item back into the
+        default queue on the next server start, so they are left untouched.
+        """
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT s.*, o.status AS snapshot_status, o.skus_json AS snapshot_skus_json FROM sku_mapping_suggestions s "
-                "LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id"
+                "LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id "
+                "WHERE NOT (s.status='pending' AND COALESCE(s.review_reason, '') = ?)",
+                (DEFERRED_REVIEW_REASON,),
             ).fetchall()
             updates = []
             cfg = load_config()
