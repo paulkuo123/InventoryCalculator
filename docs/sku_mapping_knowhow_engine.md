@@ -1,7 +1,9 @@
 # 1688 SKU Mapping Know-how Engine v1
 
 本文件是 TASK 1–7 落地後的總覽，以及 **TASK 8** 的評估對照與 auto-approve **反事實**精度。  
-**不是**第二套 mapping 引擎。**不**改 `golden_table.json` schema。**不**啟用 `auto_approve.enabled`。TASK 9（offer discovery spike）不在本文件範圍。
+**不是**第二套 mapping 引擎。**不**改 `golden_table.json` schema。**不**啟用 `auto_approve.enabled`。
+
+**TASK 9**（第 1 層：Shopee product → 1688 offer）是設計 spike，見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。結論：值得做建議層，但**先讀隔離種子歷史 Offer，不要先做站內搜尋**；本文件與本分支都不實作 crawler。
 
 CLI 細節見 [`mapping_eval.md`](mapping_eval.md)。知識包載入見 `mapping_knowledge.py`。
 
@@ -245,3 +247,5 @@ python -m mapping_eval run --fixture tests/fixtures/mapping_eval --out /tmp/mapp
 ```
 
 本機有 `procurement.db` 時可用真實 DB run 再看反事實數字；報告在 `data/mapping_eval/`（gitignore），不要提交 DB、key 或報告。
+
+第 1 層 offer 從哪裡來（種子庫 → 同商品 Golden → 最後才站內搜尋）不在本評估範圍，見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。
