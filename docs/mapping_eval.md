@@ -213,6 +213,26 @@ python -m unittest tests.test_mapping_evidence_audit
 
 本任務不改 `golden_table.json` schema、不啟用 auto-approve、不做 TASK 8–9。
 
+## TASK 8 對照評估與 auto-approve 反事實（不啟用）
+
+總覽與架構見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)。本任務只重跑 fixture 評估、用 `compare` 對 TASK 1 baseline，以及**報告** SPEC 5.1 auto-approve 精度。`auto_approve.enabled` 維持 `false`，沒有 UI toggle，不改 Golden schema，不做 TASK 9。
+
+凍結的 TASK 1 fixture 指標：`tests/fixtures/mapping_eval/task1_baseline/metrics.json`。
+
+```bash
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --out /tmp/mapping_eval_task8_current
+python -m mapping_eval compare \
+  --baseline tests/fixtures/mapping_eval/task1_baseline \
+  --candidate /tmp/mapping_eval_task8_current
+python -m unittest tests.test_mapping_auto_approve_eval
+```
+
+Headline 與 TASK 1 持平：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)、Top-3 `75.0%` (3/4)、FN `25.0%` (1/4)、**Green precision `100.0%` (2/2)**。
+
+`run` 另寫 `auto_approve.json`（反事實）。fixture 上 SPEC 5.1 全閘：**0** 案會自動過關，精度 **n/a (0/0)**。`enabled` 仍為 `false`。
+
 ## Fixture 報告摘錄（無秘密）
 
 ```text

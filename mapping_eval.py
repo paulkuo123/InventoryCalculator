@@ -3,7 +3,8 @@
 Wraps ``SkuMappingService.generate_candidates`` and
 ``classify_review_tier`` (plus the optional existing AI judge).  It does
 not invent a parallel matcher, change ``golden_table.json`` schema, or
-auto-approve mappings.
+enable auto-approve.  TASK 8 reports a counterfactual auto-approve
+precision against ``mapping_knowledge/config.json`` (SPEC 5.1) only.
 
 Reports are written under ``data/mapping_eval/`` (gitignored) or ``--out``.
 Never point this tool at a path you intend to commit.
@@ -24,6 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
+from mapping_knowledge import DEFAULT_CONFIG, load_config
 from sku_mapping_service import (
     AI_SUCCESS_SOURCES,
     PROMPT_VERSION,
@@ -42,6 +44,15 @@ DEFAULT_CATEGORIES_PATH = "mapping_knowledge/categories.json"
 DEFAULT_SAMPLE_SEED = 42
 DEFAULT_AI_LIMIT = 50
 EXIT_USAGE = 2
+
+# SPEC 5.1 auto-approve gates (counterfactual only; enabled stays false).
+AUTO_APPROVE_CONDITION_ORDER = (
+    "require_unique_complete_strict_match",
+    "require_no_hard_rule_violation",
+    "require_no_negative_example",
+    "require_snapshot_status_ok",
+    "min_historical_support",
+)
 
 # Product-name fallback used only when mapping_knowledge/categories.json is
 # missing or unreadable.  TASK 3 committed a keyword map; this remains the
@@ -418,6 +429,168 @@ def call_existing_ai_judge(
     return ai
 
 
+def auto_approve_settings(config: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Return SPEC 5.1 auto-approve gates from config (defaults if missing)."""
+    payload = config if isinstance(config, dict) else load_config()
+    raw = payload.get("auto_approve") if isinstance(payload.get("auto_approve"), dict) else {}
+    defaults = DEFAULT_CONFIG["auto_approve"]
+    return {key: raw[key] if key in raw else defaults[key] for key in defaults}
+
+
+def _candidate_evidence(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    evidence = candidate.get("evidence")
+    return evidence if isinstance(evidence, dict) else {}
+
+
+def is_unique_complete_strict_match(candidates: Sequence[Dict[str, Any]]) -> bool:
+    """True when exactly one candidate is complete and strictly matches every source part."""
+    if len(candidates) != 1:
+        return False
+    candidate = candidates[0]
+    evidence = _candidate_evidence(candidate)
+    complete = evidence.get("complete") is True or candidate.get("complete") is True
+    if not complete:
+        return False
+    source_parts = evidence.get("source_parts") or []
+    try:
+        required = max(1, int(evidence.get("required") or 0), len(source_parts))
+    except (TypeError, ValueError):
+        required = max(1, len(source_parts))
+    try:
+        strict_exact = int(evidence.get("strict_exact") or 0)
+    except (TypeError, ValueError):
+        strict_exact = 0
+    return strict_exact >= required
+
+
+def _has_hard_rule_violation(
+    candidates: Sequence[Dict[str, Any]],
+    *,
+    false_negative: bool = False,
+) -> bool:
+    if false_negative:
+        return True
+    for candidate in candidates:
+        evidence = _candidate_evidence(candidate)
+        for rule in evidence.get("applied_rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            effect = str(rule.get("effect") or "")
+            rule_type = str(rule.get("rule_type") or "")
+            if effect == "reject" and (rule_type == "hard" or str(rule.get("rule_id") or "").startswith("RULE-")):
+                return True
+    return False
+
+
+def _has_negative_example(candidates: Sequence[Dict[str, Any]]) -> bool:
+    for candidate in candidates:
+        if isinstance(candidate.get("negative_example"), dict):
+            return True
+        evidence = _candidate_evidence(candidate)
+        if isinstance(evidence.get("negative_example"), dict):
+            return True
+        if evidence.get("negative_hits"):
+            return True
+        for rule in evidence.get("applied_rules") or []:
+            if not isinstance(rule, dict):
+                continue
+            if str(rule.get("rule_id") or "").upper() == "NEGATIVE" and str(rule.get("effect") or "") == "reject":
+                return True
+    return False
+
+
+def _historical_support_count(candidate: Optional[Dict[str, Any]]) -> int:
+    if not isinstance(candidate, dict):
+        return 0
+    if candidate.get("historical_support_count") is not None:
+        try:
+            return int(candidate.get("historical_support_count") or 0)
+        except (TypeError, ValueError):
+            return 0
+    evidence = _candidate_evidence(candidate)
+    try:
+        return int(evidence.get("historical_support_count") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def assess_auto_approve_counterfactual(
+    candidates: Sequence[Dict[str, Any]],
+    *,
+    truth_matched: bool = False,
+    false_negative: bool = False,
+    snapshot_status: str = "ok",
+    config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """If auto-approve were enabled, would this case pass SPEC 5.1?
+
+    Never flips ``auto_approve.enabled``.  The production flag stays false;
+    this only scores the other gates for reporting.
+    """
+    settings = auto_approve_settings(config)
+    failed: List[str] = []
+    rows = list(candidates or [])
+    if settings.get("require_unique_complete_strict_match") and not is_unique_complete_strict_match(rows):
+        failed.append("require_unique_complete_strict_match")
+    if settings.get("require_no_hard_rule_violation") and _has_hard_rule_violation(
+        rows, false_negative=false_negative
+    ):
+        failed.append("require_no_hard_rule_violation")
+    if settings.get("require_no_negative_example") and _has_negative_example(rows):
+        failed.append("require_no_negative_example")
+    if settings.get("require_snapshot_status_ok") and str(snapshot_status or "") != "ok":
+        failed.append("require_snapshot_status_ok")
+    support = _historical_support_count(rows[0]) if len(rows) == 1 else 0
+    try:
+        min_hist = int(settings.get("min_historical_support") or 0)
+    except (TypeError, ValueError):
+        min_hist = 0
+    if min_hist > 0 and len(rows) == 1 and support < min_hist:
+        failed.append("min_historical_support")
+    would_pass = not failed
+    return {
+        "enabled": bool(settings.get("enabled")),
+        "would_auto_approve": would_pass,
+        "correct": bool(would_pass and truth_matched),
+        "failed_conditions": failed,
+        "historical_support_count": support,
+        "conditions": {
+            key: settings.get(key) for key in ("enabled",) + AUTO_APPROVE_CONDITION_ORDER if key in settings
+        },
+    }
+
+
+def summarize_auto_approve(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate counterfactual auto-approve precision.  Does not enable it."""
+    settings = auto_approve_settings()
+    n_would = 0
+    n_correct = 0
+    failed_counts: Dict[str, int] = defaultdict(int)
+    n_with = 0
+    for record in records:
+        row = record.get("auto_approve")
+        if not isinstance(row, dict):
+            continue
+        n_with += 1
+        if row.get("would_auto_approve"):
+            n_would += 1
+            if row.get("correct"):
+                n_correct += 1
+        for cond in row.get("failed_conditions") or []:
+            failed_counts[str(cond)] += 1
+    return {
+        "enabled": bool(settings.get("enabled")),
+        "n_evaluated": n_with,
+        "n_would_pass": n_would,
+        "n_correct": n_correct,
+        "precision": _rate(n_correct, n_would),
+        "failed_condition_counts": {key: failed_counts[key] for key in AUTO_APPROVE_CONDITION_ORDER if key in failed_counts},
+        "conditions": {
+            key: settings.get(key) for key in ("enabled",) + AUTO_APPROVE_CONDITION_ORDER
+        },
+    }
+
+
 def evaluate_case(
     service: SkuMappingService,
     case: Dict[str, Any],
@@ -465,6 +638,12 @@ def evaluate_case(
         "candidate_count": len(candidates),
         "candidates": [public_candidate(item, index) for index, item in enumerate(candidates, start=1)],
         "ai": None,
+        "auto_approve": assess_auto_approve_counterfactual(
+            candidates,
+            truth_matched=rank == 1,
+            false_negative=false_negative,
+            snapshot_status="ok",
+        ),
     }
     if isinstance(ai_result, dict):
         decision = str(ai_result.get("decision") or "abstain")
@@ -614,6 +793,7 @@ def compute_metrics(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "by_category": {key: _finalize_group(value) for key, value in sorted(by_category.items())},
         "by_mapping_source": {key: _finalize_group(value) for key, value in sorted(by_source.items())},
         "ai": None,
+        "auto_approve": summarize_auto_approve(records),
     }
     if ai_called:
         metrics["ai"] = {
@@ -687,6 +867,12 @@ def write_report(out_dir: Path, metrics: Dict[str, Any], records: Sequence[Dict[
             }
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     (out_dir / "summary.md").write_text(render_summary_markdown(metrics, meta), encoding="utf-8")
+    auto_approve = metrics.get("auto_approve")
+    if isinstance(auto_approve, dict):
+        (out_dir / "auto_approve.json").write_text(
+            json.dumps(auto_approve, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _pct(value: Optional[float]) -> str:
@@ -723,9 +909,31 @@ def render_summary_markdown(metrics: Dict[str, Any], meta: Optional[Dict[str, An
         f"- Red truth coverage: **{_pct((metrics.get('red') or {}).get('truth_coverage'))}** "
         f"({(metrics.get('red') or {}).get('n', 0)} cases)",
         "",
+    ]
+    auto_approve = metrics.get("auto_approve")
+    if isinstance(auto_approve, dict):
+        lines.extend([
+            "## Auto-approve counterfactual (not enabled)",
+            "",
+            f"- config `auto_approve.enabled`: **{str(auto_approve.get('enabled')).lower()}**",
+            f"- would auto-pass if enabled: **{auto_approve.get('n_would_pass', 0)}** / "
+            f"{auto_approve.get('n_evaluated', 0)}",
+            f"- correct among those: **{auto_approve.get('n_correct', 0)}**",
+            f"- Auto-approve precision: **{_pct(auto_approve.get('precision'))}** "
+            f"({auto_approve.get('n_correct', 0)}/{auto_approve.get('n_would_pass', 0)})",
+            "",
+        ])
+        failed_counts = auto_approve.get("failed_condition_counts") or {}
+        if failed_counts:
+            lines.append("Failed SPEC 5.1 gates (counts):")
+            for name in AUTO_APPROVE_CONDITION_ORDER:
+                if name in failed_counts:
+                    lines.append(f"- `{name}`: {failed_counts[name]}")
+            lines.append("")
+    lines.extend([
         "## By category",
         "",
-    ]
+    ])
     by_category = metrics.get("by_category") or {}
     if not by_category:
         lines.append("_no cases_")
@@ -897,6 +1105,9 @@ def _metric_pairs() -> List[Tuple[str, str]]:
         ("green.precision", "green.precision"),
         ("yellow.truth_coverage", "yellow.truth_coverage"),
         ("red.truth_coverage", "red.truth_coverage"),
+        ("auto_approve.n_would_pass", "auto_approve.n_would_pass"),
+        ("auto_approve.n_correct", "auto_approve.n_correct"),
+        ("auto_approve.precision", "auto_approve.precision"),
         ("ai.match_precision", "ai.match_precision"),
         ("ai.abstain_rate", "ai.abstain_rate"),
         ("ai.ai_wrong_det_right", "ai.ai_wrong_det_right"),

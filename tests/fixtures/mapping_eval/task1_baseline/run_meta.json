@@ -1,0 +1,7 @@
+{
+  "label": "TASK 1 fixture baseline",
+  "source": "PR #51 mapping_eval fixture run on tests/fixtures/mapping_eval/cases.json",
+  "note": "Rule-layer metrics frozen for TASK 8 compare. TASK 1 did not emit auto_approve.* keys.",
+  "mode": "fixture",
+  "ai": false
+}
