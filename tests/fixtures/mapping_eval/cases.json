@@ -1,0 +1,118 @@
+{
+  "cases": [
+    {
+      "product_id": "p-socks",
+      "model_id": "sock-white",
+      "product_name": "純色棉襪 女襪",
+      "model_name": "白色",
+      "offer_id": "100",
+      "1688_sku_id": "sku-white",
+      "1688_sku_name": "白色",
+      "1688_sku_second_name": "均碼",
+      "1688_mapping_source": "manual",
+      "skus": [
+        {
+          "sku_id": "sku-white",
+          "sku_name": "白色",
+          "second_name": "均碼",
+          "spec_text": "白色,均碼",
+          "parts": ["白色", "均碼"]
+        },
+        {
+          "sku_id": "sku-black",
+          "sku_name": "黑色",
+          "second_name": "均碼",
+          "spec_text": "黑色,均碼",
+          "parts": ["黑色", "均碼"]
+        }
+      ]
+    },
+    {
+      "product_id": "p-case",
+      "model_id": "case-17-graphite",
+      "product_name": "iPhone 手機殼",
+      "model_name": "iPhone 17,黑色",
+      "offer_id": "200",
+      "1688_sku_id": "sku-graphite",
+      "1688_sku_name": "石墨黑",
+      "1688_sku_second_name": "iPhone17",
+      "1688_mapping_source": "ai_reviewed",
+      "skus": [
+        {
+          "sku_id": "sku-black",
+          "sku_name": "黑色",
+          "second_name": "iPhone17",
+          "spec_text": "黑色,iPhone17",
+          "parts": ["黑色", "iPhone17"]
+        },
+        {
+          "sku_id": "sku-graphite",
+          "sku_name": "石墨黑",
+          "second_name": "iPhone17",
+          "spec_text": "石墨黑,iPhone17",
+          "parts": ["石墨黑", "iPhone17"]
+        }
+      ]
+    },
+    {
+      "product_id": "p-watch",
+      "model_id": "watch-blue-45",
+      "product_name": "Apple Watch 一體式錶殼",
+      "model_name": "單排鑽—藍色,45mm(7/8代適用)",
+      "offer_id": "300",
+      "1688_sku_id": "blue-49",
+      "1688_sku_name": "藍色",
+      "1688_sku_second_name": "49mm膠盒包裝",
+      "1688_mapping_source": "legacy_user_approved",
+      "skus": [
+        {
+          "sku_id": "blue-49",
+          "sku_name": "藍色",
+          "second_name": "49mm膠盒包裝",
+          "spec_text": "藍色,49mm膠盒包裝",
+          "parts": ["藍色", "49mm膠盒包裝"]
+        }
+      ]
+    },
+    {
+      "product_id": "p-charm",
+      "model_id": "charm-bear",
+      "product_name": "壓克力吊飾 掛繩",
+      "model_name": "小熊",
+      "offer_id": "400",
+      "1688_sku_id": "sku-gone",
+      "1688_sku_name": "小熊",
+      "1688_sku_second_name": "",
+      "1688_mapping_source": "manual",
+      "skus": [
+        {
+          "sku_id": "sku-cat",
+          "sku_name": "小貓",
+          "second_name": "",
+          "spec_text": "小貓",
+          "parts": ["小貓"]
+        }
+      ]
+    },
+    {
+      "product_id": "p-socks-legacy",
+      "model_id": "sock-khaki",
+      "product_name": "日系棉襪",
+      "model_name": "淺卡其",
+      "offer_id": "500",
+      "1688_sku_id": "sku-khaki",
+      "1688_sku_name": "2349淺卡其",
+      "1688_sku_second_name": "均碼",
+      "1688_mapping_source": "legacy_user_approved",
+      "skus": [
+        {
+          "sku_id": "sku-khaki",
+          "sku_name": "2349淺卡其",
+          "second_name": "均碼",
+          "spec_text": "2349淺卡其,均碼",
+          "parts": ["2349淺卡其", "均碼"]
+        }
+      ]
+    }
+  ]
+}
