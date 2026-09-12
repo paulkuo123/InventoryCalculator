@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "thresholds": {
+    "ai_green_confidence": 0.95,
+    "ai_verified_green_confidence": 0.90,
+    "max_review_candidates": 4
+  },
+  "score_weights": {
+    "feature": 0.30,
+    "historical": 0.30,
+    "rule": 0.20,
+    "llm": 0.20
+  },
+  "auto_approve": {
+    "enabled": false,
+    "require_unique_complete_strict_match": true,
+    "require_no_hard_rule_violation": true,
+    "require_no_negative_example": true,
+    "require_snapshot_status_ok": true,
+    "min_historical_support": 1
+  }
+}

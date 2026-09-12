@@ -35,7 +35,7 @@
 - 核心：`alibaba_restocker.py`（1688 加採購車、SKU 選擇、MOQ／包裝倍數）。
 - 數量規則：`restock_rules.py`（手機殼／手机壳 **3 個月**，其餘 **4 個月**；吊飾／掛繩／明確加購除外）。
 - 批次與關注清單：`restock_batch.py`、`scripts/run_watchlist_restock.py`。
-- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。
+- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。門檻設定：`mapping_knowledge/config.json`（`mapping_knowledge.py::load_config()`）。
 - 離線購物車數量核對（不連瀏覽器）：`scripts/reconcile_cart.py`，說明見 [`docs/cart-reconciliation.md`](docs/cart-reconciliation.md)。
 - 瀏覽器優先 ego-lite，否則 Chrome／Playwright Chromium。
 
@@ -354,6 +354,8 @@ InventoryCalculator/
 ├── restock_batch.py / restock_rules.py
 ├── sku_mapping_service.py  # SKU 快照、候選、AI 與審核
 ├── mapping_eval.py         # 離線 mapping 評估 baseline（不改 golden、不 auto-approve）
+├── mapping_knowledge.py    # mapping 知識包設定載入（缺失／無效 JSON 回退預設）
+├── mapping_knowledge/      # 知識包檔（TASK 2：config.json；尚無 aliases／rules）
 ├── ads_analysis.py         # Shopee 廣告分析
 ├── ads_weekly.py           # 週報抓取（預設遠端 CDP，不走 Mac）
 ├── ads_session.py          # 遠端工作階段／BLOCKER 輔助

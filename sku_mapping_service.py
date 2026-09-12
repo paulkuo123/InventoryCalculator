@@ -29,6 +29,14 @@ from urllib.parse import urlparse
 import requests
 
 from config_loader import load_deepseek_api_key, load_gemini_api_key, load_openai_api_key, load_openai_config_value, load_xai_api_key
+from mapping_knowledge import (
+    ai_green_confidence,
+    ai_verified_green_confidence,
+    config_version,
+    knowledge_version,
+    load_config,
+    max_review_candidates,
+)
 
 
 GOLDEN_TABLE_FILE = "golden_table.json"
@@ -51,6 +59,14 @@ REVIEW_TIERS = {"green", "yellow", "red", "approved"}
 MAX_REVIEW_CANDIDATES = 4
 GOLDEN_BACKUP_KEEP = 3
 _GOLDEN_BACKUP_RE = re.compile(r"^golden_table\.json\.backup_before_(.+)_(\d+)$")
+
+
+def _threshold_percent(value: float) -> str:
+    """Format a 0–1 confidence threshold as the historical '95%' style string."""
+    scaled = float(value) * 100
+    if abs(scaled - round(scaled)) < 1e-9:
+        return f"{int(round(scaled))}%"
+    return f"{scaled:g}%"
 
 
 def prune_golden_table_backups(backup_path: Path, keep: int = GOLDEN_BACKUP_KEEP) -> None:
@@ -1182,16 +1198,22 @@ class SkuMappingService:
         existing_sku_id: str = "",
         existing_sku_name: str = "",
         verified_ai_candidate_keys: Optional[Sequence[str]] = None,
+        config: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str]:
         """Classify a suggestion conservatively for safe review/batch actions.
 
         Green requires a live snapshot and a usable selected mapping.  A valid AI
-        match with confidence at or above 95% is also treated as green; lower
-        confidence remains yellow for human comparison.
+        match with confidence at or above the configured green threshold
+        (default 95%) is also treated as green; lower confidence remains yellow
+        for human comparison.  Thresholds come from ``load_config()``; module
+        constants remain the defaults when the file is missing or invalid.
         """
         status = str(status or "").strip()
         snapshot_status = str(snapshot_status or "").strip()
         ai = ai if isinstance(ai, dict) else {}
+        cfg = config if isinstance(config, dict) else load_config()
+        green_threshold = ai_green_confidence(cfg)
+        verified_threshold = ai_verified_green_confidence(cfg)
         if status == "approved":
             return "approved", "已核准"
         # A changed live fingerprint is a safety stop even when the old
@@ -1247,16 +1269,16 @@ class SkuMappingService:
             and not ai_has_warning
             and not ai_has_safety_override
             and (
-                ai_confidence >= AI_GREEN_CONFIDENCE_THRESHOLD
+                ai_confidence >= green_threshold
                 or (
-                    ai_confidence >= AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD
+                    ai_confidence >= verified_threshold
                     and ai_selected_verified
                 )
             )
         ):
-            if ai_confidence >= AI_GREEN_CONFIDENCE_THRESHOLD:
-                return "green", "AI 信心指數達 95% 以上且選中有效候選；綠色：唯一精確"
-            return "green", "AI 信心指數達 90% 以上，且顏色／型號／尺寸已通過本機完整驗證；綠色：唯一精確"
+            if ai_confidence >= green_threshold:
+                return "green", f"AI 信心指數達 {_threshold_percent(green_threshold)} 以上且選中有效候選；綠色：唯一精確"
+            return "green", f"AI 信心指數達 {_threshold_percent(verified_threshold)} 以上，且顏色／型號／尺寸已通過本機完整驗證；綠色：唯一精確"
         if len(candidates) == 1:
             candidate = candidates[0]
             evidence = candidate.get("evidence") or {}
@@ -1308,6 +1330,9 @@ class SkuMappingService:
                 "LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id"
             ).fetchall()
             updates = []
+            cfg = load_config()
+            green_threshold = ai_green_confidence(cfg)
+            verified_threshold = ai_verified_green_confidence(cfg)
             for row in rows:
                 candidates = [
                     dict(candidate)
@@ -1327,7 +1352,7 @@ class SkuMappingService:
                     ai_confidence = 0
                 if (
                     row["status"] == "pending"
-                    and AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD <= ai_confidence < AI_GREEN_CONFIDENCE_THRESHOLD
+                    and verified_threshold <= ai_confidence < green_threshold
                     and not [warning for warning in ((ai or {}).get("warnings") or []) if str(warning).strip()]
                     and not str((ai or {}).get("safety_override") or "").strip()
                 ):
@@ -1352,6 +1377,7 @@ class SkuMappingService:
                     existing_sku_id="",
                     existing_sku_name=row["suggested_sku_name"] or "",
                     verified_ai_candidate_keys=verified_ai_candidate_keys,
+                    config=cfg,
                 )
                 updates.append((tier, reason, row["id"]))
             conn.executemany("UPDATE sku_mapping_suggestions SET review_tier=?, review_reason=? WHERE id=?", updates)
@@ -1544,6 +1570,10 @@ class SkuMappingService:
             "blockedRestockQty": blocked_restock_qty,
             "inventorySource": inventory_source,
             "latestRun": dict(latest) if latest else None,
+            "knowledge": {
+                "config_version": config_version(),
+                "knowledge_version": knowledge_version(),
+            },
         }
 
     @staticmethod
@@ -2538,7 +2568,8 @@ class SkuMappingService:
         instead of unrelated catalog rows that merely happened to be nearby.
         """
         candidates = list(candidates or [])
-        if len(candidates) <= MAX_REVIEW_CANDIDATES and not ai:
+        limit = max_review_candidates()
+        if len(candidates) <= limit and not ai:
             return candidates
         ai = ai if isinstance(ai, dict) else {}
         selected_key = str(ai.get("selected_candidate_key") or "")
@@ -2570,7 +2601,7 @@ class SkuMappingService:
         remaining = [(index, item) for index, item in enumerate(candidates) if item is not selected]
         remaining.sort(key=lambda pair: related_score(pair[1], pair[0]), reverse=True)
         ordered = ([selected] if selected else []) + [item for _, item in remaining]
-        return ordered[:MAX_REVIEW_CANDIDATES]
+        return ordered[:limit]
 
     def _display_ai_candidates(
         self,
@@ -3833,7 +3864,7 @@ class SkuMappingService:
         if strict_candidates:
             scored = strict_candidates
         scored.sort(key=lambda item: (-float(item["deterministic_score"]), item["sku_id"]))
-        return scored[:MAX_REVIEW_CANDIDATES]
+        return scored[:max_review_candidates()]
 
     @staticmethod
     def _validate_ai_selection(result: Dict[str, Any], candidates: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
@@ -4321,7 +4352,7 @@ class SkuMappingService:
         verified_ai_candidate_keys: List[str] = []
         if (
             ai.get("decision") == "match"
-            and float(ai.get("confidence") or 0) >= AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD
+            and float(ai.get("confidence") or 0) >= ai_verified_green_confidence()
             and not [warning for warning in (ai.get("warnings") or []) if str(warning).strip()]
             and not str(ai.get("safety_override") or "").strip()
         ):
