@@ -35,7 +35,7 @@
 - 核心：`alibaba_restocker.py`（1688 加採購車、SKU 選擇、MOQ／包裝倍數）。
 - 數量規則：`restock_rules.py`（手機殼／手机壳 **3 個月**，其餘 **4 個月**；吊飾／掛繩／明確加購除外）。
 - 批次與關注清單：`restock_batch.py`、`scripts/run_watchlist_restock.py`。
-- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。知識包：`mapping_knowledge/`（`config.json` 門檻、`aliases.json` 同義詞、`rules.json` 規則登錄、`categories.json` 類別關鍵字）；載入見 `mapping_knowledge.py`。`python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出 aliases。人工否決寫入 `mapping_negative_examples`（原因代碼見 SPEC 5.3）。TASK 5 把歷史核准與負例餵進 `generate_candidates()`／既有 AI judge（`PROMPT_VERSION=2026-09-v2`）；無 key 可用 `python -m mapping_eval run --fixture tests/fixtures/mapping_eval --ai-dry`。TASK 6 用 `score_weights` 合成 `final_score`（只排序，不改綠色條件），並提供 `GET /api/sku-mapping/explain`／審核卡「為什麼」。TASK 7 讓每次 `_save_suggestion()` 把 `knowledge_version`／`prompt_version`／`ai.provider|model|effort`／`applied_rules`／`historical_support`／`negative_hits`／`score_breakdown`／`snapshot_id`／`fingerprint` 寫進 `evidence_json`（沒跑 AI 時 `ai.*` 為 `null`）；`python -m mapping_eval audit --db-path procurement.db --since <days>` 列出缺欄位數。
+- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。知識包：`mapping_knowledge/`（`config.json` 門檻、`aliases.json` 同義詞、`rules.json` 規則登錄、`categories.json` 類別關鍵字）；載入見 `mapping_knowledge.py`。`python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出 aliases。人工否決寫入 `mapping_negative_examples`（原因代碼見 SPEC 5.3）。TASK 5 把歷史核准與負例餵進 `generate_candidates()`／既有 AI judge（`PROMPT_VERSION=2026-09-v2`）；無 key 可用 `python -m mapping_eval run --fixture tests/fixtures/mapping_eval --ai-dry`。TASK 6 用 `score_weights` 合成 `final_score`（只排序，不改綠色條件），並提供 `GET /api/sku-mapping/explain`／審核卡「為什麼」。TASK 7 讓每次 `_save_suggestion()` 把 `knowledge_version`／`prompt_version`／`ai.provider|model|effort`／`applied_rules`／`historical_support`／`negative_hits`／`score_breakdown`／`snapshot_id`／`fingerprint` 寫進 `evidence_json`（沒跑 AI 時 `ai.*` 為 `null`）；`python -m mapping_eval audit --db-path procurement.db --since <days>` 列出缺欄位數。TASK 8 用 `mapping_eval compare` 對 TASK 1 fixture baseline，並**只報告** auto-approve 反事實精度（`enabled` 維持 false）；總覽見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。
 - 離線購物車數量核對（不連瀏覽器）：`scripts/reconcile_cart.py`，說明見 [`docs/cart-reconciliation.md`](docs/cart-reconciliation.md)。
 - 瀏覽器優先 ego-lite，否則 Chrome／Playwright Chromium。
 
@@ -378,7 +378,8 @@ InventoryCalculator/
 │   ├── ads_metrics_dictionary.md
 │   ├── ads_report_prompt_spec.md
 │   ├── ads_weekly_pipeline.md
-│   └── mapping_eval.md
+│   ├── mapping_eval.md
+│   └── sku_mapping_knowhow_engine.md
 ├── tests/                  # pytest（含 reverse_audit 離線安全測試）
 ├── watchlists/             # 個人關注與排除清單
 ├── golden_table.json       # 已核准 mapping（納入 git）
@@ -407,7 +408,7 @@ InventoryCalculator/
 - 批次核准 API 必須帶 `batch=true`；使用者勾選的項目才會送出，未手動點候選的項目會在確認提示後使用第 1 個候選，沒有候選的項目則整批拒絕。
 - 工作台會顯示既有 SKU mapping。人工從完整 SKU 清單選擇並核准時，該選擇就是最高優先，會直接寫入並覆蓋既有 mapping；不再另外提供容易混淆的「取代既有 mapping」按鈕。
 
-- 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。
+- 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。Know-how Engine 總覽、TASK 1 vs 現況數字與 auto-approve 反事實精度見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
 - 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。

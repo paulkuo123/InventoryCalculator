@@ -1,0 +1,176 @@
+{
+  "n_cases": 5,
+  "n_scorable": 4,
+  "n_truth_absent": 1,
+  "top1_accuracy": 0.5,
+  "top3_accuracy": 0.75,
+  "false_negative_rate": 0.25,
+  "top1_correct": 2,
+  "top3_correct": 3,
+  "false_negatives": 1,
+  "green": {
+    "n": 2,
+    "top1_correct": 2,
+    "precision": 1.0
+  },
+  "yellow": {
+    "n": 1,
+    "truth_coverage": 1.0
+  },
+  "red": {
+    "n": 2,
+    "truth_coverage": 0.0
+  },
+  "by_category": {
+    "charm": {
+      "n": 1,
+      "scorable": 0,
+      "top1_accuracy": null,
+      "top3_accuracy": null,
+      "false_negative_rate": null,
+      "green": {
+        "n": 0,
+        "top1_correct": 0,
+        "precision": null
+      },
+      "yellow": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "red": {
+        "n": 1,
+        "truth_coverage": 0.0
+      },
+      "truth_absent": 1
+    },
+    "phone_case": {
+      "n": 1,
+      "scorable": 1,
+      "top1_accuracy": 0.0,
+      "top3_accuracy": 1.0,
+      "false_negative_rate": 0.0,
+      "green": {
+        "n": 0,
+        "top1_correct": 0,
+        "precision": null
+      },
+      "yellow": {
+        "n": 1,
+        "truth_coverage": 1.0
+      },
+      "red": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "truth_absent": 0
+    },
+    "socks": {
+      "n": 2,
+      "scorable": 2,
+      "top1_accuracy": 1.0,
+      "top3_accuracy": 1.0,
+      "false_negative_rate": 0.0,
+      "green": {
+        "n": 2,
+        "top1_correct": 2,
+        "precision": 1.0
+      },
+      "yellow": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "red": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "truth_absent": 0
+    },
+    "watch": {
+      "n": 1,
+      "scorable": 1,
+      "top1_accuracy": 0.0,
+      "top3_accuracy": 0.0,
+      "false_negative_rate": 1.0,
+      "green": {
+        "n": 0,
+        "top1_correct": 0,
+        "precision": null
+      },
+      "yellow": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "red": {
+        "n": 1,
+        "truth_coverage": 0.0
+      },
+      "truth_absent": 0
+    }
+  },
+  "by_mapping_source": {
+    "ai_reviewed": {
+      "n": 1,
+      "scorable": 1,
+      "top1_accuracy": 0.0,
+      "top3_accuracy": 1.0,
+      "false_negative_rate": 0.0,
+      "green": {
+        "n": 0,
+        "top1_correct": 0,
+        "precision": null
+      },
+      "yellow": {
+        "n": 1,
+        "truth_coverage": 1.0
+      },
+      "red": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "truth_absent": 0
+    },
+    "legacy_user_approved": {
+      "n": 2,
+      "scorable": 2,
+      "top1_accuracy": 0.5,
+      "top3_accuracy": 0.5,
+      "false_negative_rate": 0.5,
+      "green": {
+        "n": 1,
+        "top1_correct": 1,
+        "precision": 1.0
+      },
+      "yellow": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "red": {
+        "n": 1,
+        "truth_coverage": 0.0
+      },
+      "truth_absent": 0
+    },
+    "manual": {
+      "n": 2,
+      "scorable": 1,
+      "top1_accuracy": 1.0,
+      "top3_accuracy": 1.0,
+      "false_negative_rate": 0.0,
+      "green": {
+        "n": 1,
+        "top1_correct": 1,
+        "precision": 1.0
+      },
+      "yellow": {
+        "n": 0,
+        "truth_coverage": null
+      },
+      "red": {
+        "n": 1,
+        "truth_coverage": 0.0
+      },
+      "truth_absent": 1
+    }
+  },
+  "ai": null
+}
