@@ -1039,7 +1039,7 @@ class ShopeeCrawler:
         print(f"{prefix} {message}")
 
     def _build_ads_range_configs(self):
-        today = datetime.now().date()
+        today = datetime.now(ZoneInfo("Asia/Taipei")).date()
         yesterday = today - timedelta(days=1)
         anchor_date = yesterday
         if anchor_date.month == 1:
@@ -1089,7 +1089,7 @@ class ShopeeCrawler:
         }
 
     def _build_ads_trend_range_configs(self, week_count=DEFAULT_TREND_EXPORT_WEEKS):
-        anchor_date = datetime.now().date() - timedelta(days=1)
+        anchor_date = datetime.now(ZoneInfo("Asia/Taipei")).date() - timedelta(days=1)
 
         def fmt(date_value):
             return date_value.strftime("%Y/%m/%d")
@@ -1706,7 +1706,16 @@ class ShopeeCrawler:
             return False
         start_date, end_date = self._extract_report_date_range(report_name)
         if start_date and end_date:
-            return start_date == range_config["start_date"] and end_date == range_config["end_date"]
+            expected_start = range_config["start_date"]
+            expected_end = range_config["end_date"]
+            if end_date != expected_end:
+                return False
+            # Shopee 預設「近 7 天／過去一個月」起日常與我方算法差 1 天
+            if start_date == expected_start:
+                return True
+            if expected_start != expected_end and abs((start_date - expected_start).days) <= 1:
+                return True
+            return False
         return any(re.search(pattern, report_name) for pattern in range_config["report_patterns"])
 
     def _extract_report_date_range(self, report_name):

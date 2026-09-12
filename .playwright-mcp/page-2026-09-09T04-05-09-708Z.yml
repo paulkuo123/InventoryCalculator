@@ -1,0 +1,326 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: 莉莉安 · Golden AI-5
+      - heading "1688 候選審核工作台" [level=1] [ref=e5]
+      - paragraph [ref=e6]:
+        - text: 一次看一案：左邊蝦皮、右邊 1688 候選。核准／駁回／改換／略過／停售只寫進本機審核結果，不會動
+        - code [ref=e7]: golden_table.json
+        - text: ，也不加採購車。
+      - generic [ref=e8]: 預設先審高／中信心；低信心在「低」分頁。主佇列 81＝原 69＋杯套／愛心熊 resume 12（source=ai4_resume）。附錄 7 筆是先前已擱的 Plan C，非本批必審。
+      - paragraph [ref=e9]: 快捷鍵：1 核准 · 2 駁回 · 3 改換 · 4 略過 · 5 停售 · ← → 上一／下一筆（輸入框內不觸發）
+  - main [ref=e10]:
+    - generic [ref=e11]:
+      - generic [ref=e12]:
+        - strong [ref=e13]: 2 / 81
+        - text: 主佇列已審（必審 81）
+      - generic [ref=e14]:
+        - strong [ref=e15]: "19"
+        - text: 高信心
+      - generic [ref=e16]:
+        - strong [ref=e17]: "25"
+        - text: 中信心
+      - generic [ref=e18]:
+        - strong [ref=e19]: "37"
+        - text: 低信心（可後審）
+      - generic [ref=e20]:
+        - strong [ref=e21]: 0 / 7
+        - text: 附錄已擱（非必審）
+    - navigation "佇列篩選" [ref=e22]:
+      - button "優先（高／中）（44）" [ref=e23] [cursor=pointer]
+      - button "全部必審（81）" [ref=e24] [cursor=pointer]
+      - button "高（19）" [ref=e25] [cursor=pointer]
+      - button "中（25）" [ref=e26] [cursor=pointer]
+      - button "低（37）" [ref=e27] [cursor=pointer]
+      - button "附錄 shelved_round1（7）" [ref=e28] [cursor=pointer]
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - button "上一筆" [ref=e31] [cursor=pointer]
+        - strong [ref=e32]: 20 / 44
+        - button "下一筆" [ref=e33] [cursor=pointer]
+        - generic [ref=e34]:
+          - text: 跳到
+          - spinbutton "跳到 筆" [ref=e35]
+          - text: 筆
+        - button "前往" [ref=e36] [cursor=pointer]
+        - button "下一筆未審" [ref=e37] [cursor=pointer]
+      - generic [ref=e38]: 預設：高／中未審優先。低信心請改切「低」分頁。
+    - generic [ref=e39]:
+      - complementary [ref=e40]:
+        - generic [ref=e579] [cursor=pointer]:
+          - generic [ref=e581]:
+            - text: 粉絲帶蝴蝶結,11
+            - generic [ref=e582]: 高 · 應補 60
+          - generic [ref=e583]: 高
+        - generic [ref=e584] [cursor=pointer]:
+          - generic [ref=e586]:
+            - text: 米菲兔
+            - generic [ref=e587]: 高 · 應補 30
+          - generic [ref=e588]: 高
+        - generic [ref=e589] [cursor=pointer]:
+          - generic [ref=e591]:
+            - text: 抹茶綠軍規,12/12 pro
+            - generic [ref=e592]: 高 · 應補 30
+          - generic [ref=e593]: 高
+        - generic [ref=e594] [cursor=pointer]:
+          - generic [ref=e596]:
+            - text: 鏡面愛心,7 Plus/8 Plus
+            - generic [ref=e597]: 高 · 應補 30
+          - generic [ref=e598]: 高
+        - generic [ref=e599] [cursor=pointer]:
+          - generic [ref=e601]:
+            - text: 怪獸大派對,16 pro
+            - generic [ref=e602]: 高 · 應補 30
+          - generic [ref=e603]: 高
+        - generic [ref=e604] [cursor=pointer]:
+          - generic [ref=e606]:
+            - text: 米色MES
+            - generic [ref=e607]: 高 · 應補 20
+          - generic [ref=e608]: 高
+        - generic [ref=e609] [cursor=pointer]:
+          - generic [ref=e611]:
+            - text: Hello
+            - generic [ref=e612]: 高 · 應補 20
+          - generic [ref=e613]: 高
+        - generic [ref=e614] [cursor=pointer]:
+          - generic [ref=e616]:
+            - text: 粉色軍規,14Plus/15Plus
+            - generic [ref=e617]: 高 · 應補 20
+          - generic [ref=e618]: 高
+        - generic [ref=e619] [cursor=pointer]:
+          - generic [ref=e621]:
+            - text: 抹茶綠軍規,15
+            - generic [ref=e622]: 高 · 應補 20
+          - generic [ref=e623]: 高
+        - generic [ref=e624] [cursor=pointer]:
+          - generic [ref=e626]:
+            - text: 綠頭套鴨,11
+            - generic [ref=e627]: 高 · 應補 20
+          - generic [ref=e628]: 高
+        - generic [ref=e629] [cursor=pointer]:
+          - generic [ref=e631]:
+            - text: 銀色-小粉結滿屏,12/12 Pro
+            - generic [ref=e632]: 高 · 應補 20
+          - generic [ref=e633]: 高
+        - generic [ref=e634] [cursor=pointer]:
+          - generic [ref=e636]:
+            - text: 銀色-小粉結滿屏,13 / 14
+            - generic [ref=e637]: 高 · 應補 20
+          - generic [ref=e638]: 高
+        - generic [ref=e639] [cursor=pointer]:
+          - generic [ref=e641]:
+            - text: 鏡面愛心,15 Pro
+            - generic [ref=e642]: 高 · 應補 20
+          - generic [ref=e643]: 高
+        - generic [ref=e644] [cursor=pointer]:
+          - generic [ref=e646]:
+            - text: 怪獸大派對,17
+            - generic [ref=e647]: 高 · 應補 20
+          - generic [ref=e648]: 高
+        - generic [ref=e649] [cursor=pointer]:
+          - generic [ref=e651]:
+            - text: 黑邊,11
+            - generic [ref=e652]: 高 · 應補 20
+          - generic [ref=e653]: 高
+        - generic [ref=e654] [cursor=pointer]:
+          - generic [ref=e656]:
+            - text: 粉絲帶蝴蝶結,13 pro
+            - generic [ref=e657]: 高 · 應補 20
+          - generic [ref=e658]: 高
+        - generic [ref=e659] [cursor=pointer]:
+          - generic [ref=e661]:
+            - text: 粉絲帶蝴蝶結,7/8/SE2/SE3
+            - generic [ref=e662]: 高 · 應補 20
+          - generic [ref=e663]: 高
+        - generic [ref=e664] [cursor=pointer]:
+          - generic [ref=e666]:
+            - text: Have a warm day
+            - generic [ref=e667]: 高 · 應補 10
+          - generic [ref=e668]: 高
+        - generic [ref=e669] [cursor=pointer]:
+          - generic [ref=e671]:
+            - text: 貓和主人
+            - generic [ref=e672]: 高 · 應補 10
+          - generic [ref=e673]: 高
+        - generic [ref=e674] [cursor=pointer]:
+          - generic [ref=e676]:
+            - text: 白色
+            - generic [ref=e677]: 中 · 應補 400
+          - generic [ref=e678]: 中
+        - generic [ref=e679] [cursor=pointer]:
+          - generic [ref=e681]:
+            - text: 白色
+            - generic [ref=e682]: 中 · 應補 120
+          - generic [ref=e683]: 中
+        - generic [ref=e684] [cursor=pointer]:
+          - generic [ref=e686]:
+            - text: 紫色
+            - generic [ref=e687]: 中 · 應補 90
+          - generic [ref=e688]: 中
+        - generic [ref=e689] [cursor=pointer]:
+          - generic [ref=e691]:
+            - text: 奶油
+            - generic [ref=e692]: 中 · 應補 90
+          - generic [ref=e693]: 中
+        - generic [ref=e694] [cursor=pointer]:
+          - generic [ref=e696]:
+            - text: 淺藍
+            - generic [ref=e697]: 中 · 應補 70
+          - generic [ref=e698]: 中
+        - generic [ref=e699] [cursor=pointer]:
+          - generic [ref=e701]:
+            - text: 黑色
+            - generic [ref=e702]: 中 · 應補 70
+          - generic [ref=e703]: 中
+        - generic [ref=e704] [cursor=pointer]:
+          - generic [ref=e706]:
+            - text: 愛心熊
+            - generic [ref=e707]: 中 · 應補 60
+          - generic [ref=e708]: 中
+        - generic [ref=e709] [cursor=pointer]:
+          - generic [ref=e711]:
+            - text: 堆堆小狗(單殼),12/12pro
+            - generic [ref=e712]: 中 · 應補 40
+          - generic [ref=e713]: 中
+        - generic [ref=e714] [cursor=pointer]:
+          - generic [ref=e716]:
+            - text: 鬱金香
+            - generic [ref=e717]: 中 · 應補 30
+          - generic [ref=e718]: 中
+        - generic [ref=e719] [cursor=pointer]:
+          - generic [ref=e721]:
+            - text: 草莓藍花,11
+            - generic [ref=e722]: 中 · 應補 30
+          - generic [ref=e723]: 中
+        - generic [ref=e724] [cursor=pointer]:
+          - generic [ref=e726]:
+            - text: 鏡面珍珠結,11
+            - generic [ref=e727]: 中 · 應補 20
+          - generic [ref=e728]: 中
+        - generic [ref=e729] [cursor=pointer]:
+          - generic [ref=e731]:
+            - text: 鏡面珍珠結,13/14
+            - generic [ref=e732]: 中 · 應補 20
+          - generic [ref=e733]: 中
+        - generic [ref=e734] [cursor=pointer]:
+          - generic [ref=e736]:
+            - text: 黑色軍規,15
+            - generic [ref=e737]: 中 · 應補 20
+          - generic [ref=e738]: 中
+        - generic [ref=e739] [cursor=pointer]:
+          - generic [ref=e741]:
+            - text: 米白色
+            - generic [ref=e742]: 中 · 應補 20
+          - generic [ref=e743]: 中
+        - generic [ref=e744] [cursor=pointer]:
+          - generic [ref=e746]:
+            - text: 堆堆小狗(單殼),14
+            - generic [ref=e747]: 中 · 應補 20
+          - generic [ref=e748]: 中
+        - generic [ref=e749] [cursor=pointer]:
+          - generic [ref=e751]:
+            - text: 堆堆小狗(單殼),15
+            - generic [ref=e752]: 中 · 應補 20
+          - generic [ref=e753]: 中
+        - generic [ref=e754] [cursor=pointer]:
+          - generic [ref=e756]:
+            - text: 白色
+            - generic [ref=e757]: 中 · 應補 20
+          - generic [ref=e758]: 中
+        - generic [ref=e759] [cursor=pointer]:
+          - generic [ref=e761]:
+            - text: 沉思
+            - generic [ref=e762]: 中 · 應補 10
+          - generic [ref=e763]: 中
+        - generic [ref=e764] [cursor=pointer]:
+          - generic [ref=e766]:
+            - text: 摸頭
+            - generic [ref=e767]: 中 · 應補 10
+          - generic [ref=e768]: 中
+        - generic [ref=e769] [cursor=pointer]:
+          - generic [ref=e771]:
+            - text: 14. 套裝 - 發芽碳球
+            - generic [ref=e772]: 中 · 應補 10
+          - generic [ref=e773]: 中
+        - generic [ref=e774] [cursor=pointer]:
+          - generic [ref=e776]:
+            - text: 煮茶
+            - generic [ref=e777]: 中 · 應補 5
+          - generic [ref=e778]: 中
+        - generic [ref=e779] [cursor=pointer]:
+          - generic [ref=e781]:
+            - text: 情人節
+            - generic [ref=e782]: 中 · 應補 5
+          - generic [ref=e783]: 中
+        - generic [ref=e784] [cursor=pointer]:
+          - generic [ref=e786]:
+            - text: 靠樹
+            - generic [ref=e787]: 中 · 應補 5
+          - generic [ref=e788]: 中
+        - generic [ref=e789] [cursor=pointer]:
+          - generic [ref=e791]:
+            - text: 男孩
+            - generic [ref=e792]: 中 · 應補 5
+          - generic [ref=e793]: 中
+        - generic [ref=e794] [cursor=pointer]:
+          - generic [ref=e796]:
+            - text: 貼貼奶狗(無吊飾),11 pro
+            - generic [ref=e797]: 中 · 應補 5
+          - generic [ref=e798]: 中
+      - generic [ref=e261]:
+        - generic [ref=e799]:
+          - generic [ref=e800]:
+            - heading "蝦皮商品" [level=2] [ref=e801]
+            - generic [ref=e802]:
+              - img "蝦皮圖" [ref=e803]
+              - generic [ref=e804]:
+                - generic [ref=e805]:
+                  - generic [ref=e806]: P3_mapping_suspect
+                  - generic [ref=e807]: 應補 400
+                - strong [ref=e808]: 隔日到貨🔥 韓版簡約原宿後背包 學生背包 大容量 B52 背包 百搭 防潑水 尼龍 手提 雙肩包 背包 書包 潮流 後背
+                - generic [ref=e809]:
+                  - generic [ref=e810]: 型號 白色
+                  - generic [ref=e811]: 商品 ID 23551074058
+                  - generic [ref=e812]: 規格 ID 204499705550
+                  - generic [ref=e813]: 分桶 mapping_suspect
+          - generic [ref=e814]:
+            - heading "1688 候選" [level=2] [ref=e815]
+            - generic [ref=e816]:
+              - generic [ref=e817]: 信心 中
+              - generic [ref=e818]: history
+              - link "開 1688 頁" [ref=e819] [cursor=pointer]:
+                - /url: https://detail.1688.com/offer/695219979754.html
+            - generic [ref=e820]:
+              - generic [ref=e821]: SKU 白色
+              - generic [ref=e822]: 規格 白色>含挂件
+              - generic [ref=e823]: offer 695219979754 · sku_id 5102026642396
+              - generic [ref=e824]:
+                - text: 這筆沒有
+                - code [ref=e825]: alt_offer_id
+                - text: ；若要改換請手動填 offer／SKU。
+            - generic [ref=e826]: 理由 兄弟／原檔 695219979754：顏色對上；型號字面命中
+        - generic [ref=e827]: 尚未紀錄
+        - generic [ref=e828]:
+          - button "1 核准" [ref=e829] [cursor=pointer]
+          - button "2 駁回" [ref=e830] [cursor=pointer]
+          - button "3 改換" [ref=e831] [cursor=pointer]
+          - button "4 略過" [ref=e832] [cursor=pointer]
+          - button "5 停售" [ref=e833] [cursor=pointer]
+        - generic [ref=e835]:
+          - generic [ref=e836]:
+            - text: 改換 offer ID
+            - textbox "改換 offer ID" [ref=e837]:
+              - /placeholder: swap_offer_id
+          - generic [ref=e838]:
+            - text: 改換 SKU ID
+            - textbox "改換 SKU ID" [ref=e839]:
+              - /placeholder: swap_sku_id
+        - generic [ref=e841]:
+          - text: 備註
+          - textbox "備註" [ref=e842]:
+            - /placeholder: 對圖心得、為何駁回／改換
+    - generic [ref=e308]:
+      - button "下載審核結果 CSV" [ref=e309] [cursor=pointer]
+      - button "下載審核結果 JSON" [ref=e310] [cursor=pointer]
+      - button "清除本機紀錄" [ref=e311] [cursor=pointer]
+      - generic [ref=e312]: 結果存在瀏覽器 localStorage；磁碟上的模板是空的，給庭安匯出後另存。

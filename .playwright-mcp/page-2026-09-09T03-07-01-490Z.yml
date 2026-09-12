@@ -1,0 +1,144 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - generic [ref=e3]:
+      - generic [ref=e4]: 莉莉安 · Golden AI-5
+      - heading "1688 候選審核工作台" [level=1] [ref=e5]
+      - paragraph [ref=e6]:
+        - text: 一次看一案：左邊蝦皮、右邊 1688 候選。核准／駁回／改換／略過／停售只寫進本機審核結果，不會動
+        - code [ref=e7]: golden_table.json
+        - text: ，也不加採購車。
+      - generic [ref=e8]: 預設先審高／中信心；低信心在「低」分頁。附錄 7 筆是先前已擱的 Plan C，非本批必審。
+      - paragraph [ref=e9]: 快捷鍵：1 核准 · 2 駁回 · 3 改換 · 4 略過 · 5 停售 · ← → 上一／下一筆（輸入框內不觸發）
+  - main [ref=e10]:
+    - generic [ref=e11]:
+      - generic [ref=e710]:
+        - strong [ref=e711]: 1 / 69
+        - text: 主佇列已審（必審 69）
+      - generic [ref=e712]:
+        - strong [ref=e713]: "14"
+        - text: 高信心
+      - generic [ref=e714]:
+        - strong [ref=e715]: "18"
+        - text: 中信心
+      - generic [ref=e716]:
+        - strong [ref=e717]: "37"
+        - text: 低信心（可後審）
+      - generic [ref=e718]:
+        - strong [ref=e719]: 0 / 7
+        - text: 附錄已擱（非必審）
+    - navigation "佇列篩選" [ref=e22]:
+      - button "優先（高／中）（32）" [ref=e720] [cursor=pointer]
+      - button "全部必審（69）" [ref=e721] [cursor=pointer]
+      - button "高（14）" [ref=e722] [cursor=pointer]
+      - button "中（18）" [ref=e723] [cursor=pointer]
+      - button "低（37）" [ref=e724] [cursor=pointer]
+      - button "附錄 shelved_round1（7）" [ref=e725] [cursor=pointer]
+    - generic [ref=e29]:
+      - generic [ref=e30]:
+        - button "上一筆" [disabled] [ref=e31]
+        - strong [ref=e32]: 1 / 7
+        - button "下一筆" [ref=e33] [cursor=pointer]
+        - generic [ref=e34]:
+          - text: 跳到
+          - spinbutton "跳到 筆" [ref=e35]
+          - text: 筆
+        - button "前往" [ref=e36] [cursor=pointer]
+        - button "下一筆未審" [ref=e37] [cursor=pointer]
+      - generic [ref=e38]: 附錄是 Plan C 已擱高／中 7 筆，不算本批必審。
+    - generic [ref=e39]:
+      - complementary [ref=e40]:
+        - generic [ref=e726] [cursor=pointer]:
+          - generic [ref=e728]:
+            - text: 15.水晶愛心繩
+            - generic [ref=e729]: 高 · 應補 9
+          - generic [ref=e730]: 高
+        - generic [ref=e731] [cursor=pointer]:
+          - generic [ref=e733]:
+            - text: 淺灰色 M (56-58cm)
+            - generic [ref=e734]: 高 · 應補 1
+          - generic [ref=e735]: 高
+        - generic [ref=e736] [cursor=pointer]:
+          - generic [ref=e738]:
+            - text: 14. 套裝 - 發芽碳球
+            - generic [ref=e739]: 中 · 應補 8
+          - generic [ref=e740]: 中
+        - generic [ref=e741] [cursor=pointer]:
+          - generic [ref=e743]:
+            - text: 貼貼奶狗(無吊飾),11 pro
+            - generic [ref=e744]: 中 · 應補 3
+          - generic [ref=e745]: 中
+        - generic [ref=e746] [cursor=pointer]:
+          - generic [ref=e748]:
+            - text: 小狗貼貼,7/8/SE2/SE3
+            - generic [ref=e749]: 中 · 應補 2
+          - generic [ref=e750]: 中
+        - generic [ref=e751] [cursor=pointer]:
+          - generic [ref=e753]:
+            - text: 小狗貼貼,7 Plus/8 Plus
+            - generic [ref=e754]: 中 · 應補 1
+          - generic [ref=e755]: 中
+        - generic [ref=e756] [cursor=pointer]:
+          - generic [ref=e758]:
+            - text: 小狗貼貼,XS Max
+            - generic [ref=e759]: 中 · 應補 1
+          - generic [ref=e760]: 中
+      - generic [ref=e201]:
+        - generic [ref=e761]:
+          - generic [ref=e762]:
+            - heading "蝦皮商品" [level=2] [ref=e763]
+            - generic [ref=e764]:
+              - img "蝦皮圖" [ref=e765]
+              - generic [ref=e766]:
+                - generic [ref=e767]:
+                  - generic [ref=e768]: planC_shelved_round1
+                  - generic [ref=e769]: 已擱 round1
+                  - generic [ref=e770]: 應補 9
+                - strong [ref=e771]: 隔日到貨🔥 ins韓風 手機殼吊飾 手機殼掛飾 手機殼掛繩 手機掛件 掛飾 手機吊飾 鍊條 手提掛飾 手機掛繩 掛繩
+                - generic [ref=e772]:
+                  - generic [ref=e773]: 型號 15.水晶愛心繩
+                  - generic [ref=e774]: 商品 ID 19725077805
+                  - generic [ref=e775]: 規格 ID 194347278765
+                  - generic [ref=e776]: 分桶 mapping_suspect
+          - generic [ref=e777]:
+            - heading "1688 候選" [level=2] [ref=e778]
+            - generic [ref=e779]:
+              - generic [ref=e780]: 信心 高
+              - generic [ref=e781]: cdp/browser
+              - link "開 1688 頁" [ref=e782] [cursor=pointer]:
+                - /url: https://detail.1688.com/offer/676841046990.html
+              - link "開舊檔" [ref=e783] [cursor=pointer]:
+                - /url: https://detail.1688.com/offer/752797767076.html
+            - generic [ref=e784]:
+              - generic [ref=e785]: SKU 水晶爱心绳
+              - generic [ref=e786]: 規格 水晶爱心绳
+              - generic [ref=e787]: offer 676841046990 · sku_id 4998466037287
+              - generic [ref=e788]:
+                - text: 這筆沒有
+                - code [ref=e789]: alt_offer_id
+                - text: ；若要改換請手動填 offer／SKU。
+            - generic [ref=e790]: 理由 同商品其他型號已核准這檔塔下掛繩；活頁 SKU 名稱就是「水晶爱心绳」，庫存還有。 其他為何不推：原 offer 752797767076 也活著，但 SKU 只有水晶玫瑰花绳／粉蝶爱心绳，沒有「水晶爱心绳」這個名字，所以改推同系列 676841046990。
+        - generic [ref=e791]: 尚未紀錄
+        - generic [ref=e792]:
+          - button "1 核准" [ref=e793] [cursor=pointer]
+          - button "2 駁回" [ref=e794] [cursor=pointer]
+          - button "3 改換" [ref=e795] [cursor=pointer]
+          - button "4 略過" [ref=e796] [cursor=pointer]
+          - button "5 停售" [ref=e797] [cursor=pointer]
+        - generic [ref=e799]:
+          - generic [ref=e800]:
+            - text: 改換 offer ID
+            - textbox "改換 offer ID" [ref=e801]:
+              - /placeholder: swap_offer_id
+          - generic [ref=e802]:
+            - text: 改換 SKU ID
+            - textbox "改換 SKU ID" [ref=e803]:
+              - /placeholder: swap_sku_id
+        - generic [ref=e805]:
+          - text: 備註
+          - textbox "備註" [ref=e806]:
+            - /placeholder: 對圖心得、為何駁回／改換
+    - generic [ref=e246]:
+      - button "下載審核結果 CSV" [ref=e247] [cursor=pointer]
+      - button "下載審核結果 JSON" [ref=e248] [cursor=pointer]
+      - button "清除本機紀錄" [ref=e249] [cursor=pointer]
+      - generic [ref=e250]: 結果存在瀏覽器 localStorage；磁碟上的模板是空的，給庭安匯出後另存。
