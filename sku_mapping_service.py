@@ -89,14 +89,6 @@ SUGGESTION_EVIDENCE_REQUIRED_FIELDS = (
 )
 SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS = ("provider", "model", "effort")
 WHY_KINDS = ("rule", "alias", "historical", "negative", "feature", "llm")
-WHY_KIND_LABELS = {
-    "rule": "規則",
-    "alias": "同義詞",
-    "historical": "歷史核准",
-    "negative": "負例",
-    "feature": "特徵",
-    "llm": "AI",
-}
 _GOLDEN_BACKUP_RE = re.compile(r"^golden_table\.json\.backup_before_(.+)_(\d+)$")
 
 
@@ -1368,8 +1360,6 @@ class SkuMappingService:
         candidates: Sequence[Dict[str, Any]],
         snapshot_status: str = "",
         ai: Optional[Dict[str, Any]] = None,
-        existing_sku_id: str = "",
-        existing_sku_name: str = "",
         verified_ai_candidate_keys: Optional[Sequence[str]] = None,
         config: Optional[Dict[str, Any]] = None,
     ) -> Tuple[str, str]:
@@ -1496,11 +1486,20 @@ class SkuMappingService:
         return "yellow", f"有 {len(candidates)} 個候選，需人工比較完整規格"
 
     def _refresh_review_tiers(self) -> None:
-        """Backfill tier metadata for rows created before tiered review existed."""
+        """Backfill tier metadata for rows created before tiered review existed.
+
+        A manual 稍後處理 decision is stored as ``status='pending'`` plus the
+        ``DEFERRED_REVIEW_REASON`` marker; the 待處理／稍後處理 queues are split on
+        that marker alone.  Recomputing those rows would replace the marker with
+        an automatic reason and silently move every deferred item back into the
+        default queue on the next server start, so they are left untouched.
+        """
         with self.connect() as conn:
             rows = conn.execute(
                 "SELECT s.*, o.status AS snapshot_status, o.skus_json AS snapshot_skus_json FROM sku_mapping_suggestions s "
-                "LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id"
+                "LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id "
+                "WHERE NOT (s.status='pending' AND COALESCE(s.review_reason, '') = ?)",
+                (DEFERRED_REVIEW_REASON,),
             ).fetchall()
             updates = []
             cfg = load_config()
@@ -1547,8 +1546,6 @@ class SkuMappingService:
                     candidates,
                     row["snapshot_status"] or "",
                     ai,
-                    existing_sku_id="",
-                    existing_sku_name=row["suggested_sku_name"] or "",
                     verified_ai_candidate_keys=verified_ai_candidate_keys,
                     config=cfg,
                 )
@@ -2639,19 +2636,6 @@ class SkuMappingService:
                     "mappingStatus": str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing")),
                 }
         return lookup
-
-    def _images_for_model(self, product_id: str, model_id: str) -> Tuple[str, str]:
-        product = self._golden().get(str(product_id), {})
-        for model in product.get("型號", []) if isinstance(product, dict) else []:
-            current = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
-            if current == str(model_id):
-                return str(product.get("商品圖片網址") or ""), str(model.get("型號圖片網址") or "")
-        return "", ""
-
-    def _restock_qty(self, product_id: str, model_id: str, golden: Optional[Dict[str, Any]] = None) -> int:
-        shopee, _ = self._live_inventory()
-        live = self._live_model_lookup(shopee).get((str(product_id), str(model_id)), {})
-        return int(live.get("restockQty") or 0)
 
     @staticmethod
     def _catalog_candidate(sku: Dict[str, Any]) -> Dict[str, Any]:
@@ -5381,9 +5365,6 @@ class SkuMappingService:
         warnings = result.get("warnings") or ["Grok API 沒有回傳結果"]
         return self._ai_failure("grok", warnings, force_match)
 
-    def _suggestion_applied_rules(self, candidates: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        return self._prompt_applied_rules(candidates)
-
     def _suggestion_historical_support(
         self,
         model: Dict[str, Any],
@@ -5510,7 +5491,7 @@ class SkuMappingService:
             "ai": normalize_ai_evidence(ai),
             "knowledge_version": knowledge_version(),
             "prompt_version": PROMPT_VERSION,
-            "applied_rules": self._suggestion_applied_rules(candidates or []),
+            "applied_rules": self._prompt_applied_rules(candidates or []),
             "historical_support": self._suggestion_historical_support(model or {}, snapshot, candidates or []),
             "negative_hits": self._suggestion_negative_hits(model or {}, snapshot, candidates or []),
             "score_breakdown": breakdown,
@@ -5645,8 +5626,6 @@ class SkuMappingService:
             candidates,
             snapshot.get("status", ""),
             ai,
-            existing_sku_id=model.get("existing_sku_id", ""),
-            existing_sku_name=model.get("existing_sku_name", ""),
             verified_ai_candidate_keys=verified_ai_candidate_keys,
         )
         if preserve_discontinued:
