@@ -27,7 +27,10 @@ from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tupl
 from sku_mapping_service import (
     AI_SUCCESS_SOURCES,
     PROMPT_VERSION,
+    SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS,
+    SUGGESTION_EVIDENCE_REQUIRED_FIELDS,
     SkuMappingService,
+    missing_suggestion_evidence_fields,
     normalize_id,
     normalize_text,
     parse_offer_id,
@@ -1004,6 +1007,19 @@ def build_parser() -> argparse.ArgumentParser:
     compare_p.add_argument("--baseline", required=True, help="Baseline run directory (has metrics.json)")
     compare_p.add_argument("--candidate", required=True, help="Candidate run directory")
     compare_p.add_argument("--out", default=None, help="Optional directory to write compare.md")
+
+    audit_p = sub.add_parser(
+        "audit",
+        help="Count suggestions whose evidence_json is missing required TASK 7 fields",
+    )
+    audit_p.add_argument("--db-path", default=DEFAULT_DB_PATH, help="procurement.db path")
+    audit_p.add_argument(
+        "--since",
+        type=int,
+        required=True,
+        help="Only scan rows updated in the last N days (0 = all rows)",
+    )
+    audit_p.add_argument("--out", default=None, help="Optional directory to write audit.md / audit.json")
     return parser
 
 
@@ -1045,6 +1061,126 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def audit_cutoff(since_days: int, now: Optional[int] = None) -> int:
+    days = int(since_days)
+    if days <= 0:
+        return 0
+    return int(now if now is not None else time.time()) - days * 86400
+
+
+def audit_suggestions(db_path: Path, since_days: int, now: Optional[int] = None) -> Dict[str, Any]:
+    """Scan sku_mapping_suggestions for missing TASK 7 evidence fields.
+
+    Old rows may be incomplete.  New ``_save_suggestion()`` writes must have
+    zero missing fields.  Null ``ai.provider`` / ``ai.model`` / ``ai.effort``
+    count as present (documented no-AI).
+    """
+    if not db_path.is_file():
+        raise MappingEvalError(f"procurement database not found: {db_path}")
+    cutoff = audit_cutoff(since_days, now)
+    try:
+        conn = _open_sqlite_readonly(db_path)
+    except sqlite3.Error as exc:
+        raise MappingEvalError(f"cannot open procurement database {db_path}: {exc}") from exc
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, product_id, model_id, created_at, updated_at, evidence_json
+              FROM sku_mapping_suggestions
+             WHERE COALESCE(updated_at, created_at, 0) >= ?
+             ORDER BY updated_at DESC, id DESC
+            """,
+            (cutoff,),
+        ).fetchall()
+    except sqlite3.Error as exc:
+        raise MappingEvalError(
+            f"{db_path} has no usable sku_mapping_suggestions table: {exc}"
+        ) from exc
+    finally:
+        conn.close()
+
+    incomplete: List[Dict[str, Any]] = []
+    missing_counts: Dict[str, int] = defaultdict(int)
+    for row in rows:
+        evidence = _json_load(row["evidence_json"], {})
+        missing = missing_suggestion_evidence_fields(evidence)
+        if not missing:
+            continue
+        for field in missing:
+            missing_counts[field] += 1
+        incomplete.append({
+            "id": row["id"],
+            "product_id": row["product_id"],
+            "model_id": row["model_id"],
+            "updated_at": row["updated_at"],
+            "missing": missing,
+        })
+    return {
+        "db_path": str(db_path),
+        "since_days": int(since_days),
+        "cutoff": cutoff,
+        "required_fields": list(SUGGESTION_EVIDENCE_REQUIRED_FIELDS)
+        + [f"ai.{key}" for key in SUGGESTION_AI_EVIDENCE_REQUIRED_FIELDS],
+        "n_scanned": len(rows),
+        "n_missing": len(incomplete),
+        "missing_field_counts": dict(sorted(missing_counts.items())),
+        "incomplete": incomplete,
+    }
+
+
+def render_audit_markdown(report: Dict[str, Any]) -> str:
+    lines = [
+        "# mapping_eval audit",
+        "",
+        "Required ``evidence_json`` fields for new ``_save_suggestion()`` writes. "
+        "Old rows may be incomplete; null ``ai.provider`` / ``ai.model`` / ``ai.effort`` "
+        "are documented no-AI values and do not count as missing.",
+        "",
+        f"- db: `{report.get('db_path')}`",
+        f"- since: **{report.get('since_days')}** days (cutoff {report.get('cutoff')})",
+        f"- scanned: **{report.get('n_scanned', 0)}**",
+        f"- missing any required field: **{report.get('n_missing', 0)}**",
+        "",
+    ]
+    counts = report.get("missing_field_counts") or {}
+    if counts:
+        lines.extend(["## Missing-field counts", ""])
+        for field, count in counts.items():
+            lines.append(f"- `{field}`: {count}")
+        lines.append("")
+    incomplete = report.get("incomplete") or []
+    if not incomplete:
+        lines.append("All scanned suggestions have the required evidence fields.")
+        lines.append("")
+        return "\n".join(lines)
+    lines.extend([
+        "## Incomplete suggestions",
+        "",
+        "| product_id | model_id | missing |",
+        "|---|---|---|",
+    ])
+    for row in incomplete:
+        missing = ", ".join(row.get("missing") or [])
+        lines.append(f"| {row.get('product_id')} | {row.get('model_id')} | {missing} |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    report = audit_suggestions(Path(args.db_path), int(args.since))
+    text = render_audit_markdown(report)
+    print(text)
+    if args.out:
+        out_dir = Path(args.out)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / "audit.md").write_text(text, encoding="utf-8")
+        (out_dir / "audit.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    return 0
+
+
 def cmd_compare(args: argparse.Namespace) -> int:
     baseline = load_run_metrics(Path(args.baseline))
     candidate = load_run_metrics(Path(args.candidate))
@@ -1070,6 +1206,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return cmd_run(args)
         if args.command == "compare":
             return cmd_compare(args)
+        if args.command == "audit":
+            return cmd_audit(args)
         parser.error("unknown command")
         return EXIT_USAGE
     except MappingEvalError as exc:

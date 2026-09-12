@@ -185,6 +185,34 @@ Headline：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)、Top-3 `75.0%` (3
 python -m unittest tests.test_mapping_knowledge.DisabledRuleTests tests.test_mapping_knowledge.FixtureParityTests
 ```
 
+## TASK 7 建議證據可稽核
+
+每次 `_save_suggestion()` 寫入的 `evidence_json` 都必須含：
+
+- `knowledge_version`（知識包 SHA-256；欄位也以 `ALTER ADD` 寫入 `sku_mapping_suggestions.knowledge_version`）
+- `prompt_version`
+- `ai.provider`／`ai.model`／`ai.effort`（有跑 AI 時寫入實際值；沒跑 AI 時明確寫 `null`）
+- `applied_rules`
+- `historical_support`
+- `negative_hits`
+- `score_breakdown`
+- `snapshot_id`
+- `fingerprint`
+
+舊列可以不完整。稽核只計「缺 key」，`null` 不算缺：
+
+```bash
+python -m mapping_eval audit --db-path procurement.db --since 7
+```
+
+`--since 0` 掃描全部列。可選 `--out` 寫 `audit.md`／`audit.json`。新寫入必須 `missing any required field: 0`。
+
+```bash
+python -m unittest tests.test_mapping_evidence_audit
+```
+
+本任務不改 `golden_table.json` schema、不啟用 auto-approve、不做 TASK 8–9。
+
 ## Fixture 報告摘錄（無秘密）
 
 ```text
