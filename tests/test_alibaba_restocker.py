@@ -473,6 +473,84 @@ class AlibabaRestockerTests(unittest.TestCase):
         self.assertEqual(fields["sku_id"], "5191344225957")
         self.assertEqual(fields["status"], "approved")
 
+    def test_restock_mapping_auto_trusts_approved_sku_url(self):
+        """Trust tier: approved + sku_id + URL is purchasable without Phase 1 stamp."""
+        auto = {
+            "status": "approved",
+            "sku_id": "sku-1",
+            "sku_name": "黑色",
+            "url": "https://detail.1688.com/offer/1.html",
+        }
+        self.assertTrue(alibaba_restocker.restock_mapping_is_purchasable(auto, auto["url"]))
+        missing_sku = dict(auto)
+        missing_sku["sku_id"] = ""
+        self.assertFalse(alibaba_restocker.restock_mapping_is_purchasable(missing_sku, missing_sku["url"]))
+        phase1 = dict(missing_sku)
+        phase1["phase1_verified_at"] = "2026-09-07T12:00:00Z"
+        self.assertTrue(alibaba_restocker.restock_mapping_is_purchasable(phase1, phase1["url"]))
+        discontinued = dict(auto)
+        discontinued["status"] = "discontinued"
+        self.assertFalse(alibaba_restocker.restock_mapping_is_purchasable(discontinued, discontinued["url"]))
+
+    def test_load_sku_mappings_marks_shared_sku_conflict(self):
+        import json
+        import os
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            golden = {
+                "p1": {
+                    "型號": [
+                        {
+                            "型號名稱": "淺灰",
+                            "規格ID": "s1",
+                            "1688_sku_id": "shared-1",
+                            "1688_sku_name": "淺灰",
+                            "1688_mapping_status": "approved",
+                            "阿里巴巴商品URL": "https://detail.1688.com/offer/1.html",
+                        },
+                        {
+                            "型號名稱": "深灰",
+                            "規格ID": "s2",
+                            "1688_sku_id": "shared-1",
+                            "1688_sku_name": "深灰",
+                            "1688_mapping_status": "approved",
+                            "阿里巴巴商品URL": "https://detail.1688.com/offer/1.html",
+                        },
+                        {
+                            "型號名稱": "黑色",
+                            "規格ID": "s3",
+                            "1688_sku_id": "unique-1",
+                            "1688_sku_name": "黑色",
+                            "1688_mapping_status": "approved",
+                            "阿里巴巴商品URL": "https://detail.1688.com/offer/2.html",
+                        },
+                    ]
+                }
+            }
+            with open(os.path.join(tmp, "golden_table.json"), "w", encoding="utf-8") as f:
+                json.dump(golden, f)
+            mappings = alibaba_restocker.load_sku_mappings(tmp)
+            self.assertTrue(mappings["p1"]["淺灰"]["shared_sku_conflict"])
+            self.assertTrue(mappings["p1"]["深灰"]["shared_sku_conflict"])
+            self.assertFalse(mappings["p1"]["黑色"]["shared_sku_conflict"])
+
+            light = alibaba_restocker.mapped_sku_selection(mappings, "p1", "淺灰")
+            light_fields = alibaba_restocker.restock_sku_fields({}, light)
+            self.assertFalse(
+                alibaba_restocker.restock_mapping_is_purchasable(light_fields, light_fields["url"])
+            )
+            self.assertEqual(
+                alibaba_restocker.restock_not_purchasable_reason(light_fields, light_fields["url"]),
+                "conflict",
+            )
+
+            black = alibaba_restocker.mapped_sku_selection(mappings, "p1", "黑色")
+            black_fields = alibaba_restocker.restock_sku_fields({}, black)
+            self.assertTrue(
+                alibaba_restocker.restock_mapping_is_purchasable(black_fields, black_fields["url"])
+            )
+
     @unittest.skipUnless(sys.platform == "darwin", "uses the macOS system Chinese converter")
     def test_catalog_mapping_canonicalizes_primary_and_secondary_separately(self):
         catalog = {

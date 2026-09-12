@@ -3,7 +3,8 @@
 Read-only: never mutates cart. shortfall → PAUSED (no auto qty fix).
 Phase 1 also lists qty_excess + unexpected_in_cart (no PAUSE on excess).
 Never invents URL/skuId into golden_table — uncertain (true missing fields)
-are recorded only. Certain = approved + URL + (skuId OR usable name/spec);
+are recorded only. Certain = Phase-1-reverified approved + URL + (skuId OR usable name/spec).
+Raw 1688_mapping_status=approved is not certain until gated re-verification.
 unique cart name/spec match resolves live skuId for qty diff.
 """
 from __future__ import annotations
@@ -25,6 +26,13 @@ from restock_rules import (
 )
 
 from reverse_audit.paths import repo_root
+from mapping_procurement_gate import (
+    certain_via,
+    is_certain,
+    model_has_shared_sku_conflict,
+    not_purchasable_reason,
+    shared_sku_conflict_model_keys,
+)
 from reverse_audit.util import (
     KNOWN_SOLDOUT,
     KNOWN_SOLDOUT_OFFERS,
@@ -169,6 +177,10 @@ def build_expected(
             continue
         name = str(prod.get("商品名稱") or "")
         by_spec, by_name = golden_index(golden, pid)
+        golden_entry = golden.get(pid) or {}
+        conflict_keys = shared_sku_conflict_model_keys(
+            golden_entry.get("型號") or [] if isinstance(golden_entry, dict) else []
+        )
         models = prod.get("型號") or []
         if isinstance(models, dict):
             models = list(models.values())
@@ -227,23 +239,58 @@ def build_expected(
             url_ok = url.startswith("http")
             has_sku = bool(sku_id)
             has_name_spec = bool(sku_name)
-            certain = status == "approved" and url_ok and (has_sku or has_name_spec)
+            in_conflict = model_has_shared_sku_conflict(
+                spec_id=spec_id,
+                model_name=model_name,
+                conflict_keys=conflict_keys,
+                model=gm,
+            )
+            certain = is_certain(gm, 阿里巴巴商品URL=url, **{
+                "1688_sku_id": sku_id,
+                "1688_sku_name": sku_name,
+                "1688_mapping_status": status,
+                "shared_sku_conflict": in_conflict,
+            })
             if certain:
                 row = dict(base)
                 row["bucket"] = "certain"
-                row["certain_via"] = "sku_id" if has_sku else "name_spec"
+                row["certain_via"] = certain_via(gm, **{"1688_sku_id": sku_id})
                 if not has_sku:
-                    row["note"] = "approved+URL+name/spec；缺 skuId（qty 以唯一 name/spec 對車）"
+                    row["note"] = "phase1-reverified+URL+name/spec；缺 skuId（qty 以唯一 name/spec 對車）"
                 certain_rows.append(row)
             else:
                 missing = []
-                if status != "approved":
-                    missing.append(f"status={status or 'empty'}")
-                if not url_ok:
+                gate_reason = not_purchasable_reason(gm, 阿里巴巴商品URL=url, **{
+                    "1688_sku_id": sku_id,
+                    "1688_sku_name": sku_name,
+                    "1688_mapping_status": status,
+                    "shared_sku_conflict": in_conflict,
+                })
+                # Prefer stable gate reason codes from mapping_procurement_gate.
+                if gate_reason in {
+                    "missing_sku_id",
+                    "missing_url",
+                    "conflict",
+                    "must_reverify",
+                    "rejected",
+                    "sold_out",
+                    "phase1_unverified",  # legacy alias
+                }:
+                    missing.append(gate_reason)
+                if status != "approved" and not any(m.startswith("status=") for m in missing):
+                    if gate_reason and str(gate_reason).startswith("status="):
+                        missing.append(gate_reason)
+                    else:
+                        missing.append(f"status={status or 'empty'}")
+                if not url_ok and "missing_url" not in missing and "url" not in missing:
                     missing.append("url")
-                if not has_sku and not has_name_spec:
+                if not has_sku and not has_name_spec and "skuId+name/spec" not in missing:
                     missing.append("skuId+name/spec")
-                elif not has_sku:
+                elif (
+                    not has_sku
+                    and gate_reason not in {"missing_sku_id", "must_reverify", "phase1_unverified", "conflict", "rejected"}
+                    and "skuId" not in missing
+                ):
                     missing.append("skuId")
                 row = dict(base)
                 row["bucket"] = "uncertain"

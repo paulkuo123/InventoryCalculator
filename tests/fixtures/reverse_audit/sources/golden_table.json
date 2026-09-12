@@ -9,7 +9,10 @@
         "1688_offer_id": "10001",
         "1688_sku_id": "sku-a",
         "1688_sku_name": "黑色",
-        "1688_sku_second_name": "15"
+        "1688_sku_second_name": "15",
+        "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+        "1688_source_review_status": "confirmed",
+        "1688_sku_review_status": "confirmed"
       },
       {
         "規格ID": "s2",
@@ -19,7 +22,10 @@
         "1688_offer_id": "10001",
         "1688_sku_id": "sku-b",
         "1688_sku_name": "白色",
-        "1688_sku_second_name": "15"
+        "1688_sku_second_name": "15",
+        "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+        "1688_source_review_status": "confirmed",
+        "1688_sku_review_status": "confirmed"
       },
       {
         "規格ID": "s3",
@@ -50,7 +56,10 @@
         "阿里巴巴商品URL": "https://detail.1688.com/offer/20002.html",
         "1688_offer_id": "20002",
         "1688_sku_id": "sku-sock",
-        "1688_sku_name": "黑色"
+        "1688_sku_name": "黑色",
+        "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+        "1688_source_review_status": "confirmed",
+        "1688_sku_review_status": "confirmed"
       }
     ]
   }

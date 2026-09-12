@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>1688 SKU Mapping 工作台</title>
-  <link rel="stylesheet" href="sku-mapping.css?v=20260811-summary-groups1">
+  <link rel="stylesheet" href="sku-mapping.css?v=20260907-phase1">
   <style>.select-row{grid-column:1/-1;color:#475569;font-size:.88rem}.source-placeholder{width:100px;height:100px;border-radius:10px;background:#eef3f8;display:grid;place-items:center;color:#789}</style>
 </head>
 <body>
@@ -12,7 +12,7 @@
     <div>
       <div class="eyebrow">莉莉安蝦皮庫存管理系統</div>
       <h1>1688 SKU Mapping 工作台</h1>
-      <p>建立整個賣場的 SKU mapping：先掃描全部有 1688 URL 的型號，依商品月銷量排序並將同商品型號集中；未核准項目不會進入購物車。</p>
+      <p>建立整個賣場的 SKU mapping：先掃描全部有 1688 URL 的型號，依商品月銷量排序並將同商品型號集中。寫入 Golden Table 必須通過閘門與審核紀錄；未完成 Phase 1 補驗證的既有核准不可採購。</p>
     </div>
     <nav><a href="/">庫存首頁</a><a href="/golden-import.html">新增 Golden 商品</a><a href="/inbound.html">到貨入庫</a></nav>
   </header>
@@ -20,6 +20,7 @@
   <main class="page-shell">
     <div class="workbench-tabs" role="tablist" aria-label="1688 管理模式">
       <button id="skuReviewTab" class="workbench-tab active" role="tab" aria-selected="true" aria-controls="skuReviewView">SKU 審核</button>
+      <button id="sourceReviewTab" class="workbench-tab" role="tab" aria-selected="false" aria-controls="sourceReviewView">來源鑑定</button>
       <button id="urlManagerTab" class="workbench-tab" role="tab" aria-selected="false" aria-controls="urlManagerView">URL 管理</button>
     </div>
 
@@ -70,6 +71,44 @@
         <label class="check check-strong"><input id="restockOnly" type="checkbox"> 只看目前需要補貨</label>
         <button id="reload">重新載入</button>
       </div>
+      <div class="filters filters-phase0">
+        <div class="filter-label">三層問題</div>
+        <select id="problemType" aria-label="主問題類型">
+          <option value="">全部問題類型</option>
+          <option value="LINK">連結／URL 層</option>
+          <option value="SOURCE">來源層</option>
+          <option value="SKU">SKU 層</option>
+          <option value="EXISTING_APPROVAL">既有核准，待補驗證</option>
+        </select>
+        <select id="linkStatus" aria-label="連結層狀態">
+          <option value="">全部連結狀態</option>
+          <option value="url_missing">缺連結</option>
+          <option value="url_malformed">連結格式不正確</option>
+          <option value="url_present_invalid">健康檢查失效</option>
+          <option value="url_present_unchecked">尚未健康檢查</option>
+          <option value="url_present_valid">健康檢查通過</option>
+        </select>
+        <select id="sourceStatus" aria-label="來源層狀態">
+          <option value="">全部來源狀態</option>
+          <option value="source_missing">無來源</option>
+          <option value="source_single_unverified">單一來源，尚未鑑定</option>
+          <option value="source_multi_unverified">同商品多來源</option>
+          <option value="source_page_suspect">來源頁疑似失效</option>
+        </select>
+        <select id="skuStatus" aria-label="SKU 層狀態">
+          <option value="">全部 SKU 狀態</option>
+          <option value="sku_approved_unverified">既有核准，待補驗證</option>
+          <option value="sku_approved_incomplete">既有核准，欄位不完整</option>
+          <option value="sku_approved_conflict">既有核准，疑似衝突</option>
+          <option value="sku_pending">待人工審核</option>
+          <option value="sku_missing">尚未對應 SKU</option>
+          <option value="sku_discontinued">停售</option>
+          <option value="sku_stale">快照失效</option>
+        </select>
+        <label class="check check-strong"><input id="existingApprovalQueue" type="checkbox"> 既有核准，待補驗證隊列</label>
+        <label class="check"><input id="allowMultiOffer" type="checkbox"> 允許刻意多 offer 分流</label>
+        <label class="check"><input id="allowSharedSkuId" type="checkbox"> 允許同 sku_id（需人工確認）</label>
+      </div>
       </section>
 
       <section id="summary" class="metrics panel"></section>
@@ -77,6 +116,30 @@
       <section id="queue" class="queue"></section>
       <section id="pagination" class="pagination panel" aria-label="mapping 分頁"></section>
       <div id="empty" class="empty panel" hidden>目前沒有符合篩選條件的型號。</div>
+    </div>
+
+    <div id="sourceReviewView" role="tabpanel" aria-labelledby="sourceReviewTab" hidden>
+      <section class="url-manager-toolbar panel">
+        <div>
+          <h2>來源鑑定（依商品／offer 群組）</h2>
+          <p>並排比對蝦皮圖與 1688 快照圖。確認來源不會發明 SKU；正式寫入仍走閘門與審核紀錄。多 offer 商品（例如刻意分流）需勾選「允許刻意多 offer 分流」。</p>
+        </div>
+        <div class="url-manager-filters">
+          <input id="sourceGroupQuery" type="search" placeholder="搜尋商品名稱、商品 ID 或 offer">
+          <select id="sourceGroupStatus" aria-label="來源狀態">
+            <option value="all">全部來源狀態</option>
+            <option value="source_multi_unverified">同商品多來源</option>
+            <option value="source_single_unverified">單一來源，尚未鑑定</option>
+            <option value="source_page_suspect">來源頁疑似失效</option>
+            <option value="source_missing">無來源</option>
+          </select>
+          <label class="check check-strong"><input id="sourceAllowMultiOffer" type="checkbox"> 允許刻意多 offer 分流</label>
+          <button id="reloadSourceGroups">重新載入</button>
+        </div>
+      </section>
+      <section id="sourceReviewMessage" class="message" aria-live="polite"></section>
+      <section id="sourceGroupList" class="source-group-list"></section>
+      <div id="sourceGroupEmpty" class="empty panel" hidden>目前沒有符合條件的來源群組。</div>
     </div>
 
     <div id="urlManagerView" role="tabpanel" aria-labelledby="urlManagerTab" hidden>
@@ -157,6 +220,6 @@
     </section>
   </div>
 
-  <script src="sku-mapping.js?v=20260811-summary-groups1"></script>
+  <script src="sku-mapping.js?v=20260907-phase1"></script>
 </body>
 </html>

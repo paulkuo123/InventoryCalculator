@@ -777,6 +777,8 @@ def propagate_existing_primary_mappings(base_dir: str) -> str:
 
 
 def main() -> None:
+    from golden_mapping_phase1_gate import LegacyPathLocked, reject_legacy_mapper
+
     parser = argparse.ArgumentParser(description="掃描手機殼 1688 雙規格，安全建立對應報告")
     parser.add_argument("--product-id", default="", help="只掃描指定 Shopee 商品 ID")
     parser.add_argument("--limit-urls", type=int, default=0, help="限制 URL 數量，0 代表全部")
@@ -817,9 +819,15 @@ def main() -> None:
     print("人工覆核清單：{}".format(review_path), flush=True)
     print("總型號：{}；可安全寫入：{}；需覆核：{}".format(len(items), len(high), len(items) - len(high)), flush=True)
     if args.apply_high_confidence or args.apply_safe_primary_only:
-        print(apply_high_confidence(base_dir, report, args.apply_safe_primary_only), flush=True)
+        try:
+            reject_legacy_mapper("alibaba_phone_case_mapper")
+        except LegacyPathLocked as exc:
+            raise SystemExit(str(exc)) from exc
     if args.propagate_existing_primary:
-        print(propagate_existing_primary_mappings(base_dir), flush=True)
+        try:
+            reject_legacy_mapper("alibaba_phone_case_mapper")
+        except LegacyPathLocked as exc:
+            raise SystemExit(str(exc)) from exc
 
 
 if __name__ == "__main__":

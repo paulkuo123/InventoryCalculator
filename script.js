@@ -2046,7 +2046,7 @@ document.addEventListener('DOMContentLoaded', function() {
                     <select id="alibabaApplyScopeInput">
                         <option value="single">只更新此型號</option>
                         <option value="fill_missing">套用到此商品缺漏型號</option>
-                        <option value="overwrite_all">覆蓋此商品全部型號</option>
+                        <option value="url_offer_all">只套用 URL／Offer 到全部型號</option>
                         <option value="selected_models">自選型號</option>
                     </select>
 

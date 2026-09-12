@@ -40,6 +40,7 @@ ads_analysis_report*.md
 ads_analysis_report*.pdf
 ads_export_result*.json
 debug_snapshots/
+logs/
 reports/
 outputs/
 *.numbers

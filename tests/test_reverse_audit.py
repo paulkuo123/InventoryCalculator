@@ -330,6 +330,9 @@ class NameSpecMappingTests(unittest.TestCase):
                         "1688_offer_id": "90001",
                         "1688_sku_id": "sku-only-1",
                         "1688_sku_name": "",
+                        "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+                        "1688_source_review_status": "confirmed",
+                        "1688_sku_review_status": "confirmed",
                     }
                 ]
             }
@@ -339,6 +342,142 @@ class NameSpecMappingTests(unittest.TestCase):
         self.assertEqual(len(certain), 1)
         self.assertEqual(certain[0]["sku_id"], "sku-only-1")
         self.assertEqual(certain[0]["certain_via"], "sku_id")
+
+    def test_auto_trusted_approved_sku_url_is_certain(self):
+        """Trust tier: approved + sku_id + URL is certain without Phase 1 stamp."""
+        products = {
+            "9004": {
+                "商品名稱": "測試手機殼",
+                "型號": [{"規格ID": "u1", "型號名稱": "自動信任", "商品庫存": "0", "月銷量": "10"}],
+            }
+        }
+        golden = {
+            "9004": {
+                "型號": [{
+                    "規格ID": "u1",
+                    "型號名稱": "自動信任",
+                    "1688_mapping_status": "approved",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/90004.html",
+                    "1688_offer_id": "90004",
+                    "1688_sku_id": "sku-auto",
+                    "1688_sku_name": "黑色",
+                    "1688_verified_at": "2026-08-08T05:40:22Z",
+                }]
+            }
+        }
+        certain, uncertain, skip, _ = build_expected(products, golden, ["9004"])
+        self.assertEqual(uncertain, [])
+        self.assertEqual(skip, [])
+        self.assertEqual(len(certain), 1)
+        self.assertEqual(certain[0]["certain_via"], "sku_id")
+
+    def test_approved_missing_sku_id_is_uncertain(self):
+        """Trust tier: approved without sku_id stays uncertain until workbench."""
+        products = {
+            "9005": {
+                "商品名稱": "測試手機殼",
+                "型號": [{"規格ID": "u2", "型號名稱": "缺sku", "商品庫存": "0", "月銷量": "10"}],
+            }
+        }
+        golden = {
+            "9005": {
+                "型號": [{
+                    "規格ID": "u2",
+                    "型號名稱": "缺sku",
+                    "1688_mapping_status": "approved",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/90005.html",
+                    "1688_offer_id": "90005",
+                    "1688_sku_id": "",
+                    "1688_sku_name": "黑色",
+                }]
+            }
+        }
+        certain, uncertain, skip, _ = build_expected(products, golden, ["9005"])
+        self.assertEqual(certain, [])
+        self.assertEqual(skip, [])
+        self.assertEqual(len(uncertain), 1)
+        self.assertIn("missing_sku_id", uncertain[0]["uncertain_reason"])
+
+    def test_shared_sku_id_same_product_is_uncertain_conflict(self):
+        products = {
+            "9010": {
+                "商品名稱": "冰冰襪",
+                "型號": [
+                    {"規格ID": "g1", "型號名稱": "淺灰", "商品庫存": "0", "月銷量": "10"},
+                    {"規格ID": "g2", "型號名稱": "深灰", "商品庫存": "0", "月銷量": "10"},
+                ],
+            }
+        }
+        golden = {
+            "9010": {
+                "型號": [
+                    {
+                        "規格ID": "g1",
+                        "型號名稱": "淺灰",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/111.html",
+                        "1688_offer_id": "111",
+                        "1688_sku_id": "6205321050395",
+                        "1688_sku_name": "淺灰",
+                    },
+                    {
+                        "規格ID": "g2",
+                        "型號名稱": "深灰",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/111.html",
+                        "1688_offer_id": "111",
+                        "1688_sku_id": "6205321050395",
+                        "1688_sku_name": "深灰",
+                    },
+                ]
+            }
+        }
+        certain, uncertain, skip, _ = build_expected(products, golden, ["9010"])
+        self.assertEqual(certain, [])
+        self.assertEqual(skip, [])
+        self.assertEqual(len(uncertain), 2)
+        for row in uncertain:
+            self.assertIn("conflict", row["uncertain_reason"])
+
+    def test_different_sku_ids_same_product_remain_certain(self):
+        products = {
+            "9011": {
+                "商品名稱": "測試吊飾",
+                "型號": [
+                    {"規格ID": "a1", "型號名稱": "黑色", "商品庫存": "0", "月銷量": "10"},
+                    {"規格ID": "a2", "型號名稱": "白色", "商品庫存": "0", "月銷量": "10"},
+                ],
+            }
+        }
+        golden = {
+            "9011": {
+                "型號": [
+                    {
+                        "規格ID": "a1",
+                        "型號名稱": "黑色",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/111.html",
+                        "1688_offer_id": "111",
+                        "1688_sku_id": "sku-a",
+                        "1688_sku_name": "黑色",
+                    },
+                    {
+                        "規格ID": "a2",
+                        "型號名稱": "白色",
+                        "1688_mapping_status": "approved",
+                        "阿里巴巴商品URL": "https://detail.1688.com/offer/222.html",
+                        "1688_offer_id": "222",
+                        "1688_sku_id": "sku-b",
+                        "1688_sku_name": "白色",
+                    },
+                ]
+            }
+        }
+        certain, uncertain, skip, _ = build_expected(products, golden, ["9011"])
+        self.assertEqual(uncertain, [])
+        self.assertEqual(skip, [])
+        self.assertEqual(len(certain), 2)
+        self.assertEqual({row["sku_id"] for row in certain}, {"sku-a", "sku-b"})
 
     def test_name_spec_only_certain_participates_in_qty_diff(self):
         """缺 skuId 的 name/spec → certain；唯一對車後進 qty diff，且非 unexpected removable。"""
@@ -1393,6 +1532,9 @@ class HumanCsvOneRowPerModelTests(unittest.TestCase):
                     "1688_sku_id": "sku-b",
                     "1688_sku_name": "白色",
                     "1688_sku_second_name": "16",
+                    "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+                    "1688_source_review_status": "confirmed",
+                    "1688_sku_review_status": "confirmed",
                 }
             )
             products_path.write_text(

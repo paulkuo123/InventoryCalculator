@@ -2104,6 +2104,55 @@ class SkuMappingServiceTest(unittest.TestCase):
                 mode="clear", models=[{"modelId": "sock-white", "selected": True}],
             )
 
+    def test_existing_approval_queue_includes_unverified_approved_only(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-socks"]["型號"][0].update({
+            "1688_offer_id": "100",
+            "1688_sku_id": "sock-1",
+            "1688_sku_name": "白色",
+            "1688_mapping_status": "approved",
+        })
+        golden["p-case"]["型號"][0].update({
+            "1688_offer_id": "200",
+            "1688_sku_id": "case-1",
+            "1688_sku_name": "黑色",
+            "1688_sku_second_name": "11 Pro",
+            "1688_mapping_status": "approved",
+            "1688_phase1_verified_at": "2026-09-07T00:00:00Z",
+            "1688_source_review_status": "confirmed",
+            "1688_sku_review_status": "confirmed",
+        })
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        queue = self.service.queue(existing_approval_queue=True, url_presence="with")
+        ids = {(item["product_id"], item["model_id"]) for item in queue["items"]}
+        self.assertIn(("p-socks", "sock-white"), ids)
+        self.assertNotIn(("p-case", "case-11-pro"), ids)
+        sock = next(item for item in queue["items"] if item["product_id"] == "p-socks")
+        self.assertEqual(sock["sku_status"], "sku_approved_unverified")
+        self.assertFalse(sock["phase1_verified"])
+
+    def test_problem_type_filter_link_and_source_groups(self):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        golden["p-socks"]["型號"][0].pop("阿里巴巴商品URL", None)
+        golden["p-case"]["型號"].append({
+            "規格ID": "case-12",
+            "型號名稱": "iPhone 12,黑色",
+            "阿里巴巴商品URL": "https://detail.1688.com/offer/201.html",
+            "1688_offer_id": "201",
+            "1688_mapping_status": "missing",
+        })
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        link_queue = self.service.queue(problem_type="LINK", url_presence="all")
+        self.assertTrue(any(item["product_id"] == "p-socks" for item in link_queue["items"]))
+        groups = self.service.source_groups()
+        case = next(row for row in groups["groups"] if row["productId"] == "p-case")
+        self.assertTrue(case["multiOffer"])
+        self.assertEqual(len(case["offers"]), 2)
+
 
 if __name__ == "__main__":
     unittest.main()

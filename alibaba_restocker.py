@@ -19,6 +19,11 @@ from playwright.sync_api import sync_playwright
 
 from ego_browser_page import EgoBrowserContext
 from housekeeping import prune_generated_files
+from mapping_procurement_gate import (
+    is_purchasable,
+    not_purchasable_reason,
+    shared_sku_conflict_model_keys,
+)
 
 
 ADD_TO_CART_TEXTS = [
@@ -1011,7 +1016,7 @@ def group_items_by_url(items: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, 
     return groups
 
 
-def load_sku_mappings(base_dir: str) -> Dict[str, Dict[str, Dict[str, str]]]:
+def load_sku_mappings(base_dir: str) -> Dict[str, Dict[str, Dict[str, Any]]]:
     path = os.path.join(base_dir, GOLDEN_TABLE_FILE)
     try:
         with open(path, "r", encoding="utf-8") as f:
@@ -1019,18 +1024,19 @@ def load_sku_mappings(base_dir: str) -> Dict[str, Dict[str, Dict[str, str]]]:
     except (OSError, json.JSONDecodeError):
         return {}
 
-    mappings: Dict[str, Dict[str, Dict[str, str]]] = {}
+    mappings: Dict[str, Dict[str, Dict[str, Any]]] = {}
     for product_id, product in golden_table.items():
         if not isinstance(product, dict):
             continue
-        product_mapping: Dict[str, Dict[str, str]] = {}
-        for model in product.get("型號", []):
-            if not isinstance(model, dict):
-                continue
+        product_mapping: Dict[str, Dict[str, Any]] = {}
+        models = [m for m in product.get("型號", []) if isinstance(m, dict)]
+        conflict_keys = shared_sku_conflict_model_keys(models)
+        for model in models:
             model_name = str(model.get("型號名稱") or "").strip()
             sku_name = str(model.get("1688_sku_name") or "").strip()
             sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
             sku_id = str(model.get("1688_sku_id") or "").strip()
+            spec_id = str(model.get("規格ID") or "").strip()
             mapping_status = str(model.get("1688_mapping_status") or ("pending" if sku_name else "missing")).strip()
             if model_name:
                 product_mapping[model_name] = {
@@ -1040,23 +1046,45 @@ def load_sku_mappings(base_dir: str) -> Dict[str, Dict[str, Dict[str, str]]]:
                     "spec_text": str(model.get("1688_spec_text") or "").strip(),
                     "status": mapping_status,
                     "offer_fingerprint": str(model.get("1688_offer_fingerprint") or "").strip(),
+                    "url": str(model.get("阿里巴巴商品URL") or "").strip(),
+                    "phase1_verified_at": str(model.get("1688_phase1_verified_at") or "").strip(),
+                    "source_review_status": str(model.get("1688_source_review_status") or "").strip(),
+                    "sku_review_status": str(model.get("1688_sku_review_status") or "").strip(),
+                    "shared_sku_conflict": spec_id in conflict_keys or model_name in conflict_keys,
                 }
         if product_mapping:
             mappings[str(product_id)] = product_mapping
     return mappings
 
 
+_EMPTY_SKU_SELECTION = {
+    "primary": "",
+    "secondary": "",
+    "sku_id": "",
+    "spec_text": "",
+    "status": "missing",
+    "offer_fingerprint": "",
+    "url": "",
+    "phase1_verified_at": "",
+    "source_review_status": "",
+    "sku_review_status": "",
+    "shared_sku_conflict": False,
+}
+
+
 def mapped_sku_selection(
-    mappings: Dict[str, Dict[str, Dict[str, str]]],
+    mappings: Dict[str, Dict[str, Dict[str, Any]]],
     product_id: str,
     model_name: str,
-) -> Dict[str, str]:
+) -> Dict[str, Any]:
     product_mapping = mappings.get(str(product_id or ""), {})
     if not isinstance(product_mapping, dict):
-        return {"primary": "", "secondary": "", "sku_id": "", "spec_text": "", "status": "missing", "offer_fingerprint": ""}
+        return dict(_EMPTY_SKU_SELECTION)
     selection = product_mapping.get(str(model_name or "").strip(), {})
     if not isinstance(selection, dict):
-        return {"primary": str(selection or "").strip(), "secondary": "", "sku_id": "", "spec_text": "", "status": "missing", "offer_fingerprint": ""}
+        empty = dict(_EMPTY_SKU_SELECTION)
+        empty["primary"] = str(selection or "").strip()
+        return empty
     return {
         "primary": str(selection.get("primary") or "").strip(),
         "secondary": str(selection.get("secondary") or "").strip(),
@@ -1064,10 +1092,46 @@ def mapped_sku_selection(
         "spec_text": str(selection.get("spec_text") or "").strip(),
         "status": str(selection.get("status") or "missing").strip(),
         "offer_fingerprint": str(selection.get("offer_fingerprint") or "").strip(),
+        "url": str(selection.get("url") or "").strip(),
+        "phase1_verified_at": str(selection.get("phase1_verified_at") or "").strip(),
+        "source_review_status": str(selection.get("source_review_status") or "").strip(),
+        "sku_review_status": str(selection.get("sku_review_status") or "").strip(),
+        "shared_sku_conflict": bool(selection.get("shared_sku_conflict") or selection.get("sharedSkuConflict")),
     }
 
 
-def restock_sku_fields(item: Dict[str, Any], mapped_selection: Dict[str, str]) -> Dict[str, str]:
+def restock_mapping_is_purchasable(sku_fields: Dict[str, Any], url: str = "") -> bool:
+    """Phase 1: raw approved without gated re-verification is not addable to cart."""
+    fields = sku_fields if isinstance(sku_fields, dict) else {}
+    return is_purchasable(
+        fields,
+        status=fields.get("status"),
+        url=url or fields.get("url") or "",
+        sku_id=fields.get("sku_id"),
+        sku_name=fields.get("sku_name"),
+        phase1_verified_at=fields.get("phase1_verified_at"),
+        source_review_status=fields.get("source_review_status"),
+        sku_review_status=fields.get("sku_review_status"),
+        shared_sku_conflict=bool(fields.get("shared_sku_conflict") or fields.get("sharedSkuConflict")),
+    )
+
+
+def restock_not_purchasable_reason(sku_fields: Dict[str, Any], url: str = "") -> str:
+    fields = sku_fields if isinstance(sku_fields, dict) else {}
+    return not_purchasable_reason(
+        fields,
+        status=fields.get("status"),
+        url=url or fields.get("url") or "",
+        sku_id=fields.get("sku_id"),
+        sku_name=fields.get("sku_name"),
+        phase1_verified_at=fields.get("phase1_verified_at"),
+        source_review_status=fields.get("source_review_status"),
+        sku_review_status=fields.get("sku_review_status"),
+        shared_sku_conflict=bool(fields.get("shared_sku_conflict") or fields.get("sharedSkuConflict")),
+    ) or ""
+
+
+def restock_sku_fields(item: Dict[str, Any], mapped_selection: Dict[str, Any]) -> Dict[str, Any]:
     """Prefer Golden Table mapping over crawler/UI snapshots."""
     mapped = mapped_selection if isinstance(mapped_selection, dict) else {}
     payload = item if isinstance(item, dict) else {}
@@ -1080,6 +1144,21 @@ def restock_sku_fields(item: Dict[str, Any], mapped_selection: Dict[str, str]) -
         "offer_fingerprint": str(
             mapped.get("offer_fingerprint") or payload.get("alibabaOfferFingerprint") or ""
         ).strip(),
+        "url": str(mapped.get("url") or payload.get("alibabaUrl") or payload.get("alibabaProductUrl") or "").strip(),
+        "phase1_verified_at": str(
+            mapped.get("phase1_verified_at") or payload.get("phase1VerifiedAt") or ""
+        ).strip(),
+        "source_review_status": str(
+            mapped.get("source_review_status") or payload.get("sourceReviewStatus") or ""
+        ).strip(),
+        "sku_review_status": str(
+            mapped.get("sku_review_status") or payload.get("skuReviewStatus") or ""
+        ).strip(),
+        "shared_sku_conflict": bool(
+            mapped.get("shared_sku_conflict")
+            or payload.get("sharedSkuConflict")
+            or payload.get("shared_sku_conflict")
+        ),
     }
 
 
@@ -3150,7 +3229,23 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 expected_fingerprint = sku_fields["offer_fingerprint"]
                 offer_id = str(item.get("alibabaOfferId") or "").strip()
                 quantity = int(item.get("restockQty") or item.get("adjustedQty") or 0)
-                if mapping_status != "approved":
+                item_url = str(item.get("alibabaUrl") or url or "")
+                if not restock_mapping_is_purchasable(sku_fields, item_url):
+                    gate_reason = restock_not_purchasable_reason(sku_fields, item_url)
+                    if gate_reason == "discontinued":
+                        blocker_message = "SKU mapping 已停售，未加入採購車"
+                    elif gate_reason == "sold_out":
+                        blocker_message = "SKU mapping 已售罄／停售，未加入採購車"
+                    elif gate_reason == "missing_sku_id":
+                        blocker_message = "SKU mapping 缺 1688_sku_id，待補驗證，不可採購"
+                    elif gate_reason == "missing_url":
+                        blocker_message = "SKU mapping 缺 URL／offer，待補驗證，不可採購"
+                    elif gate_reason == "conflict":
+                        blocker_message = "SKU mapping 型號列衝突，不可採購"
+                    elif gate_reason in {"must_reverify", "phase1_unverified", "rejected"}:
+                        blocker_message = "SKU mapping 已核准但尚待補驗證／審核未通過，不可採購"
+                    else:
+                        blocker_message = f"SKU mapping 尚未核准（{mapping_status}）"
                     item_result = {
                         "status": "blocked_mapping",
                         "specId": str(item.get("specId") or item.get("modelId") or ""),
@@ -3158,9 +3253,10 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                         "alibabaSkuId": alibaba_sku_id,
                         "alibabaSkuName": alibaba_sku_name,
                         "alibabaSkuSecondName": alibaba_sku_second_name,
-                        "alibabaUrl": str(item.get("alibabaUrl") or url or ""),
+                        "alibabaUrl": item_url,
                         "quantity": quantity,
-                        "message": f"SKU mapping 尚未核准（{mapping_status}）",
+                        "message": blocker_message,
+                        "gateReason": gate_reason,
                     }
                     group_result["items"].append(item_result)
                     debug.log("item_blocked_mapping_status", item_result)
