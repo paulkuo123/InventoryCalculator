@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -119,6 +119,40 @@ def load_deepseek_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
         return shell_value, "shell_rc"
 
     return "", ""
+
+
+def _load_config_value(name: str, project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """依環境變數、專案 .env.local、shell 設定的順序讀取單一設定值。"""
+    env_value = os.environ.get(name, "").strip()
+    if env_value:
+        return env_value, "env"
+
+    local_value = _load_project_local_env(project_root).get(name, "").strip()
+    if local_value:
+        return local_value, ".env.local"
+
+    shell_value = _load_shell_rc_values().get(name, "").strip()
+    if shell_value:
+        return shell_value, "shell_rc"
+
+    return "", ""
+
+
+def load_telegram_bot_token(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """Load the Telegram Bot API token without exposing it to the browser/UI."""
+    return _load_config_value("TELEGRAM_BOT_TOKEN", project_root)
+
+
+def load_telegram_chat_id(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """Load the primary Telegram chat id that receives reports."""
+    return _load_config_value("TELEGRAM_CHAT_ID", project_root)
+
+
+def load_telegram_authorized_chat_ids(project_root: str = PROJECT_ROOT) -> Tuple[List[str], str]:
+    """Load the comma-separated list of chat ids allowed to command the bot."""
+    raw_value, source = _load_config_value("TELEGRAM_AUTHORIZED_CHAT_IDS", project_root)
+    chat_ids = [part.strip() for part in raw_value.split(",") if part.strip()]
+    return chat_ids, source
 
 
 def load_openai_config_value(name: str, default: str = "", project_root: str = PROJECT_ROOT) -> Tuple[str, str]:

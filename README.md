@@ -297,7 +297,13 @@ python3 ads_analysis.py --include-ai true
 - HTML 報告會只列出需要調整的商品，並附上商品圖片與具體建議
 
 ### Telegram Bot
-若要使用 Telegram Bot：
+若要使用 Telegram Bot，先在環境變數或專案 `.env.local` 設定（鍵名見 `.env.example`）：
+
+- `TELEGRAM_BOT_TOKEN`：BotFather 發的 bot token（必填）
+- `TELEGRAM_CHAT_ID`：主要接收報告、允許下指令的 chat id
+- `TELEGRAM_AUTHORIZED_CHAT_IDS`：其他允許下指令的 chat id，逗號分隔（選填）
+
+缺少 token、或兩個 chat id 都沒設時，Bot 會在啟動時直接報錯退出，不會用空值執行。接著啟動：
 
 ```bash
 python3 telegram_bot.py
