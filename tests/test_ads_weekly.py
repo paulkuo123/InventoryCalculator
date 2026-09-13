@@ -138,7 +138,7 @@ class AdsAnalyzerRemoteDefaultTests(unittest.TestCase):
                 include_ai=False,
                 refresh_source=True,
             )
-            cmd = analyzer._crawler_refresh_cmd("ads-export", "ads_analysis_current_export.json")
+            cmd = analyzer._crawler_refresh_cmd("ads_analysis_current_export.json")
         self.assertEqual(analyzer.browser_source, "remote")
         self.assertEqual(cmd[cmd.index("--browser-source") + 1], "remote")
         self.assertEqual(cmd[cmd.index("--cdp-endpoint") + 1], DEFAULT_CDP_ENDPOINT)

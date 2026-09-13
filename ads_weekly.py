@@ -12,12 +12,12 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from ads_session import (
     ALL_EXPORT_WINDOWS,
-    BROWSER_SOURCE_MAC,
     BROWSER_SOURCE_REMOTE,
     AdsWeeklyBlocker,
     BLOCKER_EXPORT_FAILED,
@@ -275,7 +275,7 @@ def run_weekly(
     source = normalize_browser_source(args.source)
     root = str(args.repo_root or repo_root())
     cdp_endpoint = resolve_cdp_endpoint(args.cdp_endpoint) if source == BROWSER_SOURCE_REMOTE else ""
-    run_date = str(args.date or "").strip() or __import__("datetime").datetime.now().strftime("%Y%m%d")
+    run_date = str(args.date or "").strip() or datetime.now().strftime("%Y%m%d")
     out_dir = weekly_run_dir(root, run_date)
     export_dir = prepare_weekly_run_dir(out_dir)
     output_paths = analysis_output_paths(out_dir)

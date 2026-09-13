@@ -9,7 +9,6 @@ import subprocess
 import sys
 import time
 import uuid
-from io import BytesIO
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -61,6 +60,10 @@ DEFAULT_OPENAI_MODEL = "gpt-5.6-sol"
 DEFAULT_OPENAI_REASONING_EFFORT = "xhigh"
 OPENAI_BACKGROUND_POLL_INTERVAL_SECONDS = 5
 OPENAI_BACKGROUND_MAX_WAIT_SECONDS = 5000
+CRAWLER_ADS_EXPORT_MODE = "ads-export"
+# _classify_product 的兩條「立即加碼」路徑分別要求 stable_strong_weeks >= 3 / >= 2，
+# 少於這個週數時規則層不可能產出加碼建議。
+MIN_TREND_WEEKS_FOR_SCALE_UP = 2
 
 
 OPENAI_ANALYSIS_SCHEMA = {
@@ -440,24 +443,22 @@ class AdsAnalyzer:
             self._log("WARN", f"讀取 golden_table.json 失敗: {e}")
             return {}
 
-    def _crawler_refresh_cmd(self, mode: str, output_name: str, extra_args: Optional[List[str]] = None) -> List[str]:
+    def _crawler_refresh_cmd(self, output_name: str) -> List[str]:
         crawler_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "crawler.py")
-        cmd = [
+        return [
             sys.executable,
             crawler_script,
-            "--mode", mode,
+            "--mode", CRAWLER_ADS_EXPORT_MODE,
             "--output", output_name,
             "--headless", "true",
             "--browser-source", self.browser_source,
             "--cdp-endpoint", self.cdp_endpoint,
             "--ads-export-dir", os.path.abspath(self.ads_export_dir),
         ]
-        if extra_args:
-            cmd.extend(extra_args)
-        return cmd
 
-    def _run_crawler_export_mode(self, mode: str, output_name: str, extra_args: Optional[List[str]] = None) -> Dict[str, Any]:
-        cmd = self._crawler_refresh_cmd(mode, output_name, extra_args)
+    def _run_crawler_export(self, output_name: str) -> Dict[str, Any]:
+        cmd = self._crawler_refresh_cmd(output_name)
+        mode = CRAWLER_ADS_EXPORT_MODE
 
         result = subprocess.run(
             cmd,
@@ -492,10 +493,7 @@ class AdsAnalyzer:
             "EXPORT",
             f"開始刷新分析來源（source={self.browser_source}）：匯出過去一個月、昨天與 4 週趨勢，共 6 份",
         )
-        export_result = self._run_crawler_export_mode(
-            "ads-export",
-            "ads_analysis_current_export.json",
-        )
+        export_result = self._run_crawler_export("ads_analysis_current_export.json")
         self._log("EXPORT", f"6 份分析來源刷新完成：{export_result.get('message', '')}")
 
     def _parse_csv_file(self, path: str) -> ParsedAdsReport:
@@ -1244,7 +1242,23 @@ class AdsAnalyzer:
 
         return "忽略", 0, "不輸出", "", [], "暫無明顯調整需求"
 
-    def _build_rule_summary(self, account_summary: Dict[str, Any], product_analysis: Dict[str, Any]) -> Dict[str, Any]:
+    def _loaded_trend_week_count(self, report_runs: List[Dict[str, Any]]) -> int:
+        return sum(1 for item in report_runs if item.get("window_key") in self.trend_window_order)
+
+    def _trend_weeks_insufficient_note(self, loaded_trend_weeks: int) -> str:
+        if loaded_trend_weeks >= MIN_TREND_WEEKS_FOR_SCALE_UP:
+            return ""
+        return (
+            f"本趟只載入 {loaded_trend_weeks} 週滾動趨勢報表（加碼判定至少需要 {MIN_TREND_WEEKS_FOR_SCALE_UP} 週），"
+            "規則層本趟不評估加碼。"
+        )
+
+    def _build_rule_summary(
+        self,
+        account_summary: Dict[str, Any],
+        product_analysis: Dict[str, Any],
+        report_runs: Optional[List[Dict[str, Any]]] = None,
+    ) -> Dict[str, Any]:
         scale_count = len(product_analysis["rankings"]["scale_up"])
         reduce_count = len(product_analysis["rankings"]["reduce_budget"])
         indirect_count = len(product_analysis["rankings"]["indirect_dependency"])
@@ -1274,6 +1288,10 @@ class AdsAnalyzer:
             )
         if not action_points:
             action_points.append("目前帳戶沒有明顯異常，可先維持投放並持續累積歷史資料。")
+        if report_runs is not None:
+            trend_note = self._trend_weeks_insufficient_note(self._loaded_trend_week_count(report_runs))
+            if trend_note:
+                action_points.append(trend_note)
 
         return {
             "overall_health": account_summary.get("health", "穩健"),
@@ -2165,22 +2183,15 @@ class AdsAnalyzer:
         with open(self.markdown_output_path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
 
-    def _fetch_image(self, url: str) -> Optional[BytesIO]:
-        if not url:
-            return None
-        try:
-            response = requests.get(url, timeout=15)
-            response.raise_for_status()
-            return BytesIO(response.content)
-        except Exception:
-            return None
-
     def _build_html_report(self, report: Dict[str, Any]) -> None:
         account = report["report"]["account_summary"]
         narrative = report["report"]["narrative"]
         rankings = report["report"]["rankings"]
         runtime = report.get("analysis_runtime", {})
         current = account.get("current_window", {})
+        trend_note = self._trend_weeks_insufficient_note(
+            self._loaded_trend_week_count(report["report"].get("report_runs", []))
+        )
         image_cache: Dict[str, str] = {}
         actionable_total = sum(
             len(rankings.get(key, []))
@@ -2397,6 +2408,7 @@ class AdsAnalyzer:
             <div class="note">生成時間：{report['generated_at']}</div>
             <div class="note">分析來源：{'OpenAI API' if narrative.get('source') == 'openai' else '本機規則'} ｜ 實際模型：{runtime.get('response_model') or runtime.get('model') or '未使用'} ｜ 推理強度：{runtime.get('reasoning_effort') or '-'} ｜ API 耗時：{runtime.get('api_latency_seconds', 0)} 秒</div>
             <div class="note">主要決策基準：昨天完整日報表，最近一週（week_01）與過去一個月用來驗證穩定性，另納入近 {self.trend_weeks} 週滾動 7 天趨勢判斷。</div>
+            {f'<div class="note">{trend_note}</div>' if trend_note else ''}
             <div class="summary">
               <div class="summary-box"><strong>觀察視窗</strong><br>{current.get('window_label', '-')}</div>
               <div class="summary-box"><strong>總花費</strong><br>{current.get('spend', 0):,.2f}</div>
@@ -2436,7 +2448,7 @@ class AdsAnalyzer:
 
         account_summary = self._build_account_summary(metrics)
         product_analysis = self._build_product_analysis(metrics)
-        rule_summary = self._build_rule_summary(account_summary, product_analysis)
+        rule_summary = self._build_rule_summary(account_summary, product_analysis, report_runs)
         ai_payload = self._build_ai_payload(report_runs, account_summary, product_analysis, rule_summary)
         ai_sections = self._call_openai(ai_payload)
         narrative = self._build_narrative(rule_summary, ai_sections)
@@ -2479,10 +2491,6 @@ class AdsAnalyzer:
         self._build_html_report(report)
         self._log("DONE", "廣告分析完成並已輸出 JSON / Markdown / HTML")
         return report
-
-
-def diagnostics_by_category(products: List[Dict[str, Any]], category: str, limit: int = 8) -> List[Dict[str, Any]]:
-    return take_category_with_scope(products, category, limit=limit)
 
 
 def main() -> None:
