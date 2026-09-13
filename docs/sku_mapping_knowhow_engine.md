@@ -248,4 +248,4 @@ python -m mapping_eval run --fixture tests/fixtures/mapping_eval --out /tmp/mapp
 
 本機有 `procurement.db` 時可用真實 DB run 再看反事實數字；報告在 `data/mapping_eval/`（gitignore），不要提交 DB、key 或報告。
 
-第 1 層 offer 從哪裡來（種子庫 → 同商品 Golden → 最後才站內搜尋）不在本評估範圍，見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。
+第 1 層 offer 從哪裡來（種子庫 → 同商品 Golden → 最後才站內搜尋）不在本評估範圍，見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。全表 AI 補完的現況、暫停約束與解暫停後路線見 [`golden_ai_automation_review.md`](golden_ai_automation_review.md)。
