@@ -256,7 +256,7 @@ th { color: #596273; background: #f3f5f7; font-size: 11px; }
 td { font-size: 13px; }
 .stock-flow { white-space: nowrap; font-weight: 800; }
 .state-success { color: var(--green); }
-.state-error, .state-manual_review { color: var(--red); }
+.state-failed, .state-manual_review { color: var(--red); }
 .state-previewed { color: var(--blue); }
 .empty-copy { color: var(--muted); font-size: 13px; }
 .hidden { display: none !important; }

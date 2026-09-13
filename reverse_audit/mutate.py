@@ -7,16 +7,13 @@ import os
 import runpy
 import sys
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from reverse_audit.paths import repo_root
 
 APPROVE_ADD_FLAG = "--i-approve-mutate"
 APPROVE_SET_QTY_FLAG = "--i-approve-set-qty"
 APPROVE_REMOVE_FLAG = "--i-approve-remove"
-
-# Back-compat alias used by older tests / callers
-APPROVE_FLAG = APPROVE_ADD_FLAG
 
 PROTECTED_REMOVE_REASONS = frozenset(
     {
@@ -192,10 +189,6 @@ def plan_set_qty_rows(
     return accepted, skipped
 
 
-def _truthy_uncertain(value: Any) -> bool:
-    return as_bool(value)
-
-
 def remove_runtime_blocked(row: Dict[str, Any]) -> Optional[str]:
     """S2/S3 programmatic re-check — even if CSV was hand-edited to removable=true."""
     reason = str(row.get("reason") or "").strip()
@@ -203,7 +196,7 @@ def remove_runtime_blocked(row: Dict[str, Any]) -> Optional[str]:
         return f"protected_reason:{reason or 'ambiguous'}"
     if str(row.get("in_order_pools") or "").strip():
         return "in_order_pools_nonempty"
-    if _truthy_uncertain(row.get("in_uncertain_expected")):
+    if as_bool(row.get("in_uncertain_expected")):
         return "in_uncertain_expected"
     # Fail-closed: skip-bucket keys must not be deleted even if removable edited.
     if as_bool(row.get("in_skip_expected")):
@@ -291,7 +284,11 @@ def plan_remove_rows(
 
 
 def load_order_keys_from_live(out_dir: Path) -> set:
-    """Cheap cross-check against freeze order live JSON (fail-closed on doubt)."""
+    """Cheap cross-check against freeze order live JSON (fail-closed on doubt).
+
+    Freeze writes order lines under ``orders``; ``items`` is accepted for
+    older hand-written dumps.
+    """
     keys: set = set()
     out_dir = Path(out_dir)
     for name in (
@@ -307,7 +304,11 @@ def load_order_keys_from_live(out_dir: Path) -> set:
         except (OSError, json.JSONDecodeError):
             # Doubt → treat as cannot verify; caller still has CSV reason checks
             continue
-        items = data.get("items") if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            continue
+        items = data.get("orders")
+        if not isinstance(items, list):
+            items = data.get("items")
         if not isinstance(items, list):
             continue
         for it in items:
@@ -364,11 +365,6 @@ def mutate_remove_script_path(root: Optional[Path] = None) -> Path:
         if path.exists():
             return path
     return root / "scripts" / "mutate_remove_cdp.py"
-
-
-# Alias kept for older imports
-def mutate_script_path(root: Optional[Path] = None) -> Path:
-    return mutate_add_script_path(root)
 
 
 def _prepare_env(out_dir: Path, root: Path) -> None:
@@ -561,20 +557,3 @@ def run_mutate_actions(
         print("[mutate] step add ok", flush=True)
 
     return 0
-
-
-def run_mutate(
-    out_dir: Path,
-    *,
-    approved: bool,
-    root: Optional[Path] = None,
-) -> int:
-    """Back-compat: add-only path used by older callers."""
-    require_approve(approved)
-    return run_mutate_actions(
-        out_dir,
-        approve_add=True,
-        approve_set_qty=False,
-        approve_remove=False,
-        root=root,
-    )

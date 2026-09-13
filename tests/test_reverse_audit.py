@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -31,6 +32,7 @@ from reverse_audit.dry_run import (  # noqa: E402
     run_dry_run,
 )
 from reverse_audit.mutate import (  # noqa: E402
+    load_order_keys_from_live,
     plan_remove_rows,
     plan_set_qty_rows,
     refuse_no_flags_message,
@@ -1182,6 +1184,88 @@ class RemovePlannerTests(unittest.TestCase):
             self.assertEqual(calls, ["mutate_remove_cdp.py"])
 
 
+class LiveOrderKeysTests(unittest.TestCase):
+    """load_order_keys_from_live must read the `orders` key freeze actually writes."""
+
+    def test_reads_orders_from_freeze_fixture(self):
+        keys = load_order_keys_from_live(FIX)
+        self.assertIn(("20002", "sku-sock"), keys)
+        expected = set()
+        for pool in _load_pools(FIX).values():
+            for line in pool["orders"]:
+                expected.add((str(line["offerId"]), str(line["skuId"])))
+        self.assertEqual(keys, expected)
+
+    def test_accepts_legacy_items_key_and_skips_bad_files(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td)
+            (out / "live_orders_pending_pay.json").write_text(
+                json.dumps(
+                    {"items": [{"offer_id": "1", "sku_id": "a"}, {"offerId": "2"}]}
+                ),
+                encoding="utf-8",
+            )
+            (out / "live_orders_pending_ship.json").write_text(
+                "{not json", encoding="utf-8"
+            )
+            (out / "live_orders_pending_receive.json").write_text(
+                json.dumps([{"offerId": "9", "skuId": "z"}]), encoding="utf-8"
+            )
+            self.assertEqual(load_order_keys_from_live(out), {("1", "a")})
+
+    def test_remove_plan_protects_key_seen_in_live_orders(self):
+        with tempfile.TemporaryDirectory() as td:
+            out = _stage_fixture(Path(td))
+            fields = [
+                "offer_id",
+                "sku_id",
+                "cart_ids",
+                "in_order_pools",
+                "in_uncertain_expected",
+                "in_skip_expected",
+                "removable",
+                "reason",
+                "multi_cart_line_fail",
+            ]
+            with (out / "unexpected_in_cart.csv").open(
+                "w", encoding="utf-8", newline=""
+            ) as f:
+                w = csv.DictWriter(f, fieldnames=fields)
+                w.writeheader()
+                # Hand-edited: CSV claims removable and no order pool, but the
+                # frozen live orders still contain this key.
+                w.writerow(
+                    {
+                        "offer_id": "20002",
+                        "sku_id": "sku-sock",
+                        "cart_ids": "c-sock",
+                        "in_order_pools": "",
+                        "in_uncertain_expected": "false",
+                        "in_skip_expected": "false",
+                        "removable": "true",
+                        "reason": "not_in_certain_expected",
+                        "multi_cart_line_fail": "false",
+                    }
+                )
+            calls = []
+            code = run_mutate_actions(
+                out,
+                approve_add=False,
+                approve_set_qty=False,
+                approve_remove=True,
+                dispatch=lambda script, out_dir: calls.append(script.name) or 0,
+            )
+            self.assertEqual(code, 0)
+            self.assertEqual(calls, [])
+            plan = json.loads(
+                (out / "mutate_remove_plan.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(plan["counts"]["accepted"], 0)
+            self.assertEqual(
+                plan["skipped"][0]["skip_reason"], "order_pool_snapshot_protected"
+            )
+
+
 class CliDryRunSmokeTests(unittest.TestCase):
     def test_module_help(self):
         proc = subprocess.run(
@@ -1529,14 +1613,81 @@ class RefreshCliTests(unittest.TestCase):
         self.assertFalse(calls[1][2])
 
 
+FREEZE_SCRIPT = ROOT / "scripts" / "freeze_reverse_audit_pools_20260905.py"
+
+try:
+    import playwright  # noqa: F401
+
+    HAS_PLAYWRIGHT = True
+except ImportError:
+    HAS_PLAYWRIGHT = False
+
+
 def _load_deep_order_dom() -> str:
-    text = (ROOT / "scripts" / "freeze_reverse_audit_pools_20260905.py").read_text(
-        encoding="utf-8"
-    )
+    text = FREEZE_SCRIPT.read_text(encoding="utf-8")
     marker = 'DEEP_ORDER_DOM = """'
     start = text.index(marker) + len(marker)
     end = text.index('"""', start)
     return text[start:end]
+
+
+def _import_freeze_script(out_dir: Path):
+    """Import the dated freeze script as a module (it mkdirs REVERSE_AUDIT_OUT)."""
+    import importlib.util
+
+    with mock.patch.dict(os.environ, {"REVERSE_AUDIT_OUT": str(out_dir)}):
+        spec = importlib.util.spec_from_file_location(
+            "freeze_reverse_audit_pools_under_test", FREEZE_SCRIPT
+        )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    return module
+
+
+@unittest.skipUnless(HAS_PLAYWRIGHT, "freeze script imports playwright at module top")
+class FreezeScriptRegexAndCdpTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls._tmp = tempfile.TemporaryDirectory()
+        cls.mod = _import_freeze_script(Path(cls._tmp.name))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._tmp.cleanup()
+
+    def test_page_meta_regex_matches_mtop_json(self):
+        txt = '{"data":{"pageSize": 50,"pages":3, "total" :123,"list":[]}}'
+        m = self.mod.PAGE_META_RE.search(txt)
+        self.assertIsNotNone(m)
+        self.assertEqual(tuple(m.groups()), ("50", "3", "123"))
+
+    def test_account_hint_regex_matches_login_id(self):
+        m = self.mod.ACCOUNT_HINT_RE.search("你好, YngSuao_88 欢迎回来")
+        self.assertIsNotNone(m)
+        self.assertEqual(m.group(0), "YngSuao_88")
+
+    def test_cdp_candidates_prefer_env_override_then_fallback_ports(self):
+        default = self.mod.cdp_candidates(env={})
+        self.assertEqual(
+            [c[0] for c in default],
+            ["http://127.0.0.1:9223", "http://127.0.0.1:9227"],
+        )
+        override = self.mod.cdp_candidates(
+            env={"ALIBABA_RESTOCK_CDP": " http://127.0.0.1:9333 "}
+        )
+        self.assertEqual(override[0][0], "http://127.0.0.1:9333")
+        self.assertEqual([c[0] for c in override[1:]], [c[0] for c in default])
+        self.assertEqual(self.mod.cdp_candidates(env={"ALIBABA_RESTOCK_CDP": ""}), default)
+
+    def test_pool_files_match_mutate_and_dry_run_inputs(self):
+        self.assertEqual(
+            set(self.mod.POOL_FILES.values()),
+            {
+                "live_orders_pending_pay.json",
+                "live_orders_pending_ship.json",
+                "live_orders_pending_receive.json",
+            },
+        )
 
 
 class DeepOrderDomFreezeTests(unittest.TestCase):

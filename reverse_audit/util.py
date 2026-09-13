@@ -63,6 +63,8 @@ def write_csv(
     path: Path,
     rows: List[Dict[str, Any]],
     fieldnames: Optional[List[str]] = None,
+    *,
+    encoding: str = "utf-8",
 ) -> None:
     if fieldnames is None:
         keys: List[str] = []
@@ -74,7 +76,7 @@ def write_csv(
                     keys.append(k)
         fieldnames = keys
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as f:
+    with path.open("w", encoding=encoding, newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         for row in rows:
@@ -88,19 +90,4 @@ def write_csv_utf8_sig(
     fieldnames: Optional[List[str]] = None,
 ) -> None:
     """Write CSV with UTF-8 BOM so Excel on Windows opens Traditional Chinese correctly."""
-    if fieldnames is None:
-        keys: List[str] = []
-        seen = set()
-        for row in rows:
-            for k in row.keys():
-                if k not in seen:
-                    seen.add(k)
-                    keys.append(k)
-        fieldnames = keys
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
-        writer.writeheader()
-        for row in rows:
-            out = {k: _csv_cell(row.get(k, "")) for k in fieldnames}
-            writer.writerow(out)
+    write_csv(path, rows, fieldnames, encoding="utf-8-sig")
