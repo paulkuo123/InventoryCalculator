@@ -1077,7 +1077,7 @@ def run_crawler_task(chat_id, keyword, months):
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=ADS_EXPORT_TIMEOUT,
+            timeout=CRAWLER_TIMEOUT,
             cwd=WORK_DIR
         )
         
@@ -1199,7 +1199,7 @@ def run_ads_export_task(chat_id):
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=CRAWLER_TIMEOUT,
+            timeout=ADS_EXPORT_TIMEOUT,
             cwd=WORK_DIR
         )
 
