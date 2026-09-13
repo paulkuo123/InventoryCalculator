@@ -3,8 +3,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from main import CustomHandler
-from product_catalog import apply_offer_to_models
+from product_catalog import apply_offer_to_models, find_model_by_identity
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -12,6 +11,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _extract_js_function(source, name):
     start = source.index(f"function {name}(")
+    if source[start - 6:start] == "async ":
+        start -= 6
     brace = source.index("{", start)
     depth = 0
     in_string = None
@@ -143,9 +144,7 @@ process.stdout.write(JSON.stringify({
             {"規格ID": "spec-2", "型號名稱": "同名"},
         ]
 
-        result = CustomHandler._find_golden_model(
-            None, models, "missing-spec", "同名"
-        )
+        result = find_model_by_identity(models, "missing-spec", "同名")
 
         self.assertIsNone(result)
 
@@ -155,7 +154,7 @@ process.stdout.write(JSON.stringify({
             {"規格ID": "", "型號名稱": "同名"},
         ]
 
-        result = CustomHandler._find_golden_model(None, models, "", "同名")
+        result = find_model_by_identity(models, "", "同名")
 
         self.assertIsNone(result)
 

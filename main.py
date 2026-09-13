@@ -81,7 +81,11 @@ from alibaba_client import AlibabaApiClient
 from alibaba_review_report import clean_options, classify, is_sock_product_name
 from procurement_store import ProcurementStore, parse_offer_id
 from inbound_store import InboundStore
-from product_catalog import apply_offer_to_models, build_product_catalog
+from product_catalog import (
+    apply_offer_to_models,
+    build_product_catalog,
+    find_model_by_identity,
+)
 from ads_analysis import (
     DEFAULT_OPENAI_MODEL,
     DEFAULT_OPENAI_REASONING_EFFORT,
@@ -3144,24 +3148,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         return product, True
 
     def _find_golden_model(self, models, spec_id, model_name):
-        if spec_id:
-            for model in models:
-                if normalize_identifier(model.get("規格ID", "")) == spec_id:
-                    return model
-            return None
-
-        if model_name:
-            matches = [
-                model for model in models
-                if (
-                    not normalize_identifier(model.get("規格ID", ""))
-                    and str(model.get("型號名稱", "")).strip() == model_name
-                )
-            ]
-            if len(matches) == 1:
-                return matches[0]
-
-        return None
+        return find_model_by_identity(
+            models,
+            spec_id,
+            model_name,
+            normalize_id=normalize_identifier,
+        )
 
     def shutdown_server(self):
         """關閉伺服器並釋放端口（在 handler 之外的執行緒呼叫）"""

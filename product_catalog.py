@@ -1,6 +1,6 @@
 """Read-only search projection for the Golden Table product editor."""
 
-from typing import Any, Dict, List
+from typing import Any, Callable, Dict, List, Optional
 
 
 def apply_offer_to_models(models: List[Dict[str, Any]], product_url: str, offer_id: str) -> List[Dict[str, Any]]:
@@ -21,6 +21,38 @@ def _search_text(value: Any) -> str:
 
 def _contains_query(values: List[Any], query: str) -> bool:
     return any(query in _search_text(value) for value in values)
+
+
+def find_model_by_identity(
+    models: List[Dict[str, Any]],
+    spec_id: Any = "",
+    model_name: Any = "",
+    normalize_id: Optional[Callable[[Any], str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """Find one model by spec ID, or by a unique name when no spec ID exists."""
+    normalize_id = normalize_id or (lambda value: str(value or "").strip())
+    normalized_spec_id = normalize_id(spec_id)
+    normalized_model_name = str(model_name or "").strip()
+
+    if normalized_spec_id:
+        return next(
+            (
+                model for model in models
+                if isinstance(model, dict)
+                and normalize_id(model.get("規格ID", "")) == normalized_spec_id
+            ),
+            None,
+        )
+
+    if not normalized_model_name:
+        return None
+    matches = [
+        model for model in models
+        if isinstance(model, dict)
+        and not normalize_id(model.get("規格ID", ""))
+        and str(model.get("型號名稱", "")).strip() == normalized_model_name
+    ]
+    return matches[0] if len(matches) == 1 else None
 
 
 def build_product_catalog(
