@@ -1,8 +1,11 @@
 import os
-import json
+import sys
 import pandas as pd
 import glob
 import math
+from pathlib import Path
+
+from shopee_products_import import atomic_write_json, validate_shopee_products
 
 def is_valid(val):
     if pd.isna(val):
@@ -24,10 +27,9 @@ def main():
     base_dir = "data"
     output_file = "shopee_products.json"
 
-    # Initialize the main dictionary
     products = {}
-    # 優化：使用字典索引加速型號查找 (O(1) vs O(n))
-    model_index = {}  # {product_id: {model_name: model_data}}
+    model_index = {}
+    parse_errors = []
 
     print("Parsing 主庫存 (Main Stock) files...")
     stock_files = glob.glob(os.path.join(base_dir, "主庫存", "*.xlsx"))
@@ -49,7 +51,6 @@ def main():
             else:
                 df = pd.read_excel(file_path, engine="calamine", header=1)
 
-            # Cache column name resolution (avoid repeated lookups)
             prod_id_col = "商品 ID" if "商品 ID" in df.columns else "et_title_product_id"
             prod_name_col = "商品名稱" if "商品名稱" in df.columns else "et_title_product_name"
             var_name_col = "商品規格名稱" if "商品規格名稱" in df.columns else ("et_title_variation_name" if "et_title_variation_name" in df.columns else "商品選項名稱")
@@ -74,9 +75,8 @@ def main():
                         "型號": [],
                         "總月銷量": "0"
                     }
-                    model_index[p_id] = {}  # Initialize index for this product
+                    model_index[p_id] = {}
 
-                # 優化：使用字典索引代替線性查找
                 if v_name and v_name not in model_index[p_id]:
                     model_data = {
                         "型號名稱": v_name,
@@ -90,10 +90,12 @@ def main():
                     model_index[p_id][v_name] = model_data
 
         except Exception as e:
-            print(f"Error parsing {file_path}: {e}")
+            message = f"Error parsing {file_path}: {e}"
+            parse_errors.append(message)
+            print(message, file=sys.stderr)
 
     print("Parsing parentskudetail (Monthly Sales) file...")
-    sales_files = glob.glob(os.path.join(base_dir, "parentskudetail*.xlsx"))
+    sales_files = sorted(glob.glob(os.path.join(base_dir, "parentskudetail*.xlsx")))
     if sales_files:
         try:
             df_sales = pd.read_excel(sales_files[0], engine="calamine")
@@ -123,7 +125,6 @@ def main():
                     # Total monthly sales for the product
                     products[p_id]["總月銷量"] = monthly_sales
                 else:
-                    # 優化：使用字典索引查找型號
                     if v_name in model_index[p_id]:
                         model_index[p_id][v_name]["月銷量"] = monthly_sales
                     else:
@@ -139,10 +140,12 @@ def main():
                         products[p_id]["型號"].append(model_data)
                         model_index[p_id][v_name] = model_data
         except Exception as e:
-            print(f"Error parsing sales file: {e}")
+            message = f"Error parsing sales file {sales_files[0]}: {e}"
+            parse_errors.append(message)
+            print(message, file=sys.stderr)
 
     print("Parsing media_info (Images) file...")
-    media_files = glob.glob(os.path.join(base_dir, "*media_info*.xlsx"))
+    media_files = sorted(glob.glob(os.path.join(base_dir, "*media_info*.xlsx")))
     if media_files:
         try:
             df_media = pd.read_excel(media_files[0], engine="calamine")
@@ -170,18 +173,33 @@ def main():
                                 continue
 
                             if opt_img and opt_img.startswith("http"):
-                                # 優化：使用字典索引查找型號
                                 if opt_name in model_index.get(p_id, {}):
                                     model_index[p_id][opt_name]["型號圖片網址"] = opt_img
         except Exception as e:
-            print(f"Error parsing media info: {e}")
+            message = f"Error parsing media info {media_files[0]}: {e}"
+            parse_errors.append(message)
+            print(message, file=sys.stderr)
 
-    # Write out the JSON result
+    if not products:
+        detail = "; ".join(parse_errors) if parse_errors else "找不到可解析的商品資料"
+        print(f"Parsing failed: no valid products; {detail}", file=sys.stderr)
+        return 1
+
+    try:
+        validate_shopee_products(products)
+    except ValueError as e:
+        print(f"Parsing failed: invalid product data: {e}", file=sys.stderr)
+        return 1
+
     print(f"Writing parsed data to {output_file}...")
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(products, f, ensure_ascii=False, indent=4)
+    try:
+        atomic_write_json(Path(output_file), products)
+    except OSError as e:
+        print(f"Parsing failed: could not write {output_file}: {e}", file=sys.stderr)
+        return 1
 
     print("Parsing complete! Processed", len(products), "products.")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
