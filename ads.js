@@ -92,7 +92,7 @@ document.addEventListener('DOMContentLoaded', function() {
         adsProgressText.textContent = '0%';
         adsExportResult.style.display = 'none';
         adsExportResult.className = 'ads-export-result';
-        adsExportResult.innerHTML = '';
+        adsExportResult.replaceChildren();
     }
 
     function updateAdsAnalysisUI(step, message, progress) {
@@ -161,10 +161,19 @@ document.addEventListener('DOMContentLoaded', function() {
         }, 2200);
     }
 
-    function showAdsExportResult(type, html) {
+    function showAdsExportResult(type, content) {
         adsExportResult.style.display = 'block';
         adsExportResult.className = `ads-export-result ${type}`;
-        adsExportResult.innerHTML = html;
+        adsExportResult.replaceChildren(content);
+    }
+
+    function createAdsExportMessage(title, message) {
+        const fragment = document.createDocumentFragment();
+        const heading = document.createElement('strong');
+        heading.textContent = title;
+        fragment.append(heading, document.createElement('br'));
+        fragment.append(document.createTextNode(String(message ?? '')));
+        return fragment;
     }
 
     function renderAdsBatchResults(data) {
@@ -172,22 +181,35 @@ document.addEventListener('DOMContentLoaded', function() {
         const summaryTitle =
             data.status === 'partial_success' ? '部分完成' :
             data.status === 'error' ? '執行失敗' : '下載完成';
-        const rows = results.map((item) => {
-            const fileText = item.file_name ? `<br>檔名：${item.file_name}` : '';
-            const actionText = item.action_taken ? `<br>動作：${item.action_taken}` : '';
-            const messageText = item.message ? `<br>訊息：${item.message}` : '';
+        const fragment = createAdsExportMessage(summaryTitle, data.message);
+        const resultList = document.createElement('div');
+        resultList.className = 'ads-result-list';
+
+        results.forEach((item) => {
             const cssClass =
                 item.status === 'success' ? 'success' :
                 item.status === 'skipped' ? 'warning' : 'error';
-            return `<div class="ads-result-item ${cssClass}">
-                <strong>${item.range_label}</strong>
-                <br>狀態：${item.status}
-                ${fileText}
-                ${actionText}
-                ${messageText}
-            </div>`;
-        }).join('');
-        return `<strong>${summaryTitle}</strong><br>${data.message}<div class="ads-result-list">${rows}</div>`;
+            const resultItem = document.createElement('div');
+            resultItem.className = `ads-result-item ${cssClass}`;
+            const rangeLabel = document.createElement('strong');
+            rangeLabel.textContent = String(item.range_label ?? '');
+            resultItem.append(rangeLabel);
+
+            [
+                ['狀態', item.status],
+                ['檔名', item.file_name],
+                ['動作', item.action_taken],
+                ['訊息', item.message],
+            ].forEach(([label, value]) => {
+                if (value === undefined || value === null || value === '') return;
+                resultItem.append(document.createElement('br'));
+                resultItem.append(document.createTextNode(`${label}：${String(value)}`));
+            });
+            resultList.append(resultItem);
+        });
+
+        fragment.append(resultList);
+        return fragment;
     }
 
     function renderAdsAnalysisReport(data) {
@@ -204,9 +226,6 @@ document.addEventListener('DOMContentLoaded', function() {
             (rankings.reduce_budget || []).length +
             (rankings.indirect_dependency || []).length +
             (rankings.watchlist || []).length;
-        const excluded = Array.isArray(narrative.excluded_but_reviewed_products)
-            ? narrative.excluded_but_reviewed_products
-            : [];
         const watchlistCount = (rankings.watchlist || []).length;
 
         return `
@@ -252,13 +271,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 ${htmlPath ? `<a class="btn-primary ads-report-download" href="${htmlPath}" target="_blank" rel="noopener noreferrer"><i class="fas fa-file-lines"></i> 開啟 HTML 報告</a>` : ''}
             </div>
 
-            ${excluded.length ? `
-            <div class="ads-analysis-section">
-                <h3><i class="fas fa-eye"></i> 已檢查但暫不列入</h3>
-                <ul class="ads-analysis-action-list">
-                    ${excluded.slice(0, 10).map((item) => `<li>${escapeHtml(item.product_id)}: ${escapeHtml(item.reason)}</li>`).join('')}
-                </ul>
-            </div>` : ''}
         `;
     }
 
@@ -294,7 +306,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 adsStatusBadge.textContent = '失敗';
                 adsStatusBadge.className = 'ads-status-badge error';
                 updateAdsExportUI('匯出失敗', error.message || '廣告匯出失敗', 100);
-                showAdsExportResult('error', `<strong>匯出失敗</strong><br>${error.message || '請稍後再試'}`);
+                showAdsExportResult('error', createAdsExportMessage('匯出失敗', error.message || '請稍後再試'));
             })
             .finally(() => {
                 window.adsExportRunning = false;

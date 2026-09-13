@@ -745,13 +745,6 @@ class AdsAnalyzer:
             return 0.0
         return numerator / denominator
 
-    def _rate_status(self, value: float, good: float, weak: float) -> str:
-        if value >= good:
-            return "強"
-        if value <= weak:
-            return "弱"
-        return "普通"
-
     def _build_window_diagnostics(self, item: Dict[str, Any]) -> Dict[str, Any]:
         spend = round2(item.get("spend", 0.0))
         clicks = int(item.get("clicks", 0))
