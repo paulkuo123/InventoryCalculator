@@ -2788,7 +2788,16 @@ def main():
             with open(args.output, 'w', encoding='utf-8') as f:
                 json.dump(result, f, ensure_ascii=False, indent=4)
         else:
-            crawler.run()
+            # run() 失敗時回傳 None（Cookies 失效則已自行 sys.exit(77)）；
+            # 必須以非零碼退出，否則 Telegram Bot 會把舊的 shopee_products.json 當成新結果。
+            inventory_result = crawler.run()
+            if inventory_result is None:
+                try:
+                    crawler.cleanup()
+                except Exception:
+                    pass
+                print("爬蟲執行失敗，以退出碼 1 結束。", file=sys.stderr)
+                sys.exit(1)
 
         # 確保瀏覽器關閉
         try:

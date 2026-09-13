@@ -19,12 +19,56 @@ from datetime import datetime
 
 # 導入 Cookie Refresher
 from cookie_refresher import CookieRefresher
+from config_loader import (
+    load_telegram_authorized_chat_ids,
+    load_telegram_bot_token,
+    load_telegram_chat_id,
+)
 
 # ===== Telegram 設定 =====
-TG_TOKEN = "8743953981:AAGlIFtMa9YBLxB-DN9S_3LqNHyworqehIc"
-TG_CHAT_ID = "6847971073"
-AUTHORIZED_USERS = [7985701289]  # 可新增其他 chat_id，例如: ["6847971073", "1234567890"]
-BASE_URL = f"https://api.telegram.org/bot{TG_TOKEN}"
+# 全部由環境變數 / .env.local 讀取（TELEGRAM_BOT_TOKEN、TELEGRAM_CHAT_ID、
+# TELEGRAM_AUTHORIZED_CHAT_IDS），由 load_telegram_settings() 在啟動時填入；
+# 不在源碼中保存任何 token 或 chat_id。
+TG_TOKEN = ""
+TG_CHAT_ID = ""
+AUTHORIZED_USERS = []
+TELEGRAM_API_ROOT = "https://api.telegram.org"
+
+
+class TelegramConfigError(RuntimeError):
+    """Telegram 必要設定缺失。"""
+
+
+def load_telegram_settings():
+    """從環境變數 / .env.local 載入 Telegram 設定，缺少必要值時直接拋錯。"""
+    global TG_TOKEN, TG_CHAT_ID, AUTHORIZED_USERS
+
+    token, token_source = load_telegram_bot_token()
+    if not token:
+        raise TelegramConfigError(
+            "缺少 TELEGRAM_BOT_TOKEN。請在環境變數或專案 .env.local 設定 Telegram Bot token"
+            "（可參考 .env.example）。"
+        )
+
+    chat_id, _ = load_telegram_chat_id()
+    authorized, _ = load_telegram_authorized_chat_ids()
+    if not chat_id and not authorized:
+        raise TelegramConfigError(
+            "缺少 TELEGRAM_CHAT_ID 與 TELEGRAM_AUTHORIZED_CHAT_IDS，Bot 不會回應任何人。"
+            "請至少設定其中一個（可參考 .env.example）。"
+        )
+
+    TG_TOKEN = token
+    TG_CHAT_ID = chat_id
+    AUTHORIZED_USERS = authorized
+    return token_source
+
+
+def _api_url(method):
+    """組出 Telegram Bot API 網址；token 尚未載入時直接失敗，不用空字串亂打。"""
+    if not TG_TOKEN:
+        raise TelegramConfigError("Telegram token 尚未載入，請先呼叫 load_telegram_settings()。")
+    return f"{TELEGRAM_API_ROOT}/bot{TG_TOKEN}/{method}"
 
 # ===== 設定 =====
 POLL_INTERVAL = 3  # 輪詢間隔（秒）
@@ -74,7 +118,7 @@ signal.signal(signal.SIGTERM, signal_handler)
 # ===== Telegram API 封裝 =====
 def get_updates(offset=None):
     """获取最新消息"""
-    url = f"{BASE_URL}/getUpdates"
+    url = _api_url("getUpdates")
     params = {
         "offset": offset,
         "timeout": 30,
@@ -91,7 +135,7 @@ def get_updates(offset=None):
 
 def send_message(chat_id, text, parse_mode="HTML"):
     """发送消息"""
-    url = f"{BASE_URL}/sendMessage"
+    url = _api_url("sendMessage")
     payload = {
         "chat_id": chat_id,
         "text": text,
@@ -107,7 +151,7 @@ def send_message(chat_id, text, parse_mode="HTML"):
 
 def send_chat_action(chat_id, action):
     """发送聊天动作（如 typing, upload_document）"""
-    url = f"{BASE_URL}/sendChatAction"
+    url = _api_url("sendChatAction")
     payload = {
         "chat_id": chat_id,
         "action": action
@@ -120,7 +164,7 @@ def send_chat_action(chat_id, action):
 
 def send_document(chat_id, file_path, caption=""):
     """发送文件"""
-    url = f"{BASE_URL}/sendDocument"
+    url = _api_url("sendDocument")
     try:
         with open(file_path, 'rb') as f:
             files = {'document': f}
@@ -1033,7 +1077,7 @@ def run_crawler_task(chat_id, keyword, months):
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=ADS_EXPORT_TIMEOUT,
+            timeout=CRAWLER_TIMEOUT,
             cwd=WORK_DIR
         )
         
@@ -1155,7 +1199,7 @@ def run_ads_export_task(chat_id):
             text=True,
             encoding='utf-8',
             errors='replace',
-            timeout=CRAWLER_TIMEOUT,
+            timeout=ADS_EXPORT_TIMEOUT,
             cwd=WORK_DIR
         )
 
@@ -1386,11 +1430,18 @@ def generate_report(keyword, months, output_file, html_output_file):
 def main():
     global running, current_task
 
+    try:
+        token_source = load_telegram_settings()
+    except TelegramConfigError as e:
+        print(f"❌ Telegram 設定錯誤：{e}", file=sys.stderr)
+        sys.exit(2)
+
     authorized_chat_ids = get_authorized_chat_ids()
 
     print("="*50)
     print("🤖 Shopee 庫存 / 廣告 Telegram Bot")
     print("="*50)
+    print(f"🔑 Telegram token 來源：{token_source}")
     print(f"📡 開始監聽訊息...")
     print(f"💡 指令格式：/搜尋 <產品> <月數>")
     print(f"   例如：/搜尋 牙刷 4")
