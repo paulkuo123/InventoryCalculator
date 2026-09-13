@@ -24,12 +24,6 @@ CHUNBAI_SPEC_ID = "98491202820"
 MAIN_OFFER_ID = "682877407287"
 ERIC_OFFER_ID = "703961968928"
 ERIC_SKU_ID = "5704602103113"
-ERIC_OFFER_FINGERPRINT = (
-    "a76f0b3649d1b2ff325e0cc6b3914af163d99923eae012179eb8ad9eaa95bf7d"
-)
-MAIN_OFFER_FINGERPRINT = (
-    "38fcb12c0fef6521771f45dc676bd22bdcf387582648e904c7020709ba03e88d"
-)
 
 
 def _load_golden():
@@ -114,10 +108,10 @@ class SockGoldenNeedsHumanCleanupTest(unittest.TestCase):
         self.assertEqual(chunbai.get("1688_spec_text"), "白色>均码")
         self.assertEqual(chunbai.get("1688_mapping_status"), "approved")
         self.assertEqual(chunbai.get("1688_mapping_source"), "manual")
-        self.assertEqual(chunbai.get("1688_offer_fingerprint"), ERIC_OFFER_FINGERPRINT)
+        # 1688_offer_fingerprint is rewritten on every rescan/approval, so it is
+        # intentionally not pinned here; offer_id is the stable override marker.
         black = next(row for row in models if row.get("型號名稱") == "黑色")
         self.assertEqual(black.get("1688_offer_id"), MAIN_OFFER_ID)
-        self.assertEqual(black.get("1688_offer_fingerprint"), MAIN_OFFER_FINGERPRINT)
 
 
 if __name__ == "__main__":

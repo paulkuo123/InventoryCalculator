@@ -5,7 +5,7 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from sku_mapping_service import URL_HEALTH_TTL_SECONDS, MappingConflict, SkuMappingService, clean_mapping_name, normalize_text, offer_fingerprint
+from sku_mapping_service import DEFERRED_REVIEW_REASON, URL_HEALTH_TTL_SECONDS, MappingConflict, SkuMappingService, clean_mapping_name, normalize_text, offer_fingerprint
 
 
 class SkuMappingServiceTest(unittest.TestCase):
@@ -1021,6 +1021,29 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "defer", "version": item["version"]}])
         deferred = self.service.queue(status="deferred")
         self.assertEqual(deferred["total"], 1)
+
+    def test_deferred_decision_survives_service_restart(self):
+        model = self.service._scope_models("all")[0]
+        snapshot = self.service._save_snapshot(model["offer_id"], model["url"], model["product_name"], [
+            {"sku_id": "sock-defer", "sku_name": "白色", "second_name": "", "spec_text": "白色", "parts": ["白色"], "image_url": "", "price": 1.2, "stock": 99}
+        ], {})
+        candidates = self.service.generate_candidates(model, snapshot["skus"])
+        self.service._save_suggestion(model, snapshot, candidates, None, {})
+        item = next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
+        # The unique complete candidate would classify as green on its own; the
+        # human 稍後處理 decision must still win over that recomputation.
+        self.assertEqual(item["review_tier"], "green")
+        self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "defer", "version": item["version"]}])
+
+        reloaded = SkuMappingService(self.tmp.name)
+        self.assertEqual(reloaded.queue(status="deferred")["total"], 1)
+        self.assertFalse(any(
+            row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"]
+            for row in reloaded.queue(status="review")["items"]
+        ))
+        restored = next(row for row in reloaded.queue(status="deferred")["items"])
+        self.assertEqual(restored["review_tier"], "yellow")
+        self.assertEqual(restored["review_reason"], DEFERRED_REVIEW_REASON)
 
     def test_batch_status_actions_support_defer_no_match_and_discontinued(self):
         model = self.service._scope_models("all")[0]

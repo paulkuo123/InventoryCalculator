@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Sequence, Tuple
 
-from mapping_knowledge import DEFAULT_CONFIG, load_config
+from mapping_knowledge import DEFAULT_CONFIG, detect_category, load_config
 from sku_mapping_service import (
     AI_SUCCESS_SOURCES,
     PROMPT_VERSION,
@@ -52,17 +52,6 @@ AUTO_APPROVE_CONDITION_ORDER = (
     "require_no_negative_example",
     "require_snapshot_status_ok",
     "min_historical_support",
-)
-
-# Product-name fallback used only when mapping_knowledge/categories.json is
-# missing or unreadable.  TASK 3 committed a keyword map; this remains the
-# offline fallback.  Order is first-match; keep phone-case ahead of generic
-# 殼 tokens that also appear on watch cases.
-_CATEGORY_HEURISTICS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
-    ("phone_case", ("手機殼", "手机壳", "保護殼", "保护壳", "手機套", "手机套")),
-    ("watch", ("watch", "錶殼", "表壳", "錶帶", "表带", "手錶", "手表")),
-    ("socks", ("襪", "袜")),
-    ("charm", ("吊飾", "吊饰", "掛繩", "挂绳", "掛飾", "挂饰")),
 )
 
 
@@ -110,43 +99,12 @@ def isolated_mapping_service() -> Iterator[SkuMappingService]:
 def infer_category(product_name: str, categories_path: Optional[Path] = None) -> str:
     """Return a coarse category label for grouping.
 
-    If ``mapping_knowledge/categories.json`` exists it is used.  Supported
-    shapes: ``{"rules": [{"category": "socks", "keywords": ["襪"]}]}`` or
-    ``{"socks": ["襪", "袜"]}``.  Otherwise the built-in product-name
-    heuristics above apply.  Missing knowledge-pack files do not block eval.
+    Delegates to ``mapping_knowledge.detect_category`` so eval groups products
+    exactly like the live service.  ``categories_path`` is the optional
+    ``--categories-path`` override; a missing or invalid knowledge-pack file
+    falls back to the built-in heuristics and never blocks eval.
     """
-    name = str(product_name or "")
-    lowered = name.casefold()
-    path = Path(categories_path) if categories_path is not None else Path(DEFAULT_CATEGORIES_PATH)
-    rules = _load_category_rules(path)
-    for category, keywords in rules:
-        for keyword in keywords:
-            token = str(keyword or "")
-            if not token:
-                continue
-            if token.casefold() in lowered or token in name:
-                return category
-    return "other"
-
-
-def _load_category_rules(path: Path) -> List[Tuple[str, Tuple[str, ...]]]:
-    payload = load_json(path, None)
-    parsed: List[Tuple[str, Tuple[str, ...]]] = []
-    if isinstance(payload, dict):
-        rules = payload.get("rules")
-        if isinstance(rules, list):
-            for row in rules:
-                if not isinstance(row, dict):
-                    continue
-                category = str(row.get("category") or "").strip()
-                keywords = row.get("keywords") or []
-                if category and isinstance(keywords, list):
-                    parsed.append((category, tuple(str(item) for item in keywords)))
-        else:
-            for category, keywords in payload.items():
-                if isinstance(keywords, list):
-                    parsed.append((str(category), tuple(str(item) for item in keywords)))
-    return parsed or list(_CATEGORY_HEURISTICS)
+    return detect_category(product_name, categories_path)
 
 
 def truth_fields(row: Dict[str, Any]) -> Dict[str, str]:
