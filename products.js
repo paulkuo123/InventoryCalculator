@@ -221,12 +221,35 @@
     }
 
     async function fetchFullProduct(productId) {
-        const response = await fetch(`/api/golden-table/catalog?query=${encodeURIComponent(productId)}&limit=1`);
+        const response = await fetch(`/api/golden-table/catalog?productId=${encodeURIComponent(productId)}&limit=1`);
         const data = await response.json().catch(() => ({}));
-        if (!response.ok || data.status !== 'success' || !data.products?.length) {
+        if (!response.ok || data.status !== 'success') {
             throw new Error(data.message || '讀取商品完整規格失敗');
         }
-        return data.products.find(product => String(product.productId) === String(productId)) || data.products[0];
+        const product = data.products?.find(
+            item => String(item.productId) === String(productId)
+        );
+        if (!product) {
+            throw new Error(`找不到商品 ID ${productId}`);
+        }
+        return product;
+    }
+
+    function findModelByIdentity(models, identity) {
+        const identitySpecId = String(identity?.specId ?? identity?.['規格ID'] ?? '').trim();
+        if (identitySpecId) {
+            return models.find(model =>
+                String(model?.specId ?? model?.['規格ID'] ?? '').trim() === identitySpecId
+            ) || null;
+        }
+
+        const identityModelName = String(identity?.modelName ?? identity?.['型號名稱'] ?? '').trim();
+        if (!identityModelName) return null;
+        const matches = models.filter(model =>
+            !String(model?.specId ?? model?.['規格ID'] ?? '').trim()
+            && String(model?.modelName ?? model?.['型號名稱'] ?? '').trim() === identityModelName
+        );
+        return matches.length === 1 ? matches[0] : null;
     }
 
     async function openSkuMappingModal(product) {
@@ -391,24 +414,33 @@
             if (!response.ok || data.status !== 'success') {
                 throw new Error(data.message || '儲存失敗');
             }
-            state.products.forEach(searchProduct => {
-                if (String(searchProduct.productId) !== String(product.productId)) return;
-                searchProduct.models.forEach(searchModel => {
-                    if (applyScope === 'url_offer_all') {
+            if (applyScope === 'url_offer_all') {
+                state.products.forEach(searchProduct => {
+                    if (String(searchProduct.productId) !== String(product.productId)) return;
+                    searchProduct.models.forEach(searchModel => {
                         searchModel.alibabaProductUrl = payload.alibabaProductUrl;
                         searchModel.alibabaOfferId = payload.alibabaOfferId;
-                    } else if (searchModel.specId === model.specId || searchModel.modelName === model.modelName) {
-                        patchModel(searchModel, payload);
-                    }
+                    });
                 });
-            });
-            if (applyScope === 'url_offer_all') {
                 product.models.forEach(productModel => {
                     productModel.alibabaProductUrl = payload.alibabaProductUrl;
                     productModel.alibabaOfferId = payload.alibabaOfferId;
                 });
             } else {
-                patchModel(model, payload);
+                const savedIdentity = data.updatedModels?.[0];
+                if (!savedIdentity) {
+                    throw new Error('後端未回傳已更新型號 identity');
+                }
+                const searchProduct = state.products.find(
+                    item => String(item.productId) === String(data.productId)
+                );
+                const searchModel = searchProduct
+                    ? findModelByIdentity(searchProduct.models, savedIdentity)
+                    : null;
+                if (searchModel) patchModel(searchModel, payload);
+
+                const activeModel = findModelByIdentity(product.models, savedIdentity);
+                if (activeModel && activeModel !== searchModel) patchModel(activeModel, payload);
             }
             renderCurrentSearch();
             setSearchStatus(data.message || '已儲存阿里巴巴資料', 'success');

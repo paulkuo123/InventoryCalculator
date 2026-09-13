@@ -624,11 +624,17 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 params = urllib.parse.parse_qs(parsed_path.query)
                 query = params.get("query", [""])[0]
+                product_id = params.get("productId", [""])[0]
                 limit = int(params.get("limit", ["30"])[0])
                 golden_table = self._load_json_file(self._golden_table_path())
                 self._send_json_response(200, {
                     "status": "success",
-                    **build_product_catalog(golden_table, query=query, limit=limit),
+                    **build_product_catalog(
+                        golden_table,
+                        query=query,
+                        limit=limit,
+                        exact_product_id=product_id,
+                    ),
                 })
             except ValueError as e:
                 self._send_json_response(400, {"status": "error", "message": str(e)})
@@ -3142,11 +3148,18 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             for model in models:
                 if normalize_identifier(model.get("規格ID", "")) == spec_id:
                     return model
+            return None
 
         if model_name:
-            for model in models:
-                if str(model.get("型號名稱", "")).strip() == model_name:
-                    return model
+            matches = [
+                model for model in models
+                if (
+                    not normalize_identifier(model.get("規格ID", ""))
+                    and str(model.get("型號名稱", "")).strip() == model_name
+                )
+            ]
+            if len(matches) == 1:
+                return matches[0]
 
         return None
 

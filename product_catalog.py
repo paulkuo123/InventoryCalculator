@@ -24,10 +24,14 @@ def _contains_query(values: List[Any], query: str) -> bool:
 
 
 def build_product_catalog(
-    golden_table: Dict[str, Any], query: str = "", limit: int = 30
+    golden_table: Dict[str, Any],
+    query: str = "",
+    limit: int = 30,
+    exact_product_id: str = "",
 ) -> Dict[str, Any]:
     """Return editable product/model data without requiring a Shopee crawler run."""
     normalized_query = _search_text(query)
+    normalized_product_id = str(exact_product_id or "").strip()
     safe_limit = max(1, min(int(limit or 30), 100))
     matches: List[Dict[str, Any]] = []
 
@@ -35,8 +39,10 @@ def build_product_catalog(
         if not isinstance(product, dict):
             continue
         product_id = str(raw_product_id or "").strip()
+        if normalized_product_id and product_id != normalized_product_id:
+            continue
         product_name = str(product.get("商品名稱") or "").strip()
-        product_match = not normalized_query or _contains_query(
+        product_match = bool(normalized_product_id) or not normalized_query or _contains_query(
             [product_id, product_name], normalized_query
         )
         raw_models = product.get("型號") or []
@@ -94,6 +100,7 @@ def build_product_catalog(
 
     return {
         "query": str(query or "").strip(),
+        "productId": normalized_product_id,
         "totalMatches": len(matches),
         "limit": safe_limit,
         "products": matches[:safe_limit],

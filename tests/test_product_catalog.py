@@ -56,6 +56,28 @@ class ProductCatalogTests(unittest.TestCase):
         self.assertEqual(result["limit"], 1)
         self.assertEqual(len(result["products"]), 1)
 
+    def test_exact_product_id_ignores_conflicting_query_matches(self):
+        table = {
+            "1000": {"商品名稱": "包含 100 的商品", "型號": []},
+            **self.table,
+        }
+
+        result = build_product_catalog(
+            table, query="100", limit=1, exact_product_id="100"
+        )
+
+        self.assertEqual(result["totalMatches"], 1)
+        self.assertEqual(result["products"][0]["productId"], "100")
+        self.assertEqual(len(result["products"][0]["models"]), 2)
+
+    def test_missing_exact_product_id_returns_empty_result(self):
+        result = build_product_catalog(
+            self.table, query="100", limit=1, exact_product_id="1000"
+        )
+
+        self.assertEqual(result["totalMatches"], 0)
+        self.assertEqual(result["products"], [])
+
 
 if __name__ == "__main__":
     unittest.main()
