@@ -133,7 +133,6 @@
 document.addEventListener('DOMContentLoaded', function() {
     const searchInput = document.getElementById('searchInput');
     const searchButton = document.getElementById('searchButton');
-    const resetButton = document.getElementById('resetButton');
     const productList = document.getElementById('productList');
     const loading = document.getElementById('loading');
     const advancedSearchCard = document.getElementById('advancedSearchCard');
@@ -143,19 +142,6 @@ document.addEventListener('DOMContentLoaded', function() {
     const searchOptionProduct = document.getElementById('searchOptionProduct');
     const searchOptionModel = document.getElementById('searchOptionModel');
     const searchOptionBoth = document.getElementById('searchOptionBoth');
-    const createProcurementDraftButton = document.getElementById('createProcurementDraftButton');
-    const syncProcurementOrdersButton = document.getElementById('syncProcurementOrdersButton');
-    const alibabaAuthStatus = document.getElementById('alibabaAuthStatus');
-    const skuReviewStatus = document.getElementById('skuReviewStatus');
-    const skuReviewReportSelect = document.getElementById('skuReviewReportSelect');
-    const skuReviewFilterSelect = document.getElementById('skuReviewFilterSelect');
-    const loadSkuReviewButton = document.getElementById('loadSkuReviewButton');
-    const applySelectedSkuReviewButton = document.getElementById('applySelectedSkuReviewButton');
-    const applyHighConfidenceButton = document.getElementById('applyHighConfidenceButton');
-    const skuReviewOverwriteCheckbox = document.getElementById('skuReviewOverwriteCheckbox');
-    const skuReviewSummary = document.getElementById('skuReviewSummary');
-    const skuReviewMessage = document.getElementById('skuReviewMessage');
-    const skuReviewList = document.getElementById('skuReviewList');
     const cookieImportText = document.getElementById('cookieImportText');
     const cookieImportButton = document.getElementById('cookieImportButton');
     const cookieImportClearButton = document.getElementById('cookieImportClearButton');
@@ -196,26 +182,17 @@ document.addEventListener('DOMContentLoaded', function() {
     const progressText = document.getElementById('progressText');
     const statusMessage = document.getElementById('statusMessage');
     // 保存當前狀態變量
-    window.currentSearchResults = null; // 保存原始搜尋結果
     window.lastSearchResults = null; // crawler/manual import 共用的原始結果
     window.currentAdvancedKeyword = ''; // 保存進階搜尋關鍵字
     window.currentSearchOption = 'product'; // 預設搜尋選項為商品名稱
-    window.isPieChartVisible = false; // 圓餅圖顯示狀態
     window.alibabaLinks = {}; // 型號ID → 阿里巴巴商品URL 映射
     window.alibabaBindings = {}; // 商品ID+型號ID → 1688 下單資料
-    window.alibabaAuth = null;
     window.currentRestockProducts = [];
     window.currentRestockAdjustment = null;
     window.currentBatchRestockSelection = null;
     window.restockInProgress = false; // 防止並發補貨操作
     window.batchRestockEnabled = false;
     window.currentRestockBatch = null;
-    window.skuReviewState = {
-        reports: [],
-        currentReport: '',
-        currentFilter: 'actionable',
-        currentGroups: []
-    };
 
     function escapeHtml(value) {
         return String(value ?? '').replace(/[&<>"']/g, char => ({
@@ -253,33 +230,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 window.alibabaBindings = {};
                 return {};
             });
-    }
-
-    function loadAlibabaAuthStatus() {
-        return fetch('/api/alibaba/auth/status')
-            .then(r => r.json())
-            .then(data => {
-                window.alibabaAuth = data;
-                if (alibabaAuthStatus) {
-                    alibabaAuthStatus.textContent = data.message || '1688 API 狀態未知';
-                    alibabaAuthStatus.className = data.can_create_order ? 'auth-ready' : 'auth-missing';
-                }
-                return data;
-            })
-            .catch(err => {
-                window.alibabaAuth = { can_create_order: false, message: '無法檢查 1688 API 狀態' };
-                if (alibabaAuthStatus) {
-                    alibabaAuthStatus.textContent = window.alibabaAuth.message;
-                    alibabaAuthStatus.className = 'auth-missing';
-                }
-                console.warn('檢查 1688 API 狀態失敗:', err);
-            });
-    }
-
-    function setSkuReviewMessage(text, type = '') {
-        if (!skuReviewMessage) return;
-        skuReviewMessage.textContent = text || '';
-        skuReviewMessage.className = `sku-review-message ${type}`.trim();
     }
 
     function setCookieImportStatus(text, type = '') {
@@ -427,15 +377,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (visible) updatePersonalWatchlistUi();
     }
 
-    function rerenderCurrentSearchResults() {
-        if (!window.lastSearchResults) return;
-        if (window.currentAdvancedKeyword && window.currentAdvancedKeyword.trim() !== '') {
-            displayProducts(window.lastSearchResults, window.currentAdvancedKeyword, window.currentSearchOption);
-        } else {
-            displayProducts(window.lastSearchResults, '', 'product');
-        }
-    }
-
     function updatePersonalWatchlistFile() {
         if (!personalWatchlistFile || !personalWatchlistImportButton) return;
         const file = personalWatchlistFile.files[0];
@@ -499,7 +440,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 persistPersonalWatchlist(isPersonalWatchlistEnabled());
                 updatePersonalWatchlistUi();
                 if (window.lastSearchResults) {
-                    rerenderCurrentSearchResults();
+                    rerenderCurrentProducts();
                 }
                 updateBatchRestockToolbar();
             } catch (error) {
@@ -548,333 +489,6 @@ document.addEventListener('DOMContentLoaded', function() {
         } finally {
             cookieImportButton.disabled = false;
         }
-    }
-
-    function skuReviewReportLabel(report) {
-        const validText = report.valid ? '可用' : '不可用';
-        const createdAt = report.createdAt || new Date((report.mtime || 0) * 1000).toLocaleString();
-        return `${report.fileName} | ${validText} | high ${report.highConfidenceCount || 0} / review ${report.needsReviewCount || 0} | ${createdAt}`;
-    }
-
-    function loadSkuReviewReports() {
-        if (!skuReviewReportSelect) return Promise.resolve();
-        return fetch('/api/alibaba/sku-review/reports')
-            .then(r => r.json())
-            .then(data => {
-                if (data.status !== 'success') {
-                    throw new Error(data.message || '載入 report 失敗');
-                }
-                window.skuReviewState.reports = data.reports || [];
-                skuReviewReportSelect.innerHTML = '';
-
-                if (!window.skuReviewState.reports.length) {
-                    const option = document.createElement('option');
-                    option.value = '';
-                    option.textContent = '找不到 mapping report';
-                    skuReviewReportSelect.appendChild(option);
-                    if (skuReviewStatus) skuReviewStatus.textContent = '找不到可用的 1688 SKU mapping report。';
-                    return data;
-                }
-
-                window.skuReviewState.reports.forEach(report => {
-                    const option = document.createElement('option');
-                    option.value = report.fileName;
-                    option.textContent = skuReviewReportLabel(report);
-                    option.disabled = !report.valid;
-                    if (report.fileName === data.recommendedReport) {
-                        option.selected = true;
-                    }
-                    skuReviewReportSelect.appendChild(option);
-                });
-
-                window.skuReviewState.currentReport = skuReviewReportSelect.value || data.recommendedReport || '';
-                const recommended = window.skuReviewState.reports.find(report => report.fileName === window.skuReviewState.currentReport);
-                if (skuReviewStatus && recommended) {
-                    skuReviewStatus.textContent = recommended.valid
-                        ? `目前建議使用 ${recommended.fileName}，high confidence ${recommended.highConfidenceCount} 筆。`
-                        : `目前 report 不可用：${recommended.invalidReason || '原因未知'}`;
-                }
-                return data;
-            })
-            .catch(error => {
-                console.warn('載入 SKU review reports 失敗:', error);
-                setSkuReviewMessage(error.message || '載入 report 失敗', 'error');
-            });
-    }
-
-    function renderSkuReviewSummary(data) {
-        if (!skuReviewSummary) return;
-        const summary = data.summary || {};
-        const report = data.report || {};
-        skuReviewSummary.innerHTML = '';
-
-        [
-            ['目前顯示', summary.shown || 0],
-            ['High confidence', summary.high || 0],
-            ['需人工確認', summary.review || 0],
-            ['A 類可選', summary.actionable || 0],
-            ['C 類錯誤', summary.error || 0],
-        ].forEach(([label, value]) => {
-            const item = document.createElement('div');
-            item.className = 'sku-review-summary-item';
-            const strong = document.createElement('strong');
-            strong.textContent = value;
-            const span = document.createElement('span');
-            span.textContent = label;
-            item.appendChild(strong);
-            item.appendChild(span);
-            skuReviewSummary.appendChild(item);
-        });
-
-        if (!report.valid) {
-            const warning = document.createElement('div');
-            warning.className = 'sku-review-summary-warning';
-            warning.textContent = `此 report 標記為不可用：${report.invalidReason || '原因未知'}`;
-            skuReviewSummary.appendChild(warning);
-        }
-    }
-
-    function rowSelectedSku(rowElement) {
-        const input = rowElement.querySelector('.sku-review-sku-input');
-        return input ? input.value.trim() : '';
-    }
-
-    function buildSkuReviewRow(row) {
-        const rowElement = document.createElement('div');
-        const categoryClass = row.reviewCategory === 'High confidence'
-            ? 'high'
-            : row.reviewCategory.startsWith('A.')
-                ? 'actionable'
-                : row.reviewCategory.startsWith('C.')
-                    ? 'error'
-                    : 'review';
-        rowElement.className = `sku-review-row ${categoryClass}`;
-        rowElement.dataset.productId = row.productId || '';
-        rowElement.dataset.specId = row.specId || '';
-        rowElement.dataset.modelName = row.modelName || '';
-        rowElement.dataset.suggestedSkuName = row.suggestedSkuName || '';
-
-        const top = document.createElement('div');
-        top.className = 'sku-review-row-top';
-
-        const checkbox = document.createElement('input');
-        checkbox.type = 'checkbox';
-        checkbox.className = 'sku-review-select';
-        checkbox.checked = row.reviewCategory === 'High confidence';
-
-        const model = document.createElement('div');
-        model.className = 'sku-review-model';
-        const modelName = document.createElement('strong');
-        modelName.textContent = row.modelName || '未命名型號';
-        const modelMeta = document.createElement('span');
-        modelMeta.textContent = `規格ID: ${row.specId || '未找到'} | ${row.reviewCategory || ''}`;
-        model.appendChild(modelName);
-        model.appendChild(modelMeta);
-
-        const current = document.createElement('div');
-        current.className = 'sku-review-current';
-        current.innerHTML = `<span>目前 SKU</span><strong>${escapeHtml(row.existingSkuName || '空')}</strong>`;
-
-        const inputWrap = document.createElement('label');
-        inputWrap.className = 'sku-review-input-wrap';
-        const inputLabel = document.createElement('span');
-        inputLabel.textContent = '要寫入的 1688 SKU';
-        const input = document.createElement('input');
-        input.className = 'sku-review-sku-input';
-        input.type = 'text';
-        input.value = row.reviewCategory === 'High confidence' ? (row.suggestedSkuName || '') : '';
-        input.placeholder = row.suggestedSkuName || '點選下方選項或手動輸入';
-        inputWrap.appendChild(inputLabel);
-        inputWrap.appendChild(input);
-
-        const applyButton = document.createElement('button');
-        applyButton.type = 'button';
-        applyButton.className = 'btn-outline sku-review-apply-row';
-        applyButton.textContent = '套用此列';
-        applyButton.addEventListener('click', () => {
-            applySkuReviewItems([{
-                productId: row.productId,
-                specId: row.specId,
-                modelName: row.modelName,
-                skuName: rowSelectedSku(rowElement)
-            }]);
-        });
-
-        top.appendChild(checkbox);
-        top.appendChild(model);
-        top.appendChild(current);
-        top.appendChild(inputWrap);
-        top.appendChild(applyButton);
-        rowElement.appendChild(top);
-
-        const chips = document.createElement('div');
-        chips.className = 'sku-review-chips';
-        if (row.suggestedSkuName) {
-            const suggested = document.createElement('button');
-            suggested.type = 'button';
-            suggested.className = 'sku-review-chip suggested';
-            suggested.textContent = `建議: ${row.suggestedSkuName}`;
-            suggested.addEventListener('click', () => {
-                input.value = row.suggestedSkuName;
-                checkbox.checked = true;
-            });
-            chips.appendChild(suggested);
-        }
-        (row.colorOptions || []).forEach(optionText => {
-            const chip = document.createElement('button');
-            chip.type = 'button';
-            chip.className = 'sku-review-chip';
-            chip.textContent = optionText;
-            chip.addEventListener('click', () => {
-                input.value = optionText;
-                checkbox.checked = true;
-            });
-            chips.appendChild(chip);
-        });
-        if (!chips.childNodes.length) {
-            const empty = document.createElement('span');
-            empty.className = 'sku-review-empty-options';
-            empty.textContent = '沒有抓到可用 1688 選項，建議等 1688 不擋後重抓。';
-            chips.appendChild(empty);
-        }
-        rowElement.appendChild(chips);
-
-        const rowMeta = document.createElement('div');
-        rowMeta.className = 'sku-review-row-meta';
-        const reason = document.createElement('span');
-        reason.textContent = row.reason || row.urlMessage || '';
-        rowMeta.appendChild(reason);
-        if (row.url) {
-            const link = document.createElement('a');
-            link.href = row.url;
-            link.target = '_blank';
-            link.rel = 'noopener noreferrer';
-            link.textContent = '開啟 1688';
-            rowMeta.appendChild(link);
-        }
-        rowElement.appendChild(rowMeta);
-        return rowElement;
-    }
-
-    function renderSkuReview(data) {
-        if (!skuReviewList) return;
-        window.skuReviewState.currentGroups = data.groups || [];
-        renderSkuReviewSummary(data);
-        skuReviewList.innerHTML = '';
-
-        if (!data.groups || data.groups.length === 0) {
-            skuReviewList.innerHTML = `
-                <div class="empty-state compact">
-                    <i class="fas fa-check-circle"></i>
-                    <p>此分類沒有需要顯示的 SKU 對應。</p>
-                </div>
-            `;
-            return;
-        }
-
-        data.groups.forEach(group => {
-            const details = document.createElement('details');
-            details.className = 'sku-review-product';
-            details.open = data.groups.length <= 3;
-
-            const summary = document.createElement('summary');
-            const title = document.createElement('span');
-            title.textContent = `${group.productId} | ${group.productName || '未命名商品'}`;
-            const counts = document.createElement('em');
-            counts.textContent = `${group.counts.total} 筆 | high ${group.counts.high} | A ${group.counts.actionable} | C ${group.counts.error}`;
-            summary.appendChild(title);
-            summary.appendChild(counts);
-            details.appendChild(summary);
-
-            const rows = document.createElement('div');
-            rows.className = 'sku-review-product-rows';
-            (group.rows || []).forEach(row => {
-                rows.appendChild(buildSkuReviewRow(row));
-            });
-            details.appendChild(rows);
-            skuReviewList.appendChild(details);
-        });
-    }
-
-    function loadSkuReview() {
-        if (!skuReviewReportSelect || !skuReviewFilterSelect) return Promise.resolve();
-        const report = skuReviewReportSelect.value || 'latest';
-        const filter = skuReviewFilterSelect.value || 'actionable';
-        window.skuReviewState.currentReport = report;
-        window.skuReviewState.currentFilter = filter;
-        setSkuReviewMessage('載入 SKU review 中...');
-        return fetch(`/api/alibaba/sku-review?report=${encodeURIComponent(report)}&filter=${encodeURIComponent(filter)}`)
-            .then(r => r.json().then(data => ({ ok: r.ok, data })))
-            .then(({ ok, data }) => {
-                if (!ok || data.status !== 'success') {
-                    throw new Error(data.message || '載入 SKU review 失敗');
-                }
-                renderSkuReview(data);
-                setSkuReviewMessage(`已載入 ${data.report.fileName}，目前顯示 ${data.summary.shown} 筆。`, 'success');
-                return data;
-            })
-            .catch(error => {
-                console.warn('載入 SKU review 失敗:', error);
-                setSkuReviewMessage(error.message || '載入 SKU review 失敗', 'error');
-            });
-    }
-
-    function collectSelectedSkuReviewItems() {
-        if (!skuReviewList) return [];
-        return Array.from(skuReviewList.querySelectorAll('.sku-review-row'))
-            .filter(row => row.querySelector('.sku-review-select')?.checked)
-            .map(row => ({
-                productId: row.dataset.productId || '',
-                specId: row.dataset.specId || '',
-                modelName: row.dataset.modelName || '',
-                skuName: rowSelectedSku(row)
-            }))
-            .filter(item => item.productId && (item.specId || item.modelName) && item.skuName);
-    }
-
-    function collectHighConfidenceItems() {
-        const items = [];
-        (window.skuReviewState.currentGroups || []).forEach(group => {
-            (group.rows || []).forEach(row => {
-                if (row.reviewCategory === 'High confidence' && row.suggestedSkuName) {
-                    items.push({
-                        productId: row.productId,
-                        specId: row.specId,
-                        modelName: row.modelName,
-                        skuName: row.suggestedSkuName
-                    });
-                }
-            });
-        });
-        return items;
-    }
-
-    function applySkuReviewItems(items) {
-        if (!items.length) {
-            setSkuReviewMessage('沒有可套用的 SKU，請先勾選並填入 1688 SKU。', 'error');
-            return Promise.resolve();
-        }
-        setSkuReviewMessage(`寫入 ${items.length} 筆 SKU 對應中...`);
-        return fetch('/api/alibaba/sku-review/apply', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                overwrite: skuReviewOverwriteCheckbox ? skuReviewOverwriteCheckbox.checked : true,
-                items
-            })
-        })
-            .then(r => r.json().then(data => ({ ok: r.ok, data })))
-            .then(({ ok, data }) => {
-                if (!ok || data.status !== 'success') {
-                    throw new Error(data.message || '寫入失敗');
-                }
-                setSkuReviewMessage(`${data.message}${data.backupPath ? `；備份：${data.backupPath}` : ''}`, 'success');
-                return loadSkuReviewReports().then(() => loadSkuReview());
-            })
-            .catch(error => {
-                console.error('寫入 SKU review 失敗:', error);
-                setSkuReviewMessage(error.message || '寫入失敗', 'error');
-            });
     }
 
     // 依序根據 golden_table、規格ID、商品名稱+型號名稱取得阿里巴巴連結
@@ -2506,6 +2120,7 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
+    // 補貨量計算的文件化基準；tests/test_restock_quantity_consistency.py 會直接抽出這段驗證。
     function calculateModelRestock(product, modelData, months) {
         const currentStock = parseInt(modelData.商品庫存, 10) || 0;
         const effectiveRate = getEffectiveMonthlyRate(product, modelData, currentStock);
@@ -2524,269 +2139,6 @@ document.addEventListener('DOMContentLoaded', function() {
         };
     }
 
-    function collectProcurementItems() {
-        const products = window.lastSearchResults || {};
-        const months = parseInt(document.getElementById('inventoryMonth')?.value || '4', 10) || 4;
-        const items = [];
-        Object.entries(products).forEach(([productId, product]) => {
-            if (!Array.isArray(product.型號)) return;
-            const productName = product.商品名稱 || '';
-            const fallbackUrl = String(productId || '') === '16790492139'
-                ? getProductAlibabaFallbackUrl(product, productName)
-                : '';
-            product.型號.forEach(modelData => {
-                const restock = calculateModelRestock(product, modelData, months);
-                if (restock.suggestedQty <= 0) return;
-                const binding = getAlibabaBinding(productId, modelData, productName, modelData.型號名稱 || '');
-                items.push({
-                    productId,
-                    modelId: modelData.規格ID || '',
-                    productName,
-                    modelName: modelData.型號名稱 || '',
-                    monthlySales: restock.monthlySales,
-                    currentStock: restock.currentStock,
-                    targetStock: restock.targetStock,
-                    suggestedQty: restock.suggestedQty,
-                    alibabaProductUrl: binding.alibabaProductUrl || fallbackUrl,
-                    alibabaOfferId: binding.alibabaOfferId,
-                    alibabaSkuId: binding.alibabaSkuId,
-                    alibabaSkuName: binding.alibabaSkuName,
-                    alibabaSkuSecondName: binding.alibabaSkuSecondName
-                });
-            });
-        });
-        return { months, items };
-    }
-
-    function ensureProcurementDraftModal() {
-        let modal = document.getElementById('procurementDraftModal');
-        if (modal) return modal;
-        modal = document.createElement('div');
-        modal.id = 'procurementDraftModal';
-        modal.className = 'alibaba-modal hidden';
-        modal.innerHTML = `
-            <div class="alibaba-modal-backdrop" data-procurement-close="true"></div>
-            <div class="alibaba-modal-panel procurement-modal-panel" role="dialog" aria-modal="true" aria-labelledby="procurementDraftTitle">
-                <div class="alibaba-modal-header">
-                    <h3 id="procurementDraftTitle">1688 補貨草稿</h3>
-                    <button type="button" class="alibaba-modal-close" data-procurement-close="true" aria-label="關閉">×</button>
-                </div>
-                <div id="procurementDraftSummary" class="procurement-summary"></div>
-                <div id="procurementDraftContent" class="procurement-draft-content"></div>
-                <div id="procurementDraftMessage" class="alibaba-edit-message" aria-live="polite"></div>
-                <div class="alibaba-modal-actions">
-                    <button type="button" class="btn-secondary" data-procurement-close="true">取消</button>
-                    <button type="button" class="btn-secondary" id="startAlibabaCartButton">開啟 1688 加採購車</button>
-                    <button type="button" class="btn-primary" id="submitProcurementDraftButton">確認建立 1688 訂單</button>
-                </div>
-            </div>
-        `;
-        document.body.appendChild(modal);
-        modal.addEventListener('click', function(e) {
-            if (e.target.dataset.procurementClose === 'true') {
-                modal.classList.add('hidden');
-            }
-        });
-        modal.querySelector('#startAlibabaCartButton').addEventListener('click', startAlibabaCartFromCurrentDraft);
-        modal.querySelector('#submitProcurementDraftButton').addEventListener('click', submitCurrentProcurementDraft);
-        return modal;
-    }
-
-    function renderProcurementDraft(draft) {
-        const modal = ensureProcurementDraftModal();
-        window.currentProcurementDraft = draft;
-        const summary = modal.querySelector('#procurementDraftSummary');
-        const content = modal.querySelector('#procurementDraftContent');
-        const submitButton = modal.querySelector('#submitProcurementDraftButton');
-        const cartButton = modal.querySelector('#startAlibabaCartButton');
-        const message = modal.querySelector('#procurementDraftMessage');
-        const readyLines = draft.lines.filter(line => line.status === 'ready');
-        const blockedLines = draft.lines.filter(line => line.status !== 'ready');
-        const cartLines = draft.lines.filter(line => {
-            const qty = Number(line.adjusted_qty || line.suggested_qty || 0);
-            return qty > 0 && line.alibaba_product_url;
-        });
-
-        summary.innerHTML = `
-            <div><strong>草稿 #${draft.id}</strong></div>
-            <div>可下單 ${readyLines.length} 項，阻擋 ${blockedLines.length} 項</div>
-            <div>調整後數量 ${draft.total_adjusted_qty}，預估 CNY ${Number(draft.total_amount_cny || 0).toFixed(2)}</div>
-        `;
-
-        content.innerHTML = draft.offer_groups.map(group => `
-            <div class="procurement-offer-group">
-                <div class="procurement-offer-header">offerId: ${group.alibaba_offer_id}</div>
-                ${group.lines.map(line => `
-                    <div class="procurement-line ${line.status !== 'ready' ? 'blocked' : ''}">
-                        <div>
-                            <strong>${line.shopee_product_name}</strong>
-                            <span>${line.shopee_model_name}</span>
-                        </div>
-                        <div>建議 ${line.suggested_qty} → 採購 ${line.adjusted_qty}</div>
-                        <div>MOQ ${line.alibaba_min_order_qty} / 倍數 ${line.alibaba_package_multiple}</div>
-                        <div>${line.alibaba_sku_name || line.alibaba_sku_id || '瀏覽器將用型號名稱匹配'}</div>
-                        <div>${line.alibaba_product_url ? '有 1688 URL' : '缺 1688 URL'}</div>
-                        <div>${line.status === 'ready' ? `CNY ${Number(line.line_amount_cny || 0).toFixed(2)}` : line.blocker_reason}</div>
-                    </div>
-                `).join('')}
-            </div>
-        `).join('');
-
-        if (draft.has_blockers) {
-            message.textContent = '草稿仍有缺少 SKU 綁定或價格待確認的項目，不能送出。';
-            message.className = 'alibaba-edit-message error';
-            submitButton.disabled = true;
-        } else if (!window.alibabaAuth || !window.alibabaAuth.can_create_order) {
-            message.textContent = (window.alibabaAuth && window.alibabaAuth.message) || '1688 API 尚未授權，不能建立訂單。';
-            message.className = 'alibaba-edit-message error';
-            submitButton.disabled = true;
-        } else {
-            message.textContent = '確認後會建立 1688 待付款訂單。';
-            message.className = 'alibaba-edit-message';
-            submitButton.disabled = false;
-        }
-        if (cartButton) {
-            cartButton.disabled = cartLines.length === 0;
-            cartButton.title = cartLines.length > 0
-                ? `開啟 1688 並嘗試加入 ${cartLines.length} 個型號到採購車，不會付款`
-                : '缺少 1688 URL 或補貨數量，不能啟動採購車流程';
-        }
-        modal.classList.remove('hidden');
-    }
-
-    function createProcurementDraft() {
-        if (!window.lastSearchResults) {
-            alert('請先搜尋商品');
-            return;
-        }
-        const { months, items } = collectProcurementItems();
-        if (items.length === 0) {
-            alert('目前沒有需要補貨的型號');
-            return;
-        }
-        createProcurementDraftButton.disabled = true;
-        createProcurementDraftButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 建立中';
-        fetch('/api/procurement/drafts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                months,
-                keyword: document.getElementById('searchInput')?.value || '',
-                items
-            })
-        })
-            .then(async response => {
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.message || '建立草稿失敗');
-                return data;
-            })
-            .then(data => renderProcurementDraft(data.draft))
-            .catch(error => alert(error.message || '建立草稿失敗'))
-            .finally(() => {
-                createProcurementDraftButton.disabled = false;
-                createProcurementDraftButton.innerHTML = '<i class="fas fa-file-invoice"></i> 建立補貨草稿';
-            });
-    }
-
-    function submitCurrentProcurementDraft() {
-        const draft = window.currentProcurementDraft;
-        if (!draft) return;
-        const modal = ensureProcurementDraftModal();
-        const submitButton = modal.querySelector('#submitProcurementDraftButton');
-        const message = modal.querySelector('#procurementDraftMessage');
-        submitButton.disabled = true;
-        message.textContent = '正在送出 1688 建單請求...';
-        message.className = 'alibaba-edit-message';
-        fetch(`/api/procurement/drafts/${draft.id}/submit`, { method: 'POST' })
-            .then(async response => {
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.message || '送出失敗');
-                return data;
-            })
-            .then(data => {
-                message.textContent = `已建立 1688 待付款訂單：${data.order.alibaba_order_id || data.order.id}`;
-                message.className = 'alibaba-edit-message success';
-                loadAlibabaBindings(true).then(rerenderCurrentProducts);
-            })
-            .catch(error => {
-                message.textContent = error.message || '送出失敗';
-                message.className = 'alibaba-edit-message error';
-                submitButton.disabled = false;
-            });
-    }
-
-    function startAlibabaCartFromCurrentDraft() {
-        const draft = window.currentProcurementDraft;
-        if (!draft) return;
-        if (window.restockInProgress) {
-            alert('目前已有補貨流程進行中，請等待完成後再試。');
-            return;
-        }
-
-        window.restockInProgress = true;
-        const modal = ensureProcurementDraftModal();
-        const cartButton = modal.querySelector('#startAlibabaCartButton');
-        const message = modal.querySelector('#procurementDraftMessage');
-        cartButton.disabled = true;
-        message.textContent = '正在啟動 1688 瀏覽器採購車流程...';
-        message.className = 'alibaba-edit-message';
-        showRestockOperationStatus('正在啟動 1688 瀏覽器採購車流程...', 'running', {
-            title: '1688 補貨執行中'
-        });
-        fetch('/api/alibaba-restock', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                draftId: draft.id,
-                addToCart: true,
-                pauseSeconds: 0
-            })
-        })
-            .then(async response => {
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.message || '啟動 1688 採購車流程失敗');
-                return data;
-            })
-            .then(data => {
-                message.textContent = data.message || '已啟動 1688 採購車流程，請檢查開啟的瀏覽器。';
-                message.className = 'alibaba-edit-message success';
-                if (data.jobId) {
-                    showRestockOperationStatus(data.message || '已啟動 1688 採購車流程。', 'running', {
-                        title: '1688 補貨執行中',
-                        completed: 0,
-                        total: data.itemCount || 0
-                    });
-                    monitorAlibabaRestockJob(data.jobId, message);
-                } else {
-                    window.restockInProgress = false;
-                    persistRestockJobId('');
-                    showRestockOperationStatus(data.message || '已啟動，但沒有工作編號可追蹤進度。', 'error', {
-                        title: '無法追蹤 1688 補貨'
-                    });
-                }
-            })
-            .catch(error => {
-                window.restockInProgress = false;
-                persistRestockJobId('');
-                const failedMessage = error.message || '啟動 1688 採購車流程失敗';
-                message.textContent = failedMessage;
-                message.className = 'alibaba-edit-message error';
-                showRestockOperationStatus(failedMessage, 'error', { title: '無法啟動 1688 補貨' });
-                cartButton.disabled = false;
-            });
-    }
-
-    function syncProcurementOrders() {
-        syncProcurementOrdersButton.disabled = true;
-        fetch('/api/procurement/orders/sync', { method: 'POST' })
-            .then(r => r.json())
-            .then(data => alert(data.message || `同步完成，更新 ${data.updated || 0} 筆`))
-            .catch(error => alert(error.message || '同步失敗'))
-            .finally(() => {
-                syncProcurementOrdersButton.disabled = false;
-            });
-    }
-    
     // 整體庫存水位統計計算函數
     function calculateInventoryStatistics(products, advancedKeyword = '', searchOption = 'product') {
         products = applyCurrentWatchlistScope(products);
@@ -3156,26 +2508,6 @@ document.addEventListener('DOMContentLoaded', function() {
         return url;
     }
     
-    // 添加圖片預加載函數
-    function preloadImage(url, callback) {
-        const processedUrl = processShopeeImageUrl(url);
-        
-        if (processedUrl === 'https://via.placeholder.com/60?text=無圖片') {
-            callback(false);
-            return;
-        }
-        
-        const img = new Image();
-        img.onload = function() {
-            callback(true, processedUrl);
-        };
-        img.onerror = function() {
-            console.error('圖片預加載失敗:', processedUrl);
-            callback(false);
-        };
-        img.src = processedUrl;
-    }
-    
     // 顯示商品資料（修改為支持進階搜尋和搜尋選項）
     function displayProducts(products, advancedKeyword = '', searchOption = 'product') {
         const productList = document.getElementById('productList');
@@ -3293,7 +2625,6 @@ document.addEventListener('DOMContentLoaded', function() {
             tableContainer.insertBefore(resultsInfo, tableContainer.firstChild);
         }
         
-        // console.log removed
         
         // 按總月銷量從大到小排序商品
         const sortedProducts = Object.entries(filteredProducts).sort(([, productA], [, productB]) => {
@@ -3302,7 +2633,6 @@ document.addEventListener('DOMContentLoaded', function() {
             return salesB - salesA; // 從大到小排序
         });
         
-        // console.log removed
         
         // 使用文檔片段減少DOM重繪
         const fragment = document.createDocumentFragment();
@@ -3383,17 +2713,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     this.onerror = null; 
                 };
                 
-                // 預加載圖片以確保顯示
-                if (imgSrc !== 'https://via.placeholder.com/60?text=無圖片') {
-                    preloadImage(product.商品圖片網址, function(success, url) {
-                        if (success) {
-                            img.src = url; // 使用預加載成功的URL
-                        } else {
-                            img.src = 'https://via.placeholder.com/60?text=無圖片';
-                        }
-                    });
-                }
-                
                 nameDiv.appendChild(img);
 
                 const nameText = document.createElement('span');
@@ -3458,17 +2777,6 @@ document.addEventListener('DOMContentLoaded', function() {
                                     this.src = 'https://via.placeholder.com/30?text=無圖片'; 
                                     this.onerror = null; 
                                 };
-                                
-                                // 預加載型號圖片以確保顯示
-                                if (modelImgSrc !== 'https://via.placeholder.com/30?text=無圖片') {
-                                    preloadImage(modelData.型號圖片網址, function(success, url) {
-                                        if (success) {
-                                            modelImg.src = url; // 使用預加載成功的URL
-                                        } else {
-                                            modelImg.src = 'https://via.placeholder.com/30?text=無圖片';
-                                        }
-                                    });
-                                }
                                 
                                 // 添加圖片到DOM
                                 modelItem.appendChild(modelImg);
@@ -3790,7 +3098,6 @@ document.addEventListener('DOMContentLoaded', function() {
         // 一次性更新DOM
         if (totalVisibleProducts > 0) {
             productList.appendChild(fragment);
-        // console.log removed
         } else {
             productList.innerHTML = `
                 <tr>
@@ -3802,7 +3109,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     </td>
                 </tr>
             `;
-        // console.log removed
         }
         
         updateBatchRestockToolbar();
@@ -3849,7 +3155,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 添加進階搜尋功能
     function performAdvancedSearch() {
-        // console.log removed
         
         const keyword = advancedSearchInput.value.trim();
         
@@ -3881,7 +3186,6 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 清除進階搜尋功能
     function clearAdvancedSearch() {
-        // console.log removed
         
         // 清空進階搜尋輸入框
         advancedSearchInput.value = '';
@@ -3919,8 +3223,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     });
     
-    // (已移除圓餅圖相關按鈕事件)
-    
     function resetSearchResultState() {
         window.currentAdvancedKeyword = '';
         window.currentSearchOption = 'product';
@@ -3944,7 +3246,6 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         resetSearchResultState();
         window.lastSearchResults = products;
-        window.currentSearchResults = products;
         loadAlibabaLinks();
         return loadAlibabaBindings(true)
             .then(() => preparePersonalWatchlistForResults())
@@ -4004,7 +3305,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
-        // console.log removed
         
         const searchInput = document.getElementById('searchInput');
         if (!searchInput) {
@@ -4024,25 +3324,21 @@ document.addEventListener('DOMContentLoaded', function() {
         const showBrowser = headlessModeElement.checked;
         const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
         
-        // console.log removed
         
         // 移除關鍵字檢查，無論是否有關鍵字都執行以下代碼
         resetSearchResultState();
         
         // 設置爬蟲運行狀態
         window.crawlerRunning = true;
-        // console.log removed
         
         // 顯示載入中
         const loading = document.getElementById('loading');
         if (loading) {
             loading.style.display = 'block';
-        // console.log removed
         }
         
         if (productList) {
             productList.innerHTML = '';
-        // console.log removed
         }
         
         // 開始進度模擬，使用改進的進度模擬函數
@@ -4050,11 +3346,9 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // 發送請求到API，包含顯示瀏覽器參數和庫存月份
         const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&inventoryMonth=${inventoryMonth}`;
-        // console.log removed
         
         fetch(searchUrl)
             .then(response => {
-        // console.log removed
                 return response.json();
             })
             .then(data => {
@@ -4070,8 +3364,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 progressText.textContent = '100%';
                 statusMessage.textContent = '爬取完成！';
                 
-        // console.log removed
-        // console.log removed
                 
                 return applyCrawlerSuccessResults(data);
             })
@@ -4105,65 +3397,6 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 綁定搜尋按鈕點擊事件
     searchButton.addEventListener('click', performSearch);
-    if (createProcurementDraftButton) {
-        createProcurementDraftButton.addEventListener('click', createProcurementDraft);
-    }
-    if (syncProcurementOrdersButton) {
-        syncProcurementOrdersButton.addEventListener('click', syncProcurementOrders);
-    }
-    if (loadSkuReviewButton) {
-        loadSkuReviewButton.addEventListener('click', () => loadSkuReviewReports().then(() => loadSkuReview()));
-    }
-    if (skuReviewReportSelect) {
-        skuReviewReportSelect.addEventListener('change', loadSkuReview);
-    }
-    if (skuReviewFilterSelect) {
-        skuReviewFilterSelect.addEventListener('change', loadSkuReview);
-    }
-    if (applySelectedSkuReviewButton) {
-        applySelectedSkuReviewButton.addEventListener('click', () => {
-            applySkuReviewItems(collectSelectedSkuReviewItems());
-        });
-    }
-    if (applyHighConfidenceButton) {
-        applyHighConfidenceButton.addEventListener('click', () => {
-            const report = skuReviewReportSelect ? (skuReviewReportSelect.value || 'latest') : 'latest';
-            setSkuReviewMessage('讀取 High confidence 清單中...');
-            fetch(`/api/alibaba/sku-review?report=${encodeURIComponent(report)}&filter=high`)
-                .then(r => r.json().then(data => ({ ok: r.ok, data })))
-                .then(({ ok, data }) => {
-                    if (!ok || data.status !== 'success') {
-                        throw new Error(data.message || '載入 High confidence 失敗');
-                    }
-                    const items = [];
-                    (data.groups || []).forEach(group => {
-                        (group.rows || []).forEach(row => {
-                            if (row.suggestedSkuName) {
-                                items.push({
-                                    productId: row.productId,
-                                    specId: row.specId,
-                                    modelName: row.modelName,
-                                    skuName: row.suggestedSkuName
-                                });
-                            }
-                        });
-                    });
-                    if (!items.length) {
-                        setSkuReviewMessage('此 report 沒有 High confidence 項目。', 'error');
-                        return;
-                    }
-                    if (!confirm(`確定要寫入 ${items.length} 筆 High confidence SKU 對應嗎？`)) {
-                        setSkuReviewMessage('已取消套用 High confidence。');
-                        return;
-                    }
-                    return applySkuReviewItems(items);
-                })
-                .catch(error => {
-                    console.error('套用 High confidence 失敗:', error);
-                    setSkuReviewMessage(error.message || '套用 High confidence 失敗', 'error');
-                });
-        });
-    }
     if (cookieImportButton) {
         cookieImportButton.addEventListener('click', importShopeeCookies);
     }
@@ -4191,7 +3424,7 @@ document.addEventListener('DOMContentLoaded', function() {
         personalWatchlistOnlyToggle.addEventListener('change', function() {
             persistPersonalWatchlist(isPersonalWatchlistEnabled());
             updatePersonalWatchlistUi();
-            rerenderCurrentSearchResults();
+            rerenderCurrentProducts();
         });
     }
     ensurePersonalWatchlistExclusions().then(() => {
@@ -4200,7 +3433,7 @@ document.addEventListener('DOMContentLoaded', function() {
             personalWatchlistIds = sanitized.productIds;
             updatePersonalWatchlistUi();
             if (window.lastSearchResults && isPersonalWatchlistEnabled()) {
-                rerenderCurrentSearchResults();
+                rerenderCurrentProducts();
             }
         } else {
             updatePersonalWatchlistUi();
@@ -4210,11 +3443,6 @@ document.addEventListener('DOMContentLoaded', function() {
     });
     loadAlibabaBindings();
     refreshRestockBatchCard();
-    loadSkuReviewReports().then(() => {
-        if (skuReviewReportSelect && skuReviewReportSelect.value) {
-            loadSkuReview();
-        }
-    });
     
     // 綁定輸入框按下Enter鍵事件
     searchInput.addEventListener('keypress', function(e) {
@@ -4223,29 +3451,4 @@ document.addEventListener('DOMContentLoaded', function() {
             performSearch();
         }
     });
-    
-    // 中斷爬蟲功能
-    function stopCrawler() {
-        if (crawlerRunning) {
-            // 顯示中斷中的消息
-            statusMessage.textContent = '正在中斷爬蟲...';
-            
-            // 發送中斷請求
-            fetch('/stop_crawler')
-                .then(response => response.json())
-                .then(data => {
-        // console.log removed
-                    crawlerRunning = false;
-                    loading.style.display = 'none';
-                    alert('爬蟲已中斷');
-                })
-                .catch(error => {
-                    console.error('中斷爬蟲出錯:', error);
-                    alert('中斷爬蟲時出錯');
-                });
-        }
-    }
-    
-    // 重設按鈕相關代碼已移除
-    
 });
