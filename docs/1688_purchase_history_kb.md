@@ -54,7 +54,7 @@ python -m purchase_history_import crawl
 - 預設 **dry-run**；`import` 未帶 `--i-approve-kb-import` 立即非零退出。
 - `--allow-order-ids` 為空 → 拒絕（不隱含「匯入全部歷史」）。
 - live `procurement.db` 在 `PHASE3_HISTORY_IMPORT_ENABLED = False` 時拒絕寫入。
-- `PHASE3_LIVE_CRAWL_ENABLED` 維持 False；Phase 3 必須另開核准與訂單 allowlist，才能對真實訂單清單做 freeze。
+- live crawl 沒有執行路徑；Phase 3 必須另開核准與訂單 allowlist，才能對真實訂單清單做 freeze。
 - 旗標**不隱含** crawl、不隱含改 Golden、不隱含入庫。
 
 ## 禁止事項

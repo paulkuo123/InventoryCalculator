@@ -113,7 +113,7 @@ Know-how 第 2 層（main 已有）
 組成規則（解暫停後也適用）：
 
 1. **Golden 已核准列是最高優先真相。** KB 只能抄到 `kb_mappings`，不可回寫（`docs/1688_purchase_history_kb.md`）。
-2. **種子庫只當第 1 層建議。** `PHASE3_HISTORY_IMPORT_ENABLED`／`PHASE3_LIVE_CRAWL_ENABLED` 維持 false，直到另開核准＋訂單 allowlist。
+2. **種子庫只當第 1 層建議。** `PHASE3_HISTORY_IMPORT_ENABLED` 維持 false，且 live crawl 沒有執行路徑，直到另開核准＋訂單 allowlist。
 3. **Know-how 只排序、說明、評估。** `final_score` 不改綠色條件；綠色 ≠ 可自動寫。
 4. **reverse_audit 不發明欄位。** uncertain 缺 approved／URL／（skuId 與 name/spec 都沒有）就只記。這是補貨安全網，不是 mapping 引擎。
 5. **#41 的 sku_id 必填若要合，是產品決策。** main 路 B 允許 name/spec certain。收緊會讓一批已核准但沒 sku_id 的列（本機約 3800 approved vs 1330 有 sku_id）突然不能補 — 必須庭安點頭，且要遷移計畫，不能藏在 AI-6。

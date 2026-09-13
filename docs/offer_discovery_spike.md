@@ -83,7 +83,7 @@ Know-how Engine 總覽見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_
 | 模組 | 與第 1 層的關係 |
 |---|---|
 | `purchase_history_store.PurchaseHistoryStore` | 隔離 SQLite 的 `kb_orders`／`kb_order_items`／`kb_products`／`kb_skus`／`kb_purchase_history`。`list_purchase_history()`、`get_order()`、`import_order()` 已存在。`db_path=` 可指向隔離檔 |
-| `purchase_history_import` | Phase 2 dry-run／gated stub。`PHASE3_HISTORY_IMPORT_ENABLED = False`、`PHASE3_LIVE_CRAWL_ENABLED = False`。`crawl` 子命令永遠拒絕 |
+| `purchase_history_import` | Phase 2 dry-run／gated stub。`PHASE3_HISTORY_IMPORT_ENABLED = False`。`crawl` 子命令永遠拒絕 |
 | `sku_mapping_service.historical_support()` | **第 2 層**分數：同 offer 其他核准、跨 offer 同名核准。**預設 offer 已知**。可選讀同 DB `kb_mappings`（缺表就忽略） |
 | `ego_browser_page.EgoBrowserPage` | 補貨 task space 的 Playwright-like adapter（`goto`／`evaluate`），不是搜尋 |
 
@@ -134,7 +134,7 @@ Know-how Engine 總覽見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_
 
 - 種子檔只**唯讀** attach（`PurchaseHistoryStore(db_path=...)` 或 sqlite 唯讀 URI）。
 - **不**把 3309 筆灌進 live `procurement.db`。`PHASE3_HISTORY_IMPORT_ENABLED` 維持 `False`。
-- **不**開 `PHASE3_LIVE_CRAWL_ENABLED`，不打 1688 list POST。
+- live crawl 沒有執行路徑，不打 1688 list POST。
 - 建議只進審核 queue，**不**寫 `golden_table.json`。
 - 種子檔與 `_handoff/` 維持 gitignore／本機，CI 用小型 fixture 模擬「歷史 offer 命中」，不要提交 `.db`。
 
