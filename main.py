@@ -109,6 +109,7 @@ from restock_rules import resolve_restock_quantity, validate_restock_sku_count
 from home_bootstrap import load_home_bootstrap
 from restock_batch import (
     STATUS_RUNNING,
+    attach_reverse_audit_if_terminal,
     begin_run,
     build_preview,
     build_report,
@@ -1955,6 +1956,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if not snapshot.get("readyProducts"):
             raise ValueError("目前畫面沒有可執行的補貨型號")
         state = create_state(snapshot)
+        if payload.get("reverseAuditRefreeze"):
+            state["reverseAuditRefreeze"] = True
         launched = launch_restock_batch(state)
         return {
             "status": "success",
@@ -3471,7 +3474,12 @@ class RestockBatchPersister:
         self.directory = Path(directory)
 
     def __call__(self, state):
-        saved = save_state(self.directory, state)
+        saved = attach_reverse_audit_if_terminal(
+            state,
+            self.directory,
+            refreeze=bool(state.get("reverseAuditRefreeze")),
+        )
+        saved = save_state(self.directory, saved)
         if saved.get("status") != STATUS_RUNNING:
             paths = write_reports(self.directory, saved)
             saved["reportPath"] = str(paths["json"])

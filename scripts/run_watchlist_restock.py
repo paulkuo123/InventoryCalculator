@@ -51,7 +51,9 @@ PATH_A_EPILOG = (
     f"加車必須帶 {APPROVE_WATCHLIST_RESTOCK_FLAG} 才會 POST {BATCHES_PATH}。\n"
     "--yes 只跳過「按 Enter」，不代表核准；舊的 --restock / --yes 不能單獨加車。\n"
     "路 B：python -m reverse_audit mutate --i-approve-mutate（本指令不會呼叫）。\n"
-    "任務 1 唯讀摘要：python -m restock_loop scan"
+    "任務 1 唯讀摘要：python -m restock_loop scan\n"
+    "任務 3：批次 completed／completed_with_gaps 後自動 reverse_audit dry-run（sources-only，永不 mutate）。\n"
+    "--refreeze 僅在本機 Chrome CDP 可用時重抓四池；CI／沒開 debugging 時仍走 sources-only，不開 Chrome。"
 )
 
 
@@ -394,6 +396,14 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     )
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=60, help="等待 main.py 啟動的秒數")
+    parser.add_argument(
+        "--refreeze",
+        action="store_true",
+        help=(
+            "批次終態後若本機 Chrome CDP 可用，先重抓四池再 dry-run。"
+            "沒有 CDP 時改走 sources-only（不開 Chrome）。永不 mutate。"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -450,9 +460,13 @@ def start_watchlist_restock_batch(
     root: Path,
     keyword: str,
     months: int,
+    *,
+    reverse_audit_refreeze: bool = False,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Existing Path A engine: build_visible_style_products → POST batches."""
     payload = build_visible_style_products(root, keyword, months)
+    if reverse_audit_refreeze:
+        payload["reverseAuditRefreeze"] = True
     ready = sum(1 for product in payload["products"] if product.get("items"))
     print(f"準備補貨 {ready} 個商品（關鍵字：{keyword or '觀察清單全部'}）", flush=True)
     started = start_batch(base_url, payload)
@@ -469,6 +483,15 @@ def confirm_restock(yes: bool, input_fn: Callable[[str], str] = input) -> bool:
 def print_batch_outcome(batch: Dict[str, Any], port: int) -> None:
     run_id = batch.get("runId") or ""
     print(f"狀態：{batch.get('status')} — {batch.get('message')}", flush=True)
+    reverse_audit = batch.get("reverseAudit") or {}
+    if reverse_audit:
+        print(
+            f"反向查核：{reverse_audit.get('status')} — "
+            f"{reverse_audit.get('consolidatedCsv') or reverse_audit.get('summaryJson') or ''}",
+            flush=True,
+        )
+        if reverse_audit.get("shortfall") or reverse_audit.get("status") == "PAUSED":
+            print("車內不足，不要加車，先看 shortfall", flush=True)
     if run_id:
         print(f"報告：{server_url(port)}/api/alibaba-restock/batches/{run_id}/report.html", flush=True)
         print(f"續跑：python scripts/run_watchlist_restock.py --resume {run_id}", flush=True)
@@ -555,7 +578,8 @@ def run_approved_watchlist_restock(args: argparse.Namespace) -> int:
             print("已取消補貨。", flush=True)
             return EXIT_OK
         started, _payload = start_watchlist_restock_batch(
-            base, ROOT, args.keyword, args.months
+            base, ROOT, args.keyword, args.months,
+            reverse_audit_refreeze=bool(args.refreeze),
         )
         if started.get("status") != "success" or not started.get("runId"):
             print(started.get("message") or "啟動整頁補貨失敗", file=sys.stderr)
