@@ -21,7 +21,7 @@
 
 ### UI
 
-- 入口：`python main.py` 啟動內建 HTTP 伺服器並開啟瀏覽器。
+- 入口：`python main.py` 啟動內建 HTTP 伺服器並開啟瀏覽器。埠 `8080` 已被佔用時會拒絕啟動（不會殺掉佔用行程）。需要檢查版本時請跑 `python version.py`。
 - 前端頁面：
   - `/`（`index.html` + `script.js` + `styles.css`）：庫存儀表板、搜尋、補貨判讀
   - `/ads.html`（`ads.js` / `ads.css`）：廣告匯出與 AI 分析工作台
@@ -328,7 +328,7 @@ python3 telegram_bot.py
 
 如果您希望將程式打包成獨立的執行檔（方便分發給其他電腦使用）：
 
-1. 確保已安裝打包工具：
+1. 確保已安裝依賴（含 PyInstaller）：
 ```bash
 pip install -r requirements.txt
 ```
@@ -337,6 +337,8 @@ pip install -r requirements.txt
 ```bash
 python build.py
 ```
+
+`build.py` 會把現有 Web 靜態頁（`index`／`ads`／`inbound`／`sku-mapping`／`products`／`golden-import` 的 html/js/css）打進執行檔。獨立 PyQt 工具 `calculator.py` 不打進這個 bundle。版本檢查請用 `python version.py`，不會在 `python main.py` 啟動時自動 fetch。
 
 3. 打包完成後，執行檔將位於 `dist/` 資料夾中：
    - 將 `dist/ShopeeCrawler`（或 `ShopeeCrawler.exe`）以及 `cookies.json` 複製到目標電腦即可使用，無需安裝 Python。
