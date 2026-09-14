@@ -556,7 +556,8 @@ class AdsScopeReportTests(unittest.TestCase):
                 },
             }
             analyzer._build_html_report(report)
-            html = open(analyzer.html_output_path, encoding="utf-8").read()
+            with open(analyzer.html_output_path, encoding="utf-8") as handle:
+                html = handle.read()
 
         self.assertIn("AirPods &lt;script&gt;alert(1)&lt;/script&gt; &amp;", html)
         self.assertIn("&quot;case&quot;", html)
