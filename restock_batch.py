@@ -2,6 +2,10 @@
 
 This module does not talk to 1688. It freezes the homepage-visible list,
 decides when to pause, and writes artifacts the homepage can resume from.
+
+Terminal success-ish statuses (`completed` / `completed_with_gaps`) automatically
+run reverse_audit **dry-run only** (sources-only by default; optional CDP
+`--refreeze` when a local browser is already available). Never mutates cart.
 """
 
 from __future__ import annotations
@@ -55,6 +59,19 @@ SKIPPABLE_START_MARKERS = (
     "缺少 1688 第二規格",
     "沒有可啟動",
     "超過兩層規格",
+)
+
+REVERSE_AUDIT_SUBDIR = "reverse_audit"
+SHORTFALL_PAUSE_MESSAGE = "車內不足，不要加車，先看 shortfall"
+LIVE_POOL_FILES = (
+    "live_cart.json",
+    "live_orders_pending_pay.json",
+    "live_orders_pending_ship.json",
+    "live_orders_pending_receive.json",
+)
+DEFAULT_CDP_ENDPOINTS = (
+    "http://127.0.0.1:9223",
+    "http://127.0.0.1:9227",
 )
 
 
@@ -289,6 +306,7 @@ def public_state(state: Dict[str, Any]) -> Dict[str, Any]:
         "gaps": state.get("gaps") or [],
         "reportPath": state.get("reportPath") or "",
         "reportHtmlPath": state.get("reportHtmlPath") or "",
+        "reverseAudit": state.get("reverseAudit") or {},
         "canResume": state.get("status") in RESUMABLE_STATUSES and bool(state.get("remaining")),
     }
 
@@ -625,7 +643,313 @@ def apply_product_outcome(state: Dict[str, Any], product: Dict[str, Any], row: D
     return finalize_status(state)
 
 
-def finalize_status(state: Dict[str, Any]) -> Dict[str, Any]:
+def reverse_audit_dir_for_batch(directory: Path) -> Path:
+    return Path(directory) / REVERSE_AUDIT_SUBDIR
+
+
+def cdp_freeze_available(*, env: Optional[Dict[str, str]] = None, timeout: float = 0.2) -> bool:
+    """TCP probe of Chrome remote-debugging ports. Never launches Chrome or Playwright."""
+    import os
+    import socket
+    from urllib.parse import urlparse
+
+    env_map = env if env is not None else os.environ
+    urls = []
+    override = str(env_map.get("ALIBABA_RESTOCK_CDP") or "").strip()
+    if override:
+        urls.append(override)
+    urls.extend(DEFAULT_CDP_ENDPOINTS)
+    seen = set()
+    for url in urls:
+        parsed = urlparse(url if "://" in url else f"http://{url}")
+        host = parsed.hostname or "127.0.0.1"
+        port = parsed.port or 9222
+        key = (host, port)
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            with socket.create_connection((host, port), timeout=timeout):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def _copy_live_pool_files(source_dir: Path, dest_dir: Path) -> List[str]:
+    import shutil
+
+    copied: List[str] = []
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    for name in LIVE_POOL_FILES + ("snapshot_meta.json",):
+        src = Path(source_dir) / name
+        if not src.exists() or not src.is_file():
+            continue
+        shutil.copy2(src, dest_dir / name)
+        copied.append(name)
+    return copied
+
+
+def live_pools_ready(out_dir: Path) -> bool:
+    for name in LIVE_POOL_FILES:
+        path = Path(out_dir) / name
+        if not path.exists():
+            return False
+        try:
+            blob = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            return False
+        if not isinstance(blob, dict) or not blob.get("complete"):
+            return False
+    return True
+
+
+def _shortfall_from_summary(summary: Dict[str, Any]) -> bool:
+    if summary.get("paused") or str(summary.get("status") or "") == "PAUSED":
+        return True
+    diff = summary.get("diff") if isinstance(summary.get("diff"), dict) else {}
+    try:
+        return int(diff.get("qty_shortfall") or 0) > 0
+    except (TypeError, ValueError):
+        return False
+
+
+def _append_shortfall_message(message: str) -> str:
+    text = str(message or "").strip()
+    if SHORTFALL_PAUSE_MESSAGE in text:
+        return text
+    if text:
+        return f"{text}。{SHORTFALL_PAUSE_MESSAGE}"
+    return SHORTFALL_PAUSE_MESSAGE
+
+
+def _dry_run_kwargs_are_mutate_free(kwargs: Dict[str, Any]) -> None:
+    """Guard: dry-run callers must never look like mutate."""
+    forbidden_needles = (
+        "mutate",
+        "approve",
+        "set_qty",
+        "setqty",
+        "remove",
+        "i-approve",
+        "i_approve",
+    )
+    for key in kwargs:
+        lowered = str(key).lower().replace("-", "_")
+        for needle in forbidden_needles:
+            if needle in lowered:
+                raise RuntimeError(f"refusing to pass mutate-like dry-run kwarg {key!r}")
+
+
+def run_batch_reverse_audit_dry_run(
+    state: Dict[str, Any],
+    directory: Path,
+    *,
+    refreeze: bool = False,
+    sources_root: Optional[Path] = None,
+    live_source_dir: Optional[Path] = None,
+    dry_run_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    freeze_fn: Optional[Callable[..., int]] = None,
+    cdp_available_fn: Optional[Callable[..., bool]] = None,
+) -> Dict[str, Any]:
+    """Offline reverse_audit dry-run after a terminal batch. Never mutates cart.
+
+    Default is sources-only (re-copy repo sources; equivalent of `--sources-only`).
+    `--refreeze` / refreeze=True only runs CDP freeze when a local browser is
+    already listening — CI must not launch Chrome.
+    """
+    from reverse_audit.dry_run import CONSOLIDATED_CSV_NAME, run_dry_run as default_dry_run
+
+    state = dict(state)
+    out_dir = reverse_audit_dir_for_batch(directory)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    want_refreeze = bool(refreeze or state.get("reverseAuditRefreeze"))
+    cdp_fn = cdp_available_fn or cdp_freeze_available
+    cdp_ok = bool(cdp_fn()) if want_refreeze else False
+    used_refreeze = False
+    mode = "sources_only"
+    notes: List[str] = []
+
+    if live_source_dir:
+        copied = _copy_live_pool_files(Path(live_source_dir), out_dir)
+        if copied:
+            notes.append(f"copied live pools from {live_source_dir}")
+
+    if want_refreeze:
+        if cdp_ok:
+            runner = freeze_fn
+            if runner is None:
+                from reverse_audit.freeze import run_freeze as runner
+            freeze_kwargs: Dict[str, Any] = {"sources_only": False}
+            if sources_root is not None:
+                freeze_kwargs["root"] = Path(sources_root)
+            freeze_code = int(runner(out_dir, **freeze_kwargs) or 0)
+            if freeze_code == 0:
+                used_refreeze = True
+                mode = "refreeze"
+                notes.append("CDP freeze completed before dry-run")
+            else:
+                notes.append(f"CDP freeze exited {freeze_code}; falling back to sources-only")
+        else:
+            notes.append("requested --refreeze but CDP unavailable; sources-only（不開 Chrome）")
+
+    summary_json = out_dir / "dry_run_summary.json"
+    csv_name = CONSOLIDATED_CSV_NAME
+    csv_path = out_dir / csv_name
+
+    if not live_pools_ready(out_dir):
+        message = (
+            "缺少完整 live_*.json（sources-only，未開 Chrome）。"
+            "本機已開 Chrome remote debugging 時可用 --refreeze 重抓四池。"
+        )
+        state["reverseAudit"] = {
+            "ran": True,
+            "ok": False,
+            "mode": mode,
+            "status": "SKIPPED_NO_LIVE_POOLS",
+            "paused": False,
+            "shortfall": False,
+            "message": message,
+            "dir": str(out_dir),
+            "summaryJson": str(summary_json),
+            "consolidatedCsv": str(csv_path),
+            "noCartMutate": True,
+            "refreezeRequested": want_refreeze,
+            "refreezeUsed": used_refreeze,
+            "cdpAvailable": cdp_ok,
+            "notes": notes,
+            "diff": {},
+        }
+        return state
+
+    runner_dry = dry_run_fn or default_dry_run
+    dry_kwargs: Dict[str, Any] = {"refreeze_sources": True}
+    if sources_root is not None:
+        dry_kwargs["root"] = Path(sources_root)
+    _dry_run_kwargs_are_mutate_free(dry_kwargs)
+
+    try:
+        summary = runner_dry(out_dir, **dry_kwargs) or {}
+    except SystemExit as exc:
+        err = exc.code if isinstance(exc.code, str) else str(exc)
+        if isinstance(exc.code, int):
+            err = f"dry-run exited {exc.code}"
+        state["reverseAudit"] = {
+            "ran": True,
+            "ok": False,
+            "mode": mode,
+            "status": "ERROR",
+            "paused": False,
+            "shortfall": False,
+            "message": f"反向 dry-run 失敗：{err}",
+            "dir": str(out_dir),
+            "summaryJson": str(summary_json),
+            "consolidatedCsv": str(csv_path),
+            "noCartMutate": True,
+            "refreezeRequested": want_refreeze,
+            "refreezeUsed": used_refreeze,
+            "cdpAvailable": cdp_ok,
+            "notes": notes,
+            "diff": {},
+        }
+        return state
+    except (OSError, FileNotFoundError, ValueError, json.JSONDecodeError) as exc:
+        state["reverseAudit"] = {
+            "ran": True,
+            "ok": False,
+            "mode": mode,
+            "status": "ERROR",
+            "paused": False,
+            "shortfall": False,
+            "message": f"反向 dry-run 失敗：{exc}",
+            "dir": str(out_dir),
+            "summaryJson": str(summary_json),
+            "consolidatedCsv": str(csv_path),
+            "noCartMutate": True,
+            "refreezeRequested": want_refreeze,
+            "refreezeUsed": used_refreeze,
+            "cdpAvailable": cdp_ok,
+            "notes": notes,
+            "diff": {},
+        }
+        return state
+
+    outputs = summary.get("outputs") if isinstance(summary.get("outputs"), dict) else {}
+    csv_path = Path(
+        outputs.get(csv_name)
+        or outputs.get("primary_human_csv")
+        or csv_path
+    )
+    summary_json = Path(outputs.get("dry_run_summary.json") or summary_json)
+    shortfall = _shortfall_from_summary(summary)
+    dry_status = str(summary.get("status") or ("PAUSED" if shortfall else "READY_FOR_APPROVAL"))
+    ra_message = str(summary.get("pauseReason") or "")
+    if shortfall:
+        ra_message = _append_shortfall_message(ra_message)
+        state["message"] = _append_shortfall_message(state.get("message") or "")
+
+    state["reverseAudit"] = {
+        "ran": True,
+        "ok": True,
+        "mode": mode,
+        "status": dry_status,
+        "paused": bool(summary.get("paused") or shortfall),
+        "shortfall": shortfall,
+        "message": ra_message,
+        "dir": str(out_dir),
+        "summaryJson": str(summary_json),
+        "consolidatedCsv": str(csv_path),
+        "noCartMutate": True,
+        "refreezeRequested": want_refreeze,
+        "refreezeUsed": used_refreeze,
+        "cdpAvailable": cdp_ok,
+        "notes": notes,
+        "diff": summary.get("diff") or {},
+    }
+    return state
+
+
+def attach_reverse_audit_if_terminal(
+    state: Dict[str, Any],
+    directory: Optional[Path],
+    *,
+    refreeze: bool = False,
+    sources_root: Optional[Path] = None,
+    live_source_dir: Optional[Path] = None,
+    dry_run_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    freeze_fn: Optional[Callable[..., int]] = None,
+    cdp_available_fn: Optional[Callable[..., bool]] = None,
+) -> Dict[str, Any]:
+    if directory is None:
+        return state
+    if state.get("status") not in TERMINAL_STATUSES:
+        return state
+    existing = state.get("reverseAudit")
+    if isinstance(existing, dict) and existing.get("ran"):
+        return state
+    return run_batch_reverse_audit_dry_run(
+        state,
+        Path(directory),
+        refreeze=refreeze,
+        sources_root=sources_root,
+        live_source_dir=live_source_dir,
+        dry_run_fn=dry_run_fn,
+        freeze_fn=freeze_fn,
+        cdp_available_fn=cdp_available_fn,
+    )
+
+
+def finalize_status(
+    state: Dict[str, Any],
+    *,
+    reverse_audit_dir: Optional[Path] = None,
+    sources_root: Optional[Path] = None,
+    live_source_dir: Optional[Path] = None,
+    refreeze: bool = False,
+    dry_run_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    freeze_fn: Optional[Callable[..., int]] = None,
+    cdp_available_fn: Optional[Callable[..., bool]] = None,
+) -> Dict[str, Any]:
     state = dict(state)
     if state.get("remaining"):
         return state
@@ -643,7 +967,16 @@ def finalize_status(state: Dict[str, Any]) -> Dict[str, Any]:
         state["status"] = STATUS_COMPLETED
         state["message"] = "整頁補貨已完成"
     state["stoppedReason"] = ""
-    return state
+    return attach_reverse_audit_if_terminal(
+        state,
+        reverse_audit_dir,
+        refreeze=refreeze,
+        sources_root=sources_root,
+        live_source_dir=live_source_dir,
+        dry_run_fn=dry_run_fn,
+        freeze_fn=freeze_fn,
+        cdp_available_fn=cdp_available_fn,
+    )
 
 
 def mark_running_product(state: Dict[str, Any], product: Dict[str, Any], job_id: str = "") -> Dict[str, Any]:
@@ -795,16 +1128,43 @@ def run_batch_loop(
     sleep_fn: Callable[[float], None] = time.sleep,
     timeout_seconds: int = 900,
     should_stop: Optional[Callable[[], bool]] = None,
+    reverse_audit_dir: Optional[Path] = None,
+    sources_root: Optional[Path] = None,
+    live_source_dir: Optional[Path] = None,
+    refreeze: bool = False,
+    dry_run_fn: Optional[Callable[..., Dict[str, Any]]] = None,
+    freeze_fn: Optional[Callable[..., int]] = None,
+    cdp_available_fn: Optional[Callable[..., bool]] = None,
 ) -> Dict[str, Any]:
+    directory = reverse_audit_dir or getattr(persist_fn, "directory", None)
+    want_refreeze = bool(refreeze or state.get("reverseAuditRefreeze"))
+    original_persist = persist_fn
+
+    def persist(next_state: Dict[str, Any]) -> Dict[str, Any]:
+        if next_state.get("status") in TERMINAL_STATUSES:
+            next_state = attach_reverse_audit_if_terminal(
+                next_state,
+                directory,
+                refreeze=bool(want_refreeze or next_state.get("reverseAuditRefreeze")),
+                sources_root=sources_root,
+                live_source_dir=live_source_dir,
+                dry_run_fn=dry_run_fn,
+                freeze_fn=freeze_fn,
+                cdp_available_fn=cdp_available_fn,
+            )
+        original_persist(next_state)
+        return next_state
+
+    persist.write_artifacts = getattr(original_persist, "write_artifacts", None)
+    persist_fn = persist
     state = begin_run(state)
-    persist_fn(state)
+    state = persist_fn(state)
     while state.get("remaining"):
         if should_stop and should_stop():
             state = dict(state)
             state["status"] = STATUS_NEEDS_RECONCILE
             state["message"] = "批次已被停止，請核對採購車後再繼續"
-            persist_fn(state)
-            return state
+            return persist_fn(state)
         product = state["remaining"][0]
         next_count = len(product_items(product))
         safe_limit = cart_safe_limit_of(state.get("cart"))
@@ -816,11 +1176,10 @@ def run_batch_loop(
                 f"目前採購車約 {(state.get('cart') or {}).get('skuCount')} 個型號，"
                 f"下一商品還有 {next_count} 個，超過安全線 {safe_limit}，已暫停"
             )
-            persist_fn(state)
-            return state
+            return persist_fn(state)
 
         state = mark_running_product(state, product)
-        persist_fn(state)
+        state = persist_fn(state)
         started: Dict[str, Any] = {}
         for attempt in range(1, 4):
             started = start_fn(product) or {}
@@ -839,7 +1198,7 @@ def run_batch_loop(
                 state, product = apply_start_skips(state, product, skipped)
                 row = skipped_product_row(product, {**started, "skipped": skipped})
                 state = apply_product_outcome(state, product, row, {})
-                persist_fn(state)
+                state = persist_fn(state)
                 if state.get("status") != STATUS_RUNNING:
                     return state
                 continue
@@ -849,16 +1208,15 @@ def run_batch_loop(
             state["currentProductId"] = None
             state["currentJobId"] = None
             state["message"] = started.get("message") or "啟動補貨失敗，此商品尚未加車"
-            persist_fn(state)
-            return state
+            return persist_fn(state)
 
         skipped_lines = [item for item in (started.get("skipped") or []) if isinstance(item, dict)]
         if skipped_lines:
             state, product = apply_start_skips(state, product, skipped_lines)
-            persist_fn(state)
+            state = persist_fn(state)
 
         state = mark_running_product(state, product, str(started["jobId"]))
-        persist_fn(state)
+        state = persist_fn(state)
         job = wait_for_job(read_fn, str(started["jobId"]), timeout_seconds=timeout_seconds, sleep_fn=sleep_fn)
         result = job.get("result") if isinstance(job.get("result"), dict) else {}
         row = summarize_product_row(product, started, job)
@@ -866,12 +1224,20 @@ def run_batch_loop(
         if callable(persist_fn_artifacts):
             persist_fn_artifacts(product, job, row, result)
         state = apply_product_outcome(state, product, row, result or job)
-        persist_fn(state)
+        state = persist_fn(state)
         if state.get("status") != STATUS_RUNNING:
             return state
-    state = finalize_status(state)
-    persist_fn(state)
-    return state
+    state = finalize_status(
+        state,
+        reverse_audit_dir=directory,
+        sources_root=sources_root,
+        live_source_dir=live_source_dir,
+        refreeze=want_refreeze,
+        dry_run_fn=dry_run_fn,
+        freeze_fn=freeze_fn,
+        cdp_available_fn=cdp_available_fn,
+    )
+    return persist_fn(state)
 
 
 def extract_failure_records(product: Dict[str, Any], row: Dict[str, Any], result: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
@@ -1134,6 +1500,7 @@ def build_report(state: Dict[str, Any]) -> Dict[str, Any]:
         "gaps": state.get("gaps") or [],
         "failures": failures,
         "skus": skus,
+        "reverseAudit": state.get("reverseAudit") or {},
     }
 
 
@@ -1180,6 +1547,7 @@ def render_report_html(report: Dict[str, Any]) -> str:
         f"<li><code>{cell(item.get('productId'))}</code> {cell(item.get('productName'))}（{cell(item.get('itemCount'))} 個型號）</li>"
         for item in remaining
     ) or "<li>無</li>"
+    reverse_audit_html = _render_reverse_audit_html(report.get("reverseAudit") or {}, cell)
     return f"""<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
@@ -1210,8 +1578,34 @@ def render_report_html(report: Dict[str, Any]) -> str:
   </table>
   <h2>尚未執行</h2>
   <ul>{remaining_html}</ul>
+  {reverse_audit_html}
 </body>
 </html>
+"""
+
+
+def _render_reverse_audit_html(reverse_audit: Dict[str, Any], cell: Callable[[Any], str]) -> str:
+    if not reverse_audit:
+        return (
+            "<h2>反向查核 dry-run（不加車）</h2>"
+            "<p>尚未執行。批次進入 completed／completed_with_gaps 後會自動跑 sources-only dry-run。</p>"
+        )
+    status = cell(reverse_audit.get("status"))
+    summary_path = cell(reverse_audit.get("summaryJson"))
+    csv_path = cell(reverse_audit.get("consolidatedCsv"))
+    message = cell(reverse_audit.get("message"))
+    shortfall = bool(reverse_audit.get("shortfall") or reverse_audit.get("paused") or reverse_audit.get("status") == "PAUSED")
+    warn = (
+        f"<p><strong>{html.escape(SHORTFALL_PAUSE_MESSAGE)}</strong></p>"
+        if shortfall
+        else ""
+    )
+    return f"""  <h2>反向查核 dry-run（不加車）</h2>
+  <p>狀態 <code>{status}</code>　模式 {cell(reverse_audit.get("mode"))}　永不 mutate</p>
+  {warn}
+  <p>{message}</p>
+  <p><code>dry_run_summary.json</code>：<code>{summary_path}</code></p>
+  <p>補貨比對結果.csv：<code>{csv_path}</code></p>
 """
 
 

@@ -145,6 +145,7 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
   - `scripts/mutate_remove_cdp.py`（刪除）
 - 需本機已登入的 Chrome remote debugging；freeze／mutate **不會**清除購物車或結束 Chrome
 - 勿把 cookies、chrome profile、live dump 提交進 git
+- 路 A 批次進入 `completed`／`completed_with_gaps` 後會自動跑 **dry-run only**（預設 sources-only，重拷來源）。`status=PAUSED` 時批次訊息寫「車內不足，不要加車，先看 shortfall」。本機有 Chrome CDP 才可用 launcher `--refreeze`；**不**呼叫 mutate。
 
 ## 相關文件
 

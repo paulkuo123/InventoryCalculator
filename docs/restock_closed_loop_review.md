@@ -98,11 +98,11 @@
 | 工具 | 做得到 | 做不到 |
 |---|---|---|
 | `alibaba_restocker` 增量驗證 | 這次送出的 SKU，車內增量 ≥ 預期才算確認 | 不管整車該有什麼；不管訂單三池；不管非預期列 |
-| `restock_batch` 報告 | `completed`／`completed_with_gaps`、gaps、分類 | 不會呼叫 `reverse_audit` |
-| `python -m reverse_audit dry-run` | 應補 vs 車＋三池；主檔 `補貨比對結果.csv` | 補貨批次結束後**不會自動跑**；每次要看最新必須 `refresh` 重抓四池 |
+| `restock_batch` 報告 | `completed`／`completed_with_gaps` 後自動 `reverse_audit` **dry-run only**（預設 sources-only）；`report.html` 掛 `dry_run_summary.json` 與 `補貨比對結果.csv` | 不 mutate；沒有 live 四池時略過 dry-run；`--refreeze` 才用本機 CDP 重抓 |
+| `python -m reverse_audit dry-run` | 應補 vs 車＋三池；主檔 `補貨比對結果.csv` | 路 B mutate 仍須人工旗標；批次路徑不會代跑 mutate |
 | `scripts/reconcile_cart.py` | 離線、書包截止、絕對設量契約 | 不連瀏覽器；與 `restock_batches/` **分開**；文件寫明不可用 `init` 重跑舊人工日誌 |
 
-**缺口：** 沒有「批次完成 → 自動 refresh／dry-run → 把不一致掛回同一份報告」。超量在 dry-run **只列不改**；要改量必須另下 `--i-approve-set-qty`。增量驗證過關，整車仍可能短少或有非預期列。
+**缺口：** 超量在 dry-run **只列不改**；要改量必須另下 `--i-approve-set-qty`。增量驗證過關，整車仍可能短少或有非預期列。批次終態已會自動掛 dry-run（任務 3）；要最新車況請本機 `--refreeze`（要 CDP），不要在 CI 開 Chrome。
 
 ## 4. 已能用／半成品／缺
 
@@ -114,6 +114,7 @@
 - 正向整頁加車（路 A）：`scripts/run_watchlist_restock.py --i-approve-watchlist-restock`、首頁預覽、`restock_batch` 可續跑。`--yes` 只跳過 Enter；沒有核准旗標不會 POST。不是 `reverse_audit mutate`。
 - 加車增量驗證與車滿暫停：`alibaba_restocker.restock_count_check`、`VERIFY_CART_COUNTS=True`。
 - 反向四池對帳：`python -m reverse_audit refresh` → 整合表＋機器 CSV。
+- 批次終態自動 dry-run（任務 3）：`completed`／`completed_with_gaps` 後跑 `reverse_audit.dry_run.run_dry_run`（sources-only；`--refreeze` 僅本機 CDP）。`PAUSED` 時寫「車內不足，不要加車，先看 shortfall」。不 mutate。
 - 核准後改車：加車／設量／刪除，缺旗標立即拒絕。
 - 不猜 URL／skuId：uncertain／skip 不進 mutate 加車。
 
@@ -122,7 +123,7 @@
 - 首頁儀表板低水位（1.5 月危急）— 要先搜尋或匯入，月數用下拉，不是 3／4 店規。
 - Telegram 庫存報告 — 拉式，月數單一，沒有「要就補」閘門。
 - launcher 的 Enter／`--yes` — `--yes` 只跳過本機「按 Enter」；加車仍須 `--i-approve-watchlist-restock`。不是遠端提醒，也不等於 mutate 核准。
-- 路 A 增量驗證 vs 路 B 四池對帳 — 兩套證據，沒串起來。
+- 路 A 增量驗證 vs 路 B 四池對帳 — 兩套證據；任務 3 在批次終態把路 B **dry-run** 掛回同一份 `report.html`，仍不自動 mutate。
 - `cart-reconciliation` 書包截止 vs `reverse_audit`「不理正向書包 cutoff」— 範圍契約不同，不能混報「已核完全車」。
 - mapping 阻擋：launcher 把未核准列算 blocker；`SkuMappingService._scope_models` 沒有 URL 的型號直接 `continue`，不會進掃描。
 
@@ -131,7 +132,6 @@
 - 任何週期排程（誰在哪台機器、多久跑一次 `main.py`／爬蟲）。
 - 低水位**推播**＋「要／不要」狀態（Telegram 或 UI）。
 - 一句「要」就啟動 **watchlist 全集** 補貨（且只補 certain）。
-- 批次結束後自動 `reverse_audit refresh` 並把差異掛回同一 run。
 - 首頁自動載入 repo watchlist（現在故意不 bootstrap）。
 - 首頁／Telegram／爬蟲與 `restock_rules` 月數對齊。
 - 1688 正式下單／付款（Open Platform 未接入；本閉環也不應做到付款）。
@@ -235,6 +235,8 @@
 **為何第二：** 對應「說要才補」，但不發明新加車引擎。
 
 ### 任務 3 — 批次終態後自動跑反向 dry-run（仍不 mutate）
+
+**狀態：** 已實作（本任務）。
 
 **做：** `restock_batch.finalize_status` 進入 `completed`／`completed_with_gaps` 後，呼叫 `reverse_audit.dry_run.run_dry_run`（預設 `--sources-only` 重拷來源；本機有 CDP 再允許 `--refreeze`）。把 `dry_run_summary.json` 狀態與 `補貨比對結果.csv` 路徑寫進批次 `report.html`。`status=PAUSED` 時批次訊息明確寫「車內不足，不要加車，先看 shortfall」。
 

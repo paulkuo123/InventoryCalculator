@@ -1,10 +1,13 @@
 import json
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from restock_batch import (
     CART_SAFE_LIMIT,
+    SHORTFALL_PAUSE_MESSAGE,
     STATUS_COMPLETED,
     STATUS_COMPLETED_GAPS,
     STATUS_NEEDS_RECONCILE,
@@ -12,6 +15,7 @@ from restock_batch import (
     STATUS_PAUSED_CART,
     STATUS_RUNNING,
     apply_product_outcome,
+    attach_reverse_audit_if_terminal,
     begin_run,
     build_preview,
     build_report,
@@ -19,6 +23,7 @@ from restock_batch import (
     create_state,
     extract_failure_records,
     find_current_batch,
+    finalize_status,
     is_skippable_start_failure,
     leftover_items,
     load_state,
@@ -27,6 +32,7 @@ from restock_batch import (
     resume_state,
     run_batch_loop,
     render_report_html,
+    reverse_audit_dir_for_batch,
     save_state,
     should_retry_start,
     tally_sku_buckets,
@@ -612,6 +618,301 @@ class RestockBatchTests(unittest.TestCase):
             )
             resumed = resume_state(loaded)
             self.assertEqual([p["productId"] for p in resumed["remaining"]], ["2"])
+
+
+ROOT = Path(__file__).resolve().parents[1]
+REVERSE_AUDIT_FIX = ROOT / "tests" / "fixtures" / "reverse_audit"
+
+
+def _stage_sources_root(tmpdir: Path) -> Path:
+    root = Path(tmpdir) / "srcroot"
+    watch = root / "watchlists"
+    watch.mkdir(parents=True)
+    src = REVERSE_AUDIT_FIX / "sources"
+    shutil.copy(src / "shopee_products.json", root / "shopee_products.json")
+    shutil.copy(src / "golden_table.json", root / "golden_table.json")
+    shutil.copy(src / "personal_watchlist.json", watch / "personal_watchlist.json")
+    shutil.copy(
+        src / "personal_watchlist_exclusions.json",
+        watch / "personal_watchlist_exclusions.json",
+    )
+    return root
+
+
+def _recording_dry_run(calls, *, status="READY_FOR_APPROVAL", paused=False, shortfall=0):
+    def dry_run(out_dir, **kwargs):
+        from reverse_audit.dry_run import CONSOLIDATED_CSV_NAME
+
+        out = Path(out_dir)
+        out.mkdir(parents=True, exist_ok=True)
+        csv_path = out / CONSOLIDATED_CSV_NAME
+        summary_path = out / "dry_run_summary.json"
+        summary = {
+            "status": status,
+            "paused": paused,
+            "diff": {"qty_shortfall": shortfall},
+            "outputs": {
+                "dry_run_summary.json": str(summary_path),
+                CONSOLIDATED_CSV_NAME: str(csv_path),
+                "primary_human_csv": str(csv_path),
+            },
+            "noCartMutate": True,
+        }
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+        csv_path.write_text("類型\n車裡數量不足\n", encoding="utf-8-sig")
+        calls.append({"out_dir": out, "kwargs": dict(kwargs)})
+        return summary
+
+    return dry_run
+
+
+class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
+    def _terminal_state(self, run_id="run-dry"):
+        snapshot = build_preview([product("1", "A", [item("黑")])])
+        state = create_state(snapshot, run_id=run_id)
+        state["remaining"] = []
+        state["done"] = [{
+            "productId": "1",
+            "productName": "A",
+            "classification": "ok",
+            "confirmed": 1,
+        }]
+        return state
+
+    def test_finalize_completed_writes_dry_run_artifacts_sources_only(self):
+        calls = []
+        freeze_calls = []
+
+        def freeze(_out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-dry"
+            live_dir = REVERSE_AUDIT_FIX
+            state = finalize_status(
+                self._terminal_state(),
+                reverse_audit_dir=batch_dir,
+                live_source_dir=live_dir,
+                sources_root=_stage_sources_root(temp_dir),
+                dry_run_fn=_recording_dry_run(calls),
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: False,
+            )
+            out = reverse_audit_dir_for_batch(batch_dir)
+            self.assertEqual(state["status"], STATUS_COMPLETED)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(freeze_calls, [])
+            self.assertTrue(calls[0]["kwargs"].get("refreeze_sources"))
+            self.assertTrue((out / "dry_run_summary.json").exists())
+            self.assertTrue((out / "補貨比對結果.csv").exists())
+            self.assertEqual(state["reverseAudit"]["status"], "READY_FOR_APPROVAL")
+            self.assertEqual(state["reverseAudit"]["mode"], "sources_only")
+            self.assertTrue(state["reverseAudit"]["noCartMutate"])
+            report = build_report(state)
+            html_text = render_report_html(report)
+            self.assertIn("dry_run_summary.json", html_text)
+            self.assertIn("補貨比對結果.csv", html_text)
+            self.assertIn(str(out / "dry_run_summary.json"), html_text)
+            self.assertNotIn(SHORTFALL_PAUSE_MESSAGE, html_text)
+
+    def test_finalize_shortfall_paused_message(self):
+        calls = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-short"
+            state = finalize_status(
+                self._terminal_state("run-short"),
+                reverse_audit_dir=batch_dir,
+                live_source_dir=REVERSE_AUDIT_FIX,
+                dry_run_fn=_recording_dry_run(
+                    calls, status="PAUSED", paused=True, shortfall=2
+                ),
+                freeze_fn=lambda *_a, **_k: 0,
+                cdp_available_fn=lambda: False,
+            )
+            self.assertIn(SHORTFALL_PAUSE_MESSAGE, state["message"])
+            self.assertTrue(state["reverseAudit"]["shortfall"])
+            html_text = render_report_html(build_report(state))
+            self.assertIn(SHORTFALL_PAUSE_MESSAGE, html_text)
+            self.assertIn("PAUSED", html_text)
+
+    def test_finalize_does_not_invoke_mutate(self):
+        dry_calls = []
+        freeze_calls = []
+
+        def freeze(_out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-nomut"
+            with mock.patch("reverse_audit.mutate.run_mutate_actions") as mutate:
+                state = finalize_status(
+                    self._terminal_state("run-nomut"),
+                    reverse_audit_dir=batch_dir,
+                    live_source_dir=REVERSE_AUDIT_FIX,
+                    dry_run_fn=_recording_dry_run(dry_calls),
+                    freeze_fn=freeze,
+                    cdp_available_fn=lambda: True,
+                )
+            mutate.assert_not_called()
+        self.assertEqual(freeze_calls, [])
+        kwargs = dry_calls[0]["kwargs"]
+        self.assertTrue(kwargs.get("refreeze_sources"))
+        joined = " ".join(f"{k}={v}" for k, v in kwargs.items())
+        for banned in (
+            "--i-approve-mutate",
+            "--i-approve-set-qty",
+            "--i-approve-remove",
+            "approve_add",
+            "approve_set_qty",
+            "approve_remove",
+        ):
+            self.assertNotIn(banned, joined)
+        self.assertTrue(state["reverseAudit"]["noCartMutate"])
+
+    def test_refreeze_without_cdp_stays_sources_only(self):
+        freeze_calls = []
+
+        def freeze(_out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            finalize_status(
+                self._terminal_state("run-no-cdp"),
+                reverse_audit_dir=Path(temp_dir) / "run-no-cdp",
+                live_source_dir=REVERSE_AUDIT_FIX,
+                refreeze=True,
+                dry_run_fn=_recording_dry_run([]),
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: False,
+            )
+        self.assertEqual(freeze_calls, [])
+
+    def test_refreeze_with_cdp_calls_freeze_not_sources_only(self):
+        freeze_calls = []
+
+        def freeze(_out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = finalize_status(
+                self._terminal_state("run-cdp"),
+                reverse_audit_dir=Path(temp_dir) / "run-cdp",
+                live_source_dir=REVERSE_AUDIT_FIX,
+                refreeze=True,
+                dry_run_fn=_recording_dry_run([]),
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: True,
+            )
+        self.assertEqual(len(freeze_calls), 1)
+        self.assertFalse(freeze_calls[0].get("sources_only", True))
+        self.assertEqual(state["reverseAudit"]["mode"], "refreeze")
+        self.assertTrue(state["reverseAudit"]["refreezeUsed"])
+
+    def test_paused_attention_does_not_run_dry_run(self):
+        calls = []
+        snapshot = build_preview([product("1", "A", [item("黑")]), product("2", "B", [item("白")])])
+        state = create_state(snapshot, run_id="run-pause")
+        state = apply_product_outcome(state, snapshot["readyProducts"][0], {
+            "productId": "1",
+            "classification": "uncertain",
+            "message": "無法確認",
+        }, {"cartVerification": {"reason": "cart_unreadable"}})
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = attach_reverse_audit_if_terminal(
+                state,
+                Path(temp_dir) / "run-pause",
+                dry_run_fn=_recording_dry_run(calls),
+            )
+        self.assertEqual(state["status"], STATUS_PAUSED_ATTENTION)
+        self.assertEqual(calls, [])
+        self.assertFalse(state.get("reverseAudit"))
+
+    def test_batch_loop_terminal_runs_real_dry_run_fixture(self):
+        snapshot = build_preview([
+            product("1", "A", [item("黑")], gaps=[{"modelName": "停售", "reason": "已停售"}]),
+        ])
+        state = create_state(snapshot, run_id="run-real-dry")
+
+        def start_fn(_product_row):
+            return {"status": "success", "jobId": "job-1"}
+
+        def read_fn(_job_id):
+            return {
+                "status": "completed",
+                "result": {
+                    "status": "success",
+                    "countCheck": {"expected": 1, "confirmed": 1, "mismatch": False},
+                    "cartVerification": {"ok": True, "lineCount": 10, "foundCount": 1, "missingCount": 0},
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-real-dry"
+            sources_root = _stage_sources_root(temp_dir)
+            with mock.patch("reverse_audit.mutate.run_mutate_actions") as mutate:
+                result = run_batch_loop(
+                    state,
+                    start_fn,
+                    read_fn,
+                    lambda _state: None,
+                    sleep_fn=lambda _: None,
+                    reverse_audit_dir=batch_dir,
+                    sources_root=sources_root,
+                    live_source_dir=REVERSE_AUDIT_FIX,
+                    freeze_fn=lambda *_a, **_k: (_ for _ in ()).throw(
+                        AssertionError("sources-only must not freeze via CDP")
+                    ),
+                    cdp_available_fn=lambda: False,
+                )
+            mutate.assert_not_called()
+            out = reverse_audit_dir_for_batch(batch_dir)
+            self.assertEqual(result["status"], STATUS_COMPLETED_GAPS)
+            self.assertTrue((out / "dry_run_summary.json").exists())
+            self.assertTrue((out / "補貨比對結果.csv").exists())
+            summary = json.loads((out / "dry_run_summary.json").read_text(encoding="utf-8"))
+            self.assertIn(summary["status"], {"READY_FOR_APPROVAL", "PAUSED"})
+            self.assertTrue(result["reverseAudit"]["ran"])
+            self.assertTrue(result["reverseAudit"]["noCartMutate"])
+            html_text = render_report_html(build_report(result))
+            self.assertIn("dry_run_summary.json", html_text)
+            self.assertIn("補貨比對結果.csv", html_text)
+            if summary["status"] == "PAUSED":
+                self.assertIn(SHORTFALL_PAUSE_MESSAGE, result["message"])
+                self.assertIn(SHORTFALL_PAUSE_MESSAGE, html_text)
+
+    def test_real_dry_run_shortfall_fixture_sets_batch_message(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-real-short"
+            live_dir = Path(temp_dir) / "live"
+            live_dir.mkdir()
+            for name in (
+                "live_cart.json",
+                "live_orders_pending_pay.json",
+                "live_orders_pending_ship.json",
+                "live_orders_pending_receive.json",
+                "snapshot_meta.json",
+            ):
+                src = REVERSE_AUDIT_FIX / name
+                if src.exists():
+                    shutil.copy(src, live_dir / name)
+            shutil.copy(REVERSE_AUDIT_FIX / "shortfall_cart.json", live_dir / "live_cart.json")
+            with mock.patch("reverse_audit.mutate.run_mutate_actions") as mutate:
+                state = finalize_status(
+                    self._terminal_state("run-real-short"),
+                    reverse_audit_dir=batch_dir,
+                    sources_root=_stage_sources_root(temp_dir),
+                    live_source_dir=live_dir,
+                    freeze_fn=lambda *_a, **_k: 0,
+                    cdp_available_fn=lambda: False,
+                )
+            mutate.assert_not_called()
+            self.assertEqual(state["reverseAudit"]["status"], "PAUSED")
+            self.assertIn(SHORTFALL_PAUSE_MESSAGE, state["message"])
+            self.assertTrue((reverse_audit_dir_for_batch(batch_dir) / "qty_shortfall.csv").exists())
 
 
 if __name__ == "__main__":

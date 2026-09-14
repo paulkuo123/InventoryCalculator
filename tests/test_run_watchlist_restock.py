@@ -332,6 +332,8 @@ class WatchlistRestockApproveGateTests(unittest.TestCase):
         self.assertIn("不代表核准", help_text)
         self.assertIn(BATCHES_PATH, help_text)
         self.assertIn("restock_loop scan", help_text)
+        self.assertIn("--refreeze", help_text)
+        self.assertIn("不開 Chrome", help_text)
 
     def test_without_flag_restock_yes_prints_scan_and_does_not_post(self):
         calls, fake_request_json = self._posts()
@@ -399,6 +401,24 @@ class WatchlistRestockApproveGateTests(unittest.TestCase):
         self.assertTrue(any(product.get("items") for product in payload["products"]))
         self.assertIn("準備補貨", stdout)
         self.assertNotIn("尚未加車", stdout)
+
+    def test_refreeze_flag_is_sent_on_batch_payload(self):
+        calls, fake_request_json = self._posts()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            code, _stdout = self._run_main(
+                [APPROVE_WATCHLIST_RESTOCK_FLAG, "--yes", "--refreeze"],
+                root,
+                fake_request_json,
+            )
+        self.assertEqual(code, 0)
+        batch_posts = [
+            call
+            for call in calls
+            if call["method"] == "POST" and str(call["url"]).rstrip("/").endswith(BATCHES_PATH)
+        ]
+        self.assertEqual(len(batch_posts), 1, calls)
+        self.assertTrue(batch_posts[0]["payload"].get("reverseAuditRefreeze"))
 
     def test_approve_flag_without_yes_still_requires_enter(self):
         calls, fake_request_json = self._posts()
