@@ -71,6 +71,7 @@ class GoldenImportTest(unittest.TestCase):
         self.assertEqual(len(models), 2)
         self.assertEqual(models[0]["suggestedCandidateKey"], mapping_candidate_key("123", "黑色", "均碼"))
         self.assertTrue(models[1]["candidates"][0]["evidence"]["manual_only"])
+        self.assertEqual(models[1]["suggestedCandidateKey"], "")
 
     def test_apply_mapping_sets_approved_fields_for_every_model(self):
         mappings = [
