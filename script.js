@@ -1163,7 +1163,9 @@ document.addEventListener('DOMContentLoaded', function() {
         const skuCount = readyProducts.reduce((sum, entry) => sum + entry.items.length, 0);
         const batchBusy = Boolean(window.currentRestockBatch && ['running', 'review'].includes(window.currentRestockBatch.status));
         openBatchRestockButton.disabled = !window.batchRestockEnabled || readyProducts.length === 0 || window.restockInProgress || batchBusy;
-        if (!window.batchRestockEnabled) {
+        if (readyProducts.length === 0 && !window.lastSearchResults) {
+            batchRestockToolbar.hidden = true;
+        } else if (!window.batchRestockEnabled) {
             batchRestockToolbar.hidden = false;
             batchRestockToolbarSummary.textContent = '自動載入商品或觀察清單失敗，整頁補貨已停用。請先修正資料或改用手動匯入。';
         } else if (readyProducts.length > 0) {
