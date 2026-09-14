@@ -15,7 +15,7 @@ Know-how Engine 把「門檻、同義詞、硬／軟規則、類別、負例原�
 Shopee 型號 (product_name / model_name)
         │
         ▼
-mapping_knowledge/          知識包（檔案 + SHA-256 knowledge_version）
+mapping_knowledge_pack/     知識包（檔案 + SHA-256 knowledge_version）
   config.json               門檻、score_weights、auto_approve 閘門（enabled=false）
   aliases.json              顏色等同詞（seed_from_COLOR_SYNONYMS）
   rules.json                RULE-0001…0004 登錄（impl → 既有函式）
@@ -45,7 +45,7 @@ _save_suggestion()          evidence_json 必填欄（TASK 7）
 | 層 | 模組 | 角色 |
 |---|---|---|
 | 規則／分級 | `sku_mapping_service.py` | 唯一 matcher；`generate_candidates` / `classify_review_tier` |
-| 知識包 | `mapping_knowledge/` + `mapping_knowledge.py` | 設定、aliases、規則登錄、類別、原因代碼 |
+| 知識包 | `mapping_knowledge_pack/` + `mapping_knowledge.py` | 設定、aliases、規則登錄、類別、原因代碼 |
 | 評估 | `mapping_eval.py` | fixture／DB baseline、`compare`、`audit`、auto-approve **反事實** |
 | 審核 UI | `/sku-mapping.html` | 綠黃紅卡片、`GET /api/sku-mapping/explain` |
 | 真相 | `golden_table.json` | 僅人工核准列；schema 不變 |
@@ -54,7 +54,7 @@ _save_suggestion()          evidence_json 必填欄（TASK 7）
 
 ## 知識檔格式
 
-目錄：`mapping_knowledge/`。`knowledge_version()` 是該目錄檔案的穩定 SHA-256（略過 `__pycache__`／點檔）。缺檔或無效 JSON 時回退內建預設，**不中斷**審核或評估。
+目錄：`mapping_knowledge_pack/`。`knowledge_version()` 是該目錄檔案的穩定 SHA-256（略過 `__pycache__`／點檔）。缺檔或無效 JSON 時回退內建預設，**不中斷**審核或評估。
 
 ### `config.json`
 
@@ -197,7 +197,7 @@ isolated eval 的 Golden／負例是空的，所以 TASK 5 歷史通道在 CI fi
 
 ## Auto-approve 條件與量測精度（只報告、不啟用）
 
-SPEC 5.1 閘門即 `mapping_knowledge/config.json` 的 `auto_approve`（`enabled` 除外）。反事實 helper：`mapping_eval.assess_auto_approve_counterfactual()`。`run` 會寫 `auto_approve.json` 並在 `summary.md` 列出。**不會**把 `enabled` 設成 true，也**不會**寫 Golden。
+SPEC 5.1 閘門即 `mapping_knowledge_pack/config.json` 的 `auto_approve`（`enabled` 除外）。反事實 helper：`mapping_eval.assess_auto_approve_counterfactual()`。`run` 會寫 `auto_approve.json` 並在 `summary.md` 列出。**不會**把 `enabled` 設成 true，也**不會**寫 Golden。
 
 | 條件 | 現況 | 反事實判定 |
 |---|---|---|

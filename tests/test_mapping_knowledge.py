@@ -1,8 +1,8 @@
-"""Tests for mapping knowledge config loading (TASK 2).
+"""Tests for mapping knowledge config loading.
 
 Existing sku_mapping / mapping_eval tests are unchanged.  These cover the
 loader contract: missing file → defaults, invalid JSON → defaults + warning,
-valid file → override.  Default config must keep TASK 1 fixture results.
+valid file → override.  Default config must keep frozen fixture results.
 """
 
 from __future__ import annotations
@@ -217,7 +217,7 @@ class SummaryKnowledgeTests(unittest.TestCase):
 
 
 class FixtureParityTests(unittest.TestCase):
-    """Default config must keep TASK 1 fixture results bit-for-bit."""
+    """Default config must keep frozen fixture results bit-for-bit."""
 
     TASK1_CASE_ROWS = {
         "sock-white": {"tier": "green", "top1": True, "top3": True, "rank": 1, "false_negative": False},

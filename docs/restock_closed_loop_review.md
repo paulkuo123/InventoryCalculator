@@ -26,7 +26,7 @@
 | 範圍：watchlist ∩ shopee ∩ golden | **正確**（反向查核） | `reverse_audit.dry_run.build_expected`：`watch_ids` 且 `pid in products and pid in golden` |
 | 不發明 URL／skuId | **正確** | `dry_run.py` 模組說明；uncertain 只記不猜；mutate 加車列缺 `offer_id`／`sku_id`／http URL 會拒 |
 | 不足 → pause；超量只列；非預期車列追蹤 | **正確** | `qty_shortfall.csv` → `status=PAUSED`；`qty_excess.csv` 不 PAUSE；`unexpected_in_cart.csv` |
-| 1688 歷史種子庫隔離、Know-how v1 在 main、`auto_approve` 仍 false | **正確** | `docs/1688_purchase_history_kb.md`、`mapping_knowledge/config.json`、`docs/sku_mapping_knowhow_engine.md` |
+| 1688 歷史種子庫隔離、Know-how v1 在 main、`auto_approve` 仍 false | **正確** | `docs/1688_purchase_history_kb.md`、`mapping_knowledge_pack/config.json`、`docs/sku_mapping_knowhow_engine.md` |
 | 廣告成本 Phase 0 與本閉環無關 | **正確**；本文件不展開 | [`ads_cost_margin_design.md`](ads_cost_margin_design.md) |
 
 額外、容易踩到的現況：

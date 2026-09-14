@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -46,75 +46,26 @@ def _load_shell_rc_values() -> Dict[str, str]:
     return merged
 
 
-def load_openai_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
-    env_value = os.environ.get("OPENAI_API_KEY", "").strip()
-    if env_value:
-        return env_value, "env"
+def _first_named_value(values: Dict[str, str], names: Sequence[str]) -> str:
+    for name in names:
+        value = str(values.get(name) or "").strip()
+        if value:
+            return value
+    return ""
 
-    local_values = _load_project_local_env(project_root)
-    local_value = local_values.get("OPENAI_API_KEY", "").strip()
+
+def _load_first_config_value(names: Sequence[str], project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """依環境變數、專案 .env.local、shell 設定的順序讀取第一個有值的設定。"""
+    for name in names:
+        env_value = os.environ.get(name, "").strip()
+        if env_value:
+            return env_value, "env"
+
+    local_value = _first_named_value(_load_project_local_env(project_root), names)
     if local_value:
         return local_value, ".env.local"
 
-    shell_values = _load_shell_rc_values()
-    shell_value = shell_values.get("OPENAI_API_KEY", "").strip()
-    if shell_value:
-        return shell_value, "shell_rc"
-
-    return "", ""
-
-
-def load_xai_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
-    """Load the official xAI API key without exposing it to the browser/UI."""
-    env_value = os.environ.get("XAI_API_KEY", "").strip()
-    if env_value:
-        return env_value, "env"
-
-    local_values = _load_project_local_env(project_root)
-    local_value = local_values.get("XAI_API_KEY", "").strip()
-    if local_value:
-        return local_value, ".env.local"
-
-    shell_values = _load_shell_rc_values()
-    shell_value = shell_values.get("XAI_API_KEY", "").strip()
-    if shell_value:
-        return shell_value, "shell_rc"
-
-    return "", ""
-
-
-def load_gemini_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
-    """Load the official Google Gemini API key without exposing it to the UI."""
-    env_value = os.environ.get("GOOGLE_API_KEY", "").strip() or os.environ.get("GEMINI_API_KEY", "").strip()
-    if env_value:
-        return env_value, "env"
-
-    local_values = _load_project_local_env(project_root)
-    local_value = (local_values.get("GOOGLE_API_KEY", "").strip() or local_values.get("GEMINI_API_KEY", "").strip())
-    if local_value:
-        return local_value, ".env.local"
-
-    shell_values = _load_shell_rc_values()
-    shell_value = (shell_values.get("GOOGLE_API_KEY", "").strip() or shell_values.get("GEMINI_API_KEY", "").strip())
-    if shell_value:
-        return shell_value, "shell_rc"
-
-    return "", ""
-
-
-def load_deepseek_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
-    """Load the official DeepSeek API key without exposing it to the UI."""
-    env_value = os.environ.get("DEEPSEEK_API_KEY", "").strip()
-    if env_value:
-        return env_value, "env"
-
-    local_values = _load_project_local_env(project_root)
-    local_value = local_values.get("DEEPSEEK_API_KEY", "").strip()
-    if local_value:
-        return local_value, ".env.local"
-
-    shell_values = _load_shell_rc_values()
-    shell_value = shell_values.get("DEEPSEEK_API_KEY", "").strip()
+    shell_value = _first_named_value(_load_shell_rc_values(), names)
     if shell_value:
         return shell_value, "shell_rc"
 
@@ -123,19 +74,26 @@ def load_deepseek_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
 
 def _load_config_value(name: str, project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
     """依環境變數、專案 .env.local、shell 設定的順序讀取單一設定值。"""
-    env_value = os.environ.get(name, "").strip()
-    if env_value:
-        return env_value, "env"
+    return _load_first_config_value((name,), project_root)
 
-    local_value = _load_project_local_env(project_root).get(name, "").strip()
-    if local_value:
-        return local_value, ".env.local"
 
-    shell_value = _load_shell_rc_values().get(name, "").strip()
-    if shell_value:
-        return shell_value, "shell_rc"
+def load_openai_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    return _load_config_value("OPENAI_API_KEY", project_root)
 
-    return "", ""
+
+def load_xai_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """Load the official xAI API key without exposing it to the browser/UI."""
+    return _load_config_value("XAI_API_KEY", project_root)
+
+
+def load_gemini_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """Load the official Google Gemini API key without exposing it to the UI."""
+    return _load_first_config_value(("GOOGLE_API_KEY", "GEMINI_API_KEY"), project_root)
+
+
+def load_deepseek_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
+    """Load the official DeepSeek API key without exposing it to the UI."""
+    return _load_config_value("DEEPSEEK_API_KEY", project_root)
 
 
 def load_telegram_bot_token(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
@@ -157,16 +115,7 @@ def load_telegram_authorized_chat_ids(project_root: str = PROJECT_ROOT) -> Tuple
 
 def load_openai_config_value(name: str, default: str = "", project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
     """依環境變數、專案 .env.local、shell 設定的順序讀取非敏感 OpenAI 設定。"""
-    env_value = os.environ.get(name, "").strip()
-    if env_value:
-        return env_value, "env"
-
-    local_value = _load_project_local_env(project_root).get(name, "").strip()
-    if local_value:
-        return local_value, ".env.local"
-
-    shell_value = _load_shell_rc_values().get(name, "").strip()
-    if shell_value:
-        return shell_value, "shell_rc"
-
+    value, source = _load_config_value(name, project_root)
+    if value:
+        return value, source
     return default, "default"

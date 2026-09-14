@@ -1,4 +1,4 @@
-"""TASK 8: counterfactual auto-approve precision (report only).
+"""Counterfactual auto-approve precision (report only).
 
 Existing sku_mapping / mapping_eval / knowledge tests are unchanged.
 This does not enable ``auto_approve.enabled``.

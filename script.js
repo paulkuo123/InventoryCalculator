@@ -1162,11 +1162,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const readyProducts = products.filter(entry => entry.items.length > 0);
         const skuCount = readyProducts.reduce((sum, entry) => sum + entry.items.length, 0);
         const batchBusy = Boolean(window.currentRestockBatch && ['running', 'review'].includes(window.currentRestockBatch.status));
-        const bootstrapReady = Boolean(window.homeBootstrap);
         openBatchRestockButton.disabled = !window.batchRestockEnabled || readyProducts.length === 0 || window.restockInProgress || batchBusy;
-        if (!bootstrapReady && readyProducts.length === 0) {
-            batchRestockToolbar.hidden = true;
-        } else if (!window.batchRestockEnabled) {
+        if (!window.batchRestockEnabled) {
             batchRestockToolbar.hidden = false;
             batchRestockToolbarSummary.textContent = '自動載入商品或觀察清單失敗，整頁補貨已停用。請先修正資料或改用手動匯入。';
         } else if (readyProducts.length > 0) {
@@ -2144,18 +2141,14 @@ document.addEventListener('DOMContentLoaded', function() {
         products = applyCurrentWatchlistScope(products);
         if (!products || typeof products !== 'object' || Object.keys(products).length === 0) {
             return {
-                totalProducts: 0,
                 totalModels: 0,
                 totalStock: 0,
                 totalMonthlySales: 0,
-                inventoryLevels: [],
                 avgLevel: 0,
-                stdDev: 0,
-                minLevel: 0,
-                maxLevel: 0,
-                overallLevel: 0,
-                levelDistribution: { low: 0, medium: 0, high: 0 },
-                modelsNeedingRestock: 0
+                modelsNeedingRestock: 0,
+                criticalModels: 0,
+                zeroStockModels: 0,
+                totalActiveModels: 0
             };
         }
         
@@ -2195,7 +2188,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
         const filterMode = document.getElementById('filterMode')?.checked || false;
         
-        let totalProducts = 0;
         let totalModels = 0;
         let totalStock = 0;
         let totalMonthlySales = 0;
@@ -2208,8 +2200,6 @@ document.addEventListener('DOMContentLoaded', function() {
         // 計算統計數據
         Object.entries(filteredProducts).forEach(([productId, product]) => {
             if (product.型號 && Array.isArray(product.型號)) {
-                let productHasVisibleModels = false;
-                
                 product.型號.forEach((modelData) => {
                     const months = parseInt(inventoryMonth, 10) || 0;
                     const currentStock = parseInt(modelData.商品庫存, 10) || 0;
@@ -2244,88 +2234,37 @@ document.addEventListener('DOMContentLoaded', function() {
                         }
                     }
                     
-                    productHasVisibleModels = true;
                     totalModels++;
                     totalStock += currentStock;
                     totalMonthlySales += monthlyRate;
                     
                     // 計算此型號的庫存水位（月數）
                     if (monthlyRate > 0) {
-                        const level = currentStock / monthlyRate;
                         inventoryLevels.push({
-                            level: level,
-                            weight: monthlyRate, // 以月銷量作為權重
-                            modelName: modelData.型號名稱,
-                            productName: product.商品名稱
+                            level: currentStock / monthlyRate,
+                            weight: monthlyRate
                         });
                     }
                 });
-                
-                if (productHasVisibleModels) {
-                    totalProducts++;
-                }
             }
         });
         
-        // 計算統計指標
         let avgLevel = 0;
-        let stdDev = 0;
-        let minLevel = 0;
-        let maxLevel = 0;
-        let overallLevel = 0;
-        let levelDistribution = { low: 0, medium: 0, high: 0 };
-        
         if (inventoryLevels.length > 0) {
-            // 計算加權平均庫存水位
             let weightedSum = 0;
             let totalWeight = 0;
-            
             inventoryLevels.forEach(item => {
                 weightedSum += item.level * item.weight;
                 totalWeight += item.weight;
             });
-            
             avgLevel = totalWeight > 0 ? weightedSum / totalWeight : 0;
-            
-            // 計算標準差
-            let variance = 0;
-            inventoryLevels.forEach(item => {
-                variance += Math.pow(item.level - avgLevel, 2) * item.weight;
-            });
-            stdDev = totalWeight > 0 ? Math.sqrt(variance / totalWeight) : 0;
-            
-            // 計算最小值和最大值
-            const levels = inventoryLevels.map(item => item.level);
-            minLevel = Math.min(...levels);
-            maxLevel = Math.max(...levels);
-            
-            // 計算整體庫存水位（基於總庫存和總月銷量）
-            overallLevel = totalMonthlySales > 0 ? totalStock / totalMonthlySales : 0;
-            
-            // 計算庫存水位分布
-            inventoryLevels.forEach(item => {
-                if (item.level < 3) {
-                    levelDistribution.low += item.weight;
-                } else if (item.level < 6) {
-                    levelDistribution.medium += item.weight;
-                } else {
-                    levelDistribution.high += item.weight;
-                }
-            });
         }
         
         return {
-            totalProducts,
             totalModels,
             totalStock,
             totalMonthlySales,
-            inventoryLevels,
             avgLevel: Math.round(avgLevel * 10) / 10,
-            stdDev: Math.round(stdDev * 10) / 10,
-            minLevel: Math.round(minLevel * 10) / 10,
-            maxLevel: Math.round(maxLevel * 10) / 10,
-            overallLevel: Math.round(overallLevel * 10) / 10,
-            levelDistribution,
             modelsNeedingRestock,
             criticalModels,
             zeroStockModels,

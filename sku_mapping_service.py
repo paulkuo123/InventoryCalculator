@@ -75,7 +75,7 @@ PROMPT_VERSION = "2026-09-v2"
 HISTORICAL_EXAMPLE_LIMIT = 5
 FEATURE_SCORE_NORMALIZER = 100.0
 HISTORICAL_SUPPORT_SATURATION = 3
-# TASK 7 — every _save_suggestion() evidence_json must persist these keys.
+# every _save_suggestion() evidence_json must persist these keys.
 # ai.provider / ai.model / ai.effort are required too; null when AI did not run.
 SUGGESTION_EVIDENCE_REQUIRED_FIELDS = (
     "knowledge_version",
@@ -685,7 +685,7 @@ def normalize_ai_evidence(ai: Optional[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def missing_suggestion_evidence_fields(evidence: Any) -> List[str]:
-    """Return required TASK 7 evidence keys that are absent (nulls are present)."""
+    """Return required evidence keys that are absent (nulls are present)."""
     missing: List[str] = []
     payload = evidence if isinstance(evidence, dict) else {}
     for field in SUGGESTION_EVIDENCE_REQUIRED_FIELDS:
@@ -2572,7 +2572,7 @@ class SkuMappingService:
         # Keep each product together.  Products are ordered by total monthly
         # sales (falling back to the sum of their model sales); variants inside
         # a product are then ordered by their own monthly sales.
-        # Yellow rows then prefer higher composite scores (TASK 6).
+        # Yellow rows then prefer higher composite scores.
         result.sort(key=lambda item: (
             -float(item.get("productMonthlySales") or 0),
             int(item.get("productOrder") or 0),

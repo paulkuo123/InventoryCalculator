@@ -138,6 +138,32 @@ process.stdout.write(JSON.stringify({
 
         self.assertEqual(result, {"found": False})
 
+    def test_apply_sku_mappings_uses_identity_and_skips_ambiguous_twins(self):
+        result = _run_products_js(
+            ["findModelByIdentity", "applySkuMappings"],
+            """
+const models = [
+    {specId: 's1', modelName: '同名', alibabaSkuName: '舊1', alibabaSkuSecondName: '均码'},
+    {specId: '', modelName: '白色', alibabaSkuName: '舊2', alibabaSkuSecondName: '均码'},
+    {specId: '', modelName: '同名', alibabaSkuName: '舊3', alibabaSkuSecondName: '均码'},
+    {specId: '', modelName: '同名', alibabaSkuName: '舊4', alibabaSkuSecondName: '均码'},
+];
+applySkuMappings(models, [
+    {specId: 's1', modelName: '同名', alibabaSkuName: '黑绳', alibabaSkuSecondName: '大码'},
+    {specId: '', modelName: '白色', alibabaSkuName: '白绳', alibabaSkuSecondName: '均码'},
+    {specId: '', modelName: '同名', alibabaSkuName: '不該寫入', alibabaSkuSecondName: '錯'},
+]);
+process.stdout.write(JSON.stringify(models));
+""",
+        )
+
+        self.assertEqual(result, [
+            {"specId": "s1", "modelName": "同名", "alibabaSkuName": "黑绳", "alibabaSkuSecondName": "大码"},
+            {"specId": "", "modelName": "白色", "alibabaSkuName": "白绳", "alibabaSkuSecondName": "均码"},
+            {"specId": "", "modelName": "同名", "alibabaSkuName": "舊3", "alibabaSkuSecondName": "均码"},
+            {"specId": "", "modelName": "同名", "alibabaSkuName": "舊4", "alibabaSkuSecondName": "均码"},
+        ])
+
     def test_backend_model_identity_never_falls_back_from_spec_id(self):
         models = [
             {"規格ID": "spec-1", "型號名稱": "同名"},

@@ -3,8 +3,8 @@
 Wraps ``SkuMappingService.generate_candidates`` and
 ``classify_review_tier`` (plus the optional existing AI judge).  It does
 not invent a parallel matcher, change ``golden_table.json`` schema, or
-enable auto-approve.  TASK 8 reports a counterfactual auto-approve
-precision against ``mapping_knowledge/config.json`` (SPEC 5.1) only.
+enable auto-approve.  Reports a counterfactual auto-approve precision
+against ``mapping_knowledge_pack/config.json`` (SPEC 5.1) only.
 
 Reports are written under ``data/mapping_eval/`` (gitignored) or ``--out``.
 Never point this tool at a path you intend to commit.
@@ -40,7 +40,7 @@ from sku_mapping_service import (
 
 DEFAULT_DB_PATH = "procurement.db"
 DEFAULT_GOLDEN_PATH = "golden_table.json"
-DEFAULT_CATEGORIES_PATH = "mapping_knowledge/categories.json"
+DEFAULT_CATEGORIES_PATH = "mapping_knowledge_pack/categories.json"
 DEFAULT_SAMPLE_SEED = 42
 DEFAULT_AI_LIMIT = 50
 EXIT_USAGE = 2
@@ -949,7 +949,7 @@ def _ai_dry_payload_row(
     case: Dict[str, Any],
     candidates: Sequence[Dict[str, Any]],
 ) -> Dict[str, Any]:
-    """Document the TASK 5 judge payload without calling a provider."""
+    """Document the judge payload without calling a provider."""
     model = {
         "product_id": case.get("product_id") or "",
         "model_id": case.get("model_id") or "",
@@ -1169,7 +1169,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_p.add_argument(
         "--categories-path",
         default=DEFAULT_CATEGORIES_PATH,
-        help="Optional mapping_knowledge/categories.json; heuristics if missing",
+        help="Optional mapping_knowledge_pack/categories.json; heuristics if missing",
     )
 
     compare_p = sub.add_parser("compare", help="Diff two evaluation run directories")
@@ -1179,7 +1179,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit_p = sub.add_parser(
         "audit",
-        help="Count suggestions whose evidence_json is missing required TASK 7 fields",
+        help="Count suggestions whose evidence_json is missing required evidence fields",
     )
     audit_p.add_argument("--db-path", default=DEFAULT_DB_PATH, help="procurement.db path")
     audit_p.add_argument(
@@ -1238,7 +1238,7 @@ def audit_cutoff(since_days: int, now: Optional[int] = None) -> int:
 
 
 def audit_suggestions(db_path: Path, since_days: int, now: Optional[int] = None) -> Dict[str, Any]:
-    """Scan sku_mapping_suggestions for missing TASK 7 evidence fields.
+    """Scan sku_mapping_suggestions for missing required evidence fields.
 
     Old rows may be incomplete.  New ``_save_suggestion()`` writes must have
     zero missing fields.  Null ``ai.provider`` / ``ai.model`` / ``ai.effort``

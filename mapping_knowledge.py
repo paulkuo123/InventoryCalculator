@@ -1,14 +1,13 @@
 """Load 1688 SKU mapping knowledge-pack configuration.
 
 Existing ``sku_mapping_service`` constants remain the defaults.  A valid
-``mapping_knowledge/config.json`` overrides them; a missing or invalid file
+``mapping_knowledge_pack/config.json`` overrides them; a missing or invalid file
 falls back to those defaults and must not crash the mapping engine.
 
-TASK 3 adds aliases / rules / categories loaders and
-``python -m mapping_knowledge seed-aliases``.  TASK 4 adds the shared
-negative-example reason-code catalog.  TASK 6 reads ``score_weights``
-for the composite ranker.  This is not a second matcher
-and does not enable auto-approve.
+The pack also loads aliases / rules / categories, the shared negative-example
+reason-code catalog, and ``score_weights`` for the composite ranker.
+``python -m mapping_knowledge seed-aliases`` exports colour aliases.
+This is not a second matcher and does not enable auto-approve.
 """
 
 from __future__ import annotations
@@ -25,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, Union
 LOGGER = logging.getLogger(__name__)
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DEFAULT_KNOWLEDGE_DIR = PROJECT_ROOT / "mapping_knowledge"
+DEFAULT_KNOWLEDGE_DIR = PROJECT_ROOT / "mapping_knowledge_pack"
 DEFAULT_CONFIG_PATH = DEFAULT_KNOWLEDGE_DIR / "config.json"
 DEFAULT_ALIASES_PATH = DEFAULT_KNOWLEDGE_DIR / "aliases.json"
 DEFAULT_RULES_PATH = DEFAULT_KNOWLEDGE_DIR / "rules.json"
@@ -204,7 +203,7 @@ def load_config(path: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
 
 
 def knowledge_version(knowledge_dir: Optional[Union[str, Path]] = None) -> str:
-    """SHA-256 of files under ``mapping_knowledge/`` (stable pack hash)."""
+    """SHA-256 of files under ``mapping_knowledge_pack/`` (stable pack hash)."""
     root = Path(knowledge_dir) if knowledge_dir is not None else DEFAULT_KNOWLEDGE_DIR
     hasher = hashlib.sha256()
     if root.is_dir():
@@ -292,7 +291,7 @@ def _merge_score_weights(raw: Any, defaults: Dict[str, Any]) -> Dict[str, Any]:
     for key in SCORE_WEIGHT_KEYS:
         if key in raw:
             out[key] = _as_float(raw.get(key), defaults[key])
-    # TASK 2: score_weights has no semantic channel.
+    # score_weights has no semantic channel.
     out.pop("semantic", None)
     return out
 
@@ -669,7 +668,7 @@ def build_parser() -> argparse.ArgumentParser:
     seed.add_argument(
         "--out",
         default=None,
-        help="Output path (default mapping_knowledge/aliases.json)",
+        help="Output path (default mapping_knowledge_pack/aliases.json)",
     )
     return parser
 

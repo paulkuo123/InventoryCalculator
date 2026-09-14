@@ -1,4 +1,4 @@
-"""TASK 5: feed historical positives and negatives into judging.
+"""Feed historical positives and negatives into judging.
 
 Existing sku_mapping / mapping_eval / negative-example tests are unchanged.
 """

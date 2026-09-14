@@ -8,7 +8,7 @@
 
 - `golden_table.json` SHA-256 仍為 `8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e`（355 商品／5918 型號列；本機核對：`approved` 3800、有 http URL 4973、有 `1688_sku_id` 1330）。
 - 開著的 #41–#46 是文件／候選／閘門草稿，**不要 merge**。
-- `mapping_knowledge/config.json` 的 `auto_approve.enabled` 維持 **false**。
+- `mapping_knowledge_pack/config.json` 的 `auto_approve.enabled` 維持 **false**。
 - 不重啟 Golden 寫入管線、不改 live `procurement.db`、不發明 URL／skuId。
 
 相關：[`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)、[`mapping_eval.md`](mapping_eval.md)、[`offer_discovery_spike.md`](offer_discovery_spike.md)、[`1688_purchase_history_kb.md`](1688_purchase_history_kb.md)、[`restock_closed_loop_review.md`](restock_closed_loop_review.md)。
