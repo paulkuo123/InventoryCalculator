@@ -25,11 +25,9 @@ from purchase_history_store import (
 APPROVE_FLAG = "--i-approve-kb-import"
 # Phase 3 flips this after freeze → dry-run → human allowlist review.
 PHASE3_HISTORY_IMPORT_ENABLED = False
-PHASE3_LIVE_CRAWL_ENABLED = False
 
 LIST_API_HINT = "OrderListDataLineService.buyerOrderList"
 DETAIL_API_HINT = "mtop.1688.mtoporderservice.queryorder"
-DEFAULT_CRAWL_SOURCE = "buyer_order_list"
 
 
 def refuse_no_approve_message() -> str:

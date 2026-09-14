@@ -211,8 +211,6 @@ def main(argv: list[str] | None = None) -> int:
         except FileNotFoundError as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 1
-    parser.error(f"unknown command {args.command}")
-    return 2
 
 
 if __name__ == "__main__":

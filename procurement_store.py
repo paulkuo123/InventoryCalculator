@@ -670,13 +670,6 @@ class ProcurementStore:
         return list(groups.values())
 
     @staticmethod
-    def round_restock_qty(quantity: int) -> int:
-        qty = int(quantity or 0)
-        if qty <= 0:
-            return 0
-        return int(math.floor((qty / 10) + 0.5) * 10)
-
-    @staticmethod
     def public_binding(binding: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "productId": binding.get("shopee_product_id", ""),

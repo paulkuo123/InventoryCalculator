@@ -37,7 +37,6 @@ from reverse_audit.mutate import (  # noqa: E402
     plan_set_qty_rows,
     refuse_no_flags_message,
     remove_runtime_blocked,
-    require_approve,
     run_mutate_actions,
     shortfall_row_count,
 )
@@ -575,12 +574,6 @@ def as_int_ex(value) -> int:
 
 
 class MutateSafetyTests(unittest.TestCase):
-    def test_require_approve_flag(self):
-        with self.assertRaises(SystemExit) as ctx:
-            require_approve(False)
-        self.assertIn("--i-approve-mutate", str(ctx.exception))
-        require_approve(True)
-
     def test_cli_mutate_without_flag_fails(self):
         code = cli_main(["mutate", "--dir", "/tmp/does-not-matter-for-gate"])
         self.assertEqual(code, 2)

@@ -20,11 +20,9 @@ PROTECTED_REMOVE_REASONS = frozenset(
         "order_pool_protected",
         "uncertain_protected",
         "skip_protected",
-        "ambiguous_ids",
         "ambiguous_multi_cart_lines",
         "ambiguous_name_spec",
         "order_covered_still_in_cart",
-        "ambiguous_protected",
     }
 )
 
@@ -86,15 +84,6 @@ def target_qty_for_set_row(row: Dict[str, Any]) -> int:
             except ValueError:
                 continue
     return 0
-
-
-def require_approve(approved: bool) -> None:
-    """Legacy add-only gate (kept for older unit tests)."""
-    if not approved:
-        raise SystemExit(
-            f"refusing mutate: pass {APPROVE_ADD_FLAG} after reviewing dry-run "
-            "(fail-closed; default never mutates cart)"
-        )
 
 
 def require_any_approve(
@@ -345,25 +334,11 @@ def mutate_add_script_path(root: Optional[Path] = None) -> Path:
 
 def mutate_set_qty_script_path(root: Optional[Path] = None) -> Path:
     root = root or repo_root()
-    for name in (
-        "mutate_set_qty_cdp.py",
-        "mutate_set_qty_cdp_20260906.py",
-    ):
-        path = root / "scripts" / name
-        if path.exists():
-            return path
     return root / "scripts" / "mutate_set_qty_cdp.py"
 
 
 def mutate_remove_script_path(root: Optional[Path] = None) -> Path:
     root = root or repo_root()
-    for name in (
-        "mutate_remove_cdp.py",
-        "mutate_remove_cdp_20260906.py",
-    ):
-        path = root / "scripts" / name
-        if path.exists():
-            return path
     return root / "scripts" / "mutate_remove_cdp.py"
 
 

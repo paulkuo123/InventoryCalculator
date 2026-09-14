@@ -9,7 +9,6 @@ from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote, urlparse, parse_qs
 
-from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 
