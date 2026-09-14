@@ -1,7 +1,9 @@
 """Offline reverse-restock dry-run (frozen sources + live pool JSONs).
 
-Read-only: never mutates cart. shortfall → PAUSED (no auto qty fix).
-Phase 1 also lists qty_excess + unexpected_in_cart (no PAUSE on excess).
+Read-only: never mutates cart. Qty change and delete are independent
+mutate approval flags — this module never auto-mutates.
+shortfall → PAUSED (no auto qty fix). Also lists qty_excess +
+unexpected_in_cart (no PAUSE on excess).
 Never invents URL/skuId into golden_table — uncertain (true missing fields)
 are recorded only. Certain = approved + URL + (skuId OR usable name/spec);
 unique cart name/spec match resolves live skuId for qty diff.
@@ -135,8 +137,6 @@ def classify_skip_reason(
         return "known_soldout_hidden(粉色愛心兔)"
     if offer_id in KNOWN_SOLDOUT_OFFERS and not sku_id:
         return "known_soldout_offer(粉色愛心兔)"
-    if status in {"stale"} and is_discontinued_sku(sku_name):
-        return "stale+discontinued"
     return None
 
 
@@ -1322,7 +1322,7 @@ def run_dry_run(
     lines.append(f"- 產生時間：{summary['generatedAt']}（Asia/Taipei）")
     lines.append(
         f"- 狀態：**{status}**"
-        + (" — 車內不足，已暫停、不改量" if paused else " — 可待核准後 mutate")
+        + (" — 車內不足，已暫停、不改量" if paused else " — dry-run 完成，未改車")
     )
     lines.append("- 模式：offline dry-run（不加車／不改量）")
     lines.append(f"- 輸出目錄：`{out_dir}`")
@@ -1368,15 +1368,14 @@ def run_dry_run(
         "`unexpected_in_cart.csv`、`covered.csv`、`expected_*.csv`、`ambiguous.csv`"
     )
     lines.append(
-        "- mutate：`--i-approve-mutate` 加車；`--i-approve-set-qty` 改量；"
-        "`--i-approve-remove` 刪除（預設不刪，須庭安明確說刪）"
+        "- 加車／改量／刪除是獨立核准旗標，互不隱含：`--i-approve-mutate` 加車；"
+        "`--i-approve-set-qty` 改量；`--i-approve-remove` 刪除（預設不刪）"
     )
     lines.append("")
     lines.append("---")
     lines.append(
-        "下一步：`python -m reverse_audit mutate --dir <此目錄> --i-approve-mutate`；"
-        "若 status=PAUSED 須先處理車內不足再繼續。`--i-approve-mutate` 僅加車；"
-        "超量／非預期 Phase 1 只列出，不改量不刪除。"
+        "dry-run 永不 mutate。若 status=PAUSED 表示車內不足，僅列出 shortfall。"
+        "改量須 `--i-approve-set-qty`、刪除須 `--i-approve-remove`，與加車旗標互不隱含。"
     )
     lines.append("")
     (out_dir / "dry_run_report.md").write_text("\n".join(lines), encoding="utf-8")

@@ -2,7 +2,7 @@
 """Remove removable unexpected cart lines via CDP attach.
 
 Only unexpected_in_cart.csv rows that pass plan_remove_rows (removable=true
-+ runtime S2/S3 re-check). Never clears whole cart; never kills Chrome.
+and a runtime re-check). Never clears whole cart; never kills Chrome.
 Requires explicit --i-approve-remove at CLI (庭安 must say 刪).
 """
 from __future__ import annotations

@@ -179,7 +179,7 @@ def plan_set_qty_rows(
 
 
 def remove_runtime_blocked(row: Dict[str, Any]) -> Optional[str]:
-    """S2/S3 programmatic re-check — even if CSV was hand-edited to removable=true."""
+    """Reject delete even if CSV was hand-edited to removable=true."""
     reason = str(row.get("reason") or "").strip()
     if reason.startswith("ambiguous_") or reason in PROTECTED_REMOVE_REASONS:
         return f"protected_reason:{reason or 'ambiguous'}"

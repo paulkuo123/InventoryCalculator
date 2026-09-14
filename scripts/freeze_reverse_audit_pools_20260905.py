@@ -457,9 +457,6 @@ DEEP_ORDER_DOM = """
   qsaDeep(document, '.order-item-entry, [class*="order-item-entry"]', entries);
   const lines = [];
   const seen = new Set();
-  // Walk order cards
-  const cards = [];
-  qsaDeep(document, '.order-item, [class*="order-item"]:not([class*="entry"]):not([class*="header"])', cards);
   const idNodes = [];
   qsaDeep(document, '.order-id, [class*="order-id"]', idNodes);
   for (const el of idNodes) {

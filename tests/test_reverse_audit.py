@@ -23,6 +23,7 @@ from reverse_audit.dry_run import (  # noqa: E402
     aggregate_certain,
     build_consolidated_zh_rows,
     build_expected,
+    classify_skip_reason,
     diff_expected,
     expected_key_set,
     find_unexpected_in_cart,
@@ -90,6 +91,21 @@ class DryRunOfflineTests(unittest.TestCase):
         for row in uncertain:
             if "url" in (row.get("uncertain_reason") or ""):
                 self.assertFalse(str(row.get("alibaba_url") or "").startswith("http"))
+
+    def test_classify_skip_reason_discontinued_name_beats_stale_status(self):
+        self.assertEqual(
+            classify_skip_reason("stale", "停售", "offer", "sku"),
+            "discontinued_sku_name=停售",
+        )
+        self.assertEqual(
+            classify_skip_reason("discontinued", "停售", "offer", "sku"),
+            "mapping_status=discontinued",
+        )
+        self.assertIsNone(classify_skip_reason("stale", "黑色", "offer", "sku"))
+        self.assertNotEqual(
+            classify_skip_reason("stale", "停售", "offer", "sku"),
+            "stale+discontinued",
+        )
 
     def test_diff_missing_covered_order_shortfall_and_excess(self):
         products = load_json(FIX / "sources" / "shopee_products.json")
@@ -189,6 +205,9 @@ class DryRunOfflineTests(unittest.TestCase):
             )
             report = (out / "dry_run_report.md").read_text(encoding="utf-8")
             self.assertIn("補貨比對結果.csv", report)
+            self.assertIn("dry-run 永不 mutate", report)
+            self.assertNotIn("Phase 1", report)
+            self.assertNotIn("下一步：`python -m reverse_audit mutate", report)
             self.assertEqual(
                 summary["outputs"]["primary_human_csv"],
                 str(zh_path),
@@ -1696,6 +1715,8 @@ class DeepOrderDomFreezeTests(unittest.TestCase):
         self.assertIn("in tabCounts", js)
         self.assertIn("offers.length ? offers[0] : null", js)
         self.assertIn("offers.length ? 'partial' : 'missing'", js)
+        self.assertNotIn("const cards = []", js)
+        self.assertNotIn("Walk order cards", js)
 
     def test_order_list_urls_use_order_status_query(self):
         src = (ROOT / "scripts" / "freeze_reverse_audit_pools_20260905.py").read_text(
