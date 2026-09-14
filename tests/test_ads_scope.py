@@ -44,7 +44,6 @@ def _metric_row(
         "ad_name": ad_name or product_name,
         "status": status,
         "product_image_url": "",
-        "variant_count": 0,
         "spend": spend,
         "sales_amount": sales_amount,
         "direct_sales_amount": direct_sales_amount,
@@ -496,11 +495,18 @@ class AdsScopeReportTests(unittest.TestCase):
                 markdown = handle.read()
             with open(analyzer.html_output_path, encoding="utf-8") as handle:
                 html = handle.read()
+            with open(analyzer.history_output_path, encoding="utf-8") as handle:
+                history = json.load(handle)
 
         product_ids = {item["product_id"] for item in report["report"]["products"]}
         scope_ids = {item["product_id"] for item in report["report"]["scope_products"]}
         saved_ids = {item["product_id"] for item in saved["report"]["products"]}
         self.assertEqual(report["source"], "rules")
+        self.assertNotIn("chart_series", report["report"])
+        self.assertNotIn("llm_summary", report["report"]["products"][0])
+        self.assertNotIn("variant_count", report["report"]["products"][0])
+        self.assertNotIn("variant_count", history["ad_metrics_daily_or_window"][0])
+        self.assertNotIn("variants", history["ad_metrics_daily_or_window"][0])
         self.assertIn(SCOPE_AIRBAG_ID, product_ids)
         self.assertIn(SCOPE_CHARM_ID, product_ids)
         self.assertIn(SCOPE_AIRBAG_ID, scope_ids)
@@ -515,6 +521,49 @@ class AdsScopeReportTests(unittest.TestCase):
         self.assertIn(SCOPE_CHARM_ID, html)
         self.assertIn("氣囊", markdown)
         self.assertIn("吊飾", markdown)
+
+    def test_html_report_escapes_product_name(self):
+        hostile_name = 'AirPods <script>alert(1)</script> & "case"'
+        metrics = [
+            _metric_row(
+                "9990002",
+                hostile_name,
+                ad_name=hostile_name,
+                spend=55,
+                roas=1.1,
+                direct_roas=1.1,
+            )
+        ]
+        with TemporaryDirectory() as temp_dir:
+            analyzer = _analyzer(temp_dir)
+            analysis = analyzer._build_product_analysis(metrics)
+            report = {
+                "generated_at": "2026-09-14 21:00:00",
+                "analysis_runtime": {},
+                "report": {
+                    "account_summary": {
+                        "current_window": {"window_label": "昨天", "spend": 55, "roas": 1.1, "direct_roas": 1.1},
+                    },
+                    "narrative": {
+                        "source": "rules",
+                        "executive_summary": "<b>not html</b>",
+                        "next_actions": ["維持投放 <ok>"],
+                    },
+                    "rankings": analysis["rankings"],
+                    "products": analysis["products"],
+                    "scope_products": analysis["scope_products"],
+                    "report_runs": [],
+                },
+            }
+            analyzer._build_html_report(report)
+            html = open(analyzer.html_output_path, encoding="utf-8").read()
+
+        self.assertIn("AirPods &lt;script&gt;alert(1)&lt;/script&gt; &amp;", html)
+        self.assertIn("&quot;case&quot;", html)
+        self.assertIn("&lt;b&gt;not html&lt;/b&gt;", html)
+        self.assertIn("維持投放 &lt;ok&gt;", html)
+        self.assertNotIn("<script>alert(1)</script>", html)
+        self.assertNotIn("<b>not html</b>", html)
 
 
 if __name__ == "__main__":

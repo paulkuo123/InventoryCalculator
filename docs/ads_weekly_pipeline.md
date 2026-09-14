@@ -87,7 +87,7 @@ reports/ads_weekly/20260911/
   ads_history.json
   ads_analysis_report.html            # 營運顧問主要閱讀檔
   ads_analysis_report.md
-  SCOPE.md                            # 焦點關鍵字 + A1 campaign
+  SCOPE.md                            # 焦點關鍵字
   manifest.json                       # 成功清單；reused_previous_week 永遠 false
   BLOCKER.md                          # 只有失敗才會出現
 ```
@@ -98,7 +98,6 @@ reports/ads_weekly/20260911/
 分析焦點（規則仍是店內 ROAS／直接 ROAS，不另立規則集）：
 
 - 關鍵字：`airpods`、`氣囊`、`吊飾|掛飾|掛件|掛繩`
-- 固定追蹤活動 A1：`18025139892`
 
 ## 登入牆／驗證碼／工作階段死亡：STOP
 

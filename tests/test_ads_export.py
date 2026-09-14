@@ -57,9 +57,9 @@ class AdsExportTests(unittest.TestCase):
                 ads_export_dir=temp_dir,
                 golden_table_path=f"{temp_dir}/missing_golden_table.json",
                 include_ai=False,
-                refresh_source=False,
             )
 
+        self.assertFalse(analyzer.refresh_source)
         self.assertEqual(
             analyzer.trend_window_order,
             ["week_01", "week_02", "week_03", "week_04"],

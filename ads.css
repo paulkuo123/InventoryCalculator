@@ -203,6 +203,11 @@
     border-color: #b7e4c7;
 }
 
+.ads-result-item.warning {
+    border-color: #ffe08a;
+    background-color: #fffaf0;
+}
+
 .ads-result-item.error {
     border-color: #ffc9c9;
 }

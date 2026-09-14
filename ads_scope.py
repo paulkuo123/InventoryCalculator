@@ -14,7 +14,7 @@ REPORT_PRODUCT_CAP = 36
 RANKING_CATEGORY_LIMIT = 8
 SCOPE_DECISION_WINDOWS = ("yesterday", "week_01", "past_month")
 ACTIVE_STATUS_MARKERS = ("投放中",)
-# Optional safety net for the 2026-09-12 miss; keyword match still remains primary.
+# Optional product-id allowlist; keyword match remains primary.
 DEFAULT_SCOPE_EXTRA_IDS = (
     "9159438193",  # 氣囊
     "22589154150",  # 吊飾

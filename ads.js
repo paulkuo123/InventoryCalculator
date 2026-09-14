@@ -220,7 +220,8 @@ document.addEventListener('DOMContentLoaded', function() {
         const rankings = report.rankings || {};
         const runtime = data.analysis_runtime || {};
         const files = data.output_files || {};
-        const htmlPath = files.html_report ? `/${files.html_report.split('/').pop()}` : '';
+        const htmlFileName = files.html_report ? String(files.html_report).split('/').pop() : '';
+        const htmlPath = htmlFileName ? `/${encodeURIComponent(htmlFileName)}` : '';
         const actionableCount =
             (rankings.scale_up || []).length +
             (rankings.reduce_budget || []).length +
@@ -264,11 +265,9 @@ document.addEventListener('DOMContentLoaded', function() {
                     ${(narrative.next_actions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
                 </ul>
                 <div class="ads-analysis-files">
-                    <div><strong>HTML：</strong>${files.html_report || '-'}</div>
-                    <div><strong>分析 JSON：</strong>${files.analysis_json || '-'}</div>
-                    <div><strong>歷史 JSON：</strong>${files.history_json || '-'}</div>
+                    <div><strong>HTML：</strong>${escapeHtml(files.html_report || '-')}</div>
                 </div>
-                ${htmlPath ? `<a class="btn-primary ads-report-download" href="${htmlPath}" target="_blank" rel="noopener noreferrer"><i class="fas fa-file-lines"></i> 開啟 HTML 報告</a>` : ''}
+                ${htmlPath ? `<a class="btn-primary ads-report-download" href="${escapeHtml(htmlPath)}" target="_blank" rel="noopener noreferrer"><i class="fas fa-file-lines"></i> 開啟 HTML 報告</a>` : ''}
             </div>
 
         `;
