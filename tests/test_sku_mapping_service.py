@@ -5,7 +5,16 @@ import time
 import unittest
 from unittest.mock import MagicMock, patch
 
-from sku_mapping_service import DEFERRED_REVIEW_REASON, URL_HEALTH_TTL_SECONDS, MappingConflict, SkuMappingService, clean_mapping_name, normalize_text, offer_fingerprint
+from sku_mapping_service import (
+    DEFERRED_REVIEW_REASON,
+    URL_HEALTH_TTL_SECONDS,
+    MappingConflict,
+    SkuMappingService,
+    clean_mapping_name,
+    main as sku_mapping_main,
+    normalize_text,
+    offer_fingerprint,
+)
 
 
 class SkuMappingServiceTest(unittest.TestCase):
@@ -801,7 +810,7 @@ class SkuMappingServiceTest(unittest.TestCase):
         )
         with self.service.connect() as conn:
             conn.execute("UPDATE alibaba_offer_snapshots SET fetched_at=(SELECT fetched_at + 1 FROM alibaba_offer_snapshots WHERE id=?) WHERE id=?", (old["id"], newer["id"]))
-        refreshed = SkuMappingService(self.tmp.name)
+        refreshed = SkuMappingService(self.tmp.name, run_startup_repairs=True)
         item = next(row for row in refreshed.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
         self.assertEqual(item["status"], "pending")
         self.assertEqual(item["review_tier"], "green")
@@ -817,7 +826,7 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.service._save_suggestion(model, snapshot, [], None, {})
         with self.service.connect() as conn:
             conn.execute("UPDATE sku_mapping_suggestions SET status='legacy_pending_id', suggested_sku_id='', suggested_sku_name='白色' WHERE product_id=? AND model_id=?", (model["product_id"], model["model_id"]))
-        refreshed = SkuMappingService(self.tmp.name)
+        refreshed = SkuMappingService(self.tmp.name, run_startup_repairs=True)
         item = next(row for row in refreshed.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
         self.assertEqual(item["status"], "pending")
         self.assertEqual(item["review_tier"], "green")
@@ -1107,7 +1116,7 @@ class SkuMappingServiceTest(unittest.TestCase):
             "version": manual_item["version"],
         }])
 
-        reloaded = SkuMappingService(self.tmp.name)
+        reloaded = SkuMappingService(self.tmp.name, run_startup_repairs=True)
         rows = {(row["product_id"], row["model_id"]): row for row in reloaded.queue(status="all")["items"]}
         scanner_row = rows[(scanner_model["product_id"], scanner_model["model_id"])]
         manual_row = rows[(manual_model["product_id"], manual_model["model_id"])]
@@ -1183,7 +1192,7 @@ class SkuMappingServiceTest(unittest.TestCase):
         with open(self.golden_path, "w", encoding="utf-8") as handle:
             json.dump(golden, handle, ensure_ascii=False)
 
-        reloaded = SkuMappingService(self.tmp.name)
+        reloaded = SkuMappingService(self.tmp.name, run_startup_repairs=True)
         item = next(row for row in reloaded.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
         self.assertEqual(item["status"], "discontinued")
         self.assertFalse(any(row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"] for row in reloaded.queue(status="review")["items"]))
@@ -2113,6 +2122,114 @@ class SkuMappingServiceTest(unittest.TestCase):
             ).fetchone()
         self.assertEqual((draft["status"], draft["has_blockers"]), ("blocked", 1))
         self.assertEqual((binding["alibaba_offer_id"], binding["alibaba_mapping_status"]), ("999", "approved"))
+
+    def _write_unverified_approved_golden(self, directory):
+        golden_path = os.path.join(directory, "golden_table.json")
+        golden = {
+            "p-socks": {
+                "商品名稱": "短襪",
+                "型號": [{
+                    "規格ID": "sock-white",
+                    "型號名稱": "白色",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/100.html",
+                    "1688_sku_name": "白色",
+                    "1688_mapping_status": "approved",
+                }],
+            }
+        }
+        with open(golden_path, "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        with open(os.path.join(directory, "shopee_products.json"), "w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False)
+        return golden_path
+
+    def test_default_construct_skips_golden_mutating_repairs(self):
+        with patch.object(SkuMappingService, "_repair_unverified_approvals") as repair, \
+             patch.object(SkuMappingService, "_backfill_legacy_fields") as backfill, \
+             patch.object(SkuMappingService, "_repair_suggestion_statuses") as suggestion, \
+             patch.object(SkuMappingService, "_sync_golden_terminal_statuses") as sync, \
+             patch.object(SkuMappingService, "_refresh_legacy_suggestions") as refresh, \
+             patch.object(SkuMappingService, "_revalidate_stale_suggestions") as revalidate, \
+             patch.object(SkuMappingService, "_refresh_review_tiers") as tiers:
+            SkuMappingService(self.tmp.name)
+        repair.assert_not_called()
+        backfill.assert_not_called()
+        suggestion.assert_not_called()
+        sync.assert_not_called()
+        refresh.assert_not_called()
+        revalidate.assert_not_called()
+        tiers.assert_not_called()
+
+    def test_readonly_construct_and_get_paths_do_not_rewrite_unverified_approved_golden(self):
+        with tempfile.TemporaryDirectory() as directory:
+            golden_path = self._write_unverified_approved_golden(directory)
+            with open(golden_path, "rb") as handle:
+                before = handle.read()
+            before_mtime = os.stat(golden_path).st_mtime_ns
+            service = SkuMappingService(directory)
+            service.summary()
+            service.queue(status="all")
+            service.url_groups()
+            service.catalog_for_model("p-socks", "sock-white")
+            service.explain("p-socks", "sock-white")
+            with open(golden_path, "rb") as handle:
+                after = handle.read()
+            self.assertEqual(after, before)
+            self.assertEqual(os.stat(golden_path).st_mtime_ns, before_mtime)
+            with open(golden_path, encoding="utf-8") as handle:
+                reloaded = json.load(handle)
+            model = reloaded["p-socks"]["型號"][0]
+            self.assertEqual(model["1688_mapping_status"], "approved")
+            self.assertNotEqual(model.get("1688_mapping_source"), "legacy_repair")
+            self.assertNotIn("1688_mapping_source", model)
+
+    def test_explicit_repair_demotes_unverified_approval_in_golden(self):
+        with tempfile.TemporaryDirectory() as directory:
+            golden_path = self._write_unverified_approved_golden(directory)
+            SkuMappingService(directory, run_startup_repairs=True)
+            with open(golden_path, encoding="utf-8") as handle:
+                model = json.load(handle)["p-socks"]["型號"][0]
+            self.assertEqual(model["1688_mapping_status"], "missing")
+            self.assertEqual(model["1688_mapping_source"], "legacy_repair")
+
+    def test_repair_cli_rewrites_unverified_approval(self):
+        with tempfile.TemporaryDirectory() as directory:
+            golden_path = self._write_unverified_approved_golden(directory)
+            self.assertEqual(sku_mapping_main(["repair", "--base-dir", directory]), 0)
+            with open(golden_path, encoding="utf-8") as handle:
+                model = json.load(handle)["p-socks"]["型號"][0]
+            self.assertEqual(model["1688_mapping_status"], "missing")
+            self.assertEqual(model["1688_mapping_source"], "legacy_repair")
+
+    def test_golden_cache_loads_once_for_read_paths(self):
+        loads = []
+        real_load = json.load
+
+        def counting_load(handle, *args, **kwargs):
+            name = getattr(handle, "name", "")
+            if os.path.basename(str(name)) == "golden_table.json":
+                loads.append(name)
+            return real_load(handle, *args, **kwargs)
+
+        with tempfile.TemporaryDirectory() as directory:
+            self._write_unverified_approved_golden(directory)
+            with patch("sku_mapping_service.json.load", side_effect=counting_load):
+                service = SkuMappingService(directory)
+                first = service._golden()
+                second = service._golden()
+                service.summary()
+                service.queue(status="all")
+                service.url_groups()
+        self.assertIs(first, second)
+        self.assertEqual(len(loads), 1)
+
+    def test_golden_cache_reloads_after_external_write(self):
+        first = self.service._golden()
+        with open(self.golden_path, "w", encoding="utf-8") as handle:
+            json.dump({"p-new": {"商品名稱": "新", "型號": []}}, handle, ensure_ascii=False)
+        second = self.service._golden()
+        self.assertIsNot(first, second)
+        self.assertIn("p-new", second)
 
     def test_url_change_commit_rejects_stale_preview_version(self):
         preview = self.service.preview_url_change("p-socks", "sock-white", mode="clear")

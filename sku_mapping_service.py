@@ -2,12 +2,16 @@
 
 The service deliberately keeps live offer snapshots and AI suggestions in
 SQLite while writing only approved mappings back to ``golden_table.json``.
+Read paths (summary / queue / url-groups / catalog / explain) construct the
+service without rewriting Golden.  Legacy Golden repairs run only from
+``python -m sku_mapping_service repair`` or ``SKU_MAPPING_REPAIR_GOLDEN=1``.
 It is usable without Playwright/OpenAI for migrations and unit tests; those
 dependencies are loaded lazily by the live scanner and AI adapter.
 """
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import base64
 import html
@@ -54,6 +58,7 @@ from mapping_knowledge import (
 
 GOLDEN_TABLE_FILE = "golden_table.json"
 MAPPING_DB_FILE = "procurement.db"
+GOLDEN_REPAIR_ENV = "SKU_MAPPING_REPAIR_GOLDEN"
 SCAN_CACHE_SECONDS = 7 * 24 * 60 * 60
 URL_HEALTH_TTL_SECONDS = 7 * 24 * 60 * 60
 JOB_ACTIVE_STATUSES = {"queued", "running"}
@@ -98,6 +103,12 @@ def _threshold_percent(value: float) -> str:
     if abs(scaled - round(scaled)) < 1e-9:
         return f"{int(round(scaled))}%"
     return f"{scaled:g}%"
+
+
+def golden_repair_requested(value: Optional[str] = None) -> bool:
+    """True when an explicit env/CLI flag asked to rewrite Golden repairs."""
+    text = os.environ.get(GOLDEN_REPAIR_ENV, "") if value is None else value
+    return str(text or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def prune_golden_table_backups(backup_path: Path, keep: int = GOLDEN_BACKUP_KEEP) -> None:
@@ -706,7 +717,12 @@ class MappingConflict(RuntimeError):
 
 
 class SkuMappingService:
-    def __init__(self, base_dir: Optional[str] = None, db_path: Optional[str] = None):
+    def __init__(
+        self,
+        base_dir: Optional[str] = None,
+        db_path: Optional[str] = None,
+        run_startup_repairs: bool = False,
+    ):
         self.base_dir = Path(base_dir or Path(__file__).resolve().parent)
         self.golden_path = self.base_dir / GOLDEN_TABLE_FILE
         self.shopee_path = self.base_dir / "shopee_products.json"
@@ -717,15 +733,48 @@ class SkuMappingService:
         self._job_threads: Dict[str, threading.Thread] = {}
         self._gemini_blocked_until = 0.0
         self._gemini_block_reason = ""
+        self._golden_cache: Optional[Dict[str, Any]] = None
+        self._golden_cache_mtime_ns: Optional[int] = None
+        self._golden_cache_size: Optional[int] = None
         self._init_db()
         self._recover_orphaned_jobs()
+        if run_startup_repairs:
+            self.run_startup_repairs()
+        else:
+            # Index URL models into SQLite so GET summary/queue can render.
+            # Do not rewrite golden_table.json on this path.
+            self.migrate_legacy_mappings(write_golden=False)
+
+    def run_startup_repairs(self) -> Dict[str, Any]:
+        """Run Golden/SQLite migrations that used to hide inside ``__init__``.
+
+        Opening the workbench is not consent to demote ``approved`` rows or
+        rewrite ``golden_table.json``.  Call this from the repair CLI or when
+        ``SKU_MAPPING_REPAIR_GOLDEN=1`` is set on server start.
+        """
         self._repair_unverified_approvals()
-        self.migrate_legacy_mappings()
+        imported = self.migrate_legacy_mappings(write_golden=True)
         self._repair_suggestion_statuses()
         self._sync_golden_terminal_statuses()
         self._refresh_legacy_suggestions()
         self._revalidate_stale_suggestions()
         self._refresh_review_tiers()
+        return {"status": "success", "migrated": imported}
+
+    def _invalidate_golden_cache(self) -> None:
+        self._golden_cache = None
+        self._golden_cache_mtime_ns = None
+        self._golden_cache_size = None
+
+    def _remember_golden(self, golden: Dict[str, Any]) -> None:
+        self._golden_cache = golden
+        if self.golden_path.exists():
+            stat = self.golden_path.stat()
+            self._golden_cache_mtime_ns = stat.st_mtime_ns
+            self._golden_cache_size = stat.st_size
+        else:
+            self._golden_cache_mtime_ns = None
+            self._golden_cache_size = None
 
     def connect(self) -> sqlite3.Connection:
         conn = sqlite3.connect(str(self.db_path), timeout=30)
@@ -1012,6 +1061,7 @@ class SkuMappingService:
                 json.dump(golden, handle, ensure_ascii=False, indent=4)
                 handle.write("\n")
             os.replace(tmp_path, self.golden_path)
+            self._remember_golden(golden)
 
         # Keep the procurement cache from bypassing the repaired review gate.
         try:
@@ -1029,10 +1079,25 @@ class SkuMappingService:
 
     def _golden(self) -> Dict[str, Any]:
         if not self.golden_path.exists():
-            return {}
+            empty: Dict[str, Any] = {}
+            self._golden_cache = empty
+            self._golden_cache_mtime_ns = None
+            self._golden_cache_size = None
+            return empty
+        stat = self.golden_path.stat()
+        if (
+            self._golden_cache is not None
+            and self._golden_cache_mtime_ns == stat.st_mtime_ns
+            and self._golden_cache_size == stat.st_size
+        ):
+            return self._golden_cache
         with self.golden_path.open(encoding="utf-8") as handle:
             value = json.load(handle)
-        return value if isinstance(value, dict) else {}
+        result = value if isinstance(value, dict) else {}
+        self._golden_cache = result
+        self._golden_cache_mtime_ns = stat.st_mtime_ns
+        self._golden_cache_size = stat.st_size
+        return result
 
     def _live_inventory(self) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Load current Shopee inventory without falling back to Golden Table.
@@ -1087,10 +1152,16 @@ class SkuMappingService:
                 }
         return lookup
 
-    def migrate_legacy_mappings(self) -> Dict[str, int]:
-        """Register existing name-only mappings without overwriting them."""
+    def migrate_legacy_mappings(self, write_golden: bool = False) -> Dict[str, int]:
+        """Register existing name-only mappings without overwriting them.
+
+        SQLite index rows are safe to create on read paths.  Cleaning names
+        and stamping ``1688_mapping_source`` rewrites ``golden_table.json``
+        and therefore requires ``write_golden=True``.
+        """
         golden = self._golden()
-        self._backfill_legacy_fields(golden)
+        if write_golden:
+            self._backfill_legacy_fields(golden)
         imported = 0
         existing = 0
         now = int(time.time())
@@ -1598,6 +1669,7 @@ class SkuMappingService:
             json.dump(golden, handle, ensure_ascii=False, indent=4)
             handle.write("\n")
         os.replace(tmp_path, self.golden_path)
+        self._remember_golden(golden)
 
     def _scope_models(
         self,
@@ -2217,6 +2289,7 @@ class SkuMappingService:
                 json.dump(golden, handle, ensure_ascii=False, indent=4)
                 handle.write("\n")
             os.replace(tmp_path, self.golden_path)
+            self._remember_golden(golden)
 
             try:
                 from procurement_store import ProcurementStore
@@ -2328,6 +2401,7 @@ class SkuMappingService:
                 restore_tmp = self.golden_path.with_suffix(".json.url-change-restore.tmp")
                 restore_tmp.write_bytes(original_bytes)
                 os.replace(restore_tmp, self.golden_path)
+                self._invalidate_golden_cache()
                 raise
 
         return {
@@ -3919,6 +3993,7 @@ class SkuMappingService:
                 json.dump(golden, handle, ensure_ascii=False, indent=4)
                 handle.write("\n")
             os.replace(tmp_path, self.golden_path)
+            self._remember_golden(golden)
         with self.connect() as conn:
             rows = conn.execute("SELECT id, product_id, model_id FROM sku_mapping_suggestions WHERE offer_id=? AND status='approved'", (str(offer_id),)).fetchall()
             for row in rows:
@@ -6170,6 +6245,7 @@ class SkuMappingService:
             json.dump(golden, handle, ensure_ascii=False, indent=4)
             handle.write("\n")
         os.replace(tmp_path, self.golden_path)
+        self._remember_golden(golden)
         try:
             self._sync_alibaba_binding(suggestion, target, candidate, now)
             with self.connect() as conn:
@@ -6197,6 +6273,7 @@ class SkuMappingService:
             restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
             restore_tmp.write_bytes(original_bytes)
             os.replace(restore_tmp, self.golden_path)
+            self._invalidate_golden_cache()
             raise
 
     def _sync_alibaba_binding(self, suggestion: Dict[str, Any], target: Dict[str, Any], candidate: Dict[str, Any], now: int) -> None:
@@ -6250,6 +6327,7 @@ class SkuMappingService:
             json.dump(golden, handle, ensure_ascii=False, indent=4)
             handle.write("\n")
         os.replace(tmp_path, self.golden_path)
+        self._remember_golden(golden)
         try:
             if target is not None:
                 from procurement_store import ProcurementStore
@@ -6275,6 +6353,7 @@ class SkuMappingService:
             restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
             restore_tmp.write_bytes(original_bytes)
             os.replace(restore_tmp, self.golden_path)
+            self._invalidate_golden_cache()
             raise
 
     def _snapshot_fingerprint(self, snapshot_id: Any) -> str:
@@ -6286,13 +6365,62 @@ class SkuMappingService:
 
 
 __all__ = [
+    "GOLDEN_REPAIR_ENV",
     "MappingConflict",
     "SkuMappingService",
     "canonical_url",
     "display_text",
+    "golden_repair_requested",
     "mapping_candidate_key",
     "normalize_id",
     "normalize_text",
     "offer_fingerprint",
     "parse_offer_id",
 ]
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="python -m sku_mapping_service",
+        description=(
+            "SKU mapping 維護指令。"
+            "HTTP 讀取路徑（summary／queue／url-groups／catalog／explain）"
+            "建構服務時不會改寫 golden_table.json。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+    repair = sub.add_parser(
+        "repair",
+        help="明確執行 Golden 修復／legacy 回填（會寫 golden_table.json）",
+        description=(
+            "把舊核准無稽核列打回待審、回填 legacy 欄位，並同步 SQLite 索引。"
+            "這不是開頁或 GET API 的副作用；請只在要修資料時執行。"
+            "不會開啟 auto-approve。"
+        ),
+    )
+    repair.add_argument(
+        "--base-dir",
+        default=None,
+        help="資料根目錄（預設為此檔所在 repo root）",
+    )
+    return parser
+
+
+def main(argv: Optional[Sequence[str]] = None) -> int:
+    args = build_parser().parse_args(list(argv) if argv is not None else None)
+    if args.command != "repair":
+        build_parser().error(f"未知指令：{args.command}")
+    service = SkuMappingService(args.base_dir, run_startup_repairs=True)
+    result = {
+        "status": "success",
+        "wroteGolden": True,
+        "baseDir": str(service.base_dir),
+        "goldenPath": str(service.golden_path),
+    }
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

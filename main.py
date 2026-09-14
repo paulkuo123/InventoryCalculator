@@ -102,7 +102,7 @@ from shopee_products_import import (
     replace_shopee_products,
     validate_shopee_products,
 )
-from sku_mapping_service import MappingConflict, SkuMappingService, mapping_candidate_key, prune_golden_table_backups
+from sku_mapping_service import MappingConflict, SkuMappingService, golden_repair_requested, mapping_candidate_key, prune_golden_table_backups
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 from housekeeping import remove_files, remove_stale_matching_files
 from restock_rules import resolve_restock_quantity, validate_restock_sku_count
@@ -1565,7 +1565,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if sku_mapping_service is None:
             with sku_mapping_service_lock:
                 if sku_mapping_service is None:
-                    sku_mapping_service = SkuMappingService(os.path.dirname(os.path.abspath(__file__)))
+                    sku_mapping_service = SkuMappingService(
+                        os.path.dirname(os.path.abspath(__file__)),
+                        run_startup_repairs=golden_repair_requested(),
+                    )
         return sku_mapping_service
 
     def _inbound_store(self):
