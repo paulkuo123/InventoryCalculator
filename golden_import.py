@@ -125,6 +125,7 @@ def preview_models(
             "offer_id": str(snapshot.get("offer_id") or ""),
         }
         candidates = mapping_service.generate_candidates(model, skus)
+        suggested_candidate_key = candidates[0].get("candidate_key") if candidates else ""
         # If no deterministic name match exists, show the complete offer catalog
         # so the user can still select the exact SKU manually.
         if not candidates:
@@ -141,7 +142,7 @@ def preview_models(
                 "stock": str(raw_model.get("商品庫存") or "0"),
                 "monthlySales": str(raw_model.get("月銷量") or "0"),
                 "candidates": candidates,
-                "suggestedCandidateKey": candidates[0].get("candidate_key") if candidates else "",
+                "suggestedCandidateKey": suggested_candidate_key,
             }
         )
     return preview
@@ -154,7 +155,6 @@ def apply_import_mapping(
 ) -> Dict[str, Any]:
     """Return a new golden product with all selected SKU mappings applied."""
     product = copy.deepcopy(dict(source_product))
-    product_id = normalize_id(product.get("商品ID") or "")
     offer_id = normalize_id(snapshot.get("offer_id")) or parse_offer_id(snapshot.get("product_url"))
     if not offer_id:
         raise ValueError("1688 商品網址缺少 offer ID")

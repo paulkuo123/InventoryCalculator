@@ -4,6 +4,7 @@
   const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
   const message = (text, type = '') => { $('message').textContent = text || ''; $('message').className = `message ${type}`.trim(); };
   const fmt = value => Number(value || 0).toLocaleString('zh-TW');
+  const candidateSignature = product => JSON.stringify(product || {});
 
   function render() {
     $('summary').textContent = `蝦皮快取 ${fmt(state.sourceCount)} 筆，Golden Table ${fmt(state.goldenCount)} 筆，待加入 ${fmt(state.candidates.length)} 筆`;
@@ -13,10 +14,11 @@
 
   function productCard(product) {
     const preview = state.previews.get(product.productId);
+    const busy = state.busy.has(product.productId);
     const image = product.productImageUrl ? `<img src="${esc(product.productImageUrl)}" loading="lazy" alt="">` : '<div class="source-placeholder">無圖片</div>';
     return `<article class="card" data-product-id="${esc(product.productId)}">
       <div class="product-head">${image}<div><h2>${esc(product.productName || '未命名商品')}</h2><div class="meta">商品 ID：${esc(product.productId)}<br>規格：${fmt(product.modelCount)} 個　庫存：${fmt((product.models || []).reduce((sum, m) => sum + Number(m.stock || 0), 0))}</div></div></div>
-      <div class="form-row"><input class="alibaba-url" type="url" placeholder="貼上 1688 商品網址 https://detail.1688.com/offer/..." value="${esc(preview?.inputUrl || '')}"><button class="preview-btn primary" data-action="preview" ${state.busy.has(product.productId) ? 'disabled' : ''}>${state.busy.has(product.productId) ? '讀取中…' : '讀取 1688 SKU'}</button></div>
+      <div class="form-row"><input class="alibaba-url" type="url" placeholder="貼上 1688 商品網址 https://detail.1688.com/offer/..." value="${esc(preview?.inputUrl || '')}"><button class="preview-btn primary" data-action="preview" ${busy ? 'disabled' : ''}>${busy ? '處理中…' : '讀取 1688 SKU'}</button></div>
       ${preview ? previewCard(product, preview) : ''}
     </article>`;
   }
@@ -34,7 +36,8 @@
       return `<div class="model-row"><div class="model-info"><strong>${esc(model.modelName)}</strong><small>規格 ID：${esc(model.modelId)}　庫存：${esc(model.stock)}</small></div><select class="model-select" data-model-id="${esc(model.modelId)}"><option value="">請選擇 1688 規格</option>${options}</select></div>`;
     }).join('');
     const hasManual = (preview.models || []).some(model => (model.candidates || []).some(candidate => candidate.evidence?.manual_only));
-    return `<div class="preview"><div class="snapshot">1688：${esc(preview.snapshot.productName || '未命名商品')}<br>Offer ID：${esc(preview.snapshot.offerId)}　SKU：${esc(preview.snapshot.skuCount)} 個</div>${hasManual ? '<div class="warning">部分規格沒有自動配對，請逐項人工確認；系統不會替你猜測。</div>' : ''}${rows}<div class="preview-actions"><button class="commit" data-action="commit">確認並寫入 Golden Table</button></div></div>`;
+    const busy = state.busy.has(product.productId);
+    return `<div class="preview"><div class="snapshot">1688：${esc(preview.snapshot.productName || '未命名商品')}<br>Offer ID：${esc(preview.snapshot.offerId)}　SKU：${esc(preview.snapshot.skuCount)} 個</div>${hasManual ? '<div class="warning">部分規格沒有自動配對，請逐項人工確認；系統不會替你猜測。</div>' : ''}${rows}<div class="preview-actions"><button class="commit" data-action="commit" ${busy ? 'disabled' : ''}>${busy ? '寫入中…' : '確認並寫入 Golden Table'}</button></div></div>`;
   }
 
   async function load() {
@@ -42,6 +45,13 @@
       const response = await fetch('/api/golden-table/import/candidates');
       const data = await response.json();
       if (!response.ok || data.status !== 'success') throw new Error(data.message || '候選清單載入失敗');
+      const previousCandidates = new Map(state.candidates.map(product => [product.productId, product]));
+      const nextCandidates = new Map((data.candidates || []).map(product => [product.productId, product]));
+      for (const productId of state.previews.keys()) {
+        const previous = previousCandidates.get(productId);
+        const next = nextCandidates.get(productId);
+        if (!previous || !next || candidateSignature(previous) !== candidateSignature(next)) state.previews.delete(productId);
+      }
       state.sourceCount = data.sourceCount || 0;
       state.goldenCount = data.goldenCount || 0;
       state.candidates = data.candidates || [];
@@ -51,6 +61,7 @@
   }
 
   async function preview(product, card) {
+    if (state.busy.has(product.productId)) return;
     const url = card.querySelector('.alibaba-url').value.trim();
     if (!url) { message('請先貼上 1688 商品網址', 'error'); return; }
     state.busy.add(product.productId); render();
@@ -66,19 +77,21 @@
   }
 
   async function commit(product, card) {
+    if (state.busy.has(product.productId)) return;
     const preview = state.previews.get(product.productId);
     if (!preview || preview.error) return;
     const mappings = [...card.querySelectorAll('.model-select')].map(select => ({modelId:select.dataset.modelId, candidateKey:select.value, skuId:select.selectedOptions[0]?.dataset.skuId || ''}));
     if (mappings.some(item => !item.candidateKey)) { message('還有規格尚未選擇 1688 SKU', 'error'); return; }
-    const button = card.querySelector('.commit'); button.disabled = true;
+    state.busy.add(product.productId); render();
     try {
       const response = await fetch('/api/golden-table/import/commit', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({productId:product.productId, offerId:preview.snapshot.offerId, fingerprint:preview.snapshot.fingerprint, mappings, alibabaProductName:preview.snapshot.productName, alibabaProductUrl:preview.snapshot.productUrl})});
       const data = await response.json();
       if (!response.ok || data.status !== 'success') throw new Error(data.message || '寫入失敗');
       state.candidates = state.candidates.filter(item => item.productId !== product.productId);
-      state.previews.delete(product.productId); render();
+      state.previews.delete(product.productId);
       message(`商品 ${product.productId} 已寫入，已建立備份檔。`, 'success');
-    } catch (error) { button.disabled = false; message(error.message, 'error'); }
+    } catch (error) { message(error.message, 'error'); }
+    finally { state.busy.delete(product.productId); render(); }
   }
 
   $('reload').addEventListener('click', load);
