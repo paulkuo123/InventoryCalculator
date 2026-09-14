@@ -49,7 +49,7 @@
 | `GET /search?keyword=…` → `InventoryHTTPRequestHandler.run_crawler` | 活的蝦皮爬蟲：`crawler.ShopeeCrawler.run` 先 `get_all_products_info()` 拉賣家中心商品列，再 `get_monthly_sales(keyword)` 用數據中心「搜尋商品」框。關鍵字「隔日到貨」是店內品名慣例，**不是**獨立 API。空關鍵字仍會爬。寫入 gitignore 的 `shopee_products.json`。 |
 | 首頁 `#searchButton` | 同上，即時爬蟲。驗證技能列為禁點。 |
 | Telegram `/搜尋 隔日到貨 4` | `telegram_bot.run_crawler_task`，同樣活爬；**拉式**，沒有定時低水位推播。 |
-| `scripts/run_watchlist_restock.py` | 若 8080 沒人就啟動 `main.py`，等 `GET /api/home/bootstrap` 有商品，開瀏覽器給人看。**預設不加車**（沒 `--restock`）。 |
+| `scripts/run_watchlist_restock.py` | 若 8080 沒人就啟動 `main.py`，等 `GET /api/home/bootstrap` 有商品，開瀏覽器給人看。**預設不加車**。沒有 `--i-approve-watchlist-restock` 時只印任務 1 應補摘要＋「尚未加車」（舊的 `--restock --yes` 不能單獨 POST）。 |
 
 **缺口：** 沒有 cron／timer；首頁不會自動載入觀察清單；「隔日到貨」搜尋掃的是賣家中心關鍵字命中，與磁碟 watchlist 158 筆不必相同；`shopee_products.json` 過期時，後續水位全錯。
 
@@ -61,7 +61,7 @@
 
 - 首頁儀表板：`script.js` `updateDashboardUI`。危急 = 有銷量型號裡 **>30%** 水位 &lt; 1.5 個月；需注意 = &gt;10%。`#restockModelsCount` 顯示需補型號數。這是**畫面上的狀態**，不是推播，也沒有「要不要補」對話。
 - Telegram `/搜尋` 報告：`classify_inventory_status`（危急 &lt;1.5 月、偏低 &lt;3 月）。會列建議補貨量，**沒有**「回覆是就開 1688」的指令。
-- CLI 確認：`run_watchlist_restock.confirm_restock` — `--restock` 且沒 `--yes` 時，在終端問「按 Enter 開始補貨，或輸入 n」。這是操作者已坐在機器前的閘門，不是遠端提醒。
+- CLI 確認：`run_watchlist_restock.confirm_restock` — 路 A 須 `--i-approve-watchlist-restock` 才會 `POST /api/alibaba-restock/batches`。`--yes` **只**跳過「按 Enter」，不能單獨核准；沒有核准旗標時印任務 1 摘要並提示尚未加車。這是操作者已坐在機器前的閘門，不是遠端提醒，也**不是** `reverse_audit mutate`。
 - 首頁整頁補貨：`#openBatchRestockButton` → `POST /api/alibaba-restock/batches/preview` 再手動確認。`restock_batch.build_preview` **不會重算數量**，只凍結畫面上的清單。
 
 **缺口：** 沒有「低水位 → 推播 → 等是／否」狀態機。Telegram 也沒有 `/補貨` 或 callback。儀表板月數與店規 3／4 可能不一致，提醒集合會和 `reverse_audit` 應補集合不同。
@@ -111,7 +111,7 @@
 - 賣家中心爬庫存＋月銷：`crawler.py`、`GET /search`、Telegram `/搜尋`（要 cookies）。
 - 店規水位（CLI／反向）：`restock_rules.calculated_restock_details`（含歷史銷量保護、近十、條件最低 5）。
 - 觀察清單 ∩ 排除：`watchlists/personal_watchlist.json`（158）+ exclusions（66）+ 品名含「襪」。
-- 正向整頁加車：`scripts/run_watchlist_restock.py --restock`、首頁預覽、`restock_batch` 可續跑。
+- 正向整頁加車（路 A）：`scripts/run_watchlist_restock.py --i-approve-watchlist-restock`、首頁預覽、`restock_batch` 可續跑。`--yes` 只跳過 Enter；沒有核准旗標不會 POST。不是 `reverse_audit mutate`。
 - 加車增量驗證與車滿暫停：`alibaba_restocker.restock_count_check`、`VERIFY_CART_COUNTS=True`。
 - 反向四池對帳：`python -m reverse_audit refresh` → 整合表＋機器 CSV。
 - 核准後改車：加車／設量／刪除，缺旗標立即拒絕。
@@ -121,7 +121,7 @@
 
 - 首頁儀表板低水位（1.5 月危急）— 要先搜尋或匯入，月數用下拉，不是 3／4 店規。
 - Telegram 庫存報告 — 拉式，月數單一，沒有「要就補」閘門。
-- launcher 的 Enter／`--yes` — 只服務本機 CLI，不是遠端提醒。
+- launcher 的 Enter／`--yes` — `--yes` 只跳過本機「按 Enter」；加車仍須 `--i-approve-watchlist-restock`。不是遠端提醒，也不等於 mutate 核准。
 - 路 A 增量驗證 vs 路 B 四池對帳 — 兩套證據，沒串起來。
 - `cart-reconciliation` 書包截止 vs `reverse_audit`「不理正向書包 cutoff」— 範圍契約不同，不能混報「已核完全車」。
 - mapping 阻擋：launcher 把未核准列算 blocker；`SkuMappingService._scope_models` 沒有 URL 的型號直接 `continue`，不會進掃描。
@@ -178,7 +178,7 @@
 ```text
 階段 0  現況（人工拼）
         爬蟲或匯入 → 人看首頁／Telegram
-        → 人下 --restock 或按整頁補貨
+        → 人下 --i-approve-watchlist-restock 或按整頁補貨
         → 人另跑 reverse_audit refresh
         閘門：每一步都是人
 
@@ -225,6 +225,8 @@
 ### 任務 2 — 明示核准才啟動現有整頁補貨
 
 **做：** 在 `run_watchlist_restock.py`（或任務 1 的 CLI）加 `--i-approve-watchlist-restock`。沒這旗標：只印任務 1 摘要＋現有「尚未加車」提示，exit 0。有旗標：才走現有 `build_visible_style_products` → `POST /api/alibaba-restock/batches`。`--yes` **不**再單獨等於核准（避免舊習慣繞過）；`--yes` 只能跳過「按 Enter」，仍要新旗標。文件寫清：這是路 A，不是 `reverse_audit mutate`。
+
+**現況：** 路 A 加車指令是 `python scripts/run_watchlist_restock.py --i-approve-watchlist-restock [--keyword 吊飾] [--yes]`。沒有該旗標（含舊習慣 `--restock --yes`）只跑 `python -m restock_loop scan` 摘要並提示尚未加車，**不會** POST `/api/alibaba-restock/batches`。這不是 `python -m reverse_audit mutate --i-approve-mutate`。
 
 **不做：** 不新做 Telegram bot 對話（政策未定）；不自動 `--i-approve-mutate`；不略過 blocker。
 

@@ -26,6 +26,7 @@ python -m reverse_audit freeze --date YYYYMMDD
 python -m reverse_audit dry-run --date YYYYMMDD
 python -m reverse_audit dry-run --date YYYYMMDD --refreeze   # 等同 refresh
 # 加車／改量／刪除各走獨立核准旗標（互不隱含；缺旗標立即拒絕）
+# 這是路 B。路 A 觀察清單整頁加車是 scripts/run_watchlist_restock.py --i-approve-watchlist-restock
 python -m reverse_audit mutate --date YYYYMMDD --i-approve-mutate
 python -m reverse_audit mutate --date YYYYMMDD --i-approve-set-qty
 python -m reverse_audit mutate --date YYYYMMDD --i-approve-remove
