@@ -25,7 +25,8 @@ def secret_mode(path):
 
 
 def leftover_tmps(directory, name):
-    return list(Path(directory).glob(f".{name}.*.tmp"))
+    stem = name.lstrip(".") or name
+    return list(Path(directory).glob(f".{stem}.*.tmp"))
 
 
 class CookieRefresherWriteTests(unittest.TestCase):

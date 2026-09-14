@@ -109,7 +109,7 @@ def atomic_write_secret_json(path: Path, payload: Any) -> None:
             "w",
             encoding="utf-8",
             dir=str(destination.parent),
-            prefix=f".{destination.name}.",
+            prefix=f".{destination.name.lstrip('.') or 'secret'}.",
             suffix=".tmp",
             delete=False,
         ) as handle:
