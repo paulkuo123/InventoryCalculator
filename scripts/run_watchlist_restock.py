@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Official launcher: start main.py, load the homepage for review, then restock via API.
 
+This is Path A (launcher / watchlist restock), not reverse_audit mutate.
+Add-to-cart requires --i-approve-watchlist-restock; --yes only skips Enter.
+
 This script owns the watchlist restock workflow. The homepage requires explicit
 product/watchlist imports; opening it does not load a list or change its filter.
 """
@@ -38,6 +41,18 @@ from restock_rules import calculated_restock_details, round_calculated_restock_q
 
 EXIT_ERROR = 1
 EXIT_PAUSED = 2
+
+# Path A (launcher / watchlist restock). Independent of reverse_audit mutate flags.
+APPROVE_WATCHLIST_RESTOCK_FLAG = "--i-approve-watchlist-restock"
+BATCHES_PATH = "/api/alibaba-restock/batches"
+
+PATH_A_EPILOG = (
+    "這是路 A（launcher／觀察清單整頁補貨），不是 reverse_audit mutate（路 B）。\n"
+    f"加車必須帶 {APPROVE_WATCHLIST_RESTOCK_FLAG} 才會 POST {BATCHES_PATH}。\n"
+    "--yes 只跳過「按 Enter」，不代表核准；舊的 --restock / --yes 不能單獨加車。\n"
+    "路 B：python -m reverse_audit mutate --i-approve-mutate（本指令不會呼叫）。\n"
+    "任務 1 唯讀摘要：python -m restock_loop scan"
+)
 
 
 def server_url(port: int) -> str:
@@ -334,13 +349,43 @@ def wait_for_batch(
 
 def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="啟動 main.py、載入首頁給你 review，再用 API 做觀察清單整頁補貨",
+        description=(
+            "啟動 main.py、載入首頁給你 review，再用 API 做觀察清單整頁補貨。"
+            "這是路 A（launcher／watchlist restock），不是 reverse_audit mutate。"
+        ),
+        epilog=PATH_A_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--keyword", default="", help="只補商品名稱含此關鍵字的項目，例如 吊飾")
     parser.add_argument("--months", type=int, default=4)
-    parser.add_argument("--restock", action="store_true", help="載入首頁後開始整頁補貨")
-    parser.add_argument("--yes", action="store_true", help="--restock 時不等待確認")
+    parser.add_argument(
+        "--restock",
+        action="store_true",
+        help=(
+            "打算整頁補貨，但已不再單獨等於核准。"
+            f"沒有 {APPROVE_WATCHLIST_RESTOCK_FLAG} 時只印應補摘要＋尚未加車，"
+            f"不會 POST {BATCHES_PATH}。"
+        ),
+    )
+    parser.add_argument(
+        "--yes",
+        action="store_true",
+        help=(
+            "核准後跳過「按 Enter」確認；不代表核准加車。"
+            f"仍須 {APPROVE_WATCHLIST_RESTOCK_FLAG} 才會 POST {BATCHES_PATH}。"
+        ),
+    )
+    parser.add_argument(
+        APPROVE_WATCHLIST_RESTOCK_FLAG,
+        action="store_true",
+        dest="i_approve_watchlist_restock",
+        help=(
+            "明確核准路 A 觀察清單整頁加車："
+            f"build_visible_style_products → POST {BATCHES_PATH}。"
+            "不是 reverse_audit mutate；不略過 blocker；不隱含 --i-approve-mutate。"
+        ),
+    )
     parser.add_argument("--resume", metavar="RUN_ID", help="繼續先前暫停的批次")
     parser.add_argument(
         "--cart-cleared",
@@ -350,6 +395,68 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser.add_argument("--no-browser", action="store_true")
     parser.add_argument("--timeout-seconds", type=int, default=60, help="等待 main.py 啟動的秒數")
     return parser.parse_args(argv)
+
+
+def approved_watchlist_restock(args: argparse.Namespace) -> bool:
+    """POST batches only when the explicit Path A flag is set. --yes is not enough."""
+    return bool(getattr(args, "i_approve_watchlist_restock", False))
+
+
+def print_task1_scan_summary(root: Path, out_dir: Optional[Path] = None) -> Optional[Dict[str, Any]]:
+    """Run Task 1 restock_loop scan (report-only). Never POSTs batches."""
+    try:
+        from restock_loop.cli import default_out_dir
+        from restock_loop.scan import run_scan
+    except ImportError as exc:
+        print(f"應補摘要無法載入（只報告、尚未加車）：{exc}", flush=True)
+        return None
+    try:
+        dest = Path(out_dir) if out_dir is not None else default_out_dir(root)
+        summary = run_scan(root=Path(root), out_dir=dest)
+    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+        print(f"應補摘要無法產生（只報告、尚未加車）：{exc}", flush=True)
+        return None
+    markdown_path = Path(summary["outputs"]["摘要.md"])
+    print(markdown_path.read_text(encoding="utf-8"), end="", flush=True)
+    print(f"\nJSON：{summary['outputs']['scan_summary.json']}", flush=True)
+    return summary
+
+
+def print_not_yet_adding_to_cart(keyword: str = "", *, restock_or_yes: bool = False) -> None:
+    kw = f" --keyword {keyword}" if keyword else ""
+    print("只載入畫面，尚未加車。確認後可：", flush=True)
+    print("  1. 在首頁按「整頁一鍵補貨」", flush=True)
+    print(
+        "  2. 或再執行（路 A，非 reverse_audit mutate）："
+        f"python scripts/run_watchlist_restock.py {APPROVE_WATCHLIST_RESTOCK_FLAG}{kw} [--yes]",
+        flush=True,
+    )
+    print(
+        f"     --yes 只跳過 Enter，不能單獨核准；沒有 {APPROVE_WATCHLIST_RESTOCK_FLAG} "
+        f"不會 POST {BATCHES_PATH}。",
+        flush=True,
+    )
+    print("  3. 唯讀應補摘要：python -m restock_loop scan", flush=True)
+    if restock_or_yes:
+        print(
+            "注意：--restock / --yes 已不再單獨等於核准加車。"
+            f"請加上 {APPROVE_WATCHLIST_RESTOCK_FLAG}（路 A，不是 reverse_audit mutate）。",
+            flush=True,
+        )
+
+
+def start_watchlist_restock_batch(
+    base_url: str,
+    root: Path,
+    keyword: str,
+    months: int,
+) -> tuple[Dict[str, Any], Dict[str, Any]]:
+    """Existing Path A engine: build_visible_style_products → POST batches."""
+    payload = build_visible_style_products(root, keyword, months)
+    ready = sum(1 for product in payload["products"] if product.get("items"))
+    print(f"準備補貨 {ready} 個商品（關鍵字：{keyword or '觀察清單全部'}）", flush=True)
+    started = start_batch(base_url, payload)
+    return started, payload
 
 
 def confirm_restock(yes: bool, input_fn: Callable[[str], str] = input) -> bool:
@@ -367,69 +474,89 @@ def print_batch_outcome(batch: Dict[str, Any], port: int) -> None:
         print(f"續跑：python scripts/run_watchlist_restock.py --resume {run_id}", flush=True)
 
 
-def main(argv: Optional[list] = None) -> int:
-    args = parse_args(argv)
+def prepare_homepage(args: argparse.Namespace) -> tuple[Optional[Any], Optional[str], int]:
+    """Start main.py if needed and wait for homepage data. Returns (process, base, exit_code)."""
     base = server_url(args.port)
+    process = start_main_if_needed(ROOT, args.port)
+    if process is not None:
+        print(f"已啟動 main.py（pid {process.pid}）", flush=True)
+    else:
+        print(f"main.py 已在 {base} 運行", flush=True)
+    if not wait_for_server(base, timeout_seconds=args.timeout_seconds):
+        print("等待庫存系統啟動逾時", file=sys.stderr)
+        return process, None, EXIT_ERROR
+
+    bootstrap = wait_for_homepage_data(base)
+    if not bootstrap_is_ready(bootstrap):
+        print(bootstrap.get("message") or "主頁資料尚未載入成功", file=sys.stderr)
+        return process, None, EXIT_ERROR
+    counts = bootstrap.get("watchlistCounts") or {}
+    print(
+        f"已備妥主頁資料：{bootstrap.get('shopee', {}).get('productCount') or len(bootstrap.get('products') or {})} 個商品，"
+        f"觀察清單 {counts.get('matched', 0)} / {counts.get('imported', 0)} 命中",
+        flush=True,
+    )
+    review_url = home_url(args.port, keyword=args.keyword)
+    if not args.no_browser:
+        webbrowser.open(review_url)
+    print(f"請先在瀏覽器對結果：{review_url}", flush=True)
+    print("請在這一頁手動匯入 shopee_products.json 與觀察清單，再核對補貨內容。", flush=True)
+    return process, base, EXIT_OK
+
+
+def wait_on_started_process(process: Any) -> None:
+    print("main.py 仍在運行，可繼續看報告。Ctrl+C 結束。", flush=True)
+    process.wait()
+
+
+def run_resume(args: argparse.Namespace) -> int:
     process = None
     try:
-        process = start_main_if_needed(ROOT, args.port)
-        if process is not None:
-            print(f"已啟動 main.py（pid {process.pid}）", flush=True)
-        else:
-            print(f"main.py 已在 {base} 運行", flush=True)
-        if not wait_for_server(base, timeout_seconds=args.timeout_seconds):
-            print("等待庫存系統啟動逾時", file=sys.stderr)
-            return EXIT_ERROR
-
-        bootstrap = wait_for_homepage_data(base)
-        if not bootstrap_is_ready(bootstrap):
-            print(bootstrap.get("message") or "主頁資料尚未載入成功", file=sys.stderr)
-            return EXIT_ERROR
-        counts = bootstrap.get("watchlistCounts") or {}
-        print(
-            f"已備妥主頁資料：{bootstrap.get('shopee', {}).get('productCount') or len(bootstrap.get('products') or {})} 個商品，"
-            f"觀察清單 {counts.get('matched', 0)} / {counts.get('imported', 0)} 命中",
-            flush=True,
-        )
-
-        review_url = home_url(args.port, keyword=args.keyword)
-        if not args.no_browser:
-            webbrowser.open(review_url)
-        print(f"請先在瀏覽器對結果：{review_url}", flush=True)
-        print("請在這一頁手動匯入 shopee_products.json 與觀察清單，再核對補貨內容。", flush=True)
-
-        if args.resume:
-            started = resume_batch(base, args.resume, cart_cleared=bool(args.cart_cleared))
-            if started.get("status") != "success" or not started.get("runId"):
-                print(started.get("message") or "續跑失敗", file=sys.stderr)
-                return EXIT_ERROR
-            print(f"已繼續批次 {started['runId']}", flush=True)
-            finished = wait_for_batch(base, str(started["runId"]))
-            batch = finished.get("batch") if isinstance(finished.get("batch"), dict) else finished
-            print_batch_outcome(batch, args.port)
-            code = EXIT_OK if str(batch.get("status") or "").startswith("completed") else EXIT_PAUSED
-            if process is not None:
-                print("main.py 仍在運行，可繼續看報告。Ctrl+C 結束。", flush=True)
-                process.wait()
+        process, base, code = prepare_homepage(args)
+        if base is None:
             return code
+        started = resume_batch(base, args.resume, cart_cleared=bool(args.cart_cleared))
+        if started.get("status") != "success" or not started.get("runId"):
+            print(started.get("message") or "續跑失敗", file=sys.stderr)
+            return EXIT_ERROR
+        print(f"已繼續批次 {started['runId']}", flush=True)
+        finished = wait_for_batch(base, str(started["runId"]))
+        batch = finished.get("batch") if isinstance(finished.get("batch"), dict) else finished
+        print_batch_outcome(batch, args.port)
+        exit_code = EXIT_OK if str(batch.get("status") or "").startswith("completed") else EXIT_PAUSED
+        if process is not None:
+            wait_on_started_process(process)
+        return exit_code
+    finally:
+        terminate_process(process)
 
-        if not args.restock:
-            print("只載入畫面，尚未加車。確認後可：", flush=True)
-            print("  1. 在首頁按「整頁一鍵補貨」", flush=True)
-            print("  2. 或再執行：python scripts/run_watchlist_restock.py --restock [--keyword 吊飾] [--yes]", flush=True)
-            if process is not None:
-                print("此腳本會持續看守 main.py，Ctrl+C 結束。", flush=True)
-                process.wait()
-            return EXIT_OK
 
+def run_review_homepage(args: argparse.Namespace) -> int:
+    process = None
+    try:
+        process, base, code = prepare_homepage(args)
+        if base is None:
+            return code
+        if process is not None:
+            print("此腳本會持續看守 main.py，Ctrl+C 結束。", flush=True)
+            process.wait()
+        return EXIT_OK
+    finally:
+        terminate_process(process)
+
+
+def run_approved_watchlist_restock(args: argparse.Namespace) -> int:
+    process = None
+    try:
+        process, base, code = prepare_homepage(args)
+        if base is None:
+            return code
         if not confirm_restock(args.yes):
             print("已取消補貨。", flush=True)
             return EXIT_OK
-
-        payload = build_visible_style_products(ROOT, args.keyword, args.months)
-        ready = sum(1 for product in payload["products"] if product.get("items"))
-        print(f"準備補貨 {ready} 個商品（關鍵字：{args.keyword or '觀察清單全部'}）", flush=True)
-        started = start_batch(base, payload)
+        started, _payload = start_watchlist_restock_batch(
+            base, ROOT, args.keyword, args.months
+        )
         if started.get("status") != "success" or not started.get("runId"):
             print(started.get("message") or "啟動整頁補貨失敗", file=sys.stderr)
             return EXIT_ERROR
@@ -437,21 +564,44 @@ def main(argv: Optional[list] = None) -> int:
         finished = wait_for_batch(base, str(started["runId"]))
         batch = finished.get("batch") if isinstance(finished.get("batch"), dict) else finished
         print_batch_outcome(batch, args.port)
-        code = EXIT_OK if str(batch.get("status") or "").startswith("completed") else EXIT_PAUSED
+        exit_code = EXIT_OK if str(batch.get("status") or "").startswith("completed") else EXIT_PAUSED
         if process is not None:
-            print("main.py 仍在運行，可繼續看報告。Ctrl+C 結束。", flush=True)
-            process.wait()
-        return code
+            wait_on_started_process(process)
+        return exit_code
+    finally:
+        terminate_process(process)
+
+
+def terminate_process(process: Optional[Any]) -> None:
+    if process is not None and process.poll() is None:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except Exception:
+            process.kill()
+
+
+def main(argv: Optional[list] = None) -> int:
+    args = parse_args(argv)
+    try:
+        if args.resume:
+            return run_resume(args)
+
+        print_task1_scan_summary(ROOT)
+
+        if not approved_watchlist_restock(args):
+            print_not_yet_adding_to_cart(
+                args.keyword,
+                restock_or_yes=bool(args.restock or args.yes),
+            )
+            if args.restock or args.yes:
+                return EXIT_OK
+            return run_review_homepage(args)
+
+        return run_approved_watchlist_restock(args)
     except KeyboardInterrupt:
         print("\n已中斷。main.py 若由此腳本啟動，將一併結束。", flush=True)
         return EXIT_ERROR
-    finally:
-        if process is not None and process.poll() is None:
-            process.terminate()
-            try:
-                process.wait(timeout=5)
-            except Exception:
-                process.kill()
 
 
 if __name__ == "__main__":

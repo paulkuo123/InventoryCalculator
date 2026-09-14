@@ -456,7 +456,9 @@ def render_zh_summary(report: Dict[str, Any]) -> str:
         [
             "",
             "---",
-            "此指令不會啟動補貨。要加車請另走既有 `scripts/run_watchlist_restock.py`（任務 2 才接核准旗標）。",
+            "此指令是任務 1 唯讀掃描，不會啟動補貨、不會 POST `/api/alibaba-restock/batches`。",
+            "路 A（launcher／觀察清單整頁補貨）：`python scripts/run_watchlist_restock.py --i-approve-watchlist-restock`",
+            "`--yes` 只跳過 Enter，不能單獨核准。這不是 `reverse_audit mutate`（路 B：`--i-approve-mutate` 等獨立旗標）。",
             "",
         ]
     )

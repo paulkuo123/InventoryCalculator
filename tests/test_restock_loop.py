@@ -76,6 +76,23 @@ class RestockLoopHelpTests(unittest.TestCase):
         text = build_parser().format_help()
         self.assertIn("只報告", text)
         self.assertIn("report-only", text)
+        self.assertIn("路 A", text)
+        self.assertIn("--i-approve-watchlist-restock", text)
+        self.assertIn("reverse_audit mutate", text)
+
+    def test_scan_help_points_to_path_a_not_mutate(self):
+        proc = subprocess.run(
+            [sys.executable, "-m", "restock_loop", "scan", "--help"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--i-approve-watchlist-restock", proc.stdout)
+        self.assertIn("路 A", proc.stdout)
+        self.assertIn("mutate", proc.stdout)
+        self.assertIn("只跳過 Enter", proc.stdout)
 
 
 class RestockLoopScanTests(unittest.TestCase):
@@ -197,6 +214,8 @@ class RestockLoopScanTests(unittest.TestCase):
             self.assertIn("Skip", md)
             self.assertIn("Blocker", md)
             self.assertIn("差集", md)
+            self.assertIn("--i-approve-watchlist-restock", md)
+            self.assertIn("reverse_audit mutate", md)
             self.assertEqual(sha256_file(fixture_golden), fixture_sha)
             self.assertEqual(
                 payload["sources"]["golden_table.json"]["sha256"], fixture_sha

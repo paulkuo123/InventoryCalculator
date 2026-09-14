@@ -18,6 +18,14 @@ REPORT_ONLY = (
     "不加車、不 mutate、不改 golden_table.json。"
 )
 
+PATH_A_VS_MUTATE_EPILOG = (
+    "scan 是任務 1 唯讀摘要，不會 POST /api/alibaba-restock/batches。\n"
+    "路 A（launcher／觀察清單整頁補貨）："
+    "python scripts/run_watchlist_restock.py --i-approve-watchlist-restock\n"
+    "--yes 只跳過 Enter，不能單獨核准加車。\n"
+    "這不是 reverse_audit mutate（路 B：python -m reverse_audit mutate --i-approve-mutate）。"
+)
+
 
 def default_out_dir(root: Path, date: Optional[str] = None) -> Path:
     stamp = (date or today_yyyymmdd()).strip()
@@ -28,6 +36,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="python -m restock_loop",
         description=REPORT_ONLY,
+        epilog=PATH_A_VS_MUTATE_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
@@ -35,6 +45,8 @@ def build_parser() -> argparse.ArgumentParser:
         "scan",
         help="只報告：產出 JSON＋中文摘要（不加車／不 mutate）",
         description=REPORT_ONLY,
+        epilog=PATH_A_VS_MUTATE_EPILOG,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     scan_p.add_argument(
         "--out",

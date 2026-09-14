@@ -1,16 +1,25 @@
+import io
+import shutil
+import subprocess
 import sys
+import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
-
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
-
 from unittest.mock import patch
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
+
 from run_watchlist_restock import (
+    APPROVE_WATCHLIST_RESTOCK_FLAG,
+    BATCHES_PATH,
+    approved_watchlist_restock,
     bootstrap_is_ready,
     build_visible_style_products,
     confirm_restock,
     home_url,
+    main,
     parse_args,
     resume_batch,
     round_restock_qty,
@@ -24,6 +33,46 @@ from run_watchlist_restock import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+FIX = ROOT / "tests" / "fixtures" / "restock_loop"
+
+READY_BOOTSTRAP = {
+    "status": "success",
+    "products": {"1": {"商品名稱": "吊飾"}},
+    "watchlistCounts": {"matched": 1, "imported": 1},
+    "shopee": {"productCount": 1},
+}
+
+
+def _stage_root(tmpdir: Path) -> Path:
+    root = tmpdir / "repo"
+    watch = root / "watchlists"
+    watch.mkdir(parents=True)
+    shutil.copy(FIX / "shopee_products.json", root / "shopee_products.json")
+    shutil.copy(FIX / "golden_table.json", root / "golden_table.json")
+    shutil.copy(FIX / "personal_watchlist.json", watch / "personal_watchlist.json")
+    shutil.copy(
+        FIX / "personal_watchlist_exclusions.json",
+        watch / "personal_watchlist_exclusions.json",
+    )
+    return root
+
+
+def _patch_runtime(root: Path, request_json):
+    return (
+        patch("run_watchlist_restock.ROOT", root),
+        patch("run_watchlist_restock.start_main_if_needed", return_value=None),
+        patch("run_watchlist_restock.wait_for_server", return_value=True),
+        patch("run_watchlist_restock.wait_for_homepage_data", return_value=READY_BOOTSTRAP),
+        patch("run_watchlist_restock.webbrowser.open"),
+        patch("run_watchlist_restock.request_json", side_effect=request_json),
+        patch(
+            "run_watchlist_restock.wait_for_batch",
+            return_value={"batch": {"status": "completed", "runId": "run-test", "message": "ok"}},
+        ),
+    )
+
+
 class RunWatchlistRestockTests(unittest.TestCase):
     def test_urls(self):
         self.assertEqual(server_url(8080), "http://127.0.0.1:8080")
@@ -33,9 +82,24 @@ class RunWatchlistRestockTests(unittest.TestCase):
     def test_parse_args_defaults_to_review_only(self):
         args = parse_args([])
         self.assertFalse(args.restock)
+        self.assertFalse(args.yes)
+        self.assertFalse(args.i_approve_watchlist_restock)
+        self.assertFalse(approved_watchlist_restock(args))
         self.assertEqual(args.keyword, "")
         self.assertIsNone(args.resume)
         self.assertFalse(args.cart_cleared)
+
+    def test_yes_and_restock_alone_are_not_approve(self):
+        args = parse_args(["--restock", "--yes"])
+        self.assertTrue(args.restock)
+        self.assertTrue(args.yes)
+        self.assertFalse(args.i_approve_watchlist_restock)
+        self.assertFalse(approved_watchlist_restock(args))
+
+        approved = parse_args([APPROVE_WATCHLIST_RESTOCK_FLAG, "--yes"])
+        self.assertTrue(approved.i_approve_watchlist_restock)
+        self.assertTrue(approved.yes)
+        self.assertTrue(approved_watchlist_restock(approved))
 
     def test_resume_without_cart_cleared_sends_false(self):
         args = parse_args(["--resume", "run-1"])
@@ -191,6 +255,10 @@ class RunWatchlistRestockTests(unittest.TestCase):
             0,
         )
 
+    @unittest.skipUnless(
+        (ROOT / "shopee_products.json").is_file(),
+        "needs local shopee_products.json",
+    )
     def test_build_visible_style_products_from_real_files(self):
         payload = build_visible_style_products(Path("."), keyword="吊飾", months=4)
         self.assertEqual(payload["keyword"], "吊飾")
@@ -202,6 +270,10 @@ class RunWatchlistRestockTests(unittest.TestCase):
                 self.assertEqual(product.get("targetMonths"), expected)
                 self.assertTrue(all(item.get("targetMonths") == expected for item in product["items"]))
 
+    @unittest.skipUnless(
+        (ROOT / "shopee_products.json").is_file(),
+        "needs local shopee_products.json",
+    )
     def test_visible_list_excludes_sock_product_names(self):
         payload = build_visible_style_products(Path("."), keyword="", months=4)
         self.assertTrue(payload["products"])
@@ -220,6 +292,130 @@ class RunWatchlistRestockTests(unittest.TestCase):
         case_model = {"商品庫存": "0", "月銷量": "10", "已售出數量": "10"}
         self.assertEqual(suggested_restock_qty(case_product, case_model, target_months_for_product("手機殼")), 30)
         self.assertEqual(suggested_restock_qty(case_product, case_model, target_months_for_product("壓克力吊飾")), 40)
+
+
+class WatchlistRestockApproveGateTests(unittest.TestCase):
+    def _posts(self):
+        calls = []
+
+        def fake_request_json(method, url, payload=None, timeout=60):
+            calls.append({"method": method, "url": url, "payload": payload})
+            return {
+                "status": "success",
+                "runId": "run-test",
+                "batch": {"status": "completed", "runId": "run-test", "message": "ok"},
+            }
+
+        return calls, fake_request_json
+
+    def _run_main(self, argv, root, request_json):
+        captured = io.StringIO()
+        with redirect_stdout(captured):
+            patches = _patch_runtime(root, request_json)
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+                code = main(["--no-browser", *argv])
+        return code, captured.getvalue()
+
+    def test_help_documents_path_a_not_mutate(self):
+        proc = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "run_watchlist_restock.py"), "--help"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        help_text = proc.stdout
+        self.assertIn(APPROVE_WATCHLIST_RESTOCK_FLAG, help_text)
+        self.assertIn("路 A", help_text)
+        self.assertIn("reverse_audit mutate", help_text)
+        self.assertIn("不代表核准", help_text)
+        self.assertIn(BATCHES_PATH, help_text)
+        self.assertIn("restock_loop scan", help_text)
+
+    def test_without_flag_restock_yes_prints_scan_and_does_not_post(self):
+        calls, fake_request_json = self._posts()
+        started = []
+
+        def fake_start(*_args, **_kwargs):
+            started.append(True)
+            return None
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            captured = io.StringIO()
+            with redirect_stdout(captured):
+                patches = _patch_runtime(root, fake_request_json)
+                with patches[0], patches[2], patches[3], patches[4], patches[5], patches[6]:
+                    with patch("run_watchlist_restock.start_main_if_needed", side_effect=fake_start):
+                        code = main(["--no-browser", "--restock", "--yes"])
+            stdout = captured.getvalue()
+        self.assertEqual(code, 0)
+        self.assertEqual(started, [])
+        self.assertIn("只報告", stdout)
+        self.assertIn("尚未加車", stdout)
+        self.assertIn(APPROVE_WATCHLIST_RESTOCK_FLAG, stdout)
+        self.assertIn("路 A", stdout)
+        self.assertIn("reverse_audit mutate", stdout)
+        self.assertIn("--restock / --yes 已不再單獨等於核准", stdout)
+        batch_posts = [
+            call
+            for call in calls
+            if call["method"] == "POST" and BATCHES_PATH in str(call["url"])
+        ]
+        self.assertEqual(batch_posts, [])
+
+    def test_without_flag_default_does_not_post(self):
+        calls, fake_request_json = self._posts()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            code, stdout = self._run_main([], root, fake_request_json)
+        self.assertEqual(code, 0)
+        self.assertIn("尚未加車", stdout)
+        self.assertFalse(
+            any(call["method"] == "POST" and BATCHES_PATH in str(call["url"]) for call in calls)
+        )
+
+    def test_with_flag_builds_existing_payload_and_posts_batches(self):
+        calls, fake_request_json = self._posts()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            expected = build_visible_style_products(root, keyword="", months=4)
+            code, stdout = self._run_main(
+                [APPROVE_WATCHLIST_RESTOCK_FLAG, "--yes"],
+                root,
+                fake_request_json,
+            )
+        self.assertEqual(code, 0)
+        self.assertTrue(any(product.get("items") for product in expected["products"]))
+        batch_posts = [
+            call
+            for call in calls
+            if call["method"] == "POST" and str(call["url"]).rstrip("/").endswith(BATCHES_PATH)
+        ]
+        self.assertEqual(len(batch_posts), 1, calls)
+        payload = batch_posts[0]["payload"]
+        self.assertEqual(payload["products"], expected["products"])
+        self.assertTrue(any(product.get("items") for product in payload["products"]))
+        self.assertIn("準備補貨", stdout)
+        self.assertNotIn("尚未加車", stdout)
+
+    def test_approve_flag_without_yes_still_requires_enter(self):
+        calls, fake_request_json = self._posts()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            captured = io.StringIO()
+            with redirect_stdout(captured):
+                patches = _patch_runtime(root, fake_request_json)
+                with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], patches[6]:
+                    with patch("run_watchlist_restock.confirm_restock", return_value=False) as confirm:
+                        code = main(["--no-browser", APPROVE_WATCHLIST_RESTOCK_FLAG])
+        self.assertEqual(code, 0)
+        confirm.assert_called_once_with(False)
+        self.assertIn("已取消補貨", captured.getvalue())
+        self.assertFalse(
+            any(call["method"] == "POST" and BATCHES_PATH in str(call["url"]) for call in calls)
+        )
 
 
 if __name__ == "__main__":
