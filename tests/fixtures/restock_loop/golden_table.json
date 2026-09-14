@@ -1,0 +1,92 @@
+{
+  "1001": {
+    "型號": [
+      {
+        "規格ID": "s1",
+        "型號名稱": "黑色,15",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/10001.html",
+        "1688_offer_id": "10001",
+        "1688_sku_id": "sku-a",
+        "1688_sku_name": "黑色",
+        "1688_sku_second_name": "15"
+      },
+      {
+        "規格ID": "s2",
+        "型號名稱": "白色,15",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/10001.html",
+        "1688_offer_id": "10001",
+        "1688_sku_id": "sku-b",
+        "1688_sku_name": "白色",
+        "1688_sku_second_name": "15"
+      },
+      {
+        "規格ID": "s3",
+        "型號名稱": "缺欄型號",
+        "1688_mapping_status": "draft",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/40004.html",
+        "1688_offer_id": "40004",
+        "1688_sku_id": "sku-unc",
+        "1688_sku_name": "uncertain"
+      },
+      {
+        "規格ID": "s4",
+        "型號名稱": "停售型號",
+        "1688_mapping_status": "discontinued",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/50005.html",
+        "1688_offer_id": "50005",
+        "1688_sku_id": "sku-skip",
+        "1688_sku_name": "停售"
+      },
+      {
+        "規格ID": "s5",
+        "型號名稱": "綠色,16",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/10001.html",
+        "1688_offer_id": "10001",
+        "1688_sku_id": "sku-green",
+        "1688_sku_name": "綠色"
+      }
+    ]
+  },
+  "1002": {
+    "型號": [
+      {
+        "規格ID": "t1",
+        "型號名稱": "黑色均碼",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/20002.html",
+        "1688_offer_id": "20002",
+        "1688_sku_id": "sku-sock",
+        "1688_sku_name": "黑色"
+      }
+    ]
+  },
+  "1003": {
+    "型號": [
+      {
+        "規格ID": "k1",
+        "型號名稱": "均碼黑",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/30003.html",
+        "1688_offer_id": "30003",
+        "1688_sku_id": "sku-sock-name",
+        "1688_sku_name": "黑襪"
+      }
+    ]
+  },
+  "1004": {
+    "型號": [
+      {
+        "規格ID": "e1",
+        "型號名稱": "透明",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/60006.html",
+        "1688_offer_id": "60006",
+        "1688_sku_id": "sku-excl",
+        "1688_sku_name": "透明"
+      }
+    ]
+  }
+}
