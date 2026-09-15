@@ -20,6 +20,7 @@ build/
 # Project specific
 debug.log
 cookies.json
+.cookie_refresh_state.json
 data/*
 data/1688_master/
 *.kb.tmp.db

@@ -11,7 +11,7 @@ import os
 import re
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Tuple
 
 
 MAX_COOKIE_IMPORT_BYTES = 2 * 1024 * 1024
@@ -99,6 +99,100 @@ def normalize_cookie_payload(payload: Any) -> Tuple[List[Dict[str, Any]], List[s
     return normalized, sorted(domains)
 
 
+def atomic_write_secret_json(path: Path, payload: Any) -> None:
+    """Atomically replace ``path`` and chmod 0600 so secrets stay owner-only."""
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=str(destination.parent),
+            prefix=f".{destination.name.lstrip('.') or 'secret'}.",
+            suffix=".tmp",
+            delete=False,
+        ) as handle:
+            temporary_path = Path(handle.name)
+            os.chmod(handle.name, 0o600)
+            json.dump(payload, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, destination)
+        temporary_path = None
+        os.chmod(destination, 0o600)
+    finally:
+        if temporary_path and temporary_path.exists():
+            temporary_path.unlink()
+
+
+def playwright_cookies_to_payload(
+    cookies: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Convert Playwright cookie dicts into the cookies.json storage shape."""
+    saved_cookies: List[Dict[str, Any]] = []
+    for cookie in cookies:
+        saved_cookie: Dict[str, Any] = {
+            "name": cookie.get("name", ""),
+            "value": cookie.get("value", ""),
+            "domain": cookie.get("domain", ""),
+            "path": cookie.get("path", "/"),
+            "secure": bool(cookie.get("secure", False)),
+            "httpOnly": bool(cookie.get("httpOnly", False)),
+        }
+        expires = cookie.get("expires")
+        if isinstance(expires, (int, float)) and not isinstance(expires, bool) and expires > 0:
+            saved_cookie["expirationDate"] = expires
+        if "sameSite" in cookie:
+            saved_cookie["sameSite"] = cookie["sameSite"]
+        saved_cookies.append(saved_cookie)
+    return saved_cookies
+
+
+def payload_to_playwright_cookies(
+    cookies: Iterable[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """Convert cookies.json storage shape into Playwright add_cookies dicts."""
+    playwright_cookies: List[Dict[str, Any]] = []
+    for cookie in cookies:
+        pw_cookie: Dict[str, Any] = {
+            "name": cookie.get("name", ""),
+            "value": cookie.get("value", ""),
+            "domain": cookie.get("domain", ""),
+            "path": cookie.get("path", "/"),
+        }
+        expiration = cookie.get("expirationDate")
+        if isinstance(expiration, (int, float)) and not isinstance(expiration, bool):
+            pw_cookie["expires"] = int(expiration)
+        if cookie.get("httpOnly", False):
+            pw_cookie["httpOnly"] = True
+        if cookie.get("secure", False):
+            pw_cookie["secure"] = True
+        same_site = cookie.get("sameSite", "Lax")
+        if same_site in ("Strict", "Lax", "None"):
+            pw_cookie["sameSite"] = same_site
+        else:
+            pw_cookie["sameSite"] = "Lax"
+        playwright_cookies.append(pw_cookie)
+    return playwright_cookies
+
+
+def write_shopee_cookies(path: Path, payload: Any) -> Dict[str, Any]:
+    """Validate a cookie list and atomically write it to ``path`` with mode 0600."""
+    normalized, domains = normalize_cookie_payload(payload)
+    target = Path(path)
+    replaced_existing = target.exists()
+    atomic_write_secret_json(target, normalized)
+    return {
+        "status": "success",
+        "count": len(normalized),
+        "domains": domains,
+        "replacedExisting": replaced_existing,
+        "fileName": target.name,
+    }
+
+
 def save_shopee_cookies(base_dir: str, cookie_text: str) -> Dict[str, Any]:
     """Validate and atomically save cookies.json under ``base_dir``."""
     if not isinstance(cookie_text, str) or not cookie_text.strip():
@@ -131,32 +225,4 @@ def save_shopee_cookies(base_dir: str, cookie_text: str) -> Dict[str, Any]:
             raise ValueError(f"Cookie JSON 格式錯誤（第 {exc.lineno} 行）") from None
         payload = pairs
 
-    normalized, domains = normalize_cookie_payload(payload)
-    target = Path(base_dir) / "cookies.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    replaced_existing = target.exists()
-    temporary_path = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            "w", encoding="utf-8", dir=str(target.parent),
-            prefix=".cookies.", suffix=".tmp", delete=False
-        ) as handle:
-            temporary_path = Path(handle.name)
-            os.chmod(handle.name, 0o600)
-            json.dump(normalized, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary_path, target)
-        os.chmod(target, 0o600)
-    finally:
-        if temporary_path and temporary_path.exists():
-            temporary_path.unlink()
-
-    return {
-        "status": "success",
-        "count": len(normalized),
-        "domains": domains,
-        "replacedExisting": replaced_existing,
-        "fileName": target.name,
-    }
+    return write_shopee_cookies(Path(base_dir) / "cookies.json", payload)

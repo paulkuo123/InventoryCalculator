@@ -1,24 +1,34 @@
 #!/usr/bin/env python3
-"""
-Cookie Refresher - 自動刷新蝦皮 Cookies
-功能：以較低頻、帶抖動的方式刷新蝦皮 Cookies，降低固定規律行為
-"""
+"""Refresh Shopee cookies on a jittered schedule."""
 
+from __future__ import annotations
+
+import argparse
 import json
 import os
-import time
 import random
+import signal
+import sys
 import threading
+import time
 from datetime import datetime
-from playwright.sync_api import sync_playwright
+from pathlib import Path
 
-# 與 crawler.py 保持一致的 User Agent 列表
+from cookie_import import (
+    atomic_write_secret_json,
+    payload_to_playwright_cookies,
+    playwright_cookies_to_payload,
+    write_shopee_cookies,
+)
+
 USER_AGENTS = [
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/132.0.0.0 Safari/537.36",
 ]
+
+APPROVE_LIVE_REFRESH_FLAG = "--i-approve-live-refresh"
 
 
 class CookieRefresher:
@@ -39,11 +49,9 @@ class CookieRefresher:
         self._refresh_lock = threading.Lock()
 
     def _format_timestamp(self, timestamp):
-        """將 timestamp 格式化為可讀時間"""
         return datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S')
 
     def _load_state(self):
-        """讀取下次排程狀態"""
         try:
             with open(self.state_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -51,15 +59,12 @@ class CookieRefresher:
             return {}
 
     def _save_state(self, state):
-        """保存排程狀態"""
         try:
-            with open(self.state_path, 'w', encoding='utf-8') as f:
-                json.dump(state, f, ensure_ascii=False, indent=2)
+            atomic_write_secret_json(Path(self.state_path), state)
         except Exception as e:
             print(f"⚠️ 保存刷新排程狀態失敗: {e}")
 
     def _schedule_next_refresh(self, min_interval_hours, max_interval_hours, reason):
-        """建立並保存下一次自動刷新時間"""
         wait_seconds = random.randint(
             int(min_interval_hours * 3600),
             int(max_interval_hours * 3600)
@@ -78,7 +83,6 @@ class CookieRefresher:
         return next_refresh
 
     def _get_next_refresh_time(self, min_interval_hours, max_interval_hours):
-        """取得既有排程；若沒有則建立新的隨機排程"""
         state = self._load_state()
         next_refresh = state.get("next_refresh_ts")
         if isinstance(next_refresh, (int, float)) and next_refresh > time.time():
@@ -91,7 +95,6 @@ class CookieRefresher:
         )
 
     def _load_cookies(self):
-        """從 cookies.json 載入 cookies"""
         try:
             with open(self.cookies_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -100,39 +103,23 @@ class CookieRefresher:
             return None
 
     def _save_cookies(self, cookies):
-        """保存 cookies 到 cookies.json"""
         try:
-            # 轉換為 cookies.json 格式（與 crawler.py 保持一致）
-            saved_cookies = []
-            for cookie in cookies:
-                saved_cookie = {
-                    "name": cookie.get("name", ""),
-                    "value": cookie.get("value", ""),
-                    "domain": cookie.get("domain", ""),
-                    "path": cookie.get("path", "/"),
-                    "secure": cookie.get("secure", False),
-                    "httpOnly": cookie.get("httpOnly", False),
-                }
-                if "expires" in cookie and cookie["expires"] and cookie["expires"] > 0:
-                    saved_cookie["expirationDate"] = cookie["expires"]
-                if "sameSite" in cookie:
-                    saved_cookie["sameSite"] = cookie["sameSite"]
-                saved_cookies.append(saved_cookie)
-
-            with open(self.cookies_path, 'w', encoding='utf-8') as f:
-                json.dump(saved_cookies, f, ensure_ascii=False, indent=2)
-            print(f"✅ Cookies 已更新 ({len(saved_cookies)} 個)")
+            result = write_shopee_cookies(
+                Path(self.cookies_path),
+                playwright_cookies_to_payload(cookies),
+            )
+            print(f"✅ Cookies 已更新 ({result['count']} 個)")
             return True
         except Exception as e:
             print(f"❌ 保存 cookies 失敗: {e}")
             return False
 
     def _init_browser(self):
-        """初始化瀏覽器（用於刷新 cookies）"""
         try:
+            from playwright.sync_api import sync_playwright
+
             self._playwright = sync_playwright().start()
 
-            # 隨機選擇 User Agent，與 crawler.py 保持一致
             user_agent = random.choice(USER_AGENTS)
             print(f"   使用 User Agent: {user_agent[:60]}...")
 
@@ -148,13 +135,11 @@ class CookieRefresher:
                 ]
             )
 
-            # 設定 viewport 和 user_agent
             self._context = self._browser.new_context(
                 user_agent=user_agent,
                 viewport={"width": 1280, "height": 800},
             )
 
-            # 注入 JavaScript 來欺騙網頁，與 crawler.py 保持一致
             self._context.add_init_script("""
                 Object.defineProperty(document, 'visibilityState', {
                     get() { return 'visible'; }
@@ -175,7 +160,6 @@ class CookieRefresher:
             return False
 
     def _close_browser(self):
-        """關閉瀏覽器（防重入）"""
         try:
             if self._page:
                 try:
@@ -200,25 +184,20 @@ class CookieRefresher:
         except Exception as e:
             print(f"⚠️ 關閉瀏覽器時出錯: {e}")
         finally:
-            # 無論成功或失敗都清除引用
             self._page = None
             self._context = None
             self._browser = None
             self._playwright = None
 
     def close_all_shopee_popups(self, max_tries=3):
-        """
-        通用關閉蝦皮彈出視窗的方法（輕量版，適用於 cookie 刷新）
-        """
+        """輕量關閉蝦皮彈窗，僅用於 cookie 刷新，不擴充 crawler 行為。"""
         for _ in range(max_tries):
             popup_closed_this_round = False
 
             try:
-                # 策略 1: 模擬按 ESC 鍵
                 self._page.keyboard.press("Escape")
                 time.sleep(0.3)
 
-                # 策略 2: 尋找常見的關閉按鈕文字
                 close_texts = ['關閉', '知道了', '我知道了', '稍後再說', '下次再說', '跳過', '取消', 'Close', 'Skip']
 
                 for text in close_texts:
@@ -237,7 +216,6 @@ class CookieRefresher:
                     except Exception:
                         pass
 
-                # 策略 3: 使用 JavaScript 硬刪除常見的 Overlay/Modal DOM 元素
                 js_script = """
                     let removed = false;
                     const dialogSelectors = [
@@ -273,14 +251,6 @@ class CookieRefresher:
                 break
 
     def refresh_cookies(self):
-        """
-        刷新 cookies 的核心邏輯：
-        1. 載入現有 cookies
-        2. 啟動瀏覽器並注入 cookies
-        3. 訪問蝦皮賣家中心（觸發 cookies 更新）
-        4. 關閉可能出現的彈窗
-        5. 獲取最新 cookies 並保存
-        """
         if not self._refresh_lock.acquire(blocking=False):
             print("⚠️ 已有 Cookie 刷新作業進行中，略過重複請求")
             return False
@@ -288,78 +258,41 @@ class CookieRefresher:
         print(f"\n🔄 [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] 開始刷新 Cookies...")
 
         try:
-            # 1. 載入現有 cookies
             cookies = self._load_cookies()
             if not cookies:
                 print("⚠️ 無法載入 cookies，跳過此次刷新")
                 return False
 
-            # 2. 初始化瀏覽器
             if not self._init_browser():
                 return False
 
-            # 3. 先訪問目標域名（建立域名上下文）
             self._page.goto(self.shopee_url, wait_until="domcontentloaded", timeout=15000)
             time.sleep(1)
 
-            # 4. 注入現有 cookies（與 crawler.py 保持一致的轉換邏輯）
-            playwright_cookies = []
-            for cookie in cookies:
-                pw_cookie = {
-                    'name': cookie.get('name', ''),
-                    'value': cookie.get('value', ''),
-                    'domain': cookie.get('domain', ''),
-                    'path': cookie.get('path', '/'),
-                }
-
-                # 添加過期時間
-                if 'expirationDate' in cookie and isinstance(cookie['expirationDate'], (int, float)):
-                    pw_cookie['expires'] = int(cookie['expirationDate'])
-
-                # 添加 httpOnly 和 secure 屬性（只在有值時才設定）
-                if cookie.get('httpOnly', False):
-                    pw_cookie['httpOnly'] = True
-                if cookie.get('secure', False):
-                    pw_cookie['secure'] = True
-
-                # sameSite 屬性（Playwright 需要）
-                same_site = cookie.get('sameSite', 'Lax')
-                if same_site and same_site in ['Strict', 'Lax', 'None']:
-                    pw_cookie['sameSite'] = same_site
-                else:
-                    pw_cookie['sameSite'] = 'Lax'
-
-                playwright_cookies.append(pw_cookie)
+            playwright_cookies = payload_to_playwright_cookies(cookies)
 
             try:
                 self._context.add_cookies(playwright_cookies)
                 print(f"   成功添加 {len(playwright_cookies)} 個 Cookies")
             except Exception as e:
                 print(f"   批次添加 Cookies 失敗: {e}")
-                # 如果批次失敗，逐一添加
                 for pw_cookie in playwright_cookies:
                     try:
                         self._context.add_cookies([pw_cookie])
                     except Exception:
                         pass
 
-            # 5. 訪問賣家中心（觸發 cookies 更新）
             seller_url = "https://seller.shopee.tw/portal/product/"
             print(f"   訪問賣家中心以刷新 Cookies...")
             self._page.goto(seller_url, wait_until="domcontentloaded", timeout=20000)
             time.sleep(2)
 
-            # 5.5 關閉可能出現的彈窗
             print(f"   檢查並關閉彈窗...")
             self.close_all_shopee_popups()
 
-            # 額外等待確保 cookies 被伺服器更新
             time.sleep(2)
 
-            # 6. 獲取最新 cookies
             current_cookies = self._context.cookies()
-
-            # 7. 保存 cookies
             success = self._save_cookies(current_cookies)
 
             if success:
@@ -403,7 +336,6 @@ class CookieRefresher:
                     time.sleep(sleep_time)
                     continue
 
-                # 到點才執行刷新，避免每次啟動 bot 都立刻觸發
                 success = self.refresh_cookies()
                 if success:
                     next_refresh_ts = self._schedule_next_refresh(
@@ -433,19 +365,32 @@ class CookieRefresher:
         print("👋 Cookie Refresher 已停止")
 
     def stop(self):
-        """停止自動刷新"""
         self.running = False
 
 
-# 獨立運行測試
-if __name__ == "__main__":
-    import signal
-    import sys
+def refuse_live_refresh_message() -> str:
+    return (
+        f"拒絕：未帶 {APPROVE_LIVE_REFRESH_FLAG}，不會打 live 賣家中心或覆寫 cookies.json"
+    )
 
-    WORK_DIR = os.path.dirname(os.path.abspath(__file__))
-    COOKIES_FILE = os.path.join(WORK_DIR, "cookies.json")
 
-    refresher = CookieRefresher(COOKIES_FILE)
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Refresh Shopee seller-center cookies. Refuses live I/O unless explicitly approved."
+    )
+    parser.add_argument(
+        APPROVE_LIVE_REFRESH_FLAG,
+        action="store_true",
+        help="Required to hit seller.shopee.tw and overwrite cookies.json",
+    )
+    args = parser.parse_args(argv)
+    if not args.i_approve_live_refresh:
+        print(refuse_live_refresh_message(), file=sys.stderr)
+        return 2
+
+    work_dir = os.path.dirname(os.path.abspath(__file__))
+    cookies_file = os.path.join(work_dir, "cookies.json")
+    refresher = CookieRefresher(cookies_file)
 
     def signal_handler(sig, frame):
         print("\n⚠️ 收到中斷信號")
@@ -455,6 +400,9 @@ if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
 
-    # 運行一次測試
-    print("🧪 執行單次 Cookie 刷新測試...")
-    refresher.refresh_cookies()
+    print("🧪 執行單次 Cookie 刷新...")
+    return 0 if refresher.refresh_cookies() else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
