@@ -1,9 +1,12 @@
 import unittest
 
 from restock_rules import (
+    DEFAULT_RESTOCK_MONTHS,
     MAX_ALIBABA_RESTOCK_SKUS,
+    PHONE_CASE_MONTHS,
     resolve_restock_quantity,
     round_calculated_restock_qty,
+    target_months_for_product,
     validate_restock_sku_count,
 )
 
@@ -50,6 +53,15 @@ class RestockRulesTests(unittest.TestCase):
             resolve_restock_quantity({"adjusted_qty": 4, "restockQty": 20}, lambda value: 5),
             4,
         )
+
+    def test_phone_case_uses_three_months_and_others_use_four(self):
+        """Analysis / 1688 restock keep shop 3/4; homepage UI does not use this helper."""
+        self.assertEqual(PHONE_CASE_MONTHS, 3)
+        self.assertEqual(DEFAULT_RESTOCK_MONTHS, 4)
+        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼"), 3)
+        self.assertEqual(target_months_for_product("可爱手机壳"), 3)
+        self.assertEqual(target_months_for_product("iPhone 吊飾掛繩"), 4)
+        self.assertEqual(target_months_for_product("iPad 保護貼"), 4)
 
 
 if __name__ == "__main__":
