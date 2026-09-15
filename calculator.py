@@ -1,10 +1,9 @@
 import sys
 from PyQt5.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
                              QPushButton, QGraphicsDropShadowEffect, QGridLayout, QFrame,
-                             QSizePolicy, QSpacerItem, QProgressBar, QShortcut, QInputDialog,
-                             QMessageBox)
-from PyQt5.QtGui import QFont, QPalette, QColor, QIcon, QFontDatabase, QValidator, QKeySequence
-from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QPoint
+                             QProgressBar, QShortcut, QInputDialog, QMessageBox)
+from PyQt5.QtGui import QFont, QColor, QValidator, QKeySequence
+from PyQt5.QtCore import Qt, QPropertyAnimation, QEasingCurve
 import threading
 
 # 導入版本管理

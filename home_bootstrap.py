@@ -144,7 +144,6 @@ def watchlist_match_counts(products: Dict[str, Any], product_ids: List[str]) -> 
 def golden_mapping_stats(products: Dict[str, Any]) -> Dict[str, int]:
     approved = 0
     incomplete = 0
-    restockable = 0
     for product in (products or {}).values():
         if not isinstance(product, dict):
             continue
@@ -156,13 +155,11 @@ def golden_mapping_stats(products: Dict[str, Any]) -> Dict[str, int]:
             url = str(model.get("阿里巴巴商品URL") or "").strip()
             if status == "approved" and sku_name and url.startswith("http"):
                 approved += 1
-                restockable += 1
             elif sku_name or url or status:
                 incomplete += 1
     return {
         "approvedModelCount": approved,
         "incompleteModelCount": incomplete,
-        "restockableModelCount": restockable,
     }
 
 

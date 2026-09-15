@@ -9,7 +9,7 @@
 import json
 import os
 import re
-from playwright.sync_api import sync_playwright, expect
+from playwright.sync_api import sync_playwright
 
 
 def test_dashboard_follows_advanced_search():
@@ -93,9 +93,7 @@ def test_dashboard_follows_advanced_search():
         
         # 取得初始 Dashboard 統計（全部商品）
         initial_models, initial_stock, initial_sales = read_dashboard()
-        
-        print(f"初始統計 - 型號: {initial_models}, 庫存: {initial_stock}, 銷量: {initial_sales}")
-        
+
         # 預期：6 個型號 (2+2+2), 215 庫存 (50+30+20+10+100+5), 60 銷量 (12+8+10+5+15+10)
         assert int(initial_models) == 6, f"預期初始有 6 個型號，實際為 {initial_models}"
         assert int(initial_stock) == 215, f"預期初始有 215 庫存，實際為 {initial_stock}"
@@ -107,9 +105,7 @@ def test_dashboard_follows_advanced_search():
         page.wait_for_timeout(500)  # 等待更新
         
         searched_models, searched_stock, searched_sales = read_dashboard()
-        
-        print(f"搜尋 'iPhone' 後 - 型號: {searched_models}, 庫存: {searched_stock}, 銷量: {searched_sales}")
-        
+
         # 預期：2 個型號（僅 iPhone），80 庫存 (50+30)，20 銷量 (12+8)
         assert int(searched_models) == 2, f"預期搜尋後有 2 個型號，實際為 {searched_models}"
         assert int(searched_stock) == 80, f"預期搜尋後有 80 庫存，實際為 {searched_stock}"
@@ -121,9 +117,7 @@ def test_dashboard_follows_advanced_search():
         page.wait_for_timeout(500)
         
         restored_models, restored_stock, restored_sales = read_dashboard()
-        
-        print(f"清除搜尋後 - 型號: {restored_models}, 庫存: {restored_stock}, 銷量: {restored_sales}")
-        
+
         assert restored_models == initial_models, f"型號未恢復：{restored_models} != {initial_models}"
         assert restored_stock == initial_stock, f"庫存未恢復：{restored_stock} != {initial_stock}"
         assert restored_sales == initial_sales, f"銷量未恢復：{restored_sales} != {initial_sales}"
@@ -132,9 +126,7 @@ def test_dashboard_follows_advanced_search():
         set_filter_mode(True)
         
         filtered_models, filtered_stock, filtered_sales = read_dashboard()
-        
-        print(f"切換 filterMode 後 - 型號: {filtered_models}, 庫存: {filtered_stock}, 銷量: {filtered_sales}")
-        
+
         # Fixture 中有 2 個庫存充足型號會被隱藏，因此 Dashboard 應只剩 4 個型號。
         assert int(filtered_models) == 4, f"預期 filterMode 後有 4 個型號，實際為 {filtered_models}"
         assert int(filtered_stock) == 65, f"預期 filterMode 後有 65 庫存，實際為 {filtered_stock}"
@@ -150,21 +142,13 @@ def test_dashboard_follows_advanced_search():
         page.wait_for_timeout(500)
         
         combo_models, combo_stock, combo_sales = read_dashboard()
-        
-        print(f"搜尋 '收納' + filterMode - 型號: {combo_models}, 庫存: {combo_stock}, 銷量: {combo_sales}")
-        
+
         # 收納盒中只有大號需要補貨，因此只剩 1 個型號。
         assert int(combo_models) == 1, f"預期搜尋+篩選有 1 個型號，實際為 {combo_models}"
         assert int(combo_stock) == 5, f"預期搜尋+篩選有 5 庫存，實際為 {combo_stock}"
         assert int(combo_sales) == 10, f"預期搜尋+篩選有 10 銷量，實際為 {combo_sales}"
         
         browser.close()
-        
-        print("\n✓ 所有 Dashboard 測試通過！")
-        print("  - Dashboard 隨進階搜尋更新")
-        print("  - Dashboard 在清除搜尋後恢復")
-        print("  - Dashboard 隨 filterMode 只統計需補貨型號")
-        print("  - Dashboard 在搜尋與 filterMode 同時開啟時套用兩者")
 
 
 if __name__ == '__main__':
