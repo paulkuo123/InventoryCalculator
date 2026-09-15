@@ -1,37 +1,24 @@
-"""
-版本管理與自動更新檢查模組
-支援兩種使用者類型：
-  1. 開發者（有 .git 目錄）→ 檢查 Git 遠端更新
-  2. 一般使用者（只有執行檔）→ 檢查 GitHub Releases
+"""版本管理與更新檢查。
+
+HTTP 入口 `python main.py` 啟動時不會自動執行；需要時請跑 `python version.py`。
 """
 import os
 import sys
 import subprocess
 import requests
 
-# ===== 版本號（每次發布新版時修改這裡） =====
 CURRENT_VERSION = "1.0.0"
-# ===========================================
-
-# GitHub 倉庫資訊（⚠️ 請替換成你的實際帳號/專案名）
-# 例如：GITHUB_OWNER = "myusername", GITHUB_REPO = "InventoryCalculater"
-GITHUB_OWNER = "paulkuo123"  # ← 改成你的 GitHub 帳號
-GITHUB_REPO = "InventoryCalculater"    # ← 改成你的 Repo 名稱
+GITHUB_OWNER = "paulkuo123"
+GITHUB_REPO = "InventoryCalculator"
 
 
 def check_for_updates():
-    """
-    統一更新檢查：自動判斷使用者類型
-    - 開發者：檢查 Git 遠端有沒有新 commit
-    - 一般使用者：檢查 GitHub Releases 最新版本
-    """
+    """開發者環境檢查 Git 遠端；打包執行檔檢查 GitHub Releases。"""
     print("\n" + "=" * 50)
     print(f"📦 目前版本：v{CURRENT_VERSION}")
     print("=" * 50)
 
-    # 判斷是否為開發者環境（有 .git 目錄）
     is_developer = os.path.exists(".git") and not getattr(sys, "frozen", False)
-
     if is_developer:
         _check_git_updates()
     else:
@@ -39,29 +26,24 @@ def check_for_updates():
 
 
 def _check_git_updates():
-    """開發者模式：檢查 Git 遠端更新"""
+    """開發者模式：fetch 後比對 HEAD 與遠端分支。"""
     try:
-        # 先 fetch 遠端資訊（不下載）
         subprocess.run(
             ["git", "fetch", "--quiet"],
             capture_output=True,
-            timeout=10
+            timeout=10,
         )
 
-        # 取得本地 HEAD commit
         local = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
         ).stdout.strip()
 
-        # 嘗試多個可能的遠端分支名稱
-        remote_branches = ["origin/main", "origin/master", "origin/develop"]
         remote = None
-
-        for branch in remote_branches:
+        for branch in ("origin/main", "origin/master", "origin/develop"):
             result = subprocess.run(
                 ["git", "rev-parse", "--verify", branch],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
                 remote = result.stdout.strip()
@@ -72,12 +54,10 @@ def _check_git_updates():
             return
 
         if local != remote:
-            # 取得遠端最新的 commit message
             log = subprocess.run(
                 ["git", "log", remote, "-1", "--oneline"],
-                capture_output=True, text=True, timeout=5
+                capture_output=True, text=True, timeout=5,
             ).stdout.strip()
-
             print("🔄 發現程式碼更新！")
             print(f"   遠端最新：{log}")
             print("   請執行：git pull 更新原始碼")
@@ -93,19 +73,20 @@ def _check_git_updates():
 
 
 def _check_github_releases():
-    """一般使用者模式：檢查 GitHub Releases 最新版本"""
+    """一般使用者模式：比對 GitHub Releases 最新 tag。"""
+    api_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
     try:
-        api_url = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
         response = requests.get(api_url, timeout=10)
-
+        if response.status_code == 404:
+            print("⚠️  尚未發布 GitHub Release，跳過版本比對")
+            return
         if response.status_code != 200:
-            print("⚠️  無法取得 GitHub Releases 資訊")
+            print(f"⚠️  無法取得 GitHub Releases 資訊（HTTP {response.status_code}）")
             return
 
         data = response.json()
         latest_version = data.get("tag_name", "").lstrip("v")
         release_url = data.get("html_url", "")
-
         if not latest_version:
             print("⚠️  尚未發布任何 Release")
             return
@@ -113,7 +94,7 @@ def _check_github_releases():
         if latest_version != CURRENT_VERSION:
             print(f"🔄 發現新版本：v{latest_version}（目前是 v{CURRENT_VERSION}）")
             if release_url:
-                print(f"   請到以下網址下載執行檔：")
+                print("   請到以下網址下載執行檔：")
                 print(f"   {release_url}")
         else:
             print("✅ 已是最新版本")
@@ -127,5 +108,4 @@ def _check_github_releases():
 
 
 if __name__ == "__main__":
-    # 直接執行此檔案時測試
     check_for_updates()

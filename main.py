@@ -2,66 +2,7 @@ import sys
 import subprocess
 import os
 import re
-import importlib.metadata
-
-def ensure_dependencies():
-    """檢查並安裝缺失的依賴套件"""
-    # 獲取腳本所在目錄及 requirements.txt 路徑
-    base_path = os.path.dirname(os.path.abspath(__file__))
-    requirements_file = os.path.join(base_path, "requirements.txt")
-    
-    if not os.path.exists(requirements_file):
-        return
-
-    try:
-        with open(requirements_file, "r", encoding="utf-8") as f:
-            packages = [line.strip() for line in f if line.strip() and not line.startswith("#")]
-    except Exception as e:
-        print(f"讀取 requirements.txt 時出錯: {e}")
-        return
-
-    missing_packages = []
-    for package in packages:
-        # 解析套件名稱（處理版本號，例如 requests>=2.25.1 -> requests）
-        package_name = re.split(r'[<>=!]', package)[0].strip()
-        
-        # 特殊映射（如果有的話）
-        # pyinstaller 的 metadata 名稱就是 pyinstaller (小寫)
-        
-        try:
-            importlib.metadata.version(package_name)
-        except importlib.metadata.PackageNotFoundError:
-            missing_packages.append(package)
-
-    if missing_packages:
-        print("\n" + "="*50)
-        print(f"偵測到缺失的套件: {', '.join(missing_packages)}")
-        print("正在嘗試自動安裝，這可能需要幾分鐘時間...")
-        print("="*50 + "\n")
-        
-        try:
-            # 使用當前 Python 解析器執行 pip
-            subprocess.check_call([sys.executable, "-m", "pip", "install"] + missing_packages)
-            print("\n✅ 套件安裝成功。")
-            
-            # Playwright 額外處理
-            if any("playwright" in p.lower() for p in missing_packages):
-                print("偵測到 Playwright，正在安裝 Chromium 瀏覽器...")
-                subprocess.check_call([sys.executable, "-m", "playwright", "install", "chromium"])
-                print("✅ Playwright 瀏覽器安裝完成。")
-                
-        except subprocess.CalledProcessError as e:
-            print(f"\n❌ 自動安裝過程出錯: {e}")
-            print("請手動執行: pip install -r requirements.txt")
-            print("="*50 + "\n")
-            # 繼續嘗試執行，但也許會因導入失敗而崩潰
-        except Exception as e:
-            print(f"\n❌ 發生非預期錯誤: {e}")
-
-# 立即執行依賴檢查
-ensure_dependencies()
-
-# 原有導入
+import socket
 import http.server
 import socketserver
 import webbrowser
@@ -129,8 +70,6 @@ from restock_batch import (
     write_reports,
 )
 
-# 導入版本管理
-
 
 def normalize_identifier(value):
     """將 Excel 讀出的 ID 正規化成不帶 .0 的字串。"""
@@ -159,7 +98,6 @@ def requires_alibaba_second_sku(product_name, model_name):
 def is_alibaba_sku_discontinued(value):
     """停售標記不可當作實際 1688 SKU 送進補貨流程。"""
     return str(value or "").strip().lower() in {"停售", "已停售", "以後不賣了", "以后不卖了"}
-from version import check_for_updates, CURRENT_VERSION
 
 # 設置日誌記錄
 LOG_FILE = "debug.log"
@@ -301,13 +239,6 @@ removed_stale_temp_files = remove_stale_matching_files(
 )
 if removed_stale_temp_files:
     logger.info("已清除 %s 個超過一天的專案暫存檔", len(removed_stale_temp_files))
-
-# 確保 index.html 存在 (僅在非打包環境檢查，或確保打包時已包含)
-if not os.path.exists(FILE_NAME) and not getattr(sys, 'frozen', False):
-    with open(FILE_NAME, "w", encoding="utf-8") as f:
-        f.write("<h1>伺服器運行中！</h1>")
-    logger.info(f"創建了 {FILE_NAME} 文件")
-
 
 # 自定義處理器
 class CustomHandler(http.server.SimpleHTTPRequestHandler):
@@ -3574,52 +3505,54 @@ def launch_restock_batch(state):
     return load_state(directory)
 
 
-def kill_process_on_port(port):
-    """終止佔用指定端口的進程"""
-    try:
-        for proc in psutil.process_iter(['pid', 'name']):
-            try:
-                connections = proc.net_connections()
-                for conn in connections:
-                    if conn.laddr.port == port:
-                        logger.info(f"發現進程 {proc.pid} ({proc.name()}) 正在使用端口 {port}")
-                        logger.info(f"正在終止進程 {proc.pid}...")
-                        proc.terminate()
-                        try:
-                            proc.wait(timeout=3)
-                            logger.info(f"進程 {proc.pid} 已成功終止")
-                        except psutil.TimeoutExpired:
-                            logger.warning(f"進程 {proc.pid} 未在 3 秒內終止，強制終止...")
-                            proc.kill()
-                            logger.info(f"進程 {proc.pid} 已強制終止")
-                        return True
-            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-                pass
-        logger.info(f"端口 {port} 未被任何進程佔用")
-        return False
-    except Exception as e:
-        logger.error(f"檢查端口 {port} 時出錯: {e}")
-        return False
+def probe_host(host):
+    """0.0.0.0 / 空字串無法 connect，改探 127.0.0.1。"""
+    if not host or host in ("0.0.0.0", "::"):
+        return "127.0.0.1"
+    return host
+
+
+def port_in_use(host, port):
+    """有行程正在聽這個埠時回 True；不會終止任何行程。"""
+    target = (probe_host(host), int(port))
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.5)
+        return sock.connect_ex(target) == 0
+
+
+def require_index_html(path=None):
+    """找不到 index.html 就失敗，不要寫 stub 蓋掉壞工作樹。"""
+    index_path = FILE_NAME if path is None else path
+    if not os.path.exists(index_path):
+        raise FileNotFoundError(
+            f"找不到 {index_path}，拒絕啟動（不會寫入 stub）。"
+            "請確認工作目錄與靜態檔完整。"
+        )
+    return index_path
+
+
+def refuse_if_port_in_use(host, port):
+    """埠被佔時拒絕啟動，不要殺佔用行程。"""
+    if port_in_use(host, port):
+        raise OSError(
+            f"埠 {port} 已被佔用，拒絕啟動。"
+            "請先關閉佔用該埠的行程後再試。"
+        )
 
 
 # 啟動 HTTP 伺服器
 def start_server():
     global httpd  # 將 httpd 設為全局變量，以便其他函數可以訪問
 
+    refuse_if_port_in_use(BIND_HOST, PORT)
+
+    class TCPServerReuse(socketserver.ThreadingTCPServer):
+        allow_reuse_address = True
+        # A stalled browser request must not block mapping decisions,
+        # summary refreshes, or other local API calls.
+        daemon_threads = True
+
     try:
-        # 在啟動伺服器前，先終止佔用端口的進程
-        logger.info(f"檢查端口 {PORT} 是否被佔用...")
-        kill_process_on_port(PORT)
-        
-        # 等待一小段時間確保端口已釋放
-        time.sleep(0.5)
-
-        class TCPServerReuse(socketserver.ThreadingTCPServer):
-            allow_reuse_address = True
-            # A stalled browser request must not block mapping decisions,
-            # summary refreshes, or other local API calls.
-            daemon_threads = True
-
         with TCPServerReuse((BIND_HOST, PORT), CustomHandler) as httpd:
             logger.info(f"✅ 伺服器啟動於 http://localhost:{PORT}（bind {BIND_HOST}）")
 
@@ -3630,63 +3563,68 @@ def start_server():
             finally:
                 httpd.server_close()
                 logger.info("伺服器已關閉，端口已釋放")
-    except Exception as e:
-        logger.exception(f"伺服器啟動失敗: {e}")
+    except OSError:
+        logger.exception("伺服器啟動失敗（埠可能已被佔用）")
+        raise
+    except Exception:
+        logger.exception("伺服器啟動失敗")
+        raise
 
 
 # 全局變量
 httpd = None
 
-# ===== 啟動時檢查版本更新 =====
-try:
-    check_for_updates()
-except Exception as e:
-    logger.warning(f"版本檢查失敗：{e}")
-# ============================
 
-try:
-    recovered_restock_batches = recover_interrupted_batches(_restock_batches_root())
-    if recovered_restock_batches:
-        logger.info("已將中斷的批次補貨標記為待核對：%s", ", ".join(recovered_restock_batches))
-except Exception as e:
-    logger.warning("還原批次補貨狀態失敗：%s", e)
-
-# 先啟動伺服器
-server_thread = threading.Thread(target=start_server, daemon=True)
-server_thread.start()
-
-# 等待 2 秒，確保伺服器已啟動
-time.sleep(2)
-
-# 正式補貨腳本會自己開 review 頁，避免再彈一個沒載入資料的分頁。
-if os.environ.get("INVENTORY_SKIP_BROWSER") != "1":
-    webbrowser.open(f"http://localhost:{PORT}")
-    logger.info(f"已嘗試在瀏覽器中打開 http://localhost:{PORT}")
-else:
-    logger.info("INVENTORY_SKIP_BROWSER=1，改由啟動腳本開啟瀏覽器")
-
-# 主線程等待
-try:
-    # 使用 server_thread.join() 而不是無限循環
-    while server_thread.is_alive():
-        time.sleep(1)
-except KeyboardInterrupt:
-    logger.info("接收到鍵盤中斷，程式即將結束...")
-    # 發送關閉請求
+def main():
     try:
-        import urllib.request
-        urllib.request.urlopen(f"http://localhost:{PORT}/shutdown")
-    except Exception as e:
-        logger.error(f"發送關閉請求時出錯: {e}")
-except Exception as e:
-    logger.exception(f"發生未預期的錯誤: {e}")
-finally:
-    # 確保所有資源都被釋放
-    logger.info("正在清理資源...")
-    # 嘗試終止所有爬蟲進程
+        require_index_html()
+        refuse_if_port_in_use(BIND_HOST, PORT)
+    except (FileNotFoundError, OSError) as exc:
+        logger.error("%s", exc)
+        raise SystemExit(1) from exc
+
     try:
-        CustomHandler.stop_running_crawler()
+        recovered_restock_batches = recover_interrupted_batches(_restock_batches_root())
+        if recovered_restock_batches:
+            logger.info("已將中斷的批次補貨標記為待核對：%s", ", ".join(recovered_restock_batches))
     except Exception as e:
-        logger.exception(f"清理資源時出錯: {e}")
-    logger.info("===== 程序結束於 %s =====" %
-                datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+        logger.warning("還原批次補貨狀態失敗：%s", e)
+
+    server_thread = threading.Thread(target=start_server, daemon=True)
+    server_thread.start()
+    time.sleep(2)
+    if not server_thread.is_alive():
+        logger.error("伺服器執行緒已結束，啟動失敗")
+        raise SystemExit(1)
+
+    # 正式補貨腳本會自己開 review 頁，避免再彈一個沒載入資料的分頁。
+    if os.environ.get("INVENTORY_SKIP_BROWSER") != "1":
+        webbrowser.open(f"http://localhost:{PORT}")
+        logger.info(f"已嘗試在瀏覽器中打開 http://localhost:{PORT}")
+    else:
+        logger.info("INVENTORY_SKIP_BROWSER=1，改由啟動腳本開啟瀏覽器")
+
+    try:
+        while server_thread.is_alive():
+            time.sleep(1)
+    except KeyboardInterrupt:
+        logger.info("接收到鍵盤中斷，程式即將結束...")
+        try:
+            import urllib.request
+            urllib.request.urlopen(f"http://localhost:{PORT}/shutdown")
+        except Exception as e:
+            logger.error(f"發送關閉請求時出錯: {e}")
+    except Exception as e:
+        logger.exception(f"發生未預期的錯誤: {e}")
+    finally:
+        logger.info("正在清理資源...")
+        try:
+            CustomHandler.stop_running_crawler()
+        except Exception as e:
+            logger.exception(f"清理資源時出錯: {e}")
+        logger.info("===== 程序結束於 %s =====" %
+                    datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
+
+
+if __name__ == "__main__":
+    main()

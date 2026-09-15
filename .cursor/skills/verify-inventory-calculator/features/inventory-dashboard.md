@@ -37,5 +37,5 @@ Preconditions:
 - The homepage does not auto-call `/api/home/bootstrap` to fill the table. A successful bootstrap GET does not change `#overallStatusText`.
 - `#shopeeProductsImportButton` writes repo-root `shopee_products.json`. If you use that path, restore or delete the file afterwards; do not commit it.
 - `#cookieImportButton` writes `cookies.json`. Never type cookie JSON into the page during verification.
-- `python main.py` without `INVENTORY_SKIP_BROWSER=1` opens a desktop browser and will kill whatever already bound 8080.
+- `python main.py` without `INVENTORY_SKIP_BROWSER=1` opens a desktop browser. If 8080 is already bound it refuses to start.
 - `#openBatchRestockButton` starts the 1688 cart batch. Leave it untouched.

@@ -32,7 +32,7 @@ Secondary surfaces (not this skill's default drive): `python -m reverse_audit` C
 
 ## Isolate
 
-**Two instances cannot run side by side.** `PORT = 8080` is hardcoded in `main.py`. `start_server()` calls `kill_process_on_port(8080)` before bind, so a naive second `python main.py` would steal and kill whoever already holds the port.
+**Two instances cannot run side by side.** `PORT = 8080` is hardcoded in `main.py`. `start_server()` refuses to bind when the port is already taken; it does not kill the occupant.
 
 - If 8080 is already listening, **do not launch**. Do not drive that shared instance.
 - `control-inventory launch` refuses when the port is taken or when a recorded verification pid is still alive.
@@ -56,7 +56,7 @@ This is exactly:
 
 Ready signal: that GET succeeds and doctor (below) reports `"healthy": true`.
 
-Do **not** run bare `python main.py` for verification: it opens a desktop browser and will kill any process already on 8080.
+Do **not** run bare `python main.py` for verification: it opens a desktop browser. If 8080 is already taken it exits instead of stealing the port.
 
 Teardown is Cleanup, not Ctrl+C on a guessed pid.
 
@@ -169,7 +169,7 @@ Cleanup sends `GET /shutdown` to the recorded instance, waits, then SIGTERM/SIGK
 
 If a drive fails, run cleanup before the next launch so 8080 is not left occupied.
 
-Do not recover a wedged UI by calling `kill_process_on_port` or `pkill -f main.py`.
+Do not recover a wedged UI by killing whoever holds 8080 or running `pkill -f main.py`.
 
 ## Helpers
 

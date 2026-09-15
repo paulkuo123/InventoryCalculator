@@ -223,7 +223,7 @@ def cmd_launch(args: argparse.Namespace) -> None:
             )
     if port_in_use(DEFAULT_PORT):
         die(
-            f"port {DEFAULT_PORT} is already in use. This app always binds 8080 and `main.py` would kill the occupant. "
+            f"port {DEFAULT_PORT} is already in use. This app always binds 8080 and `main.py` will refuse to start. "
             "Refuse to drive a shared instance. Stop the other listener, or skip verification."
         )
 

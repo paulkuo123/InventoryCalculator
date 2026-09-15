@@ -45,7 +45,7 @@
 
 | 元件 | 實際行為 |
 |---|---|
-| `python main.py` | 開 HTTP `8080`，**沒有排程**。兩支實例不能並存（`kill_process_on_port(8080)`）。 |
+| `python main.py` | 開 HTTP `8080`，**沒有排程**。兩支實例不能並存（埠被佔時拒絕啟動，不會殺掉佔用行程）。 |
 | `GET /search?keyword=…` → `InventoryHTTPRequestHandler.run_crawler` | 活的蝦皮爬蟲：`crawler.ShopeeCrawler.run` 先 `get_all_products_info()` 拉賣家中心商品列，再 `get_monthly_sales(keyword)` 用數據中心「搜尋商品」框。關鍵字「隔日到貨」是店內品名慣例，**不是**獨立 API。空關鍵字仍會爬。寫入 gitignore 的 `shopee_products.json`。 |
 | 首頁 `#searchButton` | 同上，即時爬蟲。驗證技能列為禁點。 |
 | Telegram `/搜尋 隔日到貨 4` | `telegram_bot.run_crawler_task`，同樣活爬；**拉式**，沒有定時低水位推播。 |
