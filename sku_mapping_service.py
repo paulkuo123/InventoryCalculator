@@ -2473,7 +2473,7 @@ class SkuMappingService:
             ).fetchall()
             result = []
             # Build the golden-table lookup once per request.  The queue can contain
-            # thousands of legacy rows; repeatedly walking/parsing all 5,898 models
+            # thousands of legacy rows; repeatedly walking/parsing thousands of models
             # made the restock-only view appear hung on the first load.
             for row in rows:
                 item = dict(row)

@@ -12,7 +12,7 @@ import json
 import urllib.parse
 import tempfile
 import signal
-import psutil  # 需要安裝: pip install psutil
+import psutil
 import logging
 import datetime
 import shutil
@@ -113,10 +113,6 @@ def get_resource_path(relative_path):
 
 # 如果是 worker 模式，直接執行爬蟲邏輯
 if len(sys.argv) > 1 and sys.argv[1] == '--worker':
-    # 設置環境變量以確保 crawler 能正確找到資源
-    # if getattr(sys, 'frozen', False):
-    #     os.chdir(sys._MEIPASS)
-    
     # 避免循環導入
     import crawler
     # 移除 --worker 參數，讓 crawler 的 argparse 能正常工作
@@ -190,7 +186,7 @@ logger.info(
 )
 logger.info(f"操作系統: {os.name}, Python版本: {sys.version}")
 
-PORT = 8080  # 改為其他未被使用的端口，如 8080, 8888, 9000 等
+PORT = 8080
 # 預設只聽本機。這個伺服器會回傳 cookies 相關狀態、能觸發爬蟲與 1688 下單，
 # 不該預設暴露在區網；真的要給其他裝置連時，設 INVENTORY_BIND_HOST=0.0.0.0。
 BIND_HOST = os.environ.get("INVENTORY_BIND_HOST", "127.0.0.1")

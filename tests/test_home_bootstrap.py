@@ -141,6 +141,7 @@ class HomeBootstrapTests(unittest.TestCase):
         stats = golden_mapping_stats(products)
         self.assertEqual(stats["approvedModelCount"], 1)
         self.assertEqual(stats["incompleteModelCount"], 0)
+        self.assertNotIn("restockableModelCount", stats)
 
     def test_watchlist_exclusions_are_removed_on_bootstrap(self):
         products = self.valid_products()
