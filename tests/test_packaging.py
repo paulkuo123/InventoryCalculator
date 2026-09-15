@@ -62,6 +62,7 @@ class BuildScriptTests(unittest.TestCase):
         source = (ROOT / "build.py").read_text(encoding="utf-8")
         self.assertNotIn("--add-version=", source)
         self.assertNotIn("hidden-import=PyQt5", source)
+        self.assertNotIn("hidden-import=pandas", source)
         self.assertIn("hidden-import=requests", source)
 
     def test_get_version_reads_version_py(self):

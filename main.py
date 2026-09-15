@@ -2845,10 +2845,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         )
 
     def _load_alibaba_links(self):
-        """從 shopee_products.xlsx 讀取阿里巴巴連結映射。
-
-        優先使用 型號ID；若缺少型號ID，則退回 商品名稱+型號名稱。
-        """
+        """從 SQLite bindings 建立阿里巴巴連結映射。"""
         links_map = {}
         try:
             bindings = self._procurement_store().list_bindings()
@@ -2861,28 +2858,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                         links_map[str(model_id)] = url
         except Exception as e:
             logger.warning(f"載入 SQLite 1688 綁定失敗: {e}")
-
-        try:
-            import pandas as pd
-            xlsx_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shopee_products.xlsx")
-            if not os.path.exists(xlsx_path):
-                return links_map
-            df = pd.read_excel(xlsx_path, engine="calamine")
-            for _, row in df.iterrows():
-                product_name = str(row.get("商品名稱", "")).strip()
-                model_name = str(row.get("型號名稱", "")).strip()
-                model_id = normalize_identifier(row.get("型號ID", ""))
-                alibaba_link = str(row.get("阿里巴巴商品URL", "")).strip()
-                if not alibaba_link or alibaba_link in ("", "nan", "None"):
-                    continue
-                if model_id and model_id not in ("", "nan", "None"):
-                    links_map[model_id] = alibaba_link
-                if product_name and product_name not in ("nan", "None") and model_name and model_name not in ("nan", "None"):
-                    links_map[f"{product_name}|||{model_name}"] = alibaba_link
-            return links_map
-        except Exception as e:
-            logger.warning(f"載入阿里巴巴連結失敗: {e}")
-            return links_map
+        return links_map
 
     def run_worker_process(self, worker_args, output_path, task_name="任務", timeout=20000, script_name="crawler.py"):
         """執行 worker 子程序並讀取 JSON 結果"""

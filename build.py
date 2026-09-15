@@ -71,7 +71,6 @@ def build():
         "--clean",
         *[f"--add-data={data}" for data in add_data],
         "--hidden-import=requests",
-        "--hidden-import=pandas",
         "--hidden-import=playwright",
     ]
 

@@ -4,12 +4,32 @@ import tempfile
 import threading
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import main
 
 
 class MainStartupHygieneTests(unittest.TestCase):
+    def test_alibaba_links_are_loaded_from_sqlite_bindings(self):
+        store = Mock()
+        store.list_bindings.return_value = {
+            "product-1|||spec-1": {
+                "modelId": "spec-1",
+                "alibabaProductUrl": "https://detail.1688.com/offer/1.html",
+            },
+            "product-2|||spec-2": {
+                "modelId": "spec-2",
+                "alibabaProductUrl": "",
+            },
+        }
+        handler = main.CustomHandler.__new__(main.CustomHandler)
+        handler._procurement_store = Mock(return_value=store)
+
+        self.assertEqual(handler._load_alibaba_links(), {
+            "product-1|||spec-1": "https://detail.1688.com/offer/1.html",
+            "spec-1": "https://detail.1688.com/offer/1.html",
+        })
+
     def test_source_does_not_auto_pip_install_or_kill_port(self):
         source = Path(main.__file__).read_text(encoding="utf-8")
         self.assertNotIn("def ensure_dependencies", source)
