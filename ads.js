@@ -24,13 +24,10 @@ document.addEventListener('DOMContentLoaded', function() {
     window.adsAnalysisRunning = false;
     let openaiStatusData = null;
 
-    function escapeHtml(value) {
-        return String(value ?? '')
-            .replaceAll('&', '&amp;')
-            .replaceAll('<', '&lt;')
-            .replaceAll('>', '&gt;')
-            .replaceAll('"', '&quot;')
-            .replaceAll("'", '&#039;');
+    function createIcon(className) {
+        const icon = document.createElement('i');
+        icon.className = className;
+        return icon;
     }
 
     function syncAiControlState() {
@@ -43,10 +40,20 @@ document.addEventListener('DOMContentLoaded', function() {
         openaiStatusData = data;
         if (data.configured) {
             openaiStatus.className = 'openai-status configured';
-            openaiStatus.innerHTML = `<i class="fas fa-circle-check"></i> OpenAI API 已設定（${escapeHtml(data.key_source)}）；報告會顯示實際回應模型。`;
+            openaiStatus.replaceChildren(
+                createIcon('fas fa-circle-check'),
+                document.createTextNode(` OpenAI API 已設定（${String(data.key_source ?? '')}）；報告會顯示實際回應模型。`)
+            );
         } else {
             openaiStatus.className = 'openai-status missing';
-            openaiStatus.innerHTML = `<i class="fas fa-triangle-exclamation"></i> 尚未設定 API Key。請在專案終端執行 <code>${escapeHtml(data.setup_command || 'python3 setup_openai_key.py')}</code>。`;
+            const setupCommand = document.createElement('code');
+            setupCommand.textContent = String(data.setup_command || 'python3 setup_openai_key.py');
+            openaiStatus.replaceChildren(
+                createIcon('fas fa-triangle-exclamation'),
+                document.createTextNode(' 尚未設定 API Key。請在專案終端執行 '),
+                setupCommand,
+                document.createTextNode('。')
+            );
         }
         if (data.default_model && openaiModel.querySelector(`option[value="${CSS.escape(data.default_model)}"]`)) {
             openaiModel.value = data.default_model;
@@ -70,7 +77,10 @@ document.addEventListener('DOMContentLoaded', function() {
             .catch((error) => {
                 openaiStatusData = null;
                 openaiStatus.className = 'openai-status error';
-                openaiStatus.innerHTML = `<i class="fas fa-circle-exclamation"></i> ${escapeHtml(error.message || '無法檢查 OpenAI 設定')}`;
+                openaiStatus.replaceChildren(
+                    createIcon('fas fa-circle-exclamation'),
+                    document.createTextNode(` ${String(error.message || '無法檢查 OpenAI 設定')}`)
+                );
             });
     }
 
@@ -112,7 +122,7 @@ document.addEventListener('DOMContentLoaded', function() {
         adsAnalysisProgressBar.style.width = '0%';
         adsAnalysisProgressText.textContent = '0%';
         adsAnalysisReport.style.display = 'none';
-        adsAnalysisReport.innerHTML = '';
+        adsAnalysisReport.replaceChildren();
     }
 
     function setAdsButtonsDisabled(disabled) {
@@ -212,6 +222,49 @@ document.addEventListener('DOMContentLoaded', function() {
         return fragment;
     }
 
+    function createAdsSummaryCard(label, value, description) {
+        const card = document.createElement('div');
+        card.className = 'ads-analysis-summary-card';
+        const labelElement = document.createElement('span');
+        labelElement.textContent = String(label);
+        const valueElement = document.createElement('strong');
+        valueElement.textContent = String(value);
+        const descriptionElement = document.createElement('p');
+        descriptionElement.textContent = String(description);
+        card.append(labelElement, valueElement, descriptionElement);
+        return card;
+    }
+
+    function createAdsAnalysisError(title, message) {
+        const card = document.createElement('div');
+        card.className = 'ads-analysis-error';
+        const heading = document.createElement('strong');
+        heading.textContent = title;
+        card.append(
+            heading,
+            document.createElement('br'),
+            document.createTextNode(String(message))
+        );
+        return card;
+    }
+
+    function createOpenAIMissingError() {
+        const card = document.createElement('div');
+        card.className = 'ads-analysis-error';
+        const heading = document.createElement('strong');
+        heading.textContent = '尚未連接 OpenAI API';
+        const setupCommand = document.createElement('code');
+        setupCommand.textContent = 'python3 setup_openai_key.py';
+        card.append(
+            heading,
+            document.createElement('br'),
+            document.createTextNode('請先在專案終端執行 '),
+            setupCommand,
+            document.createTextNode('，完成後重新整理這個廣告頁。API Key 不要貼到聊天或網頁中。')
+        );
+        return card;
+    }
+
     function renderAdsAnalysisReport(data) {
         const report = data.report || {};
         const summary = report.account_summary || {};
@@ -229,48 +282,85 @@ document.addEventListener('DOMContentLoaded', function() {
             (rankings.watchlist || []).length;
         const watchlistCount = (rankings.watchlist || []).length;
 
-        return `
-            <div class="ads-analysis-summary-grid">
-                <div class="ads-analysis-summary-card">
-                    <span>主決策基準</span>
-                    <strong>${current.window_label || '昨天'}</strong>
-                    <p>已額外納入過去 4 週滾動趨勢</p>
-                </div>
-                <div class="ads-analysis-summary-card">
-                    <span>昨日 ROAS</span>
-                    <strong>${Number(current.roas || 0).toFixed(2)}</strong>
-                    <p>直接 ROAS ${Number(current.direct_roas || 0).toFixed(2)}</p>
-                </div>
-                <div class="ads-analysis-summary-card">
-                    <span>需處理商品數</span>
-                    <strong>${actionableCount}</strong>
-                    <p>包含加碼、降預算、間接轉換與先觀察</p>
-                </div>
-                <div class="ads-analysis-summary-card">
-                    <span>分析來源</span>
-                    <strong>${narrative.source === 'openai' ? escapeHtml(runtime.response_model || runtime.model || 'OpenAI API') : '本機規則'}</strong>
-                    <p>${data.has_ai_enhancement ? `${escapeHtml(runtime.reasoning_effort || '-')} 推理・${Number(runtime.api_latency_seconds || 0).toFixed(1)} 秒・${runtime.attempts || 1} 次` : '此次未呼叫 OpenAI API'}</p>
-                </div>
-                <div class="ads-analysis-summary-card">
-                    <span>先觀察</span>
-                    <strong>${watchlistCount}</strong>
-                    <p>昨天異常但週趨勢未必持續轉弱</p>
-                </div>
-            </div>
+        const fragment = document.createDocumentFragment();
+        const summaryGrid = document.createElement('div');
+        summaryGrid.className = 'ads-analysis-summary-grid';
+        const analysisSource = narrative.source === 'openai'
+            ? String(runtime.response_model || runtime.model || 'OpenAI API')
+            : '本機規則';
+        const analysisRuntime = data.has_ai_enhancement
+            ? `${String(runtime.reasoning_effort || '-')} 推理・${Number(runtime.api_latency_seconds || 0).toFixed(1)} 秒・${runtime.attempts || 1} 次`
+            : '此次未呼叫 OpenAI API';
 
-            <div class="ads-analysis-section">
-                <h3><i class="fas fa-file-lines"></i> HTML 報告已生成</h3>
-                <p>${escapeHtml(narrative.executive_summary || data.message || '廣告分析完成。')}</p>
-                <ul class="ads-analysis-action-list">
-                    ${(narrative.next_actions || []).map((item) => `<li>${escapeHtml(item)}</li>`).join('')}
-                </ul>
-                <div class="ads-analysis-files">
-                    <div><strong>HTML：</strong>${escapeHtml(files.html_report || '-')}</div>
-                </div>
-                ${htmlPath ? `<a class="btn-primary ads-report-download" href="${escapeHtml(htmlPath)}" target="_blank" rel="noopener noreferrer"><i class="fas fa-file-lines"></i> 開啟 HTML 報告</a>` : ''}
-            </div>
+        summaryGrid.append(
+            createAdsSummaryCard(
+                '主決策基準',
+                current.window_label || '昨天',
+                '已額外納入過去 4 週滾動趨勢'
+            ),
+            createAdsSummaryCard(
+                '昨日 ROAS',
+                Number(current.roas || 0).toFixed(2),
+                `直接 ROAS ${Number(current.direct_roas || 0).toFixed(2)}`
+            ),
+            createAdsSummaryCard(
+                '需處理商品數',
+                actionableCount,
+                '包含加碼、降預算、間接轉換與先觀察'
+            ),
+            createAdsSummaryCard('分析來源', analysisSource, analysisRuntime),
+            createAdsSummaryCard(
+                '先觀察',
+                watchlistCount,
+                '昨天異常但週趨勢未必持續轉弱'
+            )
+        );
 
-        `;
+        const reportSection = document.createElement('div');
+        reportSection.className = 'ads-analysis-section';
+        const heading = document.createElement('h3');
+        heading.append(
+            createIcon('fas fa-file-lines'),
+            document.createTextNode(' HTML 報告已生成')
+        );
+        const executiveSummary = document.createElement('p');
+        executiveSummary.textContent = String(
+            narrative.executive_summary || data.message || '廣告分析完成。'
+        );
+        const actionList = document.createElement('ul');
+        actionList.className = 'ads-analysis-action-list';
+        (narrative.next_actions || []).forEach((item) => {
+            const action = document.createElement('li');
+            action.textContent = String(item);
+            actionList.append(action);
+        });
+        const filesElement = document.createElement('div');
+        filesElement.className = 'ads-analysis-files';
+        const htmlFile = document.createElement('div');
+        const htmlLabel = document.createElement('strong');
+        htmlLabel.textContent = 'HTML：';
+        htmlFile.append(
+            htmlLabel,
+            document.createTextNode(String(files.html_report || '-'))
+        );
+        filesElement.append(htmlFile);
+        reportSection.append(heading, executiveSummary, actionList, filesElement);
+
+        if (htmlPath) {
+            const reportLink = document.createElement('a');
+            reportLink.className = 'btn-primary';
+            reportLink.href = htmlPath;
+            reportLink.target = '_blank';
+            reportLink.rel = 'noopener noreferrer';
+            reportLink.append(
+                createIcon('fas fa-file-lines'),
+                document.createTextNode(' 開啟 HTML 報告')
+            );
+            reportSection.append(reportLink);
+        }
+
+        fragment.append(summaryGrid, reportSection);
+        return fragment;
     }
 
     function performAdsExport() {
@@ -318,7 +408,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const includeAI = includeAiAnalysis ? includeAiAnalysis.checked : true;
         if (includeAI && (!openaiStatusData || !openaiStatusData.configured)) {
             adsAnalysisReport.style.display = 'block';
-            adsAnalysisReport.innerHTML = '<div class="ads-analysis-error"><strong>尚未連接 OpenAI API</strong><br>請先在專案終端執行 <code>python3 setup_openai_key.py</code>，完成後重新整理這個廣告頁。API Key 不要貼到聊天或網頁中。</div>';
+            adsAnalysisReport.replaceChildren(createOpenAIMissingError());
             return;
         }
         const query = new URLSearchParams({
@@ -347,7 +437,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 adsAnalysisStatusBadge.className = 'ads-status-badge success';
                 updateAdsAnalysisUI('分析完成', data.message || '已完成廣告分析報告', 100);
                 adsAnalysisReport.style.display = 'block';
-                adsAnalysisReport.innerHTML = renderAdsAnalysisReport(data);
+                adsAnalysisReport.replaceChildren(renderAdsAnalysisReport(data));
             })
             .catch((error) => {
                 clearInterval(progressInterval);
@@ -355,7 +445,9 @@ document.addEventListener('DOMContentLoaded', function() {
                 adsAnalysisStatusBadge.className = 'ads-status-badge error';
                 updateAdsAnalysisUI('分析失敗', error.message || '請稍後再試', 100);
                 adsAnalysisReport.style.display = 'block';
-                adsAnalysisReport.innerHTML = `<div class="ads-analysis-error"><strong>分析失敗</strong><br>${escapeHtml(error.message || '請稍後再試')}</div>`;
+                adsAnalysisReport.replaceChildren(
+                    createAdsAnalysisError('分析失敗', error.message || '請稍後再試')
+                );
             })
             .finally(() => {
                 window.adsAnalysisRunning = false;
