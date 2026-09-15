@@ -47,8 +47,10 @@ _save_suggestion()          evidence_json 必填欄（TASK 7）
 | 規則／分級 | `sku_mapping_service.py` | 唯一 matcher；`generate_candidates` / `classify_review_tier` |
 | 知識包 | `mapping_knowledge_pack/` + `mapping_knowledge.py` | 設定、aliases、規則登錄、類別、原因代碼 |
 | 評估 | `mapping_eval.py` | fixture／DB baseline、`compare`、`audit`、auto-approve **反事實** |
-| 審核 UI | `/sku-mapping.html` | 綠黃紅卡片、`GET /api/sku-mapping/explain` |
+| 審核 UI | `/sku-mapping.html` | 綠黃紅卡片；資料走 `GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue` |
 | 真相 | `golden_table.json` | 僅人工核准列；schema 不變 |
+
+`GET /api/sku-mapping/explain` 與 `GET /api/sku-mapping/negative-examples` 仍是可用 API，但目前審核 UI 不會呼叫。
 
 `auto_approve.enabled` 讀自 `config.json`，預設與現況皆為 `false`。沒有 UI 開關。TASK 8 只計算「若啟用，有多少會過閘、其中多少正確」。
 

@@ -102,7 +102,7 @@
 | `python -m reverse_audit dry-run` | 應補 vs 車＋三池；主檔 `補貨比對結果.csv` | 路 B mutate 仍須人工旗標；批次路徑不會代跑 mutate |
 | `scripts/reconcile_cart.py` | 離線、書包截止、絕對設量契約 | 不連瀏覽器；與 `restock_batches/` **分開**；文件寫明不可用 `init` 重跑舊人工日誌 |
 
-**缺口：** 超量在 dry-run **只列不改**；要改量必須另下 `--i-approve-set-qty`。增量驗證過關，整車仍可能短少或有非預期列。批次終態已會自動掛 dry-run（任務 3）；要最新車況請本機 `--refreeze`（要 CDP），不要在 CI 開 Chrome。
+**缺口：** 超量在 dry-run **只列不改**；要改量必須另下 `--i-approve-set-qty`。增量驗證過關，整車仍可能短少或有非預期列。#88 後批次預設會在加車前／後做 live freeze 並掛 dry-run；CI／離線才加 `--sources-only`。launcher 的 `--refreeze` 是文件化的相容旗標（no-op），未加也不會停用預設 live freeze。
 
 ## 4. 已能用／半成品／缺
 
@@ -144,7 +144,7 @@
 - 路 B certain = `approved` + http URL +（`skuId` **或** 可用 name/spec）。缺 skuId 時，若車內 name/spec **唯一**對上，用 live `skuId` 對帳，**不回寫** golden。
 - name/spec 歧義 → fail-closed，不進 mutate／刪除。
 - 錯的 `approved` 列會被當成真相加車。Know-how 綠燈**不是**寫入授權（`auto_approve.enabled=false`）。
-- `SkuMappingService._repair_unverified_approvals`：沒有 approve／replace 稽核的舊 `approved` 會被改成 `missing`／`legacy_repair`。預設驗證**禁止**打 `/api/sku-mapping/*`，就是怕誤觸這段改 golden。
+- #76 後建構 `SkuMappingService` 預設不執行 Golden repair；會改寫 Golden 的舊核准修復必須明確執行 `python -m sku_mapping_service repair`，或以 `SKU_MAPPING_REPAIR_GOLDEN=1` 啟動服務。驗證應實際呼叫唯讀 GET（如 `/api/sku-mapping/summary`、`/api/sku-mapping/queue`），並比對前後 `golden_table.json` SHA、確認證據中的 `goldenUnchanged=true`。
 
 ### 驗證碼／登入牆
 
