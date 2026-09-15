@@ -1,4 +1,4 @@
-"""TASK 4: persist mapping negative examples and reason codes.
+"""Persist mapping negative examples and reason codes.
 
 Existing sku_mapping / mapping_eval tests are unchanged.  These cover the
 three negative origins, OTHER validation (API 400), and the list endpoint.

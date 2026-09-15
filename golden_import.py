@@ -8,6 +8,7 @@ from typing import Any, Dict, Iterable, List, Mapping, Sequence
 
 from procurement_store import parse_offer_id
 from sku_mapping_service import display_text, mapping_candidate_key, normalize_id
+from sku_spec import split_spec_dimensions
 
 
 _MAPPING_FIELDS = (
@@ -81,7 +82,11 @@ def _normalised_skus(snapshot: Mapping[str, Any]) -> List[Dict[str, Any]]:
         spec_text = display_text(raw.get("spec_text") or raw.get("specText") or "")
         parts = list(raw.get("parts") or [])
         if not parts and spec_text:
-            parts = [display_text(part) for part in spec_text.split(">") if display_text(part)]
+            parts = [
+                display_text(part)
+                for part in split_spec_dimensions(spec_text)
+                if display_text(part)
+            ]
         sku_name = display_text(raw.get("sku_name") or (parts[0] if parts else spec_text))
         second_name = display_text(raw.get("second_name") or (parts[1] if len(parts) > 1 else ""))
         result.append(

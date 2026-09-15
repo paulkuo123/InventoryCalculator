@@ -1,4 +1,4 @@
-"""TASK 6: composite score + explain API/UI.
+"""Composite score + explain API/UI.
 
 Existing sku_mapping / mapping_eval / knowledge / historical tests are unchanged.
 """

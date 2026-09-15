@@ -1,4 +1,4 @@
-"""TASK 7: suggestion evidence auditability.
+"""Suggestion evidence auditability.
 
 Existing sku_mapping / mapping_eval / knowledge tests are unchanged.
 """

@@ -1,6 +1,6 @@
 import unittest
 
-from golden_import import apply_import_mapping, preview_models, source_product_candidates
+from golden_import import _normalised_skus, apply_import_mapping, preview_models, source_product_candidates
 from sku_mapping_service import mapping_candidate_key
 
 
@@ -72,6 +72,21 @@ class GoldenImportTest(unittest.TestCase):
         self.assertEqual(models[0]["suggestedCandidateKey"], mapping_candidate_key("123", "黑色", "均碼"))
         self.assertTrue(models[1]["candidates"][0]["evidence"]["manual_only"])
         self.assertEqual(models[1]["suggestedCandidateKey"], "")
+
+    def test_normalised_skus_split_comma_and_fullwidth_comma_specs(self):
+        rows = _normalised_skus({
+            "offer_id": "123",
+            "skus": [
+                {"sku_id": "sku-1", "spec_text": "黑色,均码"},
+                {"sku_id": "sku-2", "spec_text": "白色，大码"},
+                {"sku_id": "sku-3", "spec_text": "灰色(大,小),均码"},
+            ],
+        })
+        self.assertEqual([(row["sku_name"], row["second_name"]) for row in rows], [
+            ("黑色", "均码"),
+            ("白色", "大码"),
+            ("灰色(大,小)", "均码"),
+        ])
 
     def test_apply_mapping_sets_approved_fields_for_every_model(self):
         mappings = [

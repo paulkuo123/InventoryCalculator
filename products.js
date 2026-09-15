@@ -252,6 +252,15 @@
         return matches.length === 1 ? matches[0] : null;
     }
 
+    function applySkuMappings(models, mappings) {
+        (mappings || []).forEach(mapping => {
+            const model = findModelByIdentity(models, mapping);
+            if (!model) return;
+            model.alibabaSkuName = mapping.alibabaSkuName;
+            model.alibabaSkuSecondName = mapping.alibabaSkuSecondName;
+        });
+    }
+
     async function openSkuMappingModal(product) {
         setMessage(skuMappingMessage, '正在載入此商品的所有規格…', 'loading');
         skuMappingRows.replaceChildren();
@@ -345,22 +354,10 @@
             if (!response.ok || data.status !== 'success') {
                 throw new Error(data.message || '儲存對應失敗');
             }
-            product.models.forEach(model => {
-                const mapping = mappings.find(item => item.specId === model.specId || item.modelName === model.modelName);
-                if (mapping) {
-                    model.alibabaSkuName = mapping.alibabaSkuName;
-                    model.alibabaSkuSecondName = mapping.alibabaSkuSecondName;
-                }
-            });
+            applySkuMappings(product.models, mappings);
             state.products.forEach(searchProduct => {
                 if (String(searchProduct.productId) !== String(product.productId)) return;
-                searchProduct.models.forEach(model => {
-                    const mapping = mappings.find(item => item.specId === model.specId || item.modelName === model.modelName);
-                    if (mapping) {
-                        model.alibabaSkuName = mapping.alibabaSkuName;
-                        model.alibabaSkuSecondName = mapping.alibabaSkuSecondName;
-                    }
-                });
+                applySkuMappings(searchProduct.models, mappings);
             });
             renderCurrentSearch();
             setMessage(skuMappingMessage, data.message || '已儲存 1688 對應型號', 'success');

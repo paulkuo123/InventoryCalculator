@@ -315,17 +315,3 @@ def load_home_bootstrap(
         "mtime": file_mtime_iso(watchlist_path),
     }
     return result
-
-
-def bootstrap_error_payload(message: str, products_path: Path, watchlist_path: Path, golden_path: Path) -> Dict[str, Any]:
-    return {
-        "status": "error",
-        "message": message,
-        "batchRestockEnabled": False,
-        "products": None,
-        "watchlist": None,
-        "watchlistCounts": {"imported": 0, "matched": 0, "missed": 0},
-        "shopee": {"ok": False, "path": str(products_path)},
-        "watchlistInfo": {"ok": False, "path": str(watchlist_path)},
-        "golden": {"ok": False, "path": str(golden_path)},
-    }

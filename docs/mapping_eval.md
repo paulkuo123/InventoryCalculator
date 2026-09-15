@@ -65,11 +65,11 @@ python -m unittest tests.test_mapping_eval tests.test_sku_mapping_service
 
 ## 類別分組
 
-`mapping_knowledge/categories.json` 是商品名稱關鍵字對類別的對照（TASK 3）。評估與 alias 類別過濾共用這份對照。檔案支援 `{"rules":[{"category":"socks","keywords":["襪"]}]}` 或 `{"socks":["襪"]}`。缺檔或無效時改用商品名稱啟發式（`手機殼`／`袜`／`錶`／`吊飾` 等，否則 `other`），評估不會失敗。預設檔的類別 id 與 TASK 1 啟發式相同（`phone_case`／`watch`／`socks`／`charm`），因此 fixture 分組標籤不變。
+`mapping_knowledge_pack/categories.json` 是商品名稱關鍵字對類別的對照（TASK 3）。評估與 alias 類別過濾共用這份對照。檔案支援 `{"rules":[{"category":"socks","keywords":["襪"]}]}` 或 `{"socks":["襪"]}`。缺檔或無效時改用商品名稱啟發式（`手機殼`／`袜`／`錶`／`吊飾` 等，否則 `other`），評估不會失敗。預設檔的類別 id 與 TASK 1 啟發式相同（`phone_case`／`watch`／`socks`／`charm`），因此 fixture 分組標籤不變。
 
 ## TASK 2 設定（thresholds／weights）
 
-`mapping_knowledge/config.json` 外置門檻與權重；`mapping_knowledge.py::load_config()` 讀檔。檔案缺失或 JSON 無效時改用 `sku_mapping_service` 既有常數（`AI_GREEN_CONFIDENCE_THRESHOLD=0.95`、`AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD=0.90`、`MAX_REVIEW_CANDIDATES=4`），並在無效 JSON 時記 warning，不中斷評估或審核。`score_weights` 沒有 `semantic`；`auto_approve.enabled` 維持 `false`（本任務不啟用 auto-approve）。
+`mapping_knowledge_pack/config.json` 外置門檻與權重；`mapping_knowledge.py::load_config()` 讀檔。檔案缺失或 JSON 無效時改用 `sku_mapping_service` 既有常數（`AI_GREEN_CONFIDENCE_THRESHOLD=0.95`、`AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD=0.90`、`MAX_REVIEW_CANDIDATES=4`），並在無效 JSON 時記 warning，不中斷評估或審核。`score_weights` 沒有 `semantic`；`auto_approve.enabled` 維持 `false`（本任務不啟用 auto-approve）。
 
 預設設定必須與 TASK 1 fixture 結果 bit-for-bit 相同。覆核：
 
@@ -84,8 +84,8 @@ python -m unittest tests.test_mapping_knowledge tests.test_mapping_eval tests.te
 
 ## TASK 3 規則／同義詞資料化
 
-- `mapping_knowledge/aliases.json`：由 `python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出（`category: "*"`，不得手抄）。`_synonym_equal()`／`_color_match_rank()` 讀 alias（含類別過濾）；缺檔回退 `COLOR_SYNONYMS`。
-- `mapping_knowledge/rules.json`：登錄既有函式（RULE-0001 size／RULE-0002 phone／RULE-0003 alphanumeric code／RULE-0004 parenthetical noise）。`impl` 指向既有函式名，不是 DSL。`status: "disabled"` 的規則不會生效。
+- `mapping_knowledge_pack/aliases.json`：由 `python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出（`category: "*"`，不得手抄）。`_synonym_equal()`／`_color_match_rank()` 讀 alias（含類別過濾）；缺檔回退 `COLOR_SYNONYMS`。
+- `mapping_knowledge_pack/rules.json`：登錄既有函式（RULE-0001 size／RULE-0002 phone／RULE-0003 alphanumeric code／RULE-0004 parenthetical noise）。`impl` 指向既有函式名，不是 DSL。`status: "disabled"` 的規則不會生效。
 - `generate_candidates()` 在剔除或命中時把 `(rule_id, effect)` 寫入候選 `evidence.applied_rules`，並在 `_save_suggestion()` 寫入 `mapping_rule_hits`。
 - 預設（全部 active + seed aliases）必須與 TASK 1／2 fixture 結果一致。覆核：
 
@@ -164,7 +164,7 @@ python -m mapping_eval run \
 - `rule`：沒有 soft-rule penalty 為 1，否則 0
 - `llm`：AI 信心；`abstain` 或未選中為 0
 
-權重來自 `mapping_knowledge/config.json` 的 `score_weights`。硬閘門剔除的候選不計分。`final_score` **只**用來排候選與黃燈佇列，**不**改 `classify_review_tier` 的綠色條件。
+權重來自 `mapping_knowledge_pack/config.json` 的 `score_weights`。硬閘門剔除的候選不計分。`final_score` **只**用來排候選與黃燈佇列，**不**改 `classify_review_tier` 的綠色條件。
 
 `sku_mapping_suggestions` 以 `ALTER ADD` 補 `final_score`、`score_breakdown_json`。`SkuMappingService.explain(product_id, model_id)` 與 `GET /api/sku-mapping/explain?productId&modelId` 回傳 `decision`、`selected_candidate`、`why[]`（`rule`／`alias`／`historical`／`negative`／`feature`／`llm`）、`score_breakdown`、`knowledge_version`。審核卡可展開「為什麼」。
 
