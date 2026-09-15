@@ -35,7 +35,7 @@ def main() -> None:
     )
     atomic_write_local_env(LOCAL_ENV_FILE, lines)
     print(f"已寫入專案本地設定：{LOCAL_ENV_FILE}")
-    print(f"SKU mapping AI provider：gemini（{DEFAULT_GEMINI_MODEL}）")
+    print(f"缺少時採用 SKU mapping 預設值：gemini（{DEFAULT_GEMINI_MODEL}）")
 
 
 if __name__ == "__main__":

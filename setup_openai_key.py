@@ -65,10 +65,10 @@ def main() -> None:
 
     write_local_env(LOCAL_ENV_FILE, key)
     print(f"已寫入專案本地設定：{LOCAL_ENV_FILE}")
-    print(f"預設模型：{DEFAULT_OPENAI_MODEL}")
-    print(f"推理強度：{DEFAULT_REASONING_EFFORT}")
-    print(f"SKU mapping provider：openai（{DEFAULT_SKU_MAPPING_MODEL}）")
-    print(f"SKU mapping 推理強度：{DEFAULT_SKU_MAPPING_REASONING_EFFORT}")
+    print(f"缺少時採用 OpenAI 模型預設值：{DEFAULT_OPENAI_MODEL}")
+    print(f"缺少時採用推理強度預設值：{DEFAULT_REASONING_EFFORT}")
+    print(f"缺少時採用 SKU mapping 預設值：openai（{DEFAULT_SKU_MAPPING_MODEL}）")
+    print(f"缺少時採用 SKU mapping 推理強度：{DEFAULT_SKU_MAPPING_REASONING_EFFORT}")
     print("之後程式會優先讀取環境變數，其次讀取 .env.local，最後才回退到 shell 設定。")
 
 
