@@ -48,7 +48,6 @@ class ShopeeCrawler:
                  shopee_url,
                  cookies_path,
                  my_products_url,
-                 driver_path=None,  # 保留參數以兼容呼叫端，但不再使用
                  output_path="shopee_products.json",
                  search_keyword="",
                  headless=False,
@@ -78,7 +77,6 @@ class ShopeeCrawler:
 
     def _load_golden_table(self):
         try:
-            import os, json
             golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'golden_table.json')
             with open(golden_path, 'r', encoding='utf-8') as f:
                 return json.load(f)
@@ -2145,24 +2143,6 @@ class ShopeeCrawler:
             traceback.print_exc()
             return False
 
-    def delete_temp_files(self, file_paths):
-        """
-        刪除暫存檔
-        :param file_paths: 要刪除的檔案路徑列表
-        """
-        import os
-
-        print(f"開始刪除 {len(file_paths)} 個暫存檔...")
-
-        for file_path in file_paths:
-            try:
-                os.remove(file_path)
-                print(f"已刪除暫存檔: {file_path}")
-            except Exception as e:
-                print(f"刪除暫存檔 {file_path} 時出錯: {e}")
-
-        print("暫存檔刪除完成")
-
     def is_valid_product(self, product_info):
         """
         Check if a product is valid based on essential fields.
@@ -2770,12 +2750,10 @@ def main():
             my_products_url = base_products_url
             print("將搜尋全部商品", flush=True)
 
-        # 根據作業系統設置 chromedriver 路徑 (已改為非強制)
-        driver_path = None
-
         # 創建爬蟲實例 (直接傳入 headless 參數)
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
-                                driver_path, args.output, args.keyword.strip(),
+                                output_path=args.output,
+                                search_keyword=args.keyword.strip(),
                                 headless=headless_mode,
                                 inventory_month=args.inventory_month,
                                 browser_source=args.browser_source,
@@ -2825,13 +2803,13 @@ def main():
             my_products_url = base_products_url
             print("將搜尋全部商品")
 
-        # 根據作業系統設置 chromedriver 路徑 (已改為非強制)
-        driver_path = None
         output_path = "shopee_products.json"  # 輸出檔案路徑
 
         # 創建爬蟲實例並運行
         crawler = ShopeeCrawler(shopee_url, cookies_path, my_products_url,
-                                driver_path, output_path, user_input.strip(), headless=False)
+                                output_path=output_path,
+                                search_keyword=user_input.strip(),
+                                headless=False)
         products = crawler.run()
 
         # 確保瀏覽器關閉
