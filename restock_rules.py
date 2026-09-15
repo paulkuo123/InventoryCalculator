@@ -1,66 +1,11 @@
 """Shared validation rules for manually adjusted and batch 1688 restocks."""
 
-import json
 import re
 
 MAX_ALIBABA_RESTOCK_SKUS = 200
 PHONE_CASE_MONTHS = 3
 DEFAULT_RESTOCK_MONTHS = 4
 PHONE_CASE_NAME_RE = re.compile(r"(?:手機殼|手机壳)(?!\s*(?:吊飾|掛飾|掛繩|掛鏈|吊饰|挂饰|挂绳|挂链))")
-ADDON_VARIANT_PREFIX_RE = re.compile(r"(?:加購|加购)")
-
-
-def months_rule_table():
-    """Public shop-rule table for APIs and the homepage helper.
-
-    Phone-case months, the non-case default, and the two name patterns all live
-    here so the frontend does not invent a second set of numbers.
-    """
-    return {
-        "phoneCaseMonths": PHONE_CASE_MONTHS,
-        "defaultMonths": DEFAULT_RESTOCK_MONTHS,
-        "phoneCaseNamePattern": PHONE_CASE_NAME_RE.pattern,
-        "addonVariantPrefixPattern": ADDON_VARIANT_PREFIX_RE.pattern,
-    }
-
-
-def coverage_months_caption(default_months=None):
-    """Human-readable 3/4 shop-rule caption for homepage and related reports."""
-    try:
-        months = int(default_months)
-    except (TypeError, ValueError):
-        months = DEFAULT_RESTOCK_MONTHS
-    if months <= 0:
-        months = DEFAULT_RESTOCK_MONTHS
-    return f"手機殼 {PHONE_CASE_MONTHS} 個月，其餘 {months} 個月"
-
-
-def frontend_target_months_javascript():
-    """JS helper whose numbers/patterns come from months_rule_table()."""
-    table_json = json.dumps(months_rule_table(), ensure_ascii=False)
-    return (
-        "/* generated from restock_rules.py; do not edit numbers here */\n"
-        "globalThis.RESTOCK_MONTHS_RULES = " + table_json + ";\n"
-        "if (typeof window !== 'undefined') {\n"
-        "  window.RESTOCK_MONTHS_RULES = globalThis.RESTOCK_MONTHS_RULES;\n"
-        "}\n"
-        "function targetMonthsForProduct(productName, defaultMonths, modelName) {\n"
-        "  const rules = globalThis.RESTOCK_MONTHS_RULES;\n"
-        "  let months = parseInt(defaultMonths, 10);\n"
-        "  if (!Number.isFinite(months) || months <= 0) {\n"
-        "    months = rules.defaultMonths;\n"
-        "  }\n"
-        "  const parts = String(modelName || '').split(/[,，]/);\n"
-        "  const variant = parts[parts.length - 1].trim();\n"
-        "  if (new RegExp('^' + rules.addonVariantPrefixPattern).test(variant)) {\n"
-        "    return months;\n"
-        "  }\n"
-        "  if (new RegExp(rules.phoneCaseNamePattern).test(String(productName || ''))) {\n"
-        "    return rules.phoneCaseMonths;\n"
-        "  }\n"
-        "  return months;\n"
-        "}\n"
-    )
 
 
 def target_months_for_product(product_name, default_months=DEFAULT_RESTOCK_MONTHS, model_name=""):
@@ -74,7 +19,7 @@ def target_months_for_product(product_name, default_months=DEFAULT_RESTOCK_MONTH
         months = DEFAULT_RESTOCK_MONTHS
     months = months if months > 0 else DEFAULT_RESTOCK_MONTHS
     variant = re.split(r"[,，]", str(model_name or ""))[-1].strip()
-    if ADDON_VARIANT_PREFIX_RE.match(variant):
+    if re.match(r"(?:加購|加购)", variant):
         return months
     if PHONE_CASE_NAME_RE.search(str(product_name or "")):
         return PHONE_CASE_MONTHS
