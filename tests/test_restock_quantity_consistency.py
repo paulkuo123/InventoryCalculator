@@ -20,7 +20,12 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from restock_rules import resolve_restock_quantity
+from restock_rules import (
+    DEFAULT_RESTOCK_MONTHS,
+    frontend_target_months_javascript,
+    resolve_restock_quantity,
+    target_months_for_product,
+)
 from crawler import ShopeeCrawler
 from run_watchlist_restock import suggested_restock_qty
 
@@ -57,6 +62,8 @@ def _extract_js_function(source, name):
 def _js_calculate_model_restock(product, model, months):
     script_js = (ROOT / "script.js").read_text(encoding="utf-8")
     functions = "\n".join([
+        frontend_target_months_javascript(),
+        _extract_js_function(script_js, "productTargetMonths"),
         _extract_js_function(script_js, "roundRestockQty"),
         _extract_js_function(script_js, "getEffectiveMonthlyRate"),
         _extract_js_function(script_js, "calculateModelRestock"),
@@ -476,36 +483,39 @@ class RestockQuantitySameAsDisplayTests(unittest.TestCase):
 
 class MonthThresholdConsistencyTests(unittest.TestCase):
     """測試庫存月份閾值的一致使用。"""
-    
-    def test_default_month_threshold_is_4(self):
-        """預設庫存月份在所有表面應為 4。"""
-        # 這記錄於：
-        # - script.js：inventoryMonth 預設 '4'
-        # - crawler.py：inventory_month 預設 4
-        # - GUI：<select id="inventoryMonth"> 預設 4
-        self.assertEqual(4, 4)  # 佔位符 - 實際測試會檢查預設值
-    
-    def test_same_month_value_used_everywhere(self):
-        """當使用者設定 inventoryMonth 時，所有計算必須使用該值。"""
-        # 測試案例：使用者設定為 6 個月
-        months = 6
-        monthly_rate = 5
-        current_stock = 10
-        
-        # GUI 計算
-        gui_target = round(monthly_rate * months)
-        gui_need = max(0, gui_target - current_stock)
-        gui_rounded = round(gui_need / 10) * 10
-        
-        # Crawler 計算（應匹配 GUI）
-        crawler_target = monthly_rate * months
-        crawler_need = max(0, crawler_target - current_stock)
-        crawler_rounded = round(crawler_need / 10) * 10
-        
-        # 兩者都應使用相同的月份值
-        self.assertEqual(gui_target, 30)
-        self.assertEqual(crawler_target, 30)
-        self.assertEqual(gui_rounded, crawler_rounded)
+
+    def test_default_month_threshold_is_shop_rules(self):
+        """非手機殼預設 4 個月；手機殼固定 3 個月。"""
+        self.assertEqual(DEFAULT_RESTOCK_MONTHS, 4)
+        self.assertEqual(target_months_for_product("壓克力吊飾"), 4)
+        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼"), 3)
+        index_html = (ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('option value="4" selected', index_html)
+
+    def test_non_case_uses_selected_month_phone_case_stays_three(self):
+        """使用者選 6 個月時，其餘商品用 6，手機殼仍為 3。"""
+        self.assertEqual(target_months_for_product("壓克力吊飾", 6), 6)
+        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼", 6), 3)
+        self.assertEqual(
+            ShopeeCrawler.calculate_restock_quantity(None, 10, 100, 10, 0, 6, 10),
+            60,
+        )
+        self.assertEqual(
+            _js_calculate_model_restock(
+                {"商品名稱": "壓克力吊飾", "總月銷量": "10", "已售出總數量": "100"},
+                {"商品庫存": "0", "月銷量": "10", "已售出數量": "10"},
+                6,
+            )["targetMonths"],
+            6,
+        )
+        self.assertEqual(
+            _js_calculate_model_restock(
+                {"商品名稱": "氣囊防摔 iPhone 手機殼", "總月銷量": "10", "已售出總數量": "100"},
+                {"商品庫存": "0", "月銷量": "10", "已售出數量": "10"},
+                6,
+            )["targetMonths"],
+            3,
+        )
 
 
 def run_tests_and_report():

@@ -204,6 +204,42 @@ document.addEventListener('DOMContentLoaded', function() {
         }[char]));
     }
 
+    function selectedDefaultRestockMonths() {
+        const fallback = (typeof targetMonthsForProduct === 'function')
+            ? targetMonthsForProduct('', 0, '')
+            : 4;
+        const raw = document.getElementById('inventoryMonth')?.value;
+        const months = parseInt(raw, 10);
+        return Number.isFinite(months) && months > 0 ? months : fallback;
+    }
+
+    function productTargetMonths(product, modelData, defaultMonths) {
+        const fallback = defaultMonths == null ? selectedDefaultRestockMonths() : defaultMonths;
+        if (typeof targetMonthsForProduct === 'function') {
+            return targetMonthsForProduct(
+                product && product.商品名稱,
+                fallback,
+                modelData && modelData.型號名稱
+            );
+        }
+        const parsed = parseInt(fallback, 10);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 4;
+    }
+
+    function syncRestockMonthsUi() {
+        const rules = window.RESTOCK_MONTHS_RULES;
+        const select = document.getElementById('inventoryMonth');
+        const label = document.querySelector('label[for="inventoryMonth"]');
+        if (!rules || !select) return;
+        const caption = `手機殼 ${rules.phoneCaseMonths} 個月，其餘用此月數`;
+        select.title = caption;
+        if (label) {
+            label.title = caption;
+        }
+    }
+
+    syncRestockMonthsUi();
+
     // 載入阿里巴巴商品URL 映射
     function loadAlibabaLinks() {
         if (Object.keys(window.alibabaLinks).length > 0) return; // 已載入過
@@ -2121,11 +2157,12 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 補貨量計算的文件化基準；tests/test_restock_quantity_consistency.py 會直接抽出這段驗證。
     function calculateModelRestock(product, modelData, months) {
+        const resolvedMonths = productTargetMonths(product, modelData, months);
         const currentStock = parseInt(modelData.商品庫存, 10) || 0;
         const effectiveRate = getEffectiveMonthlyRate(product, modelData, currentStock);
         const effectiveMonthlyRate = effectiveRate.monthlyRate;
 
-        const targetStock = Math.round(effectiveMonthlyRate * months);
+        const targetStock = Math.round(effectiveMonthlyRate * resolvedMonths);
         const rawSuggestedQty = Math.max(0, targetStock - currentStock);
         const suggestedQty = roundRestockQty(rawSuggestedQty, currentStock, effectiveMonthlyRate);
         return {
@@ -2134,7 +2171,8 @@ document.addEventListener('DOMContentLoaded', function() {
             targetStock,
             rawSuggestedQty,
             suggestedQty,
-            isEstimated: effectiveRate.usesHistoricalShare
+            isEstimated: effectiveRate.usesHistoricalShare,
+            targetMonths: resolvedMonths
         };
     }
 
@@ -2187,7 +2225,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         // 獲取過濾條件
-        const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
+        const inventoryMonth = selectedDefaultRestockMonths();
         const filterMode = document.getElementById('filterMode')?.checked || false;
         
         let totalModels = 0;
@@ -2203,7 +2241,7 @@ document.addEventListener('DOMContentLoaded', function() {
         Object.entries(filteredProducts).forEach(([productId, product]) => {
             if (product.型號 && Array.isArray(product.型號)) {
                 product.型號.forEach((modelData) => {
-                    const months = parseInt(inventoryMonth, 10) || 0;
+                    const months = productTargetMonths(product, modelData, inventoryMonth);
                     const currentStock = parseInt(modelData.商品庫存, 10) || 0;
                     const monthlyRate = getEffectiveMonthlyRate(product, modelData, currentStock).monthlyRate;
                     
@@ -2457,7 +2495,7 @@ document.addEventListener('DOMContentLoaded', function() {
         updateBatchRestockToolbar();
         
         // 獲取過濾條件
-        const inventoryMonth = document.getElementById('inventoryMonth')?.value || '4';
+        const inventoryMonth = selectedDefaultRestockMonths();
         const filterMode = document.getElementById('filterMode')?.checked || false;
 
         if (products && typeof products === 'object' && (products.error || products.status === 'error')) {
@@ -2675,7 +2713,7 @@ document.addEventListener('DOMContentLoaded', function() {
                         try {
                             // 計算預期庫存 = 月銷量 * 庫存月份
                             const monthlyRate = parseInt(modelData.月銷量, 10) || 0;
-                            const months = parseInt(inventoryMonth, 10) || 0;
+                            const months = productTargetMonths(product, modelData, inventoryMonth);
                             const expectedStock = monthlyRate * months;
                             
                             // 當前庫存
@@ -2787,8 +2825,9 @@ document.addEventListener('DOMContentLoaded', function() {
                                 const expectedStockBadge = document.createElement('span');
                                 expectedStockBadge.className = 'badge badge-secondary';
                                 expectedStockBadge.textContent = `預期庫存: ${effectiveExpectedStock}`;
+                                expectedStockBadge.title = `目標 ${months} 個月`;
                                 if (isEstimated) {
-                                    expectedStockBadge.title = `基於歷史佔比法預估 (預估月銷量: ${effectiveMonthlyRate})`;
+                                    expectedStockBadge.title = `基於歷史佔比法預估 (預估月銷量: ${effectiveMonthlyRate})；目標 ${months} 個月`;
                                 }
                                 modelText.appendChild(expectedStockBadge);
                                 
@@ -2899,6 +2938,7 @@ document.addEventListener('DOMContentLoaded', function() {
                                         alibabaSkuName: binding.alibabaSkuName,
                                         alibabaSkuSecondName: binding.alibabaSkuSecondName,
                                         restockQty: suggestedRestockForAction,
+                                        targetMonths: months,
                                         alibabaUrl: alibabaLink
                                     });
                                 } else {
@@ -2989,6 +3029,7 @@ document.addEventListener('DOMContentLoaded', function() {
                             window.currentRestockProducts.push({
                                 productId,
                                 product,
+                                targetMonths: productTargetMonths(product, {}, inventoryMonth),
                                 items: productRestockItems.map(item => ({ ...item })),
                                 blockerCount,
                                 gaps: productRestockBlockers.map(item => ({ ...item }))
@@ -3263,7 +3304,7 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         const showBrowser = headlessModeElement.checked;
-        const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
+        const inventoryMonth = selectedDefaultRestockMonths();
         
         
         // 移除關鍵字檢查，無論是否有關鍵字都執行以下代碼
