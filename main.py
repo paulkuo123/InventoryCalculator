@@ -1883,6 +1883,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if not snapshot.get("readyProducts"):
             raise ValueError("目前畫面沒有可執行的補貨型號")
         state = create_state(snapshot)
+        if payload.get("reverseAuditSourcesOnly"):
+            state["reverseAuditSourcesOnly"] = True
         if payload.get("reverseAuditRefreeze"):
             state["reverseAuditRefreeze"] = True
         launched = launch_restock_batch(state)
@@ -3404,7 +3406,7 @@ class RestockBatchPersister:
         saved = attach_reverse_audit_if_terminal(
             state,
             self.directory,
-            refreeze=bool(state.get("reverseAuditRefreeze")),
+            sources_only=bool(state.get("reverseAuditSourcesOnly")),
         )
         saved = save_state(self.directory, saved)
         if saved.get("status") != STATUS_RUNNING:

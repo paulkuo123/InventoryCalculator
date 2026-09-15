@@ -1181,6 +1181,57 @@ def main():
         print("using page", (page.url or "")[:140], "cdp", cdp_endpoint, flush=True)
 
         cart = capture_cart(page, cdp_endpoint, udd, retries=3)
+        cart_only = str(os.environ.get("REVERSE_AUDIT_CART_ONLY") or "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if cart_only:
+            meta = {
+                "capturedAt": now_iso(),
+                "timezone": "Asia/Taipei",
+                "cdpEndpoint": cdp_endpoint,
+                "userDataDir": udd,
+                "cdpConnectNotes": cdp_notes,
+                "accountHint": cart.get("accountHint"),
+                "loginValid": bool((cart.get("header") or {}).get("skuCount"))
+                and not cart.get("loginWall"),
+                "readOnly": True,
+                "noMutations": True,
+                "cartOnly": True,
+                "cart": {
+                    "complete": cart.get("complete"),
+                    "cartHeaderSkuCount": (cart.get("header") or {}).get("skuCount"),
+                    "cartLineCount": cart.get("nItems"),
+                    "nRawCartIds": cart.get("nRawCartIds"),
+                    "skuCountRaw": (cart.get("header") or {}).get("skuCountRaw"),
+                    "retries": cart.get("attempt"),
+                    "loadMoreClicks": cart.get("loadMoreClicks"),
+                    "failureReason": cart.get("failureReason"),
+                },
+                "notes": [
+                    f"CDP connect notes: {cdp_notes}",
+                    "Cart-only freeze for restock before-snapshot.",
+                    "Read-only: no cart/order mutations; Chrome left running.",
+                ],
+                "files": ["live_cart.json", "snapshot_meta.json"],
+            }
+            write("snapshot_meta.json", meta)
+            print(
+                "SUMMARY",
+                json.dumps(
+                    {
+                        "cdpEndpoint": cdp_endpoint,
+                        "cartOnly": True,
+                        "现货": (cart.get("header") or {}).get("skuCount"),
+                        "cartLines": cart.get("nItems"),
+                        "cartComplete": cart.get("complete"),
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            return
         # dedicated page for orders to avoid clobbering cart mid-debug
         try:
             opage = ctx.new_page()

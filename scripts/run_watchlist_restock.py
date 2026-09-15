@@ -52,8 +52,9 @@ PATH_A_EPILOG = (
     "--yes 只跳過「按 Enter」，不代表核准；舊的 --restock / --yes 不能單獨加車。\n"
     "路 B：python -m reverse_audit mutate --i-approve-mutate（本指令不會呼叫）。\n"
     "任務 1 唯讀摘要：python -m restock_loop scan\n"
-    "任務 3：批次 completed／completed_with_gaps 後自動 reverse_audit dry-run（sources-only，永不 mutate）。\n"
-    "--refreeze 僅在本機 Chrome CDP 可用時重抓四池；CI／沒開 debugging 時仍走 sources-only，不開 Chrome。"
+    "批次 completed／completed_with_gaps 後自動 reverse_audit dry-run（預設重抓 live cart；永不 mutate）。\n"
+    "有登入中的 Chrome CDP 時會先凍加車前購物車、結束後再凍 after 並對帳。\n"
+    "CI／離線請加 --sources-only（不開 Chrome、不假裝 live）。"
 )
 
 
@@ -389,8 +390,16 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         "--refreeze",
         action="store_true",
         help=(
-            "批次終態後若本機 Chrome CDP 可用，先重抓四池再 dry-run。"
-            "沒有 CDP 時改走 sources-only（不開 Chrome）。永不 mutate。"
+            "明示要在批次終態重抓 live 四池再 dry-run（此為預設行為）。"
+            "沒有 CDP 時改走 sources-only（不開 Chrome、不假裝 live）。永不 mutate。"
+        ),
+    )
+    parser.add_argument(
+        "--sources-only",
+        action="store_true",
+        help=(
+            "CI／離線：強制 sources-only，不加車前／後 live freeze，不開 Chrome。"
+            "與 --refreeze 同時出現時以此為準。永不 mutate。"
         ),
     )
     return parser.parse_args(argv)
@@ -451,10 +460,13 @@ def start_watchlist_restock_batch(
     months: int,
     *,
     reverse_audit_refreeze: bool = False,
+    reverse_audit_sources_only: bool = False,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Existing Path A engine: build_visible_style_products → POST batches."""
     payload = build_visible_style_products(root, keyword, months)
-    if reverse_audit_refreeze:
+    if reverse_audit_sources_only:
+        payload["reverseAuditSourcesOnly"] = True
+    elif reverse_audit_refreeze:
         payload["reverseAuditRefreeze"] = True
     ready = sum(1 for product in payload["products"] if product.get("items"))
     print(f"準備補貨 {ready} 個商品（關鍵字：{keyword or '觀察清單全部'}）", flush=True)
@@ -481,6 +493,15 @@ def print_batch_outcome(batch: Dict[str, Any], port: int) -> None:
         )
         if reverse_audit.get("shortfall") or reverse_audit.get("status") == "PAUSED":
             print("車內不足，不要加車，先看 shortfall", flush=True)
+        delta = reverse_audit.get("cartDelta") or {}
+        totals = delta.get("totals") if isinstance(delta.get("totals"), dict) else {}
+        if totals:
+            print(
+                f"本次加車 delta：{totals.get('thisRunAddedKeys') or 0} 個 SKU／"
+                f"{totals.get('thisRunAddedQty') or 0} 件"
+                f"（{reverse_audit.get('cartDeltaPath') or ''}）",
+                flush=True,
+            )
     if run_id:
         print(f"報告：{server_url(port)}/api/alibaba-restock/batches/{run_id}/report.html", flush=True)
         print(f"續跑：python scripts/run_watchlist_restock.py --resume {run_id}", flush=True)
@@ -569,6 +590,7 @@ def run_approved_watchlist_restock(args: argparse.Namespace) -> int:
         started, _payload = start_watchlist_restock_batch(
             base, ROOT, args.keyword, args.months,
             reverse_audit_refreeze=bool(args.refreeze),
+            reverse_audit_sources_only=bool(args.sources_only),
         )
         if started.get("status") != "success" or not started.get("runId"):
             print(started.get("message") or "啟動整頁補貨失敗", file=sys.stderr)

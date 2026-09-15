@@ -33,10 +33,16 @@ from restock_batch import (
     run_batch_loop,
     render_report_html,
     reverse_audit_dir_for_batch,
+    cart_before_path,
+    cart_after_path,
+    cart_delta_path,
+    compute_cart_delta,
+    snapshot_cart_before_restock,
     save_state,
     should_retry_start,
     tally_sku_buckets,
     would_exceed_cart_safe_limit,
+    CDP_FALLBACK_MESSAGE,
 )
 
 
@@ -666,6 +672,38 @@ def _recording_dry_run(calls, *, status="READY_FOR_APPROVAL", paused=False, shor
     return dry_run
 
 
+def _write_live_cart_and_pools(out_dir: Path, items):
+    out_dir.mkdir(parents=True, exist_ok=True)
+    cart = {
+        "complete": True,
+        "items": items,
+        "nItems": len(items),
+        "capturedAt": "2026-09-15T00:00:00+08:00",
+    }
+    (out_dir / "live_cart.json").write_text(
+        json.dumps(cart, ensure_ascii=False), encoding="utf-8"
+    )
+    empty_pool = {"complete": True, "orders": [], "nLines": 0, "nOrders": 0}
+    for name in (
+        "live_orders_pending_pay.json",
+        "live_orders_pending_ship.json",
+        "live_orders_pending_receive.json",
+    ):
+        (out_dir / name).write_text(json.dumps(empty_pool), encoding="utf-8")
+    return cart
+
+
+def _cart_item(offer, sku, qty, cart_id="c1", spec="黑"):
+    return {
+        "offerId": offer,
+        "skuId": sku,
+        "qty": qty,
+        "cartId": cart_id,
+        "specText": spec,
+        "effective": True,
+    }
+
+
 class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
     def _terminal_state(self, run_id="run-dry"):
         snapshot = build_preview([product("1", "A", [item("黑")])])
@@ -756,7 +794,6 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
                     cdp_available_fn=lambda: True,
                 )
             mutate.assert_not_called()
-        self.assertEqual(freeze_calls, [])
         kwargs = dry_calls[0]["kwargs"]
         self.assertTrue(kwargs.get("refreeze_sources"))
         joined = " ".join(f"{k}={v}" for k, v in kwargs.items())
@@ -770,6 +807,9 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
         ):
             self.assertNotIn(banned, joined)
         self.assertTrue(state["reverseAudit"]["noCartMutate"])
+        self.assertEqual(len(freeze_calls), 1)
+        self.assertFalse(freeze_calls[0].get("sources_only", True))
+        self.assertFalse(freeze_calls[0].get("cart_only", True))
 
     def test_refreeze_without_cdp_stays_sources_only(self):
         freeze_calls = []
@@ -779,7 +819,7 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            finalize_status(
+            state = finalize_status(
                 self._terminal_state("run-no-cdp"),
                 reverse_audit_dir=Path(temp_dir) / "run-no-cdp",
                 live_source_dir=REVERSE_AUDIT_FIX,
@@ -789,12 +829,18 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
                 cdp_available_fn=lambda: False,
             )
         self.assertEqual(freeze_calls, [])
+        self.assertEqual(state["reverseAudit"]["mode"], "sources_only")
+        self.assertFalse(state["reverseAudit"]["liveAfter"])
+        self.assertIn("不假裝 live", " ".join(state["reverseAudit"].get("notes") or []) + state["reverseAudit"].get("message", ""))
 
     def test_refreeze_with_cdp_calls_freeze_not_sources_only(self):
         freeze_calls = []
 
-        def freeze(_out_dir, **kwargs):
+        def freeze(out_dir, **kwargs):
             freeze_calls.append(kwargs)
+            _write_live_cart_and_pools(Path(out_dir), [
+                {"offerId": "10001", "skuId": "sku-a", "qty": 10, "cartId": "c1"},
+            ])
             return 0
 
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -811,6 +857,7 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
         self.assertFalse(freeze_calls[0].get("sources_only", True))
         self.assertEqual(state["reverseAudit"]["mode"], "refreeze")
         self.assertTrue(state["reverseAudit"]["refreezeUsed"])
+        self.assertTrue(state["reverseAudit"]["liveAfter"])
 
     def test_paused_attention_does_not_run_dry_run(self):
         calls = []
@@ -913,6 +960,263 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
             self.assertEqual(state["reverseAudit"]["status"], "PAUSED")
             self.assertIn(SHORTFALL_PAUSE_MESSAGE, state["message"])
             self.assertTrue((reverse_audit_dir_for_batch(batch_dir) / "qty_shortfall.csv").exists())
+
+    def test_compute_cart_delta_lists_this_run_added(self):
+        before = {
+            "complete": True,
+            "items": [_cart_item("1", "a", 3), _cart_item("2", "b", 1)],
+        }
+        after = {
+            "complete": True,
+            "items": [
+                _cart_item("1", "a", 8),
+                _cart_item("2", "b", 1),
+                _cart_item("3", "c", 4),
+            ],
+        }
+        delta = compute_cart_delta(before, after)
+        added_keys = {(row["offerId"], row["skuId"]) for row in delta["added"]}
+        increased_keys = {(row["offerId"], row["skuId"]) for row in delta["increased"]}
+        self.assertEqual(added_keys, {("3", "c")})
+        self.assertEqual(increased_keys, {("1", "a")})
+        self.assertEqual(delta["totals"]["thisRunAddedKeys"], 2)
+        self.assertEqual(delta["totals"]["thisRunAddedQty"], 9)
+        self.assertEqual(delta["thisRunAdded"][0]["delta"] + delta["thisRunAdded"][1]["delta"], 9)
+
+    def test_before_snapshot_saved_when_cdp_writes_cart(self):
+        freeze_calls = []
+
+        def freeze(out_dir, **kwargs):
+            freeze_calls.append({"out_dir": str(out_dir), **kwargs})
+            _write_live_cart_and_pools(Path(out_dir), [_cart_item("1", "a", 2)])
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-before"
+            snapshot = build_preview([product("1", "A", [item("黑")])])
+            state = create_state(snapshot, run_id="run-before")
+            state = snapshot_cart_before_restock(
+                state,
+                batch_dir,
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: True,
+            )
+            before = cart_before_path(batch_dir)
+            self.assertTrue(state["cartBefore"]["saved"])
+            self.assertTrue(before.exists())
+            self.assertTrue(json.loads(before.read_text(encoding="utf-8"))["complete"])
+        self.assertEqual(len(freeze_calls), 1)
+        self.assertTrue(freeze_calls[0].get("cart_only"))
+        self.assertFalse(freeze_calls[0].get("sources_only", True))
+
+    def test_before_snapshot_fail_soft_without_chrome(self):
+        freeze_calls = []
+
+        def freeze(_out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-no-chrome"
+            snapshot = build_preview([product("1", "A", [item("黑")])])
+            state = create_state(snapshot, run_id="run-no-chrome")
+            state = snapshot_cart_before_restock(
+                state,
+                batch_dir,
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: False,
+            )
+        self.assertEqual(freeze_calls, [])
+        self.assertFalse(state["cartBefore"]["saved"])
+        self.assertIn("不假裝 live", state["cartBefore"]["message"])
+        self.assertIn("不開 Chrome", state["cartBefore"]["message"])
+
+    def test_sources_only_skips_before_and_after_freeze_even_with_cdp(self):
+        freeze_calls = []
+
+        def freeze(_out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-src-only"
+            snapshot = build_preview([product("1", "A", [item("黑")])])
+            state = create_state(snapshot, run_id="run-src-only")
+            state["reverseAuditSourcesOnly"] = True
+            state = snapshot_cart_before_restock(
+                state,
+                batch_dir,
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: True,
+            )
+            state["remaining"] = []
+            state["done"] = [{
+                "productId": "1",
+                "productName": "A",
+                "classification": "ok",
+                "confirmed": 1,
+            }]
+            state = finalize_status(
+                state,
+                reverse_audit_dir=batch_dir,
+                live_source_dir=REVERSE_AUDIT_FIX,
+                sources_only=True,
+                dry_run_fn=_recording_dry_run([]),
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: True,
+            )
+        self.assertEqual(freeze_calls, [])
+        self.assertFalse(state["cartBefore"]["saved"])
+        self.assertEqual(state["reverseAudit"]["mode"], "sources_only")
+        self.assertFalse(state["reverseAudit"]["liveAfter"])
+
+    def test_default_finalize_prefers_after_freeze_when_cdp(self):
+        freeze_calls = []
+
+        def freeze(out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            _write_live_cart_and_pools(Path(out_dir), [_cart_item("9", "z", 1)])
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-default-after"
+            state = finalize_status(
+                self._terminal_state("run-default-after"),
+                reverse_audit_dir=batch_dir,
+                dry_run_fn=_recording_dry_run([]),
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: True,
+            )
+            self.assertTrue(cart_after_path(batch_dir).exists())
+            self.assertTrue((reverse_audit_dir_for_batch(batch_dir) / "live_cart.json").exists())
+        self.assertEqual(len(freeze_calls), 1)
+        self.assertFalse(freeze_calls[0].get("cart_only", True))
+        self.assertEqual(state["reverseAudit"]["mode"], "refreeze")
+        self.assertTrue(state["reverseAudit"]["liveAfter"])
+
+    def test_batch_loop_before_after_delta_and_no_mutate(self):
+        freeze_calls = []
+        before_items = [_cart_item("100", "old", 2, cart_id="c-old")]
+        after_items = [
+            _cart_item("100", "old", 2, cart_id="c-old"),
+            _cart_item("200", "new", 5, cart_id="c-new"),
+            _cart_item("100", "old", 3, cart_id="c-old2"),
+        ]
+
+        def freeze(out_dir, **kwargs):
+            freeze_calls.append({"out_dir": str(out_dir), **kwargs})
+            items = before_items if kwargs.get("cart_only") else after_items
+            _write_live_cart_and_pools(Path(out_dir), items)
+            return 0
+
+        snapshot = build_preview([product("1", "A", [item("黑")])])
+        state = create_state(snapshot, run_id="run-delta")
+
+        def start_fn(_product_row):
+            return {"status": "success", "jobId": "job-1"}
+
+        def read_fn(_job_id):
+            return {
+                "status": "completed",
+                "result": {
+                    "status": "success",
+                    "countCheck": {"expected": 1, "confirmed": 1, "mismatch": False},
+                    "cartVerification": {"ok": True, "lineCount": 10, "foundCount": 1, "missingCount": 0},
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-delta"
+            with mock.patch("reverse_audit.mutate.run_mutate_actions") as mutate:
+                result = run_batch_loop(
+                    state,
+                    start_fn,
+                    read_fn,
+                    lambda _state: None,
+                    sleep_fn=lambda _: None,
+                    reverse_audit_dir=batch_dir,
+                    sources_root=_stage_sources_root(temp_dir),
+                    dry_run_fn=_recording_dry_run([]),
+                    freeze_fn=freeze,
+                    cdp_available_fn=lambda: True,
+                )
+            mutate.assert_not_called()
+            self.assertTrue(cart_before_path(batch_dir).exists())
+            self.assertTrue(cart_after_path(batch_dir).exists())
+            self.assertTrue(cart_delta_path(batch_dir).exists())
+            self.assertTrue(result["cartBefore"]["saved"])
+            delta = result["reverseAudit"]["cartDelta"]
+            added_keys = {(row["offerId"], row["skuId"]) for row in delta["thisRunAdded"]}
+            self.assertIn(("200", "new"), added_keys)
+            # 100/old: before 2, after 2+3=5
+            increased = [row for row in delta["increased"] if row["offerId"] == "100"]
+            self.assertEqual(increased[0]["delta"], 3)
+            html_text = render_report_html(build_report(result))
+            self.assertIn("本次加車前後差異", html_text)
+            self.assertIn("200", html_text)
+            self.assertIn("cart_delta.json", html_text)
+            summary = json.loads(
+                (reverse_audit_dir_for_batch(batch_dir) / "dry_run_summary.json").read_text(
+                    encoding="utf-8"
+                )
+            )
+            self.assertIn("cartDelta", summary)
+            self.assertTrue(summary.get("noCartMutate"))
+            self.assertTrue(result["reverseAudit"]["noCartMutate"])
+            self.assertTrue(result["reverseAudit"]["liveAfter"])
+        cart_only_flags = [call.get("cart_only") for call in freeze_calls]
+        self.assertIn(True, cart_only_flags)
+        self.assertIn(False, cart_only_flags)
+
+    def test_batch_loop_fail_soft_without_chrome_no_mutate(self):
+        freeze_calls = []
+
+        def freeze(_out_dir, **kwargs):
+            freeze_calls.append(kwargs)
+            raise AssertionError("must not freeze when CDP is down")
+
+        snapshot = build_preview([
+            product("1", "A", [item("黑")], gaps=[{"modelName": "停售", "reason": "已停售"}]),
+        ])
+        state = create_state(snapshot, run_id="run-fail-soft")
+
+        def start_fn(_product_row):
+            return {"status": "success", "jobId": "job-1"}
+
+        def read_fn(_job_id):
+            return {
+                "status": "completed",
+                "result": {
+                    "status": "success",
+                    "countCheck": {"expected": 1, "confirmed": 1, "mismatch": False},
+                    "cartVerification": {"ok": True, "lineCount": 10, "foundCount": 1, "missingCount": 0},
+                },
+            }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            batch_dir = Path(temp_dir) / "run-fail-soft"
+            with mock.patch("reverse_audit.mutate.run_mutate_actions") as mutate:
+                result = run_batch_loop(
+                    state,
+                    start_fn,
+                    read_fn,
+                    lambda _state: None,
+                    sleep_fn=lambda _: None,
+                    reverse_audit_dir=batch_dir,
+                    sources_root=_stage_sources_root(temp_dir),
+                    live_source_dir=REVERSE_AUDIT_FIX,
+                    freeze_fn=freeze,
+                    cdp_available_fn=lambda: False,
+                )
+            mutate.assert_not_called()
+            self.assertEqual(freeze_calls, [])
+            self.assertFalse(result["cartBefore"]["saved"])
+            self.assertEqual(result["reverseAudit"]["mode"], "sources_only")
+            self.assertFalse(result["reverseAudit"]["liveAfter"])
+            self.assertIn("不假裝 live", CDP_FALLBACK_MESSAGE)
+            joined = " ".join(result["reverseAudit"].get("notes") or [])
+            self.assertIn("不假裝 live", joined)
+            self.assertTrue(result["reverseAudit"]["noCartMutate"])
 
 
 if __name__ == "__main__":
