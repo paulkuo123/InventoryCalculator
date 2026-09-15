@@ -21,12 +21,7 @@ from ads_session import (
     safe_url_for_log,
 )
 from housekeeping import prune_generated_files
-from restock_rules import (
-    DEFAULT_RESTOCK_MONTHS,
-    PHONE_CASE_MONTHS,
-    round_calculated_restock_qty,
-    target_months_for_product,
-)
+from restock_rules import round_calculated_restock_qty
 
 # Playwright 兼容層：取代 Selenium imports
 from pw_adapter import (By, WebDriverWait, EC, Keys,
@@ -57,7 +52,7 @@ class ShopeeCrawler:
                  output_path="shopee_products.json",
                  search_keyword="",
                  headless=False,
-                 inventory_month=DEFAULT_RESTOCK_MONTHS,
+                 inventory_month=4,
                  browser_source=BROWSER_SOURCE_MAC,
                  cdp_endpoint=None,
                  ads_export_dir=None):
@@ -515,7 +510,7 @@ class ShopeeCrawler:
         total_sold,
         monthly_sales,
         current_inventory,
-        expected_months=DEFAULT_RESTOCK_MONTHS,
+        expected_months=4,
         total_monthly_sales=0,
     ):
         """
@@ -532,7 +527,7 @@ class ShopeeCrawler:
             total_sold (int): 商品總已售出數量
             monthly_sales (int): 月銷量
             current_inventory (int): 當前庫存
-            expected_months (int): 期望維持的庫存月數（非手機殼預設 4 個月）
+            expected_months (int): 期望維持的庫存月數（預設 4 個月）
             
         Returns:
             int: 建議補貨數量（如果不需要補貨則為 0 或負數）
@@ -617,16 +612,11 @@ class ShopeeCrawler:
                 preferred_label="已售出"
             )
             product_info["已售出總數量"] = str(total_sold)
-            product_name = product_info.get("商品名稱", "未知商品")
-
+            expected_months = self.inventory_month or 4
+            
             if "型號" in product_info and isinstance(product_info["型號"], list):
                 for model in product_info["型號"]:
                     model_name = model.get('型號名稱', '未知')
-                    expected_months = target_months_for_product(
-                        product_name,
-                        self.inventory_month or DEFAULT_RESTOCK_MONTHS,
-                        model_name,
-                    )
                     model_sold = self._parse_number_text(
                         model.get('已售出數量', '0'),
                         preferred_label="已售出"
@@ -661,6 +651,7 @@ class ShopeeCrawler:
             product_info["總建議補貨數量"] = total_restock
 
             # 輸出詳細的計算過程
+            product_name = product_info.get("商品名稱", "未知商品")
             print(
                 f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}, 總建議補貨: {total_restock}"
             )
@@ -2744,8 +2735,8 @@ def main():
                             help='是否使用無頭模式 (true/false)')
         parser.add_argument('--inventory-month',
                             type=int,
-                            default=DEFAULT_RESTOCK_MONTHS,
-                            help=f'其餘商品庫存月份（手機殼固定 {PHONE_CASE_MONTHS} 個月）')
+                            default=4,
+                            help='庫存月份')
         parser.add_argument('--mode',
                             choices=['inventory', 'ads-export'],
                             default='inventory',

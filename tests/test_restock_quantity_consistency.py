@@ -22,7 +22,6 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 from restock_rules import (
     DEFAULT_RESTOCK_MONTHS,
-    frontend_target_months_javascript,
     resolve_restock_quantity,
     target_months_for_product,
 )
@@ -62,8 +61,6 @@ def _extract_js_function(source, name):
 def _js_calculate_model_restock(product, model, months):
     script_js = (ROOT / "script.js").read_text(encoding="utf-8")
     functions = "\n".join([
-        frontend_target_months_javascript(),
-        _extract_js_function(script_js, "productTargetMonths"),
         _extract_js_function(script_js, "roundRestockQty"),
         _extract_js_function(script_js, "getEffectiveMonthlyRate"),
         _extract_js_function(script_js, "calculateModelRestock"),
@@ -482,40 +479,39 @@ class RestockQuantitySameAsDisplayTests(unittest.TestCase):
 
 
 class MonthThresholdConsistencyTests(unittest.TestCase):
-    """測試庫存月份閾值的一致使用。"""
+    """首頁／爬蟲用單一選取月數；店規 3/4 只套在分析與觀察清單補貨。"""
 
-    def test_default_month_threshold_is_shop_rules(self):
-        """非手機殼預設 4 個月；手機殼固定 3 個月。"""
-        self.assertEqual(DEFAULT_RESTOCK_MONTHS, 4)
-        self.assertEqual(target_months_for_product("壓克力吊飾"), 4)
-        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼"), 3)
+    def test_homepage_ui_is_single_month_control(self):
         index_html = (ROOT / "index.html").read_text(encoding="utf-8")
         self.assertIn('option value="4" selected', index_html)
+        self.assertIn("庫存月份:", index_html)
+        self.assertNotIn("其餘商品月份", index_html)
+        self.assertNotIn("/api/restock-rules.js", index_html)
+        script_js = (ROOT / "script.js").read_text(encoding="utf-8")
+        self.assertNotIn("productTargetMonths", script_js)
+        self.assertNotIn("targetMonthsForProduct", script_js)
 
-    def test_non_case_uses_selected_month_phone_case_stays_three(self):
-        """使用者選 6 個月時，其餘商品用 6，手機殼仍為 3。"""
-        self.assertEqual(target_months_for_product("壓克力吊飾", 6), 6)
-        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼", 6), 3)
+    def test_homepage_js_and_crawler_use_selected_month_for_all_products(self):
+        """使用者選 6 個月時，首頁與共用快照爬蟲對手機殼與非殼都用 6。"""
         self.assertEqual(
             ShopeeCrawler.calculate_restock_quantity(None, 10, 100, 10, 0, 6, 10),
             60,
         )
-        self.assertEqual(
-            _js_calculate_model_restock(
-                {"商品名稱": "壓克力吊飾", "總月銷量": "10", "已售出總數量": "100"},
+        for name in ("壓克力吊飾", "氣囊防摔 iPhone 手機殼"):
+            result = _js_calculate_model_restock(
+                {"商品名稱": name, "總月銷量": "10", "已售出總數量": "100"},
                 {"商品庫存": "0", "月銷量": "10", "已售出數量": "10"},
                 6,
-            )["targetMonths"],
-            6,
-        )
-        self.assertEqual(
-            _js_calculate_model_restock(
-                {"商品名稱": "氣囊防摔 iPhone 手機殼", "總月銷量": "10", "已售出總數量": "100"},
-                {"商品庫存": "0", "月銷量": "10", "已售出數量": "10"},
-                6,
-            )["targetMonths"],
-            3,
-        )
+            )
+            self.assertEqual(result["targetStock"], 60)
+            self.assertNotIn("targetMonths", result)
+
+    def test_analysis_helpers_keep_shop_rules(self):
+        self.assertEqual(DEFAULT_RESTOCK_MONTHS, 4)
+        self.assertEqual(target_months_for_product("壓克力吊飾"), 4)
+        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼"), 3)
+        self.assertEqual(target_months_for_product("壓克力吊飾", 6), 6)
+        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼", 6), 3)
 
 
 def run_tests_and_report():
