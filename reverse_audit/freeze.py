@@ -89,11 +89,13 @@ def run_freeze(
     *,
     root: Optional[Path] = None,
     sources_only: bool = False,
+    cart_only: bool = False,
 ) -> int:
     """Freeze local sources; optionally capture live pools via CDP.
 
     CDP implementation: scripts/freeze_reverse_audit_pools*.py
     Requires Chrome remote debugging; does not mutate cart.
+    cart_only=True snapshots live_cart.json only (no order pools).
     """
     root = root or repo_root()
     out_dir = Path(out_dir)
@@ -131,9 +133,22 @@ def run_freeze(
         )
         return 0
 
+    prev_cart_only = os.environ.get("REVERSE_AUDIT_CART_ONLY")
     os.environ["REVERSE_AUDIT_OUT"] = str(out_dir.resolve())
+    if cart_only:
+        os.environ["REVERSE_AUDIT_CART_ONLY"] = "1"
+    else:
+        os.environ.pop("REVERSE_AUDIT_CART_ONLY", None)
     print(f"[freeze] OUT={out_dir}", flush=True)
     print(f"[freeze] script={script}", flush=True)
+    if cart_only:
+        print("[freeze] cart-only (skip order pools)", flush=True)
     sys.path.insert(0, str(root))
-    runpy.run_path(str(script), run_name="__main__")
-    return 0
+    try:
+        runpy.run_path(str(script), run_name="__main__")
+        return 0
+    finally:
+        if prev_cart_only is None:
+            os.environ.pop("REVERSE_AUDIT_CART_ONLY", None)
+        else:
+            os.environ["REVERSE_AUDIT_CART_ONLY"] = prev_cart_only

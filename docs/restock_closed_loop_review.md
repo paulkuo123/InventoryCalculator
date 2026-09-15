@@ -98,7 +98,7 @@
 | 工具 | 做得到 | 做不到 |
 |---|---|---|
 | `alibaba_restocker` 增量驗證 | 這次送出的 SKU，車內增量 ≥ 預期才算確認 | 不管整車該有什麼；不管訂單三池；不管非預期列 |
-| `restock_batch` 報告 | `completed`／`completed_with_gaps` 後自動 `reverse_audit` **dry-run only**（預設 sources-only）；`report.html` 掛 `dry_run_summary.json` 與 `補貨比對結果.csv` | 不 mutate；沒有 live 四池時略過 dry-run；`--refreeze` 才用本機 CDP 重抓 |
+| `restock_batch` 報告 | 加車前凍 live cart；`completed`／`completed_with_gaps` 後預設 CDP 重抓 after 再 `reverse_audit` **dry-run only**；`report.html` 掛 delta、`dry_run_summary.json` 與 `補貨比對結果.csv` | 不 mutate；沒 CDP 則 sources-only 並註明不假裝 live；`--sources-only` 給 CI |
 | `python -m reverse_audit dry-run` | 應補 vs 車＋三池；主檔 `補貨比對結果.csv` | 路 B mutate 仍須人工旗標；批次路徑不會代跑 mutate |
 | `scripts/reconcile_cart.py` | 離線、書包截止、絕對設量契約 | 不連瀏覽器；與 `restock_batches/` **分開**；文件寫明不可用 `init` 重跑舊人工日誌 |
 
@@ -114,7 +114,7 @@
 - 正向整頁加車（路 A）：`scripts/run_watchlist_restock.py --i-approve-watchlist-restock`、首頁預覽、`restock_batch` 可續跑。`--yes` 只跳過 Enter；沒有核准旗標不會 POST。不是 `reverse_audit mutate`。
 - 加車增量驗證與車滿暫停：`alibaba_restocker.restock_count_check`、`VERIFY_CART_COUNTS=True`。
 - 反向四池對帳：`python -m reverse_audit refresh` → 整合表＋機器 CSV。
-- 批次終態自動 dry-run（任務 3）：`completed`／`completed_with_gaps` 後跑 `reverse_audit.dry_run.run_dry_run`（sources-only；`--refreeze` 僅本機 CDP）。`PAUSED` 時寫「車內不足，不要加車，先看 shortfall」。不 mutate。
+- 批次終態自動 dry-run（任務 3＋before/after）：加車前凍 live cart；`completed`／`completed_with_gaps` 後預設重抓 after 再 `run_dry_run`。`PAUSED` 時寫「車內不足，不要加車，先看 shortfall」。沒 CDP 不開 Chrome、不假裝 live。不 mutate。
 - 核准後改車：加車／設量／刪除，缺旗標立即拒絕。
 - 不猜 URL／skuId：uncertain／skip 不進 mutate 加車。
 
@@ -238,7 +238,7 @@
 
 **狀態：** 已實作（本任務）。
 
-**做：** `restock_batch.finalize_status` 進入 `completed`／`completed_with_gaps` 後，呼叫 `reverse_audit.dry_run.run_dry_run`（預設 `--sources-only` 重拷來源；本機有 CDP 再允許 `--refreeze`）。把 `dry_run_summary.json` 狀態與 `補貨比對結果.csv` 路徑寫進批次 `report.html`。`status=PAUSED` 時批次訊息明確寫「車內不足，不要加車，先看 shortfall」。
+**做：** `restock_batch` 在核准加車前凍 live cart；`finalize_status` 進入 `completed`／`completed_with_gaps` 後預設 CDP 重抓 after 再 `run_dry_run`。`report.html` 列出本次 before/after delta、`dry_run_summary.json` 與 `補貨比對結果.csv`。`status=PAUSED` 時批次訊息明確寫「車內不足，不要加車，先看 shortfall」。CI 用 `--sources-only`。
 
 **不做：** 不呼叫 `run_mutate_actions`；不自動 set-qty／remove；不在 CI 開 Chrome。
 
