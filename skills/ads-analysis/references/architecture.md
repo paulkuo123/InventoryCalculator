@@ -29,6 +29,7 @@
   - `crawler.py`
 - 廣告分析：
   - `ads_analysis.py`
+  - `ads_scope.py`（廣告匯出範圍與視窗定義）
   - `ads_weekly.py`（週報抓取，預設遠端 CDP）
   - `ads_session.py`
   - `config_loader.py`

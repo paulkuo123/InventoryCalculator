@@ -96,8 +96,13 @@
 
 ## 驗證
 
-```text
-python3 -m pytest -q tests/test_cart_reconciliation.py tests/test_restock_rules.py tests/test_run_watchlist_restock.py tests/test_restock_quantity_consistency.py tests/test_restock_batch.py
+```bash
+python3 -m unittest -q \
+  tests/test_cart_reconciliation.py \
+  tests/test_restock_rules.py \
+  tests/test_run_watchlist_restock.py \
+  tests/test_restock_quantity_consistency.py \
+  tests/test_restock_batch.py
 ```
 
 現有 launcher 的兩個整合測試依賴工作目錄內的本機 `shopee_products.json`（Git 忽略檔），獨立 worktree 須放置唯讀用途的副本。新核對測試使用臨時合成資料，不操作任何網站。實際購物車少量試跑及最終全面回讀仍是獨立驗收條件；本機測試通過不能替代。

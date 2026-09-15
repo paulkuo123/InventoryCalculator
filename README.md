@@ -86,7 +86,7 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-> **注意**: 程式啟動時會自動檢查並安裝缺失的依賴套件和 Playwright 瀏覽器。
+> **注意**：啟動程式前，請先執行 `pip install -r requirements.txt` 與 `playwright install chromium`。
 
 ## 使用方法
 
@@ -372,7 +372,7 @@ InventoryCalculator/
 │   ├── offer_discovery_spike.md  # TASK 9：第 1 層 offer 來源（設計 only）
 │   ├── restock_closed_loop_review.md   # Goal A：補貨閉環現況 vs 最終流程
 │   └── golden_ai_automation_review.md  # Goal B：Golden AI；#41–#46 暫停中勿合
-├── tests/                  # pytest（含 reverse_audit 離線安全測試）
+├── tests/                  # unittest（含 reverse_audit 離線安全測試）
 ├── watchlists/             # 個人關注與排除清單
 ├── golden_table.json       # 已核准 mapping（納入 git）
 ├── cookies.json            # 蝦皮 Cookies（gitignore，需自行設置）
@@ -386,14 +386,14 @@ InventoryCalculator/
 
 ## 1688 SKU Mapping 工作台
 
-`/sku-mapping.html` 是整個賣場的 1688 SKU 對照獨立審核頁。按「重建全部名稱 mapping（掃描 1688）」後，系統會以 1688 offer 分組取得結構化 SKU 快照，先做繁簡／顏色／尺寸／手機型號等規則比對；只要規則找到候選，就不呼叫 AI，直接交給人工確認。只有規則完全找不到候選時，才會把完整 SKU 清單交給設定的 Gemini 初判；之後在頁面逐筆或批次核准。清單預設依商品總月銷量由高到低排序，同一商品的不同型號會集中在一起，再依型號月銷量排列。未核准、失效、停售、名稱組合不存在或 live 目錄無法驗證的資料會被購物車流程阻擋。
+`/sku-mapping.html` 是整個賣場的 1688 SKU 對照獨立審核頁。按「重建全部名稱 mapping（掃描 1688）」後，系統會以 1688 offer 分組取得結構化 SKU 快照，先做繁簡／顏色／尺寸／手機型號等規則比對；只要規則找到候選，就不呼叫 AI，直接交給人工確認。只有規則完全找不到候選時，才會把完整 SKU 清單交給 AI 初判；建議的預設設定為 OpenAI Responses API，請執行 `python3 setup_openai_key.py` 完成設定。之後在頁面逐筆或批次核准。清單預設依商品總月銷量由高到低排序，同一商品的不同型號會集中在一起，再依型號月銷量排列。未核准、失效、停售、名稱組合不存在或 live 目錄無法驗證的資料會被購物車流程阻擋。
 
 - 工作台目前以所有已有 1688 URL 的型號為範圍，不再以「是否需要補貨」作為顯示或掃描條件；補貨數量欄位仍保留在庫存與購物車流程中。
 - 清單每頁最多顯示 200 筆，使用頁面底部的上一頁／下一頁瀏覽全部 URL 型號；跨頁勾選仍會保留，批次動作會一次套用所有已勾選項目。
 - 若規則沒有產生候選，卡片可先「重新掃描此商品」；仍無法判定時可開啟該 offer 的完整 SKU 清單手動選擇。手動核准必須選擇目前 live 快照中存在的完整名稱組合；SKU ID 只作輔助，不接受任意輸入不存在的名稱或 ID。
 - 完整 SKU 清單可在任何卡片開啟；若先手動選好 SKU，再勾選卡片的「批次處理」，批次核准會優先使用手動選擇，沒有手動選擇的卡片才會提示並使用候選第 1 號。
 
-- 「重建全部名稱 mapping（掃描 1688）」是 1688 live 掃描流程：未勾選強制重抓時會優先使用 7 天內快照，但快照不存在或過期仍可能開啟 1688。若只想用目前資料庫已有快照重新跑規則／Gemini，請按「用現有快照重建名稱 mapping（不連 1688）」；沒有快照的型號會略過，不會觸發瀏覽器。
+- 「重建全部名稱 mapping（掃描 1688）」是 1688 live 掃描流程：未勾選強制重抓時會優先使用 7 天內快照，但快照不存在或過期仍可能開啟 1688。若只想用目前資料庫已有快照重跑「規則→AI」，請按「用現有快照重建（規則→AI）」；沒有快照的型號會略過，不會觸發瀏覽器。
 
 - 審核分級：綠色代表「唯一候選、所有規格維度精確匹配、live 快照有效」，或 AI 有效選中目前候選且信心指數達 95% 以上；黃色仍需人工點選候選；紅色只能保留、標記無匹配或停售，禁止猜測。月銷量只影響排列順序，不影響綠／黃／紅分級。名稱組合是主要判定依據，SKU ID 與快照 fingerprint 只作輔助證據；因此 SKU ID 改變但兩個名稱仍唯一存在時，不會因 ID 變更而否定 mapping。若單一候選仍是紅色，畫面會明確標示「需重新掃描」；通常是 live 快照狀態失效、名稱組合消失或擷取失敗，不能直接核准。批次核准仍由使用者勾選控制，未手動選候選時會明確提示並使用第 1 個候選。
 - 快照是某次從 1688 讀到的 SKU、規格、價格與庫存目錄，用來保存當時的證據並比對商品是否變更。若資料庫已有較新的 live 快照，系統會自動重新驗證舊 mapping；只要原本的 `1688_sku_name`／`1688_sku_second_name` 名稱組合仍唯一存在，就算 SKU ID 改變也可保留並更新輔助資料，不必重複人工改名。只有沒有可用快照、名稱組合消失或商品下架時，才要求重新掃描或人工處理。
@@ -402,7 +402,7 @@ InventoryCalculator/
 
 - 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。Know-how Engine 總覽、TASK 1 vs 現況數字與 auto-approve 反事實精度見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。第 1 層 offer 來源（設計 spike，不寫爬蟲）見 [`docs/offer_discovery_spike.md`](docs/offer_discovery_spike.md)。全表 AI 補完 vs 2026-09-09 暫停（PRs #41–#46 勿合）見 [`docs/golden_ai_automation_review.md`](docs/golden_ai_automation_review.md)。
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
-- 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
+- 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。若要使用 Gemini、Grok 或 DeepSeek，仍可透過 `SKU_MAPPING_AI_PROVIDER` 與對應的 API Key／模型設定切換，不需也不應改跑其他初始化腳本。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。
 - 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 
