@@ -265,7 +265,6 @@ def build_manifest(products, golden, baseline, sources=None, frozen_product_ids=
         item["blockers"] = list(dict.fromkeys(item["blockers"]))
         item["difference"] = (item["targetQty"] - item["originalQty"]
                               if item["targetQty"] is not None and item["originalQty"] is not None else None)
-        item["cause"] = {"confirmed": "僅確認數量差異；尚未證實漏加原因", "hypothesis": None}
     return {"schemaVersion": 1, "mode": MODE, "createdAt": now(), "sources": sources or {},
             "baseline": baseline, "productIds": scope, "items": items, "gaps": gaps,
             "stopBoundary": boundary, "excludedItemsAfterStop": excluded_items,

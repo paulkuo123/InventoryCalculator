@@ -856,8 +856,9 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
         self.assertEqual(len(freeze_calls), 1)
         self.assertFalse(freeze_calls[0].get("sources_only", True))
         self.assertEqual(state["reverseAudit"]["mode"], "refreeze")
-        self.assertTrue(state["reverseAudit"]["refreezeUsed"])
         self.assertTrue(state["reverseAudit"]["liveAfter"])
+        self.assertNotIn("refreezeUsed", state["reverseAudit"])
+        self.assertNotIn("refreezeRequested", state["reverseAudit"])
 
     def test_paused_attention_does_not_run_dry_run(self):
         calls = []
