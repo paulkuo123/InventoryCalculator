@@ -24,7 +24,6 @@ WEEKLY_OUTPUT_ROOT = "reports/ads_weekly"
 REQUIRED_WINDOWS = ("yesterday", "week_01", "past_month")
 ALL_EXPORT_WINDOWS = ("past_month", "yesterday", "week_01", "week_02", "week_03", "week_04")
 
-A1_CAMPAIGN_ID = "18025139892"
 SCOPE_KEYWORD_GROUPS = (
     "airpods",
     "氣囊",
@@ -287,10 +286,6 @@ def write_scope_md(out_dir: Path) -> Path:
             "",
             *[f"- `{group}`" for group in SCOPE_KEYWORD_GROUPS],
             "",
-            "## 固定追蹤",
-            "",
-            f"- 活動 A1 campaign id `{A1_CAMPAIGN_ID}`",
-            "",
             "## 視窗",
             "",
             "- 昨天（主要決策）",
@@ -344,7 +339,6 @@ def build_success_manifest(
         "read_only": True,
         "scope": {
             "keywords": list(SCOPE_KEYWORD_GROUPS),
-            "always_track_campaign_id": A1_CAMPAIGN_ID,
         },
         "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
     }

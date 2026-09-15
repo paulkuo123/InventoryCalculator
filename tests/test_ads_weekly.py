@@ -8,7 +8,6 @@ from tempfile import TemporaryDirectory
 
 from ads_analysis import AdsAnalyzer
 from ads_session import (
-    A1_CAMPAIGN_ID,
     BLOCKER_CAPTCHA,
     BLOCKER_CDP_UNAVAILABLE,
     BLOCKER_LOGIN_WALL,
@@ -16,6 +15,7 @@ from ads_session import (
     BLOCKER_SESSION_DEAD,
     DEFAULT_CDP_ENDPOINT,
     detect_session_blocker,
+    detect_window_key_from_name,
     missing_required_windows,
     normalize_browser_source,
     prepare_weekly_run_dir,
@@ -68,6 +68,21 @@ class AdsSessionHelperTests(unittest.TestCase):
         self.assertIsNone(
             detect_session_blocker("https://seller.shopee.tw/portal/marketing/pas/index")
         )
+
+    def test_window_key_from_name_matches_export_prefixes(self):
+        self.assertEqual(
+            detect_window_key_from_name("ads_overall_yesterday_20260911.csv"),
+            "yesterday",
+        )
+        self.assertEqual(
+            detect_window_key_from_name("ads_overall_past_month_20260911.csv"),
+            "past_month",
+        )
+        self.assertEqual(
+            detect_window_key_from_name("ads_overall_week_01_20260905_20260911.csv"),
+            "week_01",
+        )
+        self.assertEqual(detect_window_key_from_name("notes.txt"), "unknown")
 
     def test_safe_url_log_strips_query(self):
         from ads_session import safe_url_for_log
@@ -126,7 +141,6 @@ class AdsWeeklyCliTests(unittest.TestCase):
             include_ai=False,
         )
         self.assertEqual(cmd[cmd.index("--refresh-source") + 1], "false")
-        self.assertIn("18025139892", A1_CAMPAIGN_ID)
 
 
 class AdsAnalyzerRemoteDefaultTests(unittest.TestCase):
@@ -142,6 +156,15 @@ class AdsAnalyzerRemoteDefaultTests(unittest.TestCase):
         self.assertEqual(analyzer.browser_source, "remote")
         self.assertEqual(cmd[cmd.index("--browser-source") + 1], "remote")
         self.assertEqual(cmd[cmd.index("--cdp-endpoint") + 1], DEFAULT_CDP_ENDPOINT)
+
+    def test_refresh_source_defaults_false_to_match_cli(self):
+        with TemporaryDirectory() as temp_dir:
+            analyzer = AdsAnalyzer(
+                ads_export_dir=temp_dir,
+                golden_table_path=os.path.join(temp_dir, "missing.json"),
+                include_ai=False,
+            )
+        self.assertFalse(analyzer.refresh_source)
 
 
 class AdsWeeklyBlockerPathTests(unittest.TestCase):
@@ -264,7 +287,12 @@ class AdsWeeklyBlockerPathTests(unittest.TestCase):
             manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
             self.assertEqual(manifest["source"], "remote")
             self.assertFalse(manifest["reused_previous_week"])
-            self.assertEqual(manifest["scope"]["always_track_campaign_id"], A1_CAMPAIGN_ID)
+            self.assertEqual(
+                manifest["scope"]["keywords"],
+                ["airpods", "氣囊", "吊飾|掛飾|掛件|掛繩"],
+            )
+            self.assertNotIn("always_track_campaign_id", manifest["scope"])
+            self.assertNotIn("18025139892", (out_dir / "SCOPE.md").read_text(encoding="utf-8"))
             self.assertIn("html_report", manifest["outputs"])
             self.assertTrue(manifest["outputs"]["html_report"].endswith("ads_analysis_report.html"))
 

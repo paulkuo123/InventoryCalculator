@@ -2,6 +2,7 @@ import argparse
 import base64
 import csv
 import hashlib
+import html
 import json
 import os
 import re
@@ -31,6 +32,7 @@ from ads_scope import (
 )
 from ads_session import (
     BROWSER_SOURCE_REMOTE,
+    detect_window_key_from_name,
     normalize_browser_source,
     resolve_cdp_endpoint,
 )
@@ -224,11 +226,6 @@ def validate_reasoning_effort(value: str) -> str:
     return effort
 
 
-WINDOW_KEY_BY_PREFIX = {
-    "ads_overall_yesterday_": "yesterday",
-    "ads_overall_past_month_": "past_month",
-}
-
 CURRENT_WINDOW_LABELS = {
     "yesterday": "昨天",
     "past_month": "過去一個月",
@@ -318,14 +315,8 @@ def parse_period(value: str) -> Tuple[Optional[str], Optional[str]]:
     return start_text, end_text
 
 
-def detect_window_key(file_name: str) -> str:
-    week_match = re.match(r"ads_overall_week_(\d{2})_", file_name)
-    if week_match:
-        return f"week_{week_match.group(1)}"
-    for prefix, window_key in WINDOW_KEY_BY_PREFIX.items():
-        if file_name.startswith(prefix):
-            return window_key
-    return "unknown"
+def html_text(value: Any) -> str:
+    return html.escape("" if value is None else str(value), quote=True)
 
 
 def normalize_product_name(name: str) -> str:
@@ -381,7 +372,7 @@ class AdsAnalyzer:
         markdown_output_path: str = "ads_analysis_report.md",
         html_output_path: str = "ads_analysis_report.html",
         include_ai: bool = True,
-        refresh_source: bool = True,
+        refresh_source: bool = False,
         trend_weeks: int = 4,
         openai_model: str = "",
         reasoning_effort: str = "",
@@ -511,7 +502,7 @@ class AdsAnalyzer:
         header_row = rows[7]
         data_rows = [row for row in rows[8:] if row and any(cell.strip() for cell in row)]
         file_name = os.path.basename(path)
-        window_key = detect_window_key(file_name)
+        window_key = detect_window_key_from_name(file_name)
         start_date, end_date = parse_period(metadata.get("期間", ""))
         start_dt = parse_date(start_date) if start_date else None
         end_dt = parse_date(end_date) if end_date else None
@@ -543,7 +534,6 @@ class AdsAnalyzer:
             golden = self.golden_table.get(product_id, {})
             product_name = golden.get("商品名稱") or normalize_product_name(raw.get("廣告名稱", ""))
             product_image_url = process_image_url(golden.get("商品圖片網址", ""))
-            variants = golden.get("型號", []) if isinstance(golden.get("型號"), list) else []
 
             metrics.append({
                 "report_file_name": file_name,
@@ -579,8 +569,6 @@ class AdsAnalyzer:
                 "acos": round2(safe_float(raw.get("成本收入比率", ""), is_percent=True) * 100),
                 "direct_acos": round2(safe_float(raw.get("直接成本收入比率", ""), is_percent=True) * 100),
                 "product_image_url": product_image_url,
-                "variant_count": len(variants),
-                "variants": variants,
             })
 
         return ParsedAdsReport(report_run=report_run, metrics=metrics)
@@ -601,7 +589,7 @@ class AdsAnalyzer:
 
         latest_by_window: Dict[str, str] = {}
         for path in csv_files:
-            window_key = detect_window_key(os.path.basename(path))
+            window_key = detect_window_key_from_name(os.path.basename(path))
             if window_key in self.window_order:
                 latest_by_window[window_key] = path
 
@@ -952,8 +940,6 @@ class AdsAnalyzer:
                 recent_week=recent_week,
                 past_month=past_month,
                 yesterday_diag=yesterday_diag,
-                recent_week_diag=week_diag,
-                month_diag=month_diag,
                 trend_analysis=trend_analysis,
                 direct_share=direct_share,
                 spend_growth_pct=spend_growth_pct,
@@ -985,7 +971,6 @@ class AdsAnalyzer:
                     str(stable.get("status") or ""),
                 ),
                 "product_image_url": stable.get("product_image_url", ""),
-                "variant_count": stable.get("variant_count", 0),
                 "in_scope": in_scope,
                 "scope_group": scope_group,
                 "scope_active": scope_active,
@@ -1018,54 +1003,6 @@ class AdsAnalyzer:
                         **month_diag,
                         "status": "達標" if month_diag.get("roas", 0) >= 3 and month_diag.get("direct_roas", 0) >= 3 else ("偏間接" if month_diag.get("roas", 0) >= 3 else "未達標"),
                     } if month_diag else {},
-                },
-                "llm_summary": {
-                    "category": category,
-                    "primary_issue": primary_issue,
-                    "signals": signals[:4],
-                    "trend_flags": trend_analysis.get("trend_flags", []),
-                    "trend_summary": trend_analysis.get("trend_summary", ""),
-                    "yesterday": {
-                        "spend": yesterday_diag.get("spend", 0),
-                        "impressions": yesterday_diag.get("impressions", 0),
-                        "clicks": yesterday_diag.get("clicks", 0),
-                        "ctr": yesterday_diag.get("ctr", 0),
-                        "cvr": yesterday_diag.get("cvr", 0),
-                        "roas": yesterday_diag.get("roas", 0),
-                        "direct_roas": yesterday_diag.get("direct_roas", 0),
-                        "cpc": yesterday_diag.get("cpc", 0),
-                        "cpa": yesterday_diag.get("cpa", 0),
-                        "direct_sales_share": yesterday_diag.get("direct_sales_share", 0),
-                    },
-                    "recent_week": {
-                        "ctr": week_diag.get("ctr", 0),
-                        "cvr": week_diag.get("cvr", 0),
-                        "roas": week_diag.get("roas", 0),
-                        "direct_roas": week_diag.get("direct_roas", 0),
-                        "cpc": week_diag.get("cpc", 0),
-                        "cpa": week_diag.get("cpa", 0),
-                    },
-                    "past_month": {
-                        "ctr": month_diag.get("ctr", 0),
-                        "cvr": month_diag.get("cvr", 0),
-                        "roas": month_diag.get("roas", 0),
-                        "direct_roas": month_diag.get("direct_roas", 0),
-                        "cpc": month_diag.get("cpc", 0),
-                        "cpa": month_diag.get("cpa", 0),
-                    },
-                    "weekly_trend_series": [
-                        {
-                            "window_label": item.get("window_label", ""),
-                            "roas": item.get("roas", 0),
-                            "direct_roas": item.get("direct_roas", 0),
-                            "ctr": item.get("ctr", 0),
-                            "cvr": item.get("cvr", 0),
-                            "cpc": item.get("cpc", 0),
-                            "cpa": item.get("cpa", 0),
-                            "spend": item.get("spend", 0),
-                        }
-                        for item in weekly_trend_series
-                    ],
                 },
                 "windows": {
                     key: {
@@ -1104,8 +1041,6 @@ class AdsAnalyzer:
         recent_week: Dict[str, Any],
         past_month: Dict[str, Any],
         yesterday_diag: Dict[str, Any],
-        recent_week_diag: Dict[str, Any],
-        month_diag: Dict[str, Any],
         trend_analysis: Dict[str, Any],
         direct_share: float,
         spend_growth_pct: float,
@@ -2217,8 +2152,8 @@ class AdsAnalyzer:
                 return ""
             return f"""
             <div class="metric-box {status_class(snapshot.get('status', ''))}">
-              <div class="metric-title">{snapshot.get('window_label', '-')}</div>
-              <div class="metric-status">{snapshot.get('status', '-')}</div>
+              <div class="metric-title">{html_text(snapshot.get('window_label', '-'))}</div>
+              <div class="metric-status">{html_text(snapshot.get('status', '-'))}</div>
               <div class="metric-value">ROAS {snapshot.get('roas', 0):.2f}</div>
               <div class="metric-sub">直接 ROAS {snapshot.get('direct_roas', 0):.2f}</div>
               <div class="metric-sub">CTR {snapshot.get('ctr', 0):.2f}% / CVR {snapshot.get('cvr', 0):.2f}%</div>
@@ -2235,7 +2170,7 @@ class AdsAnalyzer:
                 cells.append(
                     f"""
                     <div class="trend-cell">
-                      <div class="trend-label">{item.get('window_label', '-')}</div>
+                      <div class="trend-label">{html_text(item.get('window_label', '-'))}</div>
                       <div class="trend-metric">ROAS {item.get('roas', 0):.2f}</div>
                       <div class="trend-sub">直接 {item.get('direct_roas', 0):.2f}</div>
                       <div class="trend-sub">CTR {item.get('ctr', 0):.2f}% / CVR {item.get('cvr', 0):.2f}%</div>
@@ -2253,8 +2188,8 @@ class AdsAnalyzer:
                 embedded = fetch_image_as_base64(product_image_url)
                 image_cache[product_image_url] = embedded
             if embedded:
-                return f'<img src="{embedded}" alt="product" />'
-            return f'<img src="{product_image_url}" alt="product" />'
+                return f'<img src="{html_text(embedded)}" alt="product" />'
+            return f'<img src="{html_text(product_image_url)}" alt="product" />'
 
         sections = []
         scope_products = report["report"].get("scope_products") or []
@@ -2269,11 +2204,11 @@ class AdsAnalyzer:
                   <div class="card-top">
                     {render_product_image(item)}
                     <div>
-                      <div class="name">{item.get('product_name', '')}</div>
-                      <div class="meta">商品 ID: {item.get('product_id', '')}</div>
-                      <div class="meta">判斷類別：{item.get('category', '-')}</div>
-                      <div class="meta">焦點關鍵字：{item.get('scope_group', '-')}</div>
-                      <div class="meta">狀態：{item.get('status', '-')}</div>
+                      <div class="name">{html_text(item.get('product_name', ''))}</div>
+                      <div class="meta">商品 ID: {html_text(item.get('product_id', ''))}</div>
+                      <div class="meta">判斷類別：{html_text(item.get('category', '-'))}</div>
+                      <div class="meta">焦點關鍵字：{html_text(item.get('scope_group', '-'))}</div>
+                      <div class="meta">狀態：{html_text(item.get('status', '-'))}</div>
                       <div class="meta">昨天花費：{snapshot.get('spend', 0):,.2f}</div>
                     </div>
                   </div>
@@ -2292,24 +2227,32 @@ class AdsAnalyzer:
             cards = []
             for item in items:
                 snapshot = item.get("decision_snapshot", {})
-                step_items = "".join(f"<li>{step}</li>" for step in item.get("action_steps", []))
-                display_detail = narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
-                primary_issue = narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
-                why_not = narrative_why_not_map.get(str(item["product_id"]), item.get("why_not_other_issue", ""))
-                ai_confidence = item.get("ai_confidence", "")
-                evidence_html = "".join(f"<li>{value}</li>" for value in item.get("ai_evidence", []))
+                step_items = "".join(f"<li>{html_text(step)}</li>" for step in item.get("action_steps", []))
+                display_detail = html_text(
+                    narrative_reason_map.get(str(item["product_id"]), item["action_detail"])
+                )
+                primary_issue = html_text(
+                    narrative_issue_map.get(str(item["product_id"]), item.get("primary_issue", ""))
+                )
+                why_not = html_text(
+                    narrative_why_not_map.get(str(item["product_id"]), item.get("why_not_other_issue", ""))
+                )
+                ai_confidence = html_text(item.get("ai_confidence", "") or "-")
+                evidence_html = "".join(f"<li>{html_text(value)}</li>" for value in item.get("ai_evidence", []))
                 budget_change = item.get("budget_change_pct")
                 observation_days = item.get("observation_days")
-                risk_if_wrong = item.get("risk_if_wrong", "")
-                disagreement = item.get("rule_disagreement_reason", "") if item.get("rule_disagreement") else ""
+                risk_if_wrong = html_text(item.get("risk_if_wrong", ""))
+                disagreement = html_text(
+                    item.get("rule_disagreement_reason", "") if item.get("rule_disagreement") else ""
+                )
                 decision_meta = ""
                 if narrative.get("source") == "openai":
                     budget_text = f"{int(budget_change):+d}%" if isinstance(budget_change, (int, float)) else "0%"
                     decision_meta = f"""
                     <div class="decision-grid">
-                      <div><strong>信心</strong><br>{ai_confidence or '-'}</div>
-                      <div><strong>預算建議</strong><br>{budget_text}</div>
-                      <div><strong>觀察期</strong><br>{observation_days or '-'} 天</div>
+                      <div><strong>信心</strong><br>{ai_confidence}</div>
+                      <div><strong>預算建議</strong><br>{html_text(budget_text)}</div>
+                      <div><strong>觀察期</strong><br>{html_text(observation_days or '-')} 天</div>
                     </div>
                     {f'<div class="detail"><strong>可查核證據：</strong><ul>{evidence_html}</ul></div>' if evidence_html else ''}
                     {f'<div class="detail"><strong>判錯風險：</strong>{risk_if_wrong}</div>' if risk_if_wrong else ''}
@@ -2317,13 +2260,13 @@ class AdsAnalyzer:
                     """
                 cards.append(f"""
                 <div class="card">
-                  <div class="action-banner">{item['action_title']}</div>
+                  <div class="action-banner">{html_text(item['action_title'])}</div>
                   <div class="card-top">
                     {render_product_image(item)}
                     <div>
-                      <div class="name">{item['product_name']}</div>
-                      <div class="meta">商品 ID: {item['product_id']}</div>
-                      <div class="meta">判斷類別：{item['category']}</div>
+                      <div class="name">{html_text(item['product_name'])}</div>
+                      <div class="meta">商品 ID: {html_text(item['product_id'])}</div>
+                      <div class="meta">判斷類別：{html_text(item['category'])}</div>
                       <div class="meta"><strong>主因：</strong>{primary_issue}</div>
                     </div>
                   </div>
@@ -2334,7 +2277,7 @@ class AdsAnalyzer:
                   </div>
                   <div class="trend-panel">
                     <div class="steps-title">近 {self.trend_weeks} 週滾動趨勢</div>
-                    <div class="detail"><strong>趨勢摘要：</strong>{item.get('trend_summary', '資料不足')}</div>
+                    <div class="detail"><strong>趨勢摘要：</strong>{html_text(item.get('trend_summary', '資料不足'))}</div>
                     {render_trend_strip(item.get('weekly_trend_series', []))}
                   </div>
                   <div class="detail"><strong>{'OpenAI 判讀' if narrative.get('source') == 'openai' else '驗算摘要'}：</strong>{display_detail}</div>
@@ -2348,7 +2291,9 @@ class AdsAnalyzer:
                 """)
             sections.append(f"<h2>{title}</h2>{''.join(cards)}")
 
-        next_actions_html = "".join(f"<li>{action}</li>" for action in narrative.get("next_actions", []))
+        next_actions_html = "".join(
+            f"<li>{html_text(action)}</li>" for action in narrative.get("next_actions", [])
+        )
         html = f"""
         <html>
           <head>
@@ -2398,12 +2343,12 @@ class AdsAnalyzer:
           </head>
           <body>
             <h1>Shopee 廣告調整報告</h1>
-            <div class="note">生成時間：{report['generated_at']}</div>
-            <div class="note">分析來源：{'OpenAI API' if narrative.get('source') == 'openai' else '本機規則'} ｜ 實際模型：{runtime.get('response_model') or runtime.get('model') or '未使用'} ｜ 推理強度：{runtime.get('reasoning_effort') or '-'} ｜ API 耗時：{runtime.get('api_latency_seconds', 0)} 秒</div>
+            <div class="note">生成時間：{html_text(report['generated_at'])}</div>
+            <div class="note">分析來源：{'OpenAI API' if narrative.get('source') == 'openai' else '本機規則'} ｜ 實際模型：{html_text(runtime.get('response_model') or runtime.get('model') or '未使用')} ｜ 推理強度：{html_text(runtime.get('reasoning_effort') or '-')} ｜ API 耗時：{html_text(runtime.get('api_latency_seconds', 0))} 秒</div>
             <div class="note">主要決策基準：昨天完整日報表，最近一週（week_01）與過去一個月用來驗證穩定性，另納入近 {self.trend_weeks} 週滾動 7 天趨勢判斷。</div>
-            {f'<div class="note">{trend_note}</div>' if trend_note else ''}
+            {f'<div class="note">{html_text(trend_note)}</div>' if trend_note else ''}
             <div class="summary">
-              <div class="summary-box"><strong>觀察視窗</strong><br>{current.get('window_label', '-')}</div>
+              <div class="summary-box"><strong>觀察視窗</strong><br>{html_text(current.get('window_label', '-'))}</div>
               <div class="summary-box"><strong>總花費</strong><br>{current.get('spend', 0):,.2f}</div>
               <div class="summary-box"><strong>總 ROAS</strong><br>{current.get('roas', 0):.2f}</div>
               <div class="summary-box"><strong>直接 ROAS</strong><br>{current.get('direct_roas', 0):.2f}</div>
@@ -2415,7 +2360,7 @@ class AdsAnalyzer:
               <div class="summary-box"><strong>焦點商品</strong><br>{len(report['report'].get('scope_products') or [])}</div>
             </div>
             <h2>整體判讀</h2>
-            <p>{narrative.get('executive_summary', '')}</p>
+            <p>{html_text(narrative.get('executive_summary', ''))}</p>
             {''.join(sections)}
             <h2>明日 / 本週優先處理</h2>
             <ul>{next_actions_html}</ul>
@@ -2474,7 +2419,6 @@ class AdsAnalyzer:
                 "products": report_products,
                 "scope_products": scope_products,
                 "narrative": narrative,
-                "chart_series": account_summary["windows"],
                 "trend_window_count": self.trend_weeks,
             },
         }
