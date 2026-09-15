@@ -282,6 +282,23 @@ class InboundStoreTest(unittest.TestCase):
         retry_payload = self.store.build_preview_payload(receipt["id"])
         self.assertEqual([item["id"] for item in retry_payload["updates"]], [update["id"]])
 
+    def test_over_receipt_is_rejected(self):
+        order = self.import_black_order(qty=2)
+        with self.assertRaisesRegex(ValueError, "實收量超過尚未收貨數量"):
+            self.store.create_receipt({
+                "orderId": order["id"],
+                "clientToken": "over-receipt",
+                "lines": [{
+                    "orderLineId": order["lines"][0]["id"],
+                    "receivedQty": 3,
+                    "damagedQty": 0,
+                    "sellableQty": 3,
+                    "shopeeQty": 3,
+                    "allocations": [{"productId": "p3", "modelId": "m3", "qty": 3}],
+                    "allowOverReceipt": True,
+                }],
+            })
+
 
 if __name__ == "__main__":
     unittest.main()

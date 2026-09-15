@@ -1,7 +1,5 @@
 :root {
     --orange: #ff5722;
-    --orange-dark: #e64a19;
-    --orange-soft: #fff3ed;
     --teal: #0f766e;
     --teal-dark: #0b5f59;
     --blue: #2563c7;
@@ -138,6 +136,9 @@ input:focus, select:focus { outline: 3px solid rgba(255, 87, 34, .12); border-co
     animation: spin .8s linear infinite;
     vertical-align: -2px;
 }
+.job-status.done { color: #116c4a; background: #e4f8ef; }
+.job-status.warning { color: #7a4a09; background: #fff5dc; }
+.job-status.error { color: #8b2626; background: #ffebeb; }
 .notice.warning { color: #7a4a09; background: #fff5dc; }
 .notice.error { color: #8b2626; background: #ffebeb; }
 .notice.success { color: #116c4a; background: #e4f8ef; }
@@ -258,6 +259,7 @@ td { font-size: 13px; }
 .state-success { color: var(--green); }
 .state-failed, .state-manual_review { color: var(--red); }
 .state-previewed { color: var(--blue); }
+.state-pending { color: var(--muted); }
 .empty-copy { color: var(--muted); font-size: 13px; }
 .hidden { display: none !important; }
 

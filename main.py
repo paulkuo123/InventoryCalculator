@@ -465,13 +465,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 self._send_json_response(404, {"status": "error", "message": str(e)})
             return
 
-        if request_path == '/api/inbound/orders':
-            self._send_json_response(200, {
-                "status": "success",
-                "orders": self._inbound_store().list_orders(),
-            })
-            return
-
         inbound_order_match = re.match(r'^/api/inbound/orders/(\d+)$', request_path)
         if inbound_order_match:
             try:

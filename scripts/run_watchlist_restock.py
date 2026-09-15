@@ -37,7 +37,7 @@ from home_bootstrap import (
     merged_watchlist_exclusion_ids,
     without_watchlist_exclusions,
 )
-from restock_rules import calculated_restock_details, round_calculated_restock_qty, target_months_for_product
+from restock_rules import calculated_restock_details, target_months_for_product
 
 EXIT_ERROR = 1
 EXIT_PAUSED = 2
@@ -168,17 +168,6 @@ def start_main_if_needed(
 
 
 DISCONTINUED_SKU_NAMES = {"停售", "已停售", "以後不賣了", "以后不卖了"}
-
-
-def _int(value: Any) -> int:
-    try:
-        return int(float(value or 0))
-    except (TypeError, ValueError):
-        return 0
-
-
-def round_restock_qty(quantity: int, current_stock: int, monthly_rate: float = 0) -> int:
-    return round_calculated_restock_qty(quantity, current_stock, monthly_rate)
 
 
 def requires_second_sku(product_name: str, model_name: str) -> bool:

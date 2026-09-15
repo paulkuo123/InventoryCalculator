@@ -11,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
+from restock_rules import round_calculated_restock_qty
 from run_watchlist_restock import (
     APPROVE_WATCHLIST_RESTOCK_FLAG,
     BATCHES_PATH,
@@ -22,7 +23,6 @@ from run_watchlist_restock import (
     main,
     parse_args,
     resume_batch,
-    round_restock_qty,
     server_url,
     start_main_if_needed,
     suggested_restock_qty,
@@ -182,18 +182,18 @@ class RunWatchlistRestockTests(unittest.TestCase):
         self.assertTrue(bootstrap_is_ready(result))
 
     def test_round_restock_qty_matches_js_math_round(self):
-        self.assertEqual(round_restock_qty(0, 0), 0)
-        self.assertEqual(round_restock_qty(1, 0), 5)
-        self.assertEqual(round_restock_qty(4, 0), 5)
-        self.assertEqual(round_restock_qty(5, 0), 5)
-        self.assertEqual(round_restock_qty(4, 1), 0)
-        self.assertEqual(round_restock_qty(5, 1), 10)
-        self.assertEqual(round_restock_qty(14, 1), 10)
-        self.assertEqual(round_restock_qty(15, 1), 20)
-        self.assertEqual(round_restock_qty(4, 2, 2), 5)
-        self.assertEqual(round_restock_qty(2, 1, 1), 0)
-        self.assertEqual(round_restock_qty(5, 4, 3), 10)
-        self.assertEqual(round_restock_qty(4, 4, 2), 0)
+        self.assertEqual(round_calculated_restock_qty(0, 0), 0)
+        self.assertEqual(round_calculated_restock_qty(1, 0), 5)
+        self.assertEqual(round_calculated_restock_qty(4, 0), 5)
+        self.assertEqual(round_calculated_restock_qty(5, 0), 5)
+        self.assertEqual(round_calculated_restock_qty(4, 1), 0)
+        self.assertEqual(round_calculated_restock_qty(5, 1), 10)
+        self.assertEqual(round_calculated_restock_qty(14, 1), 10)
+        self.assertEqual(round_calculated_restock_qty(15, 1), 20)
+        self.assertEqual(round_calculated_restock_qty(4, 2, 2), 5)
+        self.assertEqual(round_calculated_restock_qty(2, 1, 1), 0)
+        self.assertEqual(round_calculated_restock_qty(5, 4, 3), 10)
+        self.assertEqual(round_calculated_restock_qty(4, 4, 2), 0)
 
     def test_pink_military_12_promax_low_coverage_suggests_five(self):
         product_name = "隔日到貨🔥 iPhone 軍規 防摔殼 手機殼 17 16 15 14 13 12 11 XS XR SE 保護殼 蘋果"

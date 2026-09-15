@@ -1,6 +1,5 @@
 import argparse
 import ctypes
-import hashlib
 import html
 import json
 import os
@@ -1340,19 +1339,6 @@ def catalog_mapping_check(selection: Dict[str, str], catalog: Dict[str, Dict[str
     if not current:
         return {"ok": False, "reason": "sku_id_not_on_live_page", "sku_id": sku_id}
     return {"ok": True, "sku_id": sku_id, "current": current, "warning": "legacy_id_only_check"}
-
-
-def sku_catalog_fingerprint(offer_id: str, catalog: Dict[str, Dict[str, Any]]) -> str:
-    rows = []
-    for sku_id, row in catalog.items():
-        rows.append({
-            "sku_id": str(sku_id),
-            "spec_text": str(row.get("spec_text") or ""),
-            "price": row.get("price"),
-            "stock": row.get("stock"),
-        })
-    payload = json.dumps({"offer_id": str(offer_id or ""), "skus": sorted(rows, key=lambda row: row["sku_id"])}, ensure_ascii=False, sort_keys=True)
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def fill_quantity_by_sku_id(page, sku_id: str, quantity: int) -> Dict[str, Any]:

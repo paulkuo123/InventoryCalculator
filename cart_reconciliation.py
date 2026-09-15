@@ -590,13 +590,12 @@ def render_report(report):
     current = report["currentOperation"]
     current_text = f'{current["itemId"]}：{current["beforeQty"]} → {current["targetQty"]}（尚未驗證）' if current else "無待回讀操作"
     refresh = '<meta http-equiv="refresh" content="5">' if report["status"] not in {STATUS_COMPLETED, STATUS_COMPLETED_GAPS} else ""
-    demo = '<p style="background:#fff0cc;padding:16px"><strong>模擬資料示範：不是你的購物車，未執行任何實際加購。</strong></p>' if report.get("demo") else ""
     boundary = report["stopBoundary"]
     stop_text = (f'停止於原購物車第 {boundary["originalIndex"] + 1} 列：{boundary["productName"]}。書包本身及後方 {boundary["excludedCartRows"]} 列（含書包）不處理。'
                  if boundary["found"] else '原始基線未找到書包；本次範圍至購物車底端。')
     return f'''<!doctype html><html lang="zh-Hant"><head><meta charset="utf-8">{refresh}
 <title>1688 購物車核對</title><style>body{{font-family:system-ui;margin:24px;color:#183044;background:#f5f7fa}}header{{position:sticky;top:0;background:#fff;padding:16px;border-bottom:3px solid #168379}}table{{border-collapse:collapse;width:100%;background:white}}td,th{{border:1px solid #d4dce4;padding:10px;text-align:left;vertical-align:top}}td{{overflow-wrap:anywhere}}progress{{width:100%}}small{{overflow-wrap:anywhere}}</style></head><body>
-<header>{demo}<h1>1688 購物車逐項核對</h1><p>{esc(labels.get(report['status'], report['status']))} · 已處理 {report['completed']} / {report['total']} · 已吻合 {report['counts']['matched']} · 已修正 {report['counts']['corrected']} · 待查 {report['counts']['blocked']} · 未驗證 {report['counts']['unverified']}</p>
+<header><h1>1688 購物車逐項核對</h1><p>{esc(labels.get(report['status'], report['status']))} · 已處理 {report['completed']} / {report['total']} · 已吻合 {report['counts']['matched']} · 已修正 {report['counts']['corrected']} · 待查 {report['counts']['blocked']} · 未驗證 {report['counts']['unverified']}</p>
 <progress value="{report['completed']}" max="{max(report['total'], 1)}"></progress><p>{esc(current_text)}</p></header>
 <p>手機殼 3 個月，其餘 4 個月。目標為購物車最終總數；完成需最終完整重讀。</p>
 <p><strong>{esc(stop_text)}</strong></p>

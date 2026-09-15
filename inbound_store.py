@@ -519,14 +519,6 @@ class InboundStore:
             results.append(item)
         return results
 
-    def list_orders(self, limit: int = 30) -> List[Dict[str, Any]]:
-        with self.connect() as conn:
-            rows = conn.execute(
-                "SELECT id FROM inbound_orders ORDER BY updated_at DESC, id DESC LIMIT ?",
-                (max(1, min(int(limit or 30), 100)),),
-            ).fetchall()
-        return [self.get_order(int(row["id"])) for row in rows]
-
     def _save_manual_bindings(self, order_line: Dict[str, Any], allocations: List[Dict[str, Any]]) -> None:
         from procurement_store import ProcurementStore
 
@@ -586,7 +578,7 @@ class InboundStore:
             damaged = non_negative_int(item.get("damagedQty", 0), "不良數量")
             sellable = non_negative_int(item.get("sellableQty", received - damaged), "可售數量")
             shopee_qty = non_negative_int(item.get("shopeeQty", sellable), "蝦皮增加量")
-            if received > remaining and not bool(item.get("allowOverReceipt")):
+            if received > remaining:
                 raise ValueError(f"{order_line['alibaba_product_name'] or order_line_id} 實收量超過尚未收貨數量")
             if damaged > received:
                 raise ValueError("不良數量不可大於實收數量")
