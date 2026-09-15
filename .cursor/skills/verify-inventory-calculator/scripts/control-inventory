@@ -369,13 +369,6 @@ def cmd_http(args: argparse.Namespace) -> None:
     state = read_state()
     if args.method.upper() != "GET":
         die("only GET is allowed. POST/PUT would mutate Shopee, 1688, cookies, or local SoT files.")
-    path = args.path
-    if path.startswith("/api/sku-mapping/") and not args.i_approve_golden_write:
-        die(
-            "refusing GET /api/sku-mapping/*. Constructing SkuMappingService runs "
-            "_repair_unverified_approvals() and rewrites tracked golden_table.json. "
-            "Use `drive sku-mapping` (API calls aborted) or pass --i-approve-golden-write."
-        )
     result = http_request(args.path, int(state["port"]), timeout=args.timeout)
     payload = maybe_json(result.get("body") or b"")
     output = {
@@ -419,7 +412,6 @@ def launch_browser_page(url: str, headless: bool = True):
         runtime.stop()
         die(f"could not launch Chromium: {error}")
     page = browser.new_page(viewport={"width": 1440, "height": 1000})
-    page.route("**/api/sku-mapping/**", lambda route: route.abort())
     page.goto(url, wait_until="domcontentloaded", timeout=30000)
     return runtime, browser, page
 
@@ -553,44 +545,45 @@ def drive_inbound(page, out_dir: Path, port: int) -> Dict[str, Any]:
 
 
 def drive_sku_mapping(page, out_dir: Path, port: int) -> Dict[str, Any]:
-    """Prove the workbench shell without constructing SkuMappingService.
+    """Prove the workbench loads summary/queue without rewriting golden_table.json.
 
-    GET /api/sku-mapping/summary (and loading the page so JS calls it) runs
-    SkuMappingService.__init__ → _repair_unverified_approvals(), which rewrites
-    tracked golden_table.json. Abort those APIs in the browser and use the
-    static HTML GET as the second view.
+    GET /api/sku-mapping/summary constructs SkuMappingService but must not
+    mutate Golden. Scan/approve controls stay unclicked.
     """
-    page.route("**/api/sku-mapping/**", lambda route: route.abort())
+    golden_before = file_sha256(GOLDEN_TABLE_PATH)
     page.goto(base_url(port) + "/sku-mapping.html", wait_until="domcontentloaded", timeout=30000)
     page.wait_for_selector("h1", timeout=10000)
+    page.wait_for_function(
+        "() => { const n = document.querySelector('#summary'); return n && n.textContent.includes('已核准'); }",
+        timeout=120000,
+    )
     heading = page.locator("h1").inner_text()
     scan_label = page.locator("#scanAll").inner_text()
-    html = http_request("/sku-mapping.html", port)
-    html_text = decode_body(html.get("body") or b"")
-    (out_dir / "sku-mapping.html.snippet.txt").write_text(
-        "\n".join(
-            line.strip()
-            for line in html_text.splitlines()
-            if "SKU Mapping" in line or "scanAll" in line or "skuReviewTab" in line
-        ) + "\n",
-        encoding="utf-8",
-    )
+    summary_text = page.locator("#summary").inner_text()
+    summary = maybe_json(http_request("/api/sku-mapping/summary", port, timeout=120.0).get("body") or b"")
+    dump_json(out_dir / "sku-mapping.summary.json", summary)
     write_dom_snapshot(page, out_dir / "sku-mapping.dom.txt", {
         "scanAll": scan_label,
-        "apiCallsBlocked": "true",
+        "summaryPreview": " ".join(summary_text.split())[:400],
     })
     page.screenshot(path=str(out_dir / "sku-mapping.png"), full_page=True)
+    golden_after = file_sha256(GOLDEN_TABLE_PATH)
     if "SKU Mapping" not in heading:
         die(f"sku-mapping heading missing: {heading!r}")
     if "重建全部名稱 mapping" not in scan_label:
         die(f"sku-mapping scan control missing: {scan_label!r}")
+    if not isinstance(summary, dict) or summary.get("status") != "success":
+        die(f"sku-mapping summary GET failed: {summary!r}")
+    if golden_before != golden_after:
+        die("GET /api/sku-mapping/summary rewrote golden_table.json")
     return {
         "heading": heading,
         "scanAll": scan_label,
-        "blockedSkuMappingApis": True,
+        "summaryStatus": summary.get("status"),
+        "urlModels": summary.get("urlModels"),
+        "goldenUnchanged": True,
         "didNotScan": True,
         "didNotApprove": True,
-        "note": "Browser API calls aborted; live summary/queue GET rewrites golden_table.json",
     }
 
 
@@ -746,11 +739,6 @@ def build_parser() -> argparse.ArgumentParser:
     http_cmd.add_argument("path")
     http_cmd.add_argument("--out", default="")
     http_cmd.add_argument("--timeout", type=float, default=20.0)
-    http_cmd.add_argument(
-        "--i-approve-golden-write",
-        action="store_true",
-        help="Allow GET /api/sku-mapping/* which may rewrite golden_table.json",
-    )
     http_cmd.set_defaults(func=cmd_http)
 
     drive = sub.add_parser("drive", help="Drive one mapped feature with Playwright and write evidence.")

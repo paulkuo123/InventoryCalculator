@@ -1,0 +1,16 @@
+{
+  "feature": "sku-mapping",
+  "runId": "20260914T205045Z",
+  "baseUrl": "http://127.0.0.1:8080",
+  "capturedAt": "2026-09-14T20:51:06Z",
+  "observed": {
+    "heading": "1688 SKU Mapping 工作台",
+    "scanAll": "重建全部名稱 mapping（掃描 1688）",
+    "summaryStatus": "success",
+    "urlModels": 4973,
+    "goldenUnchanged": true,
+    "didNotScan": true,
+    "didNotApprove": true
+  },
+  "evidenceDir": "/workspace/.cursor/skills/verify-inventory-calculator/evidence/20260914T205045Z/sku-mapping"
+}

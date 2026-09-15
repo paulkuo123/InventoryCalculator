@@ -47,5 +47,5 @@ Keep implementation details out of the map. Name only user paths, stable handles
 - [Inventory dashboard](./inventory-dashboard.md) covers the home page load, empty dashboard, header navigation, and the forbidden live search control.
 - [Ads workbench](./ads-workbench.md) covers `/ads.html` identity, OpenAI status, and the export/analyze controls that must not be clicked in the default proof.
 - [Inbound](./inbound.md) covers `/inbound.html` read-only status and the gated Shopee write switch.
-- [SKU mapping](./sku-mapping.md) covers `/sku-mapping.html` workbench shell. Live summary/queue GETs rewrite `golden_table.json`, so the default recipe aborts those APIs.
+- [SKU mapping](./sku-mapping.md) covers `/sku-mapping.html` workbench plus read-only summary GET. Scan/approve stay forbidden.
 - [Products catalog](./products-catalog.md) covers `/products.html` local Golden Table search without saving edits.

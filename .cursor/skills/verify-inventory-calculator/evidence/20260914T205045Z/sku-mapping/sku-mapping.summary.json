@@ -1,0 +1,89 @@
+{
+  "status": "success",
+  "total": 5918,
+  "urlModels": 4973,
+  "restockModels": 0,
+  "counts": {
+    "pending": 3834,
+    "missing": 1139
+  },
+  "tierCounts": {
+    "red": 4973
+  },
+  "candidateTierCounts": {
+    "red": 3834
+  },
+  "mappingCounts": {
+    "approved": 0,
+    "candidateReview": 3834,
+    "missing": 1139,
+    "rescan": 0,
+    "noMatch": 0,
+    "discontinued": 0,
+    "otherBlocked": 0,
+    "total": 4973
+  },
+  "restockCounts": {
+    "approved": 0,
+    "candidateReview": 0,
+    "missing": 0,
+    "rescan": 0,
+    "noMatch": 0,
+    "discontinued": 0,
+    "otherBlocked": 0,
+    "total": 0
+  },
+  "green": 0,
+  "yellow": 0,
+  "red": 4973,
+  "approved": 0,
+  "pending": 4973,
+  "stale": 0,
+  "errors": 0,
+  "blockedRestockQty": 0,
+  "inventorySource": {
+    "file": "/workspace/shopee_products.json",
+    "available": false,
+    "updatedAt": null,
+    "message": "請先執行一次蝦皮搜尋／更新，產生 shopee_products.json"
+  },
+  "latestRun": null,
+  "knowledge": {
+    "config_version": 1,
+    "knowledge_version": "e4e7ecc2adcfec42450b660ad588332031ee6276f1f5d46e06d5c91e5fc28135",
+    "reason_codes": [
+      {
+        "code": "MODEL_MISMATCH",
+        "label": "型號不符"
+      },
+      {
+        "code": "SIZE_MISMATCH",
+        "label": "尺寸不符"
+      },
+      {
+        "code": "COLOR_MISMATCH",
+        "label": "顏色不符"
+      },
+      {
+        "code": "VERSION_MISMATCH",
+        "label": "版本不符"
+      },
+      {
+        "code": "PACKAGE_QTY_MISMATCH",
+        "label": "包裝數量不符"
+      },
+      {
+        "code": "LOOKALIKE_DIFFERENT",
+        "label": "外觀相似但不同商品"
+      },
+      {
+        "code": "DISCONTINUED",
+        "label": "已停售／下架"
+      },
+      {
+        "code": "OTHER",
+        "label": "其他"
+      }
+    ]
+  }
+}
