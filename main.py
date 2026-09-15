@@ -46,7 +46,13 @@ from shopee_products_import import (
 from sku_mapping_service import MappingConflict, SkuMappingService, golden_repair_requested, mapping_candidate_key, prune_golden_table_backups
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 from housekeeping import remove_files, remove_stale_matching_files
-from restock_rules import resolve_restock_quantity, validate_restock_sku_count
+from restock_rules import (
+    DEFAULT_RESTOCK_MONTHS,
+    frontend_target_months_javascript,
+    months_rule_table,
+    resolve_restock_quantity,
+    validate_restock_sku_count,
+)
 from home_bootstrap import load_home_bootstrap
 from restock_batch import (
     STATUS_RUNNING,
@@ -384,6 +390,23 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 })
             return
 
+        if request_path == '/api/restock-rules':
+            self._send_json_response(200, {
+                "status": "success",
+                "rules": months_rule_table(),
+            })
+            return
+
+        if request_path == '/api/restock-rules.js':
+            body = frontend_target_months_javascript().encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-type', 'application/javascript; charset=utf-8')
+            self.send_header('Cache-Control', 'no-store')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         if request_path == '/api/watchlist/exclusions':
             try:
                 self._send_json_response(200, self._watchlist_exclusions_payload())
@@ -617,7 +640,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 keyword = params.get('keyword', [''])[0]
                 showBrowser = params.get('showBrowser',
                                          ['false'])[0].lower() == 'true'
-                inventoryMonth = int(params.get('inventoryMonth', ['4'])[0])
+                inventoryMonth = int(params.get('inventoryMonth', [str(DEFAULT_RESTOCK_MONTHS)])[0])
 
                 # 執行爬蟲並獲取結果，無論關鍵字是否為空
                 result = self.run_crawler(keyword, showBrowser, inventoryMonth)
@@ -3182,7 +3205,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             logger.info("沒有正在運行的爬蟲進程")
             return False
 
-    def run_crawler(self, keyword, show_browser=False, inventory_month=4):
+    def run_crawler(self, keyword, show_browser=False, inventory_month=DEFAULT_RESTOCK_MONTHS):
         """執行爬蟲程序"""
         output_path = "shopee_products.json"
         mode_args = [
