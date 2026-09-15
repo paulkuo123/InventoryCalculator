@@ -856,8 +856,9 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
         self.assertEqual(len(freeze_calls), 1)
         self.assertFalse(freeze_calls[0].get("sources_only", True))
         self.assertEqual(state["reverseAudit"]["mode"], "refreeze")
-        self.assertTrue(state["reverseAudit"]["refreezeUsed"])
         self.assertTrue(state["reverseAudit"]["liveAfter"])
+        self.assertNotIn("refreezeUsed", state["reverseAudit"])
+        self.assertNotIn("refreezeRequested", state["reverseAudit"])
 
     def test_paused_attention_does_not_run_dry_run(self):
         calls = []
@@ -1008,6 +1009,28 @@ class RestockBatchReverseAuditDryRunTests(unittest.TestCase):
         self.assertEqual(len(freeze_calls), 1)
         self.assertTrue(freeze_calls[0].get("cart_only"))
         self.assertFalse(freeze_calls[0].get("sources_only", True))
+
+    def test_before_snapshot_supports_freeze_stub_without_cart_only(self):
+        freeze_calls = []
+
+        def freeze(out_dir, *, sources_only, root=None):
+            freeze_calls.append({"sources_only": sources_only, "root": root})
+            _write_live_cart_and_pools(Path(out_dir), [_cart_item("1", "a", 2)])
+            return 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state = snapshot_cart_before_restock(
+                create_state(
+                    build_preview([product("1", "A", [item("黑")])]),
+                    run_id="run-before-legacy-stub",
+                ),
+                Path(temp_dir) / "run-before-legacy-stub",
+                freeze_fn=freeze,
+                cdp_available_fn=lambda: True,
+            )
+
+        self.assertTrue(state["cartBefore"]["saved"])
+        self.assertEqual(freeze_calls, [{"sources_only": False, "root": None}])
 
     def test_before_snapshot_fail_soft_without_chrome(self):
         freeze_calls = []

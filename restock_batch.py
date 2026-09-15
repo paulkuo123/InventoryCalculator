@@ -755,9 +755,29 @@ def _force_sources_only(state: Dict[str, Any], sources_only: bool = False) -> bo
     return bool(sources_only or state.get("reverseAuditSourcesOnly"))
 
 
-def _want_live_refreeze(state: Dict[str, Any], *, sources_only: bool = False) -> bool:
-    """Prefer live after-freeze unless CI/offline forced sources-only."""
-    return not _force_sources_only(state, sources_only)
+def _invoke_cdp_freeze(
+    out_dir: Path,
+    *,
+    cart_only: bool,
+    sources_root: Optional[Path] = None,
+    freeze_fn: Optional[Callable[..., int]] = None,
+) -> int:
+    runner = freeze_fn
+    if runner is None:
+        from reverse_audit.freeze import run_freeze as runner
+    freeze_kwargs: Dict[str, Any] = {
+        "sources_only": False,
+        "cart_only": cart_only,
+    }
+    if sources_root is not None:
+        freeze_kwargs["root"] = Path(sources_root)
+    _dry_run_kwargs_are_mutate_free(freeze_kwargs)
+    try:
+        return int(runner(out_dir, **freeze_kwargs) or 0)
+    except TypeError:
+        # Compatibility for older test stubs that do not accept cart_only.
+        freeze_kwargs.pop("cart_only", None)
+        return int(runner(out_dir, **freeze_kwargs) or 0)
 
 
 def compute_cart_delta(
@@ -909,27 +929,13 @@ def snapshot_cart_before_restock(
 
     out_dir = cart_before_dir(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
-    runner = freeze_fn
-    if runner is None:
-        from reverse_audit.freeze import run_freeze as runner
-    freeze_kwargs: Dict[str, Any] = {"sources_only": False, "cart_only": True}
-    if sources_root is not None:
-        freeze_kwargs["root"] = Path(sources_root)
-    _dry_run_kwargs_are_mutate_free(freeze_kwargs)
     try:
-        freeze_code = int(runner(out_dir, **freeze_kwargs) or 0)
-    except TypeError:
-        freeze_kwargs.pop("cart_only", None)
-        try:
-            freeze_code = int(runner(out_dir, **freeze_kwargs) or 0)
-        except (OSError, RuntimeError, ValueError) as exc:
-            state["cartBefore"] = {
-                "saved": False,
-                "mode": "error",
-                "message": f"加車前 cart freeze 失敗：{exc}（不開新 Chrome、不假裝 live）",
-                "cdpAvailable": True,
-            }
-            return state
+        freeze_code = _invoke_cdp_freeze(
+            out_dir,
+            cart_only=True,
+            sources_root=sources_root,
+            freeze_fn=freeze_fn,
+        )
     except (OSError, RuntimeError, ValueError) as exc:
         state["cartBefore"] = {
             "saved": False,
@@ -1034,10 +1040,8 @@ def run_batch_reverse_audit_dry_run(
     out_dir = reverse_audit_dir_for_batch(directory)
     out_dir.mkdir(parents=True, exist_ok=True)
     forced_sources_only = _force_sources_only(state, sources_only)
-    want_refreeze = (not forced_sources_only) and (
-        _want_live_refreeze(state, sources_only=sources_only)
-        or bool(refreeze or state.get("reverseAuditRefreeze"))
-    )
+    # Live after-freeze is the default. refreeze/reverseAuditRefreeze are no-op True.
+    want_refreeze = not forced_sources_only
     cdp_fn = cdp_available_fn or cdp_freeze_available
     cdp_ok = bool(cdp_fn()) if want_refreeze else False
     used_refreeze = False
@@ -1053,21 +1057,15 @@ def run_batch_reverse_audit_dry_run(
         notes.append("forced --sources-only（CI／離線，未抓 live cart，不假裝 live）")
     elif want_refreeze:
         if cdp_ok:
-            runner = freeze_fn
-            if runner is None:
-                from reverse_audit.freeze import run_freeze as runner
-            freeze_kwargs: Dict[str, Any] = {"sources_only": False, "cart_only": False}
-            if sources_root is not None:
-                freeze_kwargs["root"] = Path(sources_root)
-            _dry_run_kwargs_are_mutate_free(freeze_kwargs)
             pre_fingerprints = {
                 name: _file_fingerprint(out_dir / name) for name in LIVE_POOL_FILES
             }
-            try:
-                freeze_code = int(runner(out_dir, **freeze_kwargs) or 0)
-            except TypeError:
-                freeze_kwargs.pop("cart_only", None)
-                freeze_code = int(runner(out_dir, **freeze_kwargs) or 0)
+            freeze_code = _invoke_cdp_freeze(
+                out_dir,
+                cart_only=False,
+                sources_root=sources_root,
+                freeze_fn=freeze_fn,
+            )
             if freeze_code == 0:
                 changed = any(
                     _file_fingerprint(out_dir / name) != pre_fingerprints[name]
@@ -1112,8 +1110,6 @@ def run_batch_reverse_audit_dry_run(
             "summaryJson": str(summary_json),
             "consolidatedCsv": str(csv_path),
             "noCartMutate": True,
-            "refreezeRequested": want_refreeze,
-            "refreezeUsed": used_refreeze,
             "liveAfter": used_refreeze,
             "cdpAvailable": cdp_ok,
             "notes": notes,
@@ -1436,7 +1432,7 @@ def run_batch_loop(
     directory = reverse_audit_dir or getattr(persist_fn, "directory", None)
     forced_sources_only = _force_sources_only(state, sources_only)
     # Live after-freeze is the default. `refreeze` remains accepted (now a no-op True).
-    want_refreeze = not forced_sources_only or bool(refreeze and not forced_sources_only)
+    want_refreeze = not forced_sources_only
     original_persist = persist_fn
 
     def persist(next_state: Dict[str, Any]) -> Dict[str, Any]:
@@ -1445,7 +1441,7 @@ def run_batch_loop(
                 next_state,
                 directory,
                 refreeze=want_refreeze,
-                sources_only=forced_sources_only or bool(next_state.get("reverseAuditSourcesOnly")),
+                sources_only=_force_sources_only(next_state, sources_only),
                 sources_root=sources_root,
                 live_source_dir=live_source_dir,
                 dry_run_fn=dry_run_fn,
@@ -1914,7 +1910,7 @@ def _render_reverse_audit_html(reverse_audit: Dict[str, Any], cell: Callable[[An
         if shortfall
         else ""
     )
-    live_after = bool(reverse_audit.get("liveAfter") or reverse_audit.get("refreezeUsed"))
+    live_after = bool(reverse_audit.get("liveAfter"))
     live_label = "after=live freeze" if live_after else "after≠live（sources-only／未假裝 live）"
     notes = reverse_audit.get("notes") or []
     notes_html = "".join(f"<li>{cell(note)}</li>" for note in notes)
@@ -1957,7 +1953,7 @@ def _render_cart_delta_html(reverse_audit: Dict[str, Any], cell: Callable[[Any],
     ))
     after_note = (
         "after 為本輪 live freeze"
-        if reverse_audit.get("liveAfter") or reverse_audit.get("refreezeUsed")
+        if reverse_audit.get("liveAfter")
         else "after 不是 live freeze（不假裝本輪真實加車）"
     )
     return f"""  <h2>本次加車前後差異（live cart delta）</h2>
