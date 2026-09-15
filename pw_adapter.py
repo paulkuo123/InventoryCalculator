@@ -6,50 +6,20 @@ import time
 import re
 
 
-# ═══════════════════════════════════════════════════════════════════
-# By — 模擬 selenium.webdriver.common.by.By
-# ═══════════════════════════════════════════════════════════════════
-
 class By:
-    ID = "id"
     CLASS_NAME = "class_name"
     CSS_SELECTOR = "css"
     XPATH = "xpath"
     TAG_NAME = "tag_name"
-    NAME = "name"
-    LINK_TEXT = "link_text"
-    PARTIAL_LINK_TEXT = "partial_link_text"
 
-
-# ═══════════════════════════════════════════════════════════════════
-# NoSuchElementException
-# ═══════════════════════════════════════════════════════════════════
 
 class NoSuchElementException(Exception):
     pass
 
 
-# ═══════════════════════════════════════════════════════════════════
-# Keys — 模擬 selenium.webdriver.common.keys.Keys
-# ═══════════════════════════════════════════════════════════════════
-
 class Keys:
     RETURN = "Enter"
-    ENTER = "Enter"
-    ESCAPE = "Escape"
-    TAB = "Tab"
-    BACKSPACE = "Backspace"
-    DELETE = "Delete"
-    SPACE = " "
-    ARROW_UP = "ArrowUp"
-    ARROW_DOWN = "ArrowDown"
-    ARROW_LEFT = "ArrowLeft"
-    ARROW_RIGHT = "ArrowRight"
 
-
-# ═══════════════════════════════════════════════════════════════════
-# 工具: By + value → Playwright selector
-# ═══════════════════════════════════════════════════════════════════
 
 def _by_to_selector(by, value):
     if by == "xpath":
@@ -73,10 +43,6 @@ def _by_to_selector(by, value):
         return f"a:has-text('{value}')"
     return value
 
-
-# ═══════════════════════════════════════════════════════════════════
-# PlaywrightElement — 包裝 Playwright ElementHandle
-# ═══════════════════════════════════════════════════════════════════
 
 class PlaywrightElement:
     def __init__(self, element_handle, page):
@@ -143,10 +109,6 @@ class PlaywrightElement:
     def __hash__(self):
         return id(self._el)
 
-
-# ═══════════════════════════════════════════════════════════════════
-# PlaywrightDriver — 包裝 Playwright Page 為 WebDriver-like 介面
-# ═══════════════════════════════════════════════════════════════════
 
 class PlaywrightDriver:
     def __init__(self, page):
@@ -231,10 +193,6 @@ class PlaywrightDriver:
         pass
 
 
-# ═══════════════════════════════════════════════════════════════════
-# WebDriverWait — 模擬 selenium.webdriver.support.ui.WebDriverWait
-# ═══════════════════════════════════════════════════════════════════
-
 class WebDriverWait:
     def __init__(self, driver, timeout):
         self._driver = driver
@@ -256,10 +214,6 @@ class WebDriverWait:
             msg += f"，最後錯誤：{last_exc}"
         raise TimeoutError(msg)
 
-
-# ═══════════════════════════════════════════════════════════════════
-# EC — 模擬 selenium expected_conditions
-# ═══════════════════════════════════════════════════════════════════
 
 class EC:
     @staticmethod
@@ -297,19 +251,6 @@ class EC:
         return _check
 
     @staticmethod
-    def visibility_of_all_elements_located(locator):
-        by, value = locator
-        def _check(driver):
-            try:
-                elements = driver.find_elements(by, value)
-                if elements and all(e.is_displayed() for e in elements):
-                    return elements
-            except Exception:
-                pass
-            return None
-        return _check
-
-    @staticmethod
     def element_to_be_clickable(element_or_locator):
         if isinstance(element_or_locator, tuple):
             by, value = element_or_locator
@@ -331,45 +272,3 @@ class EC:
                     pass
                 return None
             return _check
-
-    @staticmethod
-    def url_contains(url_fragment):
-        def _check(driver):
-            try:
-                if url_fragment in driver.current_url:
-                    return True
-            except Exception:
-                pass
-            return None
-        return _check
-
-
-# ═══════════════════════════════════════════════════════════════════
-# ActionChains — 模擬 selenium ActionChains
-# ═══════════════════════════════════════════════════════════════════
-
-class ActionChains:
-    def __init__(self, driver):
-        self._driver = driver
-        self._page = driver._page if isinstance(driver, PlaywrightDriver) else driver
-        self._keys = None
-        self._element = None
-
-    def send_keys(self, keys):
-        self._keys = keys
-        return self
-
-    def move_to_element(self, element):
-        self._element = element
-        return self
-
-    def click(self):
-        if self._element:
-            self._element.click()
-        return self
-
-    def perform(self):
-        if self._keys:
-            page = self._page if hasattr(self._page, 'keyboard') else self._page._page
-            page.keyboard.press(self._keys)
-            self._keys = None
