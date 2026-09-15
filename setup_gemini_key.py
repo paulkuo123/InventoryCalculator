@@ -2,36 +2,12 @@
 """Securely configure the official Google Gemini API key for local SKU mapping."""
 
 import getpass
-import os
-import re
 
 from config_loader import LOCAL_ENV_FILE, load_gemini_api_key
+from local_env_writer import atomic_write_local_env, read_existing_lines, upsert_env_value
 
 
 DEFAULT_GEMINI_MODEL = "gemini-3.5-flash-lite"
-
-
-def read_existing_lines(path: str):
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as handle:
-        return handle.read().splitlines()
-
-
-def upsert_env_value(lines, name: str, value: str):
-    result = []
-    replaced = False
-    for line in lines:
-        if re.match(rf"(?:export\s+)?{re.escape(name)}=", line.strip()):
-            result.append(f'{name}="{value}"')
-            replaced = True
-        else:
-            result.append(line)
-    if not replaced:
-        if result and result[-1].strip():
-            result.append("")
-        result.append(f'{name}="{value}"')
-    return result
 
 
 def main() -> None:
@@ -51,10 +27,13 @@ def main() -> None:
 
     lines = read_existing_lines(LOCAL_ENV_FILE)
     lines = upsert_env_value(lines, "GEMINI_API_KEY", key)
-    lines = upsert_env_value(lines, "SKU_MAPPING_AI_PROVIDER", "gemini")
-    lines = upsert_env_value(lines, "GEMINI_SKU_MAPPING_MODEL", DEFAULT_GEMINI_MODEL)
-    with open(LOCAL_ENV_FILE, "w", encoding="utf-8") as handle:
-        handle.write("\n".join(lines).rstrip() + "\n")
+    lines = upsert_env_value(
+        lines, "SKU_MAPPING_AI_PROVIDER", "gemini", overwrite=False
+    )
+    lines = upsert_env_value(
+        lines, "GEMINI_SKU_MAPPING_MODEL", DEFAULT_GEMINI_MODEL, overwrite=False
+    )
+    atomic_write_local_env(LOCAL_ENV_FILE, lines)
     print(f"已寫入專案本地設定：{LOCAL_ENV_FILE}")
     print(f"SKU mapping AI provider：gemini（{DEFAULT_GEMINI_MODEL}）")
 
