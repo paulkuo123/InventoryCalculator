@@ -105,21 +105,6 @@ class CookieRefresherWriteTests(unittest.TestCase):
         self.assertEqual(json.loads(self.cookies_path.read_text(encoding="utf-8")), original)
         self.assertFalse(leftover_tmps(self.tmp.name, "cookies.json"))
 
-    def test_save_state_uses_mode_0600(self):
-        self.refresher._save_state({
-            "next_refresh_ts": 1893456000,
-            "reason": "refresh_success",
-        })
-        state_path = Path(self.refresher.state_path)
-        self.assertEqual(state_path.name, ".cookie_refresh_state.json")
-        self.assertEqual(secret_mode(state_path), 0o600)
-        self.assertEqual(
-            json.loads(state_path.read_text(encoding="utf-8"))["reason"],
-            "refresh_success",
-        )
-        self.assertFalse(leftover_tmps(self.tmp.name, ".cookie_refresh_state.json"))
-
-
 class CookieRefresherCliTests(unittest.TestCase):
     def test_main_without_flag_does_not_refresh(self):
         with patch.object(cookie_refresher, "CookieRefresher") as mock_cls:
@@ -131,11 +116,14 @@ class CookieRefresherCliTests(unittest.TestCase):
         instance = cookie_refresher.CookieRefresher.__new__(cookie_refresher.CookieRefresher)
         with patch.object(cookie_refresher, "CookieRefresher", return_value=instance) as mock_cls:
             with patch.object(instance, "refresh_cookies", return_value=True) as refresh:
-                with patch.object(cookie_refresher.signal, "signal"):
-                    code = main([APPROVE_LIVE_REFRESH_FLAG])
+                code = main([APPROVE_LIVE_REFRESH_FLAG])
         self.assertEqual(code, 0)
         mock_cls.assert_called_once()
         refresh.assert_called_once_with()
+
+    def test_refresher_has_no_daemon_loop_api(self):
+        self.assertFalse(hasattr(CookieRefresher, "start"))
+        self.assertFalse(hasattr(CookieRefresher, "stop"))
 
     def test_subprocess_without_flag_exits_2_and_skips_live(self):
         proc = subprocess.run(

@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 import getpass
-import os
-import re
 
 from config_loader import LOCAL_ENV_FILE, load_openai_api_key
+from local_env_writer import atomic_write_local_env, read_existing_lines, upsert_env_value
 
 
 DEFAULT_OPENAI_MODEL = "gpt-5.6-sol"
@@ -12,44 +11,34 @@ DEFAULT_SKU_MAPPING_MODEL = "gpt-5.6-luna"
 DEFAULT_SKU_MAPPING_REASONING_EFFORT = "low"
 
 
-def read_existing_lines(path: str) -> list[str]:
-    if not os.path.exists(path):
-        return []
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read().splitlines()
-
-
-def upsert_env_value(lines: list[str], name: str, value: str) -> list[str]:
-    result: list[str] = []
-    replaced = False
-    for line in lines:
-        if re.match(rf"(?:export\s+)?{re.escape(name)}=", line.strip()):
-            result.append(f'{name}="{value}"')
-            replaced = True
-        else:
-            result.append(line)
-    if not replaced:
-        if result and result[-1].strip():
-            result.append("")
-        result.append(f'{name}="{value}"')
-    return result
-
-
 def write_local_env(path: str, key_value: str) -> None:
     lines = read_existing_lines(path)
     new_lines = upsert_env_value(lines, "OPENAI_API_KEY", key_value)
-    new_lines = upsert_env_value(new_lines, "OPENAI_MODEL", DEFAULT_OPENAI_MODEL)
-    new_lines = upsert_env_value(new_lines, "OPENAI_REASONING_EFFORT", DEFAULT_REASONING_EFFORT)
-    new_lines = upsert_env_value(new_lines, "SKU_MAPPING_AI_PROVIDER", "openai")
-    new_lines = upsert_env_value(new_lines, "OPENAI_SKU_MAPPING_MODEL", DEFAULT_SKU_MAPPING_MODEL)
+    new_lines = upsert_env_value(
+        new_lines, "OPENAI_MODEL", DEFAULT_OPENAI_MODEL, overwrite=False
+    )
+    new_lines = upsert_env_value(
+        new_lines,
+        "OPENAI_REASONING_EFFORT",
+        DEFAULT_REASONING_EFFORT,
+        overwrite=False,
+    )
+    new_lines = upsert_env_value(
+        new_lines, "SKU_MAPPING_AI_PROVIDER", "openai", overwrite=False
+    )
+    new_lines = upsert_env_value(
+        new_lines,
+        "OPENAI_SKU_MAPPING_MODEL",
+        DEFAULT_SKU_MAPPING_MODEL,
+        overwrite=False,
+    )
     new_lines = upsert_env_value(
         new_lines,
         "OPENAI_SKU_MAPPING_REASONING_EFFORT",
         DEFAULT_SKU_MAPPING_REASONING_EFFORT,
+        overwrite=False,
     )
-
-    with open(path, "w", encoding="utf-8") as f:
-        f.write("\n".join(new_lines).rstrip() + "\n")
+    atomic_write_local_env(path, new_lines)
 
 
 def main() -> None:
@@ -76,10 +65,10 @@ def main() -> None:
 
     write_local_env(LOCAL_ENV_FILE, key)
     print(f"已寫入專案本地設定：{LOCAL_ENV_FILE}")
-    print(f"預設模型：{DEFAULT_OPENAI_MODEL}")
-    print(f"推理強度：{DEFAULT_REASONING_EFFORT}")
-    print(f"SKU mapping provider：openai（{DEFAULT_SKU_MAPPING_MODEL}）")
-    print(f"SKU mapping 推理強度：{DEFAULT_SKU_MAPPING_REASONING_EFFORT}")
+    print(f"缺少時採用 OpenAI 模型預設值：{DEFAULT_OPENAI_MODEL}")
+    print(f"缺少時採用推理強度預設值：{DEFAULT_REASONING_EFFORT}")
+    print(f"缺少時採用 SKU mapping 預設值：openai（{DEFAULT_SKU_MAPPING_MODEL}）")
+    print(f"缺少時採用 SKU mapping 推理強度：{DEFAULT_SKU_MAPPING_REASONING_EFFORT}")
     print("之後程式會優先讀取環境變數，其次讀取 .env.local，最後才回退到 shell 設定。")
 
 
