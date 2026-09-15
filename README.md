@@ -12,8 +12,8 @@
 - **Excel 數據解析**：解析蝦皮後台匯出的 Excel 檔案
 - **Shopee 廣告報表匯出**：自動依序下載過去一個月、昨天，以及過去 4 週滾動周報，共 6 份
 - **Shopee 廣告 AI 分析**：使用現有的昨天 / 最近一週（week_01）/ 過去一個月與過去 4 週趨勢資料，輸出 HTML 廣告調整報告
-- **Telegram Bot**：支援庫存搜尋、廣告匯出與廣告分析報告回傳
 - **反向補貨查核**：以 watchlist ∩ 蝦皮庫存 ∩ Golden Table 算出應補集合，反向核對 1688 採購車與待付款／待發貨／待收貨
+- **補貨提醒**：低水位／應補摘要走 **Grok Bot routines**（不是 Telegram，也不是應用內推播）
 
 ## 系統架構
 
@@ -297,32 +297,12 @@ python3 ads_analysis.py --include-ai true
   - 花費提升但回收未同步改善
 - HTML 報告會只列出需要調整的商品，並附上商品圖片與具體建議
 
-### Telegram Bot
-若要使用 Telegram Bot，先在環境變數或專案 `.env.local` 設定（鍵名見 `.env.example`）：
+### 補貨提醒（非 Telegram）
+庭安已確認不再使用 Telegram。庫存／低水位提醒改走 **Grok Bot routines**，本系統不另建應用內推播頻道。
 
-- `TELEGRAM_BOT_TOKEN`：BotFather 發的 bot token（必填）
-- `TELEGRAM_CHAT_ID`：主要接收報告、允許下指令的 chat id
-- `TELEGRAM_AUTHORIZED_CHAT_IDS`：其他允許下指令的 chat id，逗號分隔（選填）
-
-缺少 token、或兩個 chat id 都沒設時，Bot 會在啟動時直接報錯退出，不會用空值執行。接著啟動：
-
-```bash
-python3 telegram_bot.py
-```
-
-目前可用指令：
-
-- `/搜尋 產品 月數`
-- `/廣告匯出`
-- `/廣告分析`
-- `/廣告分析 無AI`
-- `/refresh`
-- `/help`
-
-其中：
-- `/廣告匯出`：會回傳昨天、過去一個月與過去 4 週的廣告 CSV，共 6 份
-- `/廣告分析`：會使用現有 CSV 做 OpenAI 分析，並回傳 HTML 廣告分析報告
-- `/廣告分析 無AI`：只使用規則層，不呼叫 OpenAI
+- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`）
+- 唯讀應補摘要：`python -m restock_loop scan`
+- 廣告匯出／分析：`/ads.html` 或 `crawler.py --mode ads-export`／`ads_analysis.py`
 
 ## 應用程式打包 (發布)
 
@@ -398,7 +378,7 @@ InventoryCalculator/
 ├── cookies.json            # 蝦皮 Cookies（gitignore，需自行設置）
 ├── shopee_products.json    # 蝦皮庫存快照（gitignore）
 ├── reports/                # 產出目錄（gitignore；含 reverse_audit live dump）
-├── calculator.py / parser.py / telegram_bot.py / build.py
+├── calculator.py / parser.py / build.py
 └── requirements.txt
 ```
 
@@ -433,7 +413,7 @@ InventoryCalculator/
 - **數據處理**: pandas（Excel 解析）
 - **廣告分析**: OpenAI API + 自訂規則層
 - **反向查核**: `python -m reverse_audit`（CDP freeze／mutate + 離線 dry-run）
-- **通知 / 操作**: Telegram Bot API
+- **提醒**: Grok Bot routines（非 Telegram、非應用內推播）
 - **打包工具**: PyInstaller
 
 ## 常見問題
@@ -447,8 +427,8 @@ InventoryCalculator/
 3. 查看 `debug.log` 了解詳細錯誤訊息
 
 ### 廣告匯出 / 分析目前的 scenario 是什麼？
-- `/廣告匯出`：負責準備完整分析資料集，會依序匯出「過去一個月、昨天、近第 1 週到近第 4 週」，共 6 份
-- `/廣告分析`：不再重新抓 Shopee 後台，而是直接讀取 `ads_exports/` 內各視窗最新一份 CSV
+- `/ads.html` 匯出（或 `crawler.py --mode ads-export`）：準備完整分析資料集，依序匯出「過去一個月、昨天、近第 1 週到近第 4 週」，共 6 份
+- `/ads.html` 分析（或 `ads_analysis.py`）：不再重新抓 Shopee 後台，而是直接讀取 `ads_exports/` 內各視窗最新一份 CSV
 - 若同一視窗下載多次，分析器只會取該視窗最新一份，不會把舊檔全部混在一起算
 
 ### 廣告分析沒有使用 OpenAI？
@@ -457,9 +437,6 @@ InventoryCalculator/
 3. 檢查 `OPENAI_API_KEY` 是否可用
 4. 可用 `python3 inspect_openai_status.py` 測試目前設定是否能正常呼叫 OpenAI API
 5. 廣告頁面會明確顯示 API 是否已設定、請求模型、實際回應模型、推理強度與耗時；缺少 Key 或 API 呼叫失敗時會直接報錯，不會假裝成 AI 報告
-
-### Telegram 收到的 HTML 圖片顯示不出來？
-廣告分析與庫存報表都會盡量將圖片轉成 Base64 內嵌在 HTML 中。若仍看不到圖片，通常是當次圖片網址抓取失敗，可重新執行一次分析。
 
 ### 打包後執行檔無法運行？
 確保已將 `cookies.json` 和執行檔放在同一目錄。

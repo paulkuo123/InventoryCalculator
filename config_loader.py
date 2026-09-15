@@ -1,6 +1,6 @@
 import os
 import re
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, Sequence, Tuple
 
 
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -94,23 +94,6 @@ def load_gemini_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
 def load_deepseek_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
     """Load the official DeepSeek API key without exposing it to the UI."""
     return _load_config_value("DEEPSEEK_API_KEY", project_root)
-
-
-def load_telegram_bot_token(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
-    """Load the Telegram Bot API token without exposing it to the browser/UI."""
-    return _load_config_value("TELEGRAM_BOT_TOKEN", project_root)
-
-
-def load_telegram_chat_id(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
-    """Load the primary Telegram chat id that receives reports."""
-    return _load_config_value("TELEGRAM_CHAT_ID", project_root)
-
-
-def load_telegram_authorized_chat_ids(project_root: str = PROJECT_ROOT) -> Tuple[List[str], str]:
-    """Load the comma-separated list of chat ids allowed to command the bot."""
-    raw_value, source = _load_config_value("TELEGRAM_AUTHORIZED_CHAT_IDS", project_root)
-    chat_ids = [part.strip() for part in raw_value.split(",") if part.strip()]
-    return chat_ids, source
 
 
 def load_openai_config_value(name: str, default: str = "", project_root: str = PROJECT_ROOT) -> Tuple[str, str]:

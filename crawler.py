@@ -2038,7 +2038,7 @@ class ShopeeCrawler:
 
         except RuntimeError as e:
             if "COOKIES_EXPIRED" in str(e):
-                # 以特殊退出碼 77 通知 Telegram Bot Cookies 已失效
+                # 以特殊退出碼 77 表示 Cookies 已失效
                 print("COOKIES_EXPIRED: Cookies 已失效，請重新取得並更新 cookies.json")
                 import sys
                 sys.exit(77)
@@ -2789,7 +2789,7 @@ def main():
                 json.dump(result, f, ensure_ascii=False, indent=4)
         else:
             # run() 失敗時回傳 None（Cookies 失效則已自行 sys.exit(77)）；
-            # 必須以非零碼退出，否則 Telegram Bot 會把舊的 shopee_products.json 當成新結果。
+            # 必須以非零碼退出，避免呼叫端把舊的 shopee_products.json 當成新結果。
             inventory_result = crawler.run()
             if inventory_result is None:
                 try:

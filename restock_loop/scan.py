@@ -399,7 +399,7 @@ def render_zh_summary(report: Dict[str, Any]) -> str:
         "# 觀察清單應補摘要（只報告）",
         "",
         f"- 產生時間：{report.get('generatedAt')}（Asia/Taipei）",
-        "- 模式：**只報告／report-only** — 不爬蟲、不開 1688、不寫 Telegram、不加車、不 mutate、不改 `golden_table.json`",
+        "- 模式：**只報告／report-only** — 不爬蟲、不開 1688、不加車、不 mutate、不改 `golden_table.json`",
         "- 店規：手機殼 3 個月、其餘 4 個月（`build_expected`）",
         (
             f"- 排除後觀察清單：{excl.get('watchlistAfterExclusions')} "
