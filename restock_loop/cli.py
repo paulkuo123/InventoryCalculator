@@ -14,7 +14,7 @@ REPORT_ONLY = (
     "觀察清單應補摘要（只報告／report-only）。"
     "讀取磁碟上的 shopee_products.json、觀察清單與 golden_table.json，"
     "套用店規（手機殼 3 個月／其餘 4 個月）與 home_bootstrap 排除；"
-    "不呼叫爬蟲、不開 1688、不寫 Telegram、不啟動 restock_batch、"
+    "不呼叫爬蟲、不開 1688、不啟動 restock_batch、"
     "不加車、不 mutate、不改 golden_table.json。"
 )
 

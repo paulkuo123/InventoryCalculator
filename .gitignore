@@ -25,13 +25,11 @@ data/*
 data/1688_master/
 *.kb.tmp.db
 *.kb-isolated.db
-.last_update_id
 .qwen/
 shopee_products.json
 procurement.db
 procurement.db-*
 進貨紀錄.txt
-telegram_alert.sh
 todolist.txt
 ads_exports/
 ads_analysis_latest*.json

@@ -28,7 +28,7 @@ Primary: local `http.server` UI started by `python main.py` on **port 8080**.
 | `/products.html` | Golden Table product catalog editor |
 | `/golden-import.html` | Add Shopee products into Golden Table |
 
-Secondary surfaces (not this skill's default drive): `python -m reverse_audit` CLI, `python calculator.py` PyQt tool, `python3 telegram_bot.py`, Playwright crawlers in `crawler.py` / `alibaba_restocker.py`. Point at those only when the change lives there; still refuse live cart/inventory mutation unless the user explicitly asked for a live proof.
+Secondary surfaces (not this skill's default drive): `python -m reverse_audit` CLI, `python calculator.py` PyQt tool, Playwright crawlers in `crawler.py` / `alibaba_restocker.py`. Point at those only when the change lives there; still refuse live cart/inventory mutation unless the user explicitly asked for a live proof.
 
 ## Isolate
 

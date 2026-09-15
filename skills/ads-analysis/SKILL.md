@@ -118,7 +118,7 @@ description: 用於分析 Shopee 商品廣告報表，輸出只包含需要調�
   - `OPENAI_API_KEY` 環境變數
   - 專案本地 `.env.local`
   - `~/.zshrc` / `~/.bashrc` 備援
-- 網頁端或 Telegram 端不會主動幫使用者建立或填入 Key。
+- 網頁端不會主動幫使用者建立或填入 Key。
 - 若使用者要求 OpenAI 分析但尚未執行 `setup_openai_key.py`，必須明確報錯，不得靜默退回規則層摘要。
 - 預設模型為 `gpt-5.6-sol`、推理強度為 `xhigh`；網頁可切換 `gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。
 - OpenAI 回傳必須使用嚴格 JSON Schema，並在程式端驗收商品覆蓋、重複分類、低信心預算調整與必看商品；驗收未過時最多自動修正一次。

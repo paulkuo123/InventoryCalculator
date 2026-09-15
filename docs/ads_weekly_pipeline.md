@@ -128,7 +128,7 @@ reports/ads_weekly/20260911/
 - 不讀、不印 `cookies.json`
 - 結束時只斷開 CDP，**不會關掉**遠端 Chrome
 
-`crawler.py --mode ads-export` 若沒帶 `--browser-source`，仍維持舊的本機 Chromium + cookies（給 Telegram／廣告工作台）。**週報不要用那條路。**
+`crawler.py --mode ads-export` 若沒帶 `--browser-source`，仍維持舊的本機 Chromium + cookies（給廣告工作台）。**週報不要用那條路。**
 
 ## 程式入口對照
 
@@ -136,7 +136,7 @@ reports/ads_weekly/20260911/
 |---|---|---|
 | 週報 bot／碼農 | `python3 ads_weekly.py` | **remote** |
 | 舊 refresh 指令 | `python3 ads_analysis.py --refresh-source true` | **remote** |
-| Telegram `/廣告匯出`、`ads.html` 匯出 | `crawler.py --mode ads-export` | mac／cookies（不變） |
+| `ads.html` 匯出 | `crawler.py --mode ads-export` | mac／cookies（不變） |
 
 可選後備（程式還留著，營運預設不要用）：`python3 ads_weekly.py --source mac`
 
