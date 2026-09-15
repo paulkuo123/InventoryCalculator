@@ -107,7 +107,7 @@ Headline 數字應仍為：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%`、Top-3 
 - `approve`／`replace` 且 AI `suggested_candidate_key` ≠ 人工選擇：只寫 AI 建議候選（`chose_other_candidate`）
 - `reject_candidate`：只否決單一候選，不改 suggestion 狀態（`explicit_reject`）
 
-API：`POST /api/sku-mapping/decisions` 接受 `reasonCode`／`reasonText`；OTHER 無說明 → 400。`GET /api/sku-mapping/negative-examples?productId&modelId` 或 `?offerId`。審核 `after_json` 含 `negative_example_ids`。
+API：`POST /api/sku-mapping/decisions` 接受 `reasonCode`／`reasonText`；OTHER 無說明 → 400。`GET /api/sku-mapping/negative-examples?productId&modelId` 或 `?offerId`。審核 `after_json` 含 `negative_example_ids`。negative-examples API 仍可直接使用，但目前審核 UI 不會呼叫；UI 的審核資料走 summary／queue。
 
 ## TASK 5 歷史正負例進入 judging
 
@@ -166,7 +166,7 @@ python -m mapping_eval run \
 
 權重來自 `mapping_knowledge_pack/config.json` 的 `score_weights`。硬閘門剔除的候選不計分。`final_score` **只**用來排候選與黃燈佇列，**不**改 `classify_review_tier` 的綠色條件。
 
-`sku_mapping_suggestions` 以 `ALTER ADD` 補 `final_score`、`score_breakdown_json`。`SkuMappingService.explain(product_id, model_id)` 與 `GET /api/sku-mapping/explain?productId&modelId` 回傳 `decision`、`selected_candidate`、`why[]`（`rule`／`alias`／`historical`／`negative`／`feature`／`llm`）、`score_breakdown`、`knowledge_version`。審核卡可展開「為什麼」。
+`sku_mapping_suggestions` 以 `ALTER ADD` 補 `final_score`、`score_breakdown_json`。`SkuMappingService.explain(product_id, model_id)` 與 `GET /api/sku-mapping/explain?productId&modelId` 回傳 `decision`、`selected_candidate`、`why[]`（`rule`／`alias`／`historical`／`negative`／`feature`／`llm`）、`score_breakdown`、`knowledge_version`。explain API 仍可直接使用，但目前審核 UI 不會呼叫；UI 顯示的審核資料來自 `GET /api/sku-mapping/summary` 與 `GET /api/sku-mapping/queue`。
 
 預設 fixture 數字必須 ≥ TASK 1–5 基線（綠色條件不變，應持平）：
 

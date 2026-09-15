@@ -118,7 +118,7 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 - 車內數量 ≥ 應補 → 覆蓋；若 `cart > expected`（且非 order-covered）另寫 `qty_excess.csv`（**只列出，不 PAUSE、不改量**）
 - 車內 `0 < qty < 應補` → **PAUSED**：完整列入 `qty_shortfall.csv`，**不自動改量**
 - 四處皆無 → `missing_to_add.csv`（僅 dry-run 建議；mutate 需核准旗標）
-- 反向掃車 → `unexpected_in_cart.csv`：以 **certain**（含唯一 name/spec 解析後的 key）為界；uncertain／skip／訂單池同 key → `removable=false`；歧義 name/spec → `ambiguous_name_spec`（不可刪）；訂單已覆蓋但仍佔車 → 可選清車（`order_covered_still_in_cart`，不可刪）。不再使用 `name_spec_protected` uncertain 保護路徑
+- 反向掃車 → `unexpected_in_cart.csv`：以 **certain**（含唯一 name/spec 解析後的 key）為界；uncertain／skip／訂單池同 key → `removable=false`；歧義 name/spec → `ambiguous_name_spec`（不可刪）；訂單已覆蓋但仍佔車 → 可選清車（`order_covered_still_in_cart`，不可刪）
 - 同 `(offerId, skuId)` 多 cart 列 → 整 key fail，列入 `ambiguous.csv`（`multi_cart_lines`）
 - 範圍：全車 certain；**不理**正向書包 cutoff
 - 旗標**互不隱含**：`--i-approve-mutate`＝加車；`--i-approve-set-qty`＝改量；`--i-approve-remove`＝刪除
