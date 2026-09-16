@@ -29,7 +29,7 @@
   - `crawler.py`
 - 廣告分析：
   - `ads_analysis.py`
-  - `ads_scope.py`（廣告匯出範圍與視窗定義）
+  - `ads_scope.py`（airpods／氣囊／吊飾焦點商品 matcher；匯出視窗定義在 `ads_session.ALL_EXPORT_WINDOWS`）
   - `ads_weekly.py`（週報抓取，預設遠端 CDP）
   - `ads_session.py`
   - `config_loader.py`

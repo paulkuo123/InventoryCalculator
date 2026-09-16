@@ -214,6 +214,8 @@
 
 ### 任務 1 — 唯讀「觀察清單應補摘要」CLI
 
+**狀態：** 已實作（本任務）。
+
 **做：** 新模組（建議 `python -m restock_loop scan --out reports/restock_loop_YYYYMMDD/`）重用 `reverse_audit.dry_run.build_expected` + `home_bootstrap` 排除，讀現有 `shopee_products.json`／watchlist／golden。寫 JSON＋中文摘要：certain 需補、uncertain（缺欄）、skip、blocker（對齊 launcher 的 approved／URL／規格名規則）、與 launcher 可加車列的差集。
 
 **不做：** 不呼叫 `crawler.py`、不開 1688、不啟動 `restock_batch`。提醒不經 Telegram（改走 Grok Bot routines）。
