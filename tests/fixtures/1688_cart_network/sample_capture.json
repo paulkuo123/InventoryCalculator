@@ -1,0 +1,57 @@
+{
+  "comment": "Synthetic 1688 cart Network fixture for CI. Not a live dump. Secrets already redacted.",
+  "records": [
+    {
+      "phase": "response",
+      "method": "GET",
+      "url": "https://h5api.m.1688.com/h5/mtop.1688.buycenter.mtoppurchaseastoreservice.render/1.0/?jsv=2.6.1&appKey=12574478&t=1710000000000&sign=REDACTED&api=mtop.1688.buycenter.mtoppurchaseastoreservice.render&v=1.0&type=jsonp&dataType=jsonp&callback=mtopjsonp1&data=%7B%7D",
+      "status": 200,
+      "headers": {
+        "referer": "https://cart.1688.com/cart.htm",
+        "origin": "https://cart.1688.com",
+        "cookie": "cookie2=secret-must-redact"
+      },
+      "responseText": "mtopjsonp1({\"api\":\"mtop.1688.buycenter.mtoppurchaseastoreservice.render\",\"v\":\"1.0\",\"ret\":[\"SUCCESS::调用成功\"],\"data\":{\"model\":\"{\\\"data\\\":{\\\"item_9001\\\":{\\\"tag\\\":\\\"item\\\",\\\"fields\\\":{\\\"cartId\\\":9001,\\\"offerId\\\":752797767076,\\\"skuId\\\":\\\"5228880725920\\\",\\\"skuTitle\\\":\\\"紫花蝴蝶绳\\\",\\\"quantity\\\":40,\\\"effective\\\":true,\\\"sellerId\\\":123}},\\\"item_group_1\\\":{\\\"fields\\\":{\\\"offerId\\\":752797767076,\\\"title\\\":\\\"demo\\\"}}}}\"}});"
+    },
+    {
+      "phase": "response",
+      "method": "POST",
+      "url": "https://h5api.m.1688.com/h5/mtop.1688.buycenter.mtoppurchaseastoreservice.asyncload/1.0/",
+      "status": 200,
+      "headers": {
+        "content-type": "application/x-www-form-urlencoded",
+        "referer": "https://cart.1688.com/cart.htm"
+      },
+      "postData": "api=mtop.1688.buycenter.mtoppurchaseastoreservice.asyncload&v=1.0&sign=REDACTED&data=%7B%22loadMore%22%3Atrue%7D",
+      "responseText": "{\"api\":\"mtop.1688.buycenter.mtoppurchaseastoreservice.asyncload\",\"ret\":[\"SUCCESS::\"],\"data\":{\"item_9002\":{\"fields\":{\"cartId\":9002,\"offerId\":\"676841046990\",\"skuId\":\"1\",\"skuTitle\":\"爱心熊黑绳\",\"quantity\":10}}}}"
+    },
+    {
+      "phase": "request",
+      "method": "POST",
+      "url": "https://h5api.m.1688.com/h5/mtop.1688.offer.addcargo/1.0/",
+      "headers": {
+        "referer": "https://detail.1688.com/offer/752797767076.html",
+        "origin": "https://detail.1688.com",
+        "cookie": "unb=secret"
+      },
+      "postData": "api=mtop.1688.offer.addCargo&v=1.0&sign=abcdef&data=%7B%22goodsParams%22%3A%22%5B%7B%5C%22specId%5C%22%3A%5C%22spec-aaa%5C%22%2C%5C%22offerId%5C%22%3A752797767076%2C%5C%22quantity%5C%22%3A2%2C%5C%22flow%5C%22%3A%5C%22general%5C%22%2C%5C%22ext%5C%22%3A%7B%5C%22sceneCode%5C%22%3A%5C%22%5C%22%7D%2C%5C%22selectedTradeServices%5C%22%3A%5B%5D%7D%5D%22%7D"
+    },
+    {
+      "phase": "response",
+      "method": "GET",
+      "url": "https://h5api.m.1688.com/h5/mtop.wosc.queryofferskuselectormodel/1.0/?api=mtop.wosc.queryofferskuselectormodel",
+      "status": 200,
+      "responseText": "{\"ret\":[\"SUCCESS::\"],\"data\":{\"skuSelectorBizModel\":{\"skuInfoMap\":{\"5228880725920\":{\"skuId\":\"5228880725920\",\"specId\":\"spec-aaa\",\"specAttrs\":\"紫花蝴蝶绳\",\"price\":\"1.20\",\"canBookCount\":\"999\"}}}}}"
+    },
+    {
+      "phase": "request",
+      "method": "POST",
+      "url": "https://h5api.m.1688.com/h5/mtop.1688.buycenter.mtoppurchaseastoreservice.updatequantity/1.0/",
+      "headers": {
+        "referer": "https://cart.1688.com/cart.htm"
+      },
+      "postData": "api=mtop.1688.buycenter.mtoppurchaseastoreservice.updateQuantity&v=1.0&data=%7B%22cartId%22%3A9001%2C%22quantity%22%3A41%2C%22offerId%22%3A752797767076%2C%22skuId%22%3A%225228880725920%22%7D",
+      "comment": "Synthetic qty-change envelope for parser tests only. Live URL is TODO."
+    }
+  ]
+}
