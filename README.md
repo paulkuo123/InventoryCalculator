@@ -44,6 +44,7 @@
 - 套件：`reverse_audit/`，進入點 `python -m reverse_audit …`。
 - 固定流程：**freeze → dry-run（離線）→ 人工核准 → mutate**。每次看最新預覽請用 **refresh** 重抓四池，不要沿用舊的 `live_*.json`。
 - freeze／mutate 是 CDP 腳本的薄封裝，以 `runpy` 載入 `scripts/` 內現行實作（含日期戳檔名，**不可刪**）。
+- 採購車／加車／改量 **Network 偵察**（唯讀 CDP recorder，非正式 HTTP client）：`scripts/record_1688_cart_network.py`，說明見 [`docs/1688_cart_network_recon.md`](docs/1688_cart_network_recon.md)。Live 抓包需操作者本機已登入 1688；CI 用 `--dry-run --fixture`。
 - 完整說明與成功標準：[`docs/reverse_audit.md`](docs/reverse_audit.md)。
 - 與「定期掃庫存 → 提醒 → 核准才補 → 對帳」最終閉環的差距：[`docs/restock_closed_loop_review.md`](docs/restock_closed_loop_review.md)。
 
