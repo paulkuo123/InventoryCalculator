@@ -4,12 +4,12 @@
 
 分析規則不變，仍用：
 
-- [`docs/ads_analysis_rules.md`](ads_analysis_rules.md)
-- [`docs/ads_metrics_dictionary.md`](ads_metrics_dictionary.md)
-- [`docs/ads_report_prompt_spec.md`](ads_report_prompt_spec.md)
+- [`ads_analysis_rules.md`](ads_analysis_rules.md)
+- [`ads_metrics_dictionary.md`](ads_metrics_dictionary.md)
+- [`ads_report_prompt_spec.md`](ads_report_prompt_spec.md)
 - [`skills/ads-analysis/SKILL.md`](../skills/ads-analysis/SKILL.md)
 
-(規劃中、尚未實作:1688 歷史成本輔助的設計見 [`docs/ads_cost_margin_design.md`](ads_cost_margin_design.md);本週報流程目前不讀任何成本庫。)
+(規劃中、尚未實作:1688 歷史成本輔助的設計見 [`ads_cost_margin_design.md`](ads_cost_margin_design.md);本週報流程目前不讀任何成本庫。)
 
 本流程**只抓取 + 分析**，禁止改預算、出價或任何廣告設定。Cookies／secrets 不進 Git、不印在 log。
 

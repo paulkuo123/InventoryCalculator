@@ -35,7 +35,7 @@
 - 核心：`alibaba_restocker.py`（1688 加採購車、SKU 選擇、MOQ／包裝倍數）。
 - 數量規則：`restock_rules.py`（手機殼／手机壳 **3 個月**，其餘 **4 個月**；吊飾／掛繩／明確加購除外）。
 - 批次與關注清單：`restock_batch.py`、`scripts/run_watchlist_restock.py`。路 A 加車必須 `--i-approve-watchlist-restock` 才會 `POST /api/alibaba-restock/batches`；`--yes` 只跳過 Enter。這不是 `reverse_audit mutate`。唯讀摘要：`python -m restock_loop scan`。批次開始時若 CDP 可用會先凍加車前 live cart；`completed`／`completed_with_gaps` 後預設重抓 after 再 dry-run（對出本次 delta）。CI／離線加 `--sources-only`。永不 mutate。
-- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。知識包：`mapping_knowledge_pack/`（`config.json` 門檻、`aliases.json` 同義詞、`rules.json` 規則登錄、`categories.json` 類別關鍵字）；載入見 `mapping_knowledge.py`。`python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出 aliases。人工否決寫入 `mapping_negative_examples`（原因代碼見 SPEC 5.3）。TASK 5 把歷史核准與負例餵進 `generate_candidates()`／既有 AI judge（`PROMPT_VERSION=2026-09-v2`）；無 key 可用 `python -m mapping_eval run --fixture tests/fixtures/mapping_eval --ai-dry`。TASK 6 用 `score_weights` 合成 `final_score`（只排序，不改綠色條件）；`GET /api/sku-mapping/explain` 與 `GET /api/sku-mapping/negative-examples` 仍可直接使用，但目前審核 UI 不會呼叫，UI 資料走 summary／queue。TASK 7 讓每次 `_save_suggestion()` 把 `knowledge_version`／`prompt_version`／`ai.provider|model|effort`／`applied_rules`／`historical_support`／`negative_hits`／`score_breakdown`／`snapshot_id`／`fingerprint` 寫進 `evidence_json`（沒跑 AI 時 `ai.*` 為 `null`）；`python -m mapping_eval audit --db-path procurement.db --since <days>` 列出缺欄位數。TASK 8 用 `mapping_eval compare` 對 TASK 1 fixture baseline，並**只報告** auto-approve 反事實精度（`enabled` 維持 false）；總覽見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。
+- SKU 對照：`sku_mapping_service.py` + `/sku-mapping.html`；已核准結果寫入 `golden_table.json`。離線評估 baseline：`python -m mapping_eval run`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。知識包：`mapping_knowledge_pack/`（`config.json` 門檻、`aliases.json` 同義詞、`rules.json` 規則登錄、`categories.json` 類別關鍵字）；載入見 `mapping_knowledge.py`。`python -m mapping_knowledge seed-aliases` 從 `COLOR_SYNONYMS` 匯出 aliases。人工否決寫入 `mapping_negative_examples`（原因代碼見 SPEC 5.3）。TASK 5 把歷史核准與負例餵進 `generate_candidates()`／既有 AI judge（`PROMPT_VERSION=2026-09-v2`）；無 key 可用 `python -m mapping_eval run --fixture tests/fixtures/mapping_eval --ai-dry`。TASK 6 用 `score_weights` 合成 `final_score`（只排序，不改綠色條件）；`GET /api/sku-mapping/explain` 與 `GET /api/sku-mapping/negative-examples` 仍可直接使用，但目前審核 UI 不會呼叫，UI 資料走 summary／queue。TASK 7 讓每次 `_save_suggestion()` 把 `knowledge_version`／`prompt_version`／`ai.provider|model|effort`／`applied_rules`／`historical_support`／`negative_hits`／`score_breakdown`／`snapshot_id`／`fingerprint` 寫進 `evidence_json`（沒跑 AI 時 `ai.*` 為 `null`）；`python -m mapping_eval audit --db-path procurement.db --since <days>` 列出缺欄位數。TASK 8 用 `mapping_eval compare` 對 TASK 1 fixture baseline，並**只報告** auto-approve 反事實精度（`enabled` 維持 false）；總覽見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。
 - 離線購物車數量核對（不連瀏覽器）：`scripts/reconcile_cart.py`，說明見 [`docs/cart-reconciliation.md`](docs/cart-reconciliation.md)。
 - 瀏覽器優先 ego-lite，否則 Chrome／Playwright Chromium。
 
@@ -351,18 +351,21 @@ InventoryCalculator/
 ├── ads_session.py          # 遠端工作階段／BLOCKER 輔助
 ├── crawler.py              # 蝦皮爬蟲與廣告匯出
 ├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / mutate）
+├── restock_loop/           # 唯讀觀察清單應補摘要（python -m restock_loop scan）
 ├── scripts/                # 現行 CDP 輔助腳本（freeze／mutate 以 runpy 載入，勿刪）
 │   ├── freeze_reverse_audit_pools_20260905.py
 │   ├── mutate_add_missing_cdp_20260906.py
 │   ├── mutate_set_qty_cdp.py
 │   ├── mutate_remove_cdp.py
 │   ├── reconcile_cart.py
+│   ├── record_1688_cart_network.py
 │   └── run_watchlist_restock.py
 ├── purchase_history_store.py / purchase_history_import.py
 │                           # 1688 歷史採購 KB（kb_*；Phase 2 schema／dry-run stub）
 ├── docs/
 │   ├── reverse_audit.md
 │   ├── 1688_purchase_history_kb.md
+│   ├── 1688_cart_network_recon.md
 │   ├── cart-reconciliation.md
 │   ├── ads_analysis_rules.md
 │   ├── ads_metrics_dictionary.md
@@ -384,6 +387,16 @@ InventoryCalculator/
 ```
 
 ## 技術棧
+
+- **後端**: Python 3.8+
+- **網頁爬蟲**: Playwright (Chromium)
+- **GUI**: PyQt5（獨立庫存計算器）
+- **Web 框架**: 內建 `http.server` 模組
+- **數據處理**: pandas（Excel 解析）
+- **廣告分析**: OpenAI API + 自訂規則層
+- **反向查核**: `python -m reverse_audit`（CDP freeze／mutate + 離線 dry-run）
+- **提醒**: Grok Bot routines（非 Telegram、非應用內推播）
+- **打包工具**: PyInstaller
 
 ## 1688 SKU Mapping 工作台
 
@@ -407,16 +420,6 @@ InventoryCalculator/
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。
 - 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 
-- **後端**: Python 3.8+
-- **網頁爬蟲**: Playwright (Chromium)
-- **GUI**: PyQt5（獨立庫存計算器）
-- **Web 框架**: 內建 `http.server` 模組
-- **數據處理**: pandas（Excel 解析）
-- **廣告分析**: OpenAI API + 自訂規則層
-- **反向查核**: `python -m reverse_audit`（CDP freeze／mutate + 離線 dry-run）
-- **提醒**: Grok Bot routines（非 Telegram、非應用內推播）
-- **打包工具**: PyInstaller
-
 ## 常見問題
 
 ### Cookies 設置失敗？
@@ -436,7 +439,7 @@ InventoryCalculator/
 1. 先執行 `python3 setup_openai_key.py`
 2. 確認專案根目錄已有 `.env.local`
 3. 檢查 `OPENAI_API_KEY` 是否可用
-4. 可用 `python3 inspect_openai_status.py` 測試目前設定是否能正常呼叫 OpenAI API
+4. 可用 `python3 inspect_openai_status.py` 檢查目前設定（預設只讀 config，不打 live API）。若要實際探測 OpenAI Responses API，需加上 `--i-approve-live-probe`
 5. 廣告頁面會明確顯示 API 是否已設定、請求模型、實際回應模型、推理強度與耗時；缺少 Key 或 API 呼叫失敗時會直接報錯，不會假裝成 AI 報告
 
 ### 打包後執行檔無法運行？
