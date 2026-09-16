@@ -18,7 +18,7 @@
 
 - 原始購物車順序，遇到第一個書包商品就停止，**書包本身及其後方列不處理**。以購物車 `productName` 或 SKU 對應的蝦皮／Golden 商品名稱含「書包／书包」辨識，排除緊接掛件、吊飾、掛飾、鑰匙等配件詞；基線未找到時才做到底端。
 - 書包之前的購物車 → 唯一對應的蝦皮商品 ID → 其他型號，含其他 offer；新 offer 不再擴張蝦皮商品集合。即使是同蝦皮商品的型號，若原本位於書包之後，也排除不改。
-- 庫存來源為本次凍結的 `shopee_products.json`；Golden Table 僅提供規格 ID、SKU、網址與核准狀態。缺少／無效库存不當成零，保存過去的建議量不参与計算。
+- 庫存來源為本次凍結的 `shopee_products.json`；Golden Table 僅提供規格 ID、SKU、網址與核准狀態。缺少／無效庫存不當成零，保存過去的建議量不參與計算。
 - 共用 `restock_rules.py`：手機殼 3 個月，手機殼吊飾／掛繩及明確標記加購的型號與其餘商品 4 個月；歷史銷量保護、最近十位與條件式最低 5，和原 file-based launcher 一致。
 - 原數量、目標總數、操作前讀數、差額與操作後讀數分開保存。過多調低，缺少才新增；零量移除須另外記錄核准。
 - 同一 SKU 的多筆購物車列不猜分配；多個蝦皮型號共用採購 SKU 須先確認需求非重複。包裝單位不是一件對一件則待查，不自行換算或加到起訂量。
@@ -46,7 +46,7 @@
 }
 ```
 
-這只是格式示例，不能當成真實快照使用。URL 必須是確定的商品頁網址。`skuId` 若無法讀取可留空，但完整規格必须唯一相符；不得推測 SKU ID。不存在的型號省略整列，不以數量零偽造購物車列。操作快照需為最近 5 分鐘且時間晚於上次讀取，禁止重用 snapshotId。
+這只是格式示例，不能當成真實快照使用。URL 必須是確定的商品頁網址。`skuId` 若無法讀取可留空，但完整規格必須唯一相符；不得推測 SKU ID。不存在的型號省略整列，不以數量零偽造購物車列。操作快照需為最近 5 分鐘且時間晚於上次讀取，禁止重用 snapshotId。
 
 商品頁確認資訊另存 `catalogs.json`，以 review 報告的 `itemId` 為鍵：
 
@@ -78,7 +78,7 @@
 3. 將 `report.html` 的具體變更清單交使用者集中確認。得到確認後才執行 `approve --run-dir <run-dir> --manifest-sha256 <目前SHA> --evidence <核准紀錄>`；包含零量移除才加 `--allow-removals`。共用 SKU 要以 `--shared-sku-evidence <JSON檔>` 提供 `itemId -> 需求非重複的核對證據`。
 4. 重新確認商品頁規格／單位，再讀完整購物車。`prepare --run-dir <run-dir> --observation <新快照.json> --catalogs <catalogs.json>` 只保存下一筆意圖並回傳 `operationId`、`lineId`、`action`、`beforeQty`、`targetQty`、`delta`。
    若下一個型號尚未提供商品頁資料，回傳 `inspect_catalog`，保留待核對並要求唯讀查看商品頁；這不是加購意圖，沒有 operationId。取得資料與新的購物車快照後再 prepare。明確提供了資料但規格／單位不明的項目才列待查。
-5. Agent 使用允許的內建瀏覽器操作：`set_quantity` 直接設成 `targetQty`；`add_missing` 加入 `delta`；`remove` 僅適用已核准的零量項目。先确认眼前的 SKU／規格及數量仍與意圖相符，再操作。禁止把 `targetQty` 傳進既有的累加式補貨 API。
+5. Agent 使用允許的內建瀏覽器操作：`set_quantity` 直接設成 `targetQty`；`add_missing` 加入 `delta`；`remove` 僅適用已核准的零量項目。先確認眼前的 SKU／規格及數量仍與意圖相符，再操作。禁止把 `targetQty` 傳進既有的累加式補貨 API。
 6. 完整重讀後執行 `record --run-dir <run-dir> --operation-id <ID> --observation <新快照.json>`。只有數量恰好等於目標才記錄成功。超加、部分結果、timeout 都不能重送。
 7. 依序重複 4–6；`prepare` 回傳沒有下一筆操作時，用另一份新完整快照 `finalize --run-dir <run-dir> --observation <新快照.json>`，核對已處理 SKU 並檢查非操作範圍的變動。未完成資格核對的項目不能被 final audit 直接標成成功。
 
