@@ -99,6 +99,7 @@ _MASK_KEYS = frozenset(
         "fromkv",
         "password",
         "secret",
+        "signature",
     }
 )
 
@@ -160,6 +161,7 @@ def classify_mutate_ret(ret: Any) -> str:
         "INVALID_OPERATOR",
         "ENDPOINT_INVALID",
         "PROTOCOL_ERROR",
+        "SYSTEM_ERROR::NULL",
     )
     if any(marker.upper() in upper or marker in text for marker in ultron_markers):
         return "ultron_pack"
@@ -175,7 +177,7 @@ def mutate_block_message(kind: str, ret: Optional[List[str]] = None) -> str:
         "bad_sign": "卡在簽章：刷新同一 profile 的 _m_h5_tk（token 是第一個 '_' 之前）。不要改 appKey。",
         "risk_control": "卡在風控：mtop 回風控／驗證。停，不要重試洗車。",
         "biz_param": "卡在業務參數：缺欄。對照 docs/1688_cart_network_recon.md，不要猜結算欄。",
-        "ultron_pack": "卡在 Ultron 包：item node／operator 不被接受。只抄 render 的 item_{cartId}，不要發明整棵車樹。",
+        "ultron_pack": "卡在 Ultron 包：須從 Phase 1 render 整包 clone（endpoint／linkage／hierarchy／data），只 patch 目標 item_{cartId}。不要只送一顆 item（SYSTEM_ERROR::null）。",
         "error": "卡在其他 mtop 錯。停，帶 ret 回報；不要改打結算／清空車。",
     }
     return (hints.get(kind) or hints["error"]) + suffix
@@ -221,6 +223,19 @@ def mask_for_log(obj: Any) -> Any:
             low = str(key or "").lower()
             if low in _MASK_KEYS:
                 out[key] = mask_value(key, val)
+            elif low == "data" and isinstance(val, str) and val.strip()[:1] in "{[":
+                try:
+                    parsed = json.loads(val)
+                except json.JSONDecodeError:
+                    out[key] = val[:4000] + "…" if len(val) > 4000 else val
+                else:
+                    masked = mask_for_log(parsed)
+                    dumped = (
+                        json.dumps(masked, ensure_ascii=False, separators=(",", ":"))
+                        if isinstance(masked, (dict, list))
+                        else val
+                    )
+                    out[key] = dumped[:4000] + "…" if len(dumped) > 4000 else dumped
             elif low == "data" and isinstance(val, str) and len(val) > 4000:
                 out[key] = val[:4000] + "…"
             else:

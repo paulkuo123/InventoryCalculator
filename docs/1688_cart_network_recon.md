@@ -125,6 +125,7 @@ python scripts/record_1688_cart_network.py \
 
 | 欄位路徑 | 說明 |
 |----------|------|
+| `params.endpoint`／`linkage`／`hierarchy` | live 成功包必帶（與 `operator`／`data` 一起）；Phase 2 HTTP 從 render 整包 clone，不要只送 `data.item_*` |
 | `params.operator` | `item_{cartId}` |
 | `params.data.item_{cartId}.fields.cartId` | 車內行 id |
 | `params.data.item_{cartId}.fields.offerId` | Offer |

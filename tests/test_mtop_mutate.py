@@ -44,10 +44,13 @@ from reverse_audit.mtop_sku_map import spec_id_for_sku  # noqa: E402
 from reverse_audit.mtop_ultron_mutate import (  # noqa: E402
     APPROVE_REMOVE_ONE,
     APPROVE_SET_QTY,
+    REQUIRED_ULTRON_PARAM_KEYS,
     UltronMutateClient,
+    assert_full_ultron_params,
     build_delete_data,
     build_set_qty_data,
     extract_item_node,
+    extract_ultron_model,
     ultron_item_from_data,
 )
 
@@ -57,6 +60,7 @@ COOKIE_JAR = ROOT / "tests" / "fixtures" / "1688_mtop_read_cart" / "cookie_jar.n
 DETAIL_HTML = FIX / "detail_sku_map.html"
 ADDCARGO_OK = FIX / "addcargo_success.json"
 ULTRON_OK = FIX / "ultron_success.json"
+ULTRON_MODEL = FIX / "ultron_render_model.json"
 CLIENT_FILES = (
     ROOT / "reverse_audit" / "mtop_http.py",
     ROOT / "reverse_audit" / "mtop_addcargo.py",
@@ -129,46 +133,111 @@ class AddCargoShapeTests(unittest.TestCase):
 
 
 class UltronShapeTests(unittest.TestCase):
-    def test_takes_item_node_from_phase1_render(self):
-        bundle = json.loads(BUNDLE.read_text(encoding="utf-8"))
-        node = extract_item_node(bundle, CART)
-        self.assertEqual(node["fields"]["cartId"], 9001)
-        self.assertEqual(node["fields"]["offerId"], 752797767076)
-        self.assertEqual(node["fields"]["quantity"], 40)
+    def _model(self):
+        return json.loads(ULTRON_MODEL.read_text(encoding="utf-8"))
 
-        qty_data = build_set_qty_data(node, CART, 41)
-        item = ultron_item_from_data(qty_data, CART)
+    def test_clones_full_render_model_and_patches_target_item(self):
+        payload = self._model()
+        source_item = extract_item_node(payload, CART)
+        self.assertEqual(source_item["fields"]["cartId"], 9001)
+        self.assertEqual(source_item["fields"]["quantity"], 40)
+        self.assertEqual(source_item["fields"]["selectedQuantity"], 40)
+
+        qty_data = build_set_qty_data(payload, CART, 41)
+        assert_full_ultron_params(qty_data, CART)
+        for key in REQUIRED_ULTRON_PARAM_KEYS:
+            self.assertIn(key, qty_data["params"])
         self.assertEqual(qty_data["params"]["operator"], "item_9001")
-        self.assertEqual(list(qty_data["params"]["data"]), ["item_9001"])
+        inner = qty_data["params"]["data"]
+        self.assertIn("item_9001", inner)
+        self.assertIn("item_9002", inner)
+        self.assertIn("shop_1", inner)
+        item = ultron_item_from_data(qty_data, CART)
         self.assertEqual(item["fields"]["quantity"], 41)
+        self.assertEqual(item["fields"]["selectedQuantity"], 41)
         self.assertEqual(item["id"], "item_9001")
         self.assertEqual(item["fields"]["skuId"], SKU)
-        # Original render qty stays on the source node; we copied then mutated.
-        self.assertEqual(node["fields"]["quantity"], 40)
+        # Sibling line and shop node stay as on the render pack.
+        self.assertEqual(inner["item_9002"]["fields"]["quantity"], 10)
+        self.assertEqual(inner["shop_1"]["id"], "shop_1")
+        # Do not invent a new modifySku; existing sibling event keeps old qty.
+        self.assertEqual(item["events"]["modifySku"][0]["fields"]["quantity"], 40)
+        # Source fixture is not mutated.
+        self.assertEqual(source_item["fields"]["quantity"], 40)
+        self.assertEqual(
+            payload["render"]["data"]["data"]["item_9001"]["fields"]["quantity"],
+            40,
+        )
+        # Hierarchy / endpoint / linkage kept (not invented, not dropped).
+        self.assertEqual(qty_data["params"]["hierarchy"]["root"], "root")
+        self.assertEqual(qty_data["params"]["endpoint"]["mode"], "pc")
+        self.assertEqual(
+            qty_data["params"]["linkage"]["signature"],
+            "synthetic-linkage-sig-not-live",
+        )
 
-        del_data = build_delete_data(node, CART)
+        del_data = build_delete_data(payload, CART)
+        assert_full_ultron_params(del_data, CART)
         del_item = ultron_item_from_data(del_data, CART)
         clicks = del_item["events"]["deleteClick"]
         self.assertEqual(len(clicks), 1)
         self.assertTrue(clicks[0]["actived"])
         self.assertEqual(clicks[0]["type"], "deleteItem")
         self.assertEqual(clicks[0]["fields"]["cartId"], 9001)
-        self.assertEqual(list(del_data["params"]["data"]), ["item_9001"])
+        self.assertEqual(clicks[0]["fields"]["purchaseType"], "main_purchase_type")
+        self.assertIn("item_9002", del_data["params"]["data"])
+        self.assertIn("hierarchy", del_data["params"])
+        # Existing modifySku event is kept; delete only activates deleteClick.
+        self.assertEqual(len(del_item["events"]["modifySku"]), 1)
+        self.assertFalse(
+            payload["render"]["data"]["data"]["item_9001"]["events"]["deleteClick"][0][
+                "actived"
+            ]
+        )
 
-    def test_does_not_invent_full_cart_hierarchy(self):
+    def test_refuses_phase1_bundle_without_ultron_keys(self):
         bundle = json.loads(BUNDLE.read_text(encoding="utf-8"))
-        node = extract_item_node(bundle, CART)
-        data = build_set_qty_data(node, CART, 9)
-        keys = list(data["params"]["data"])
-        self.assertEqual(keys, ["item_9001"])
-        blob = json.dumps(data)
-        self.assertNotIn("item_9002", blob)
-        self.assertNotIn("item_group_1", blob)
+        with self.assertRaises(MutateSafetyError) as ctx:
+            extract_ultron_model(bundle)
+        self.assertIn("endpoint", str(ctx.exception))
+        with self.assertRaises(MutateSafetyError):
+            build_set_qty_data(bundle, CART, 9)
+        with self.assertRaises(MutateSafetyError):
+            build_delete_data(bundle, CART)
+
+    def test_does_not_invent_missing_ultron_keys(self):
+        payload = {
+            "data": {
+                "operator": "item_9001",
+                "data": {"item_9001": {"fields": {"cartId": 9001, "quantity": 1}}},
+            }
+        }
+        with self.assertRaises(MutateSafetyError) as ctx:
+            build_set_qty_data(payload, CART, 2)
+        msg = str(ctx.exception)
+        self.assertIn("endpoint", msg)
+        self.assertIn("Will not invent", msg)
+
+    def test_unwraps_model_json_string(self):
+        inner = self._model()["render"]["data"]
+        payload = {"ret": ["SUCCESS::"], "data": {"model": json.dumps(inner)}}
+        data = build_set_qty_data(payload, CART, 3)
+        assert_full_ultron_params(data, CART)
+        self.assertEqual(ultron_item_from_data(data, CART)["fields"]["quantity"], 3)
+        self.assertIn("item_9002", data["params"]["data"])
+
+    def test_delete_appends_click_when_missing(self):
+        payload = self._model()
+        payload["render"]["data"]["data"]["item_9001"]["events"].pop("deleteClick")
+        data = build_delete_data(payload, CART)
+        clicks = ultron_item_from_data(data, CART)["events"]["deleteClick"]
+        self.assertEqual(len(clicks), 1)
+        self.assertTrue(clicks[0]["actived"])
+        self.assertEqual(clicks[0]["type"], "deleteItem")
+        self.assertEqual(clicks[0]["fields"]["purchaseType"], "main_purchase_type")
 
     def test_sign_reuses_phase1_h5_formula(self):
-        bundle = json.loads(BUNDLE.read_text(encoding="utf-8"))
-        node = extract_item_node(bundle, CART)
-        data = build_set_qty_data(node, CART, 9)
+        data = build_set_qty_data(self._model(), CART, 9)
         t = "1710000000000"
         query = signed_query(api=API_ULTRON_ASYNC, data=data, token=SYNTHETIC_TOKEN, t=t)
         self.assertEqual(query["sign"], sign_h5(SYNTHETIC_TOKEN, t, data))
@@ -231,14 +300,14 @@ class ClientGateTests(unittest.TestCase):
             calls.append(1)
             raise AssertionError("dry-run must not POST")
 
-        bundle = json.loads(BUNDLE.read_text(encoding="utf-8"))
+        model = json.loads(ULTRON_MODEL.read_text(encoding="utf-8"))
         client = UltronMutateClient(self._session(), transport=transport)
-        plan = client.plan_set_qty(cart_id=CART, quantity=9, fixture_payload=bundle)
+        plan = client.plan_set_qty(cart_id=CART, quantity=9, fixture_payload=model)
         client.execute(plan, approve=False)
         self.assertFalse(plan.posted)
         self.assertEqual(calls, [])
 
-        plan2 = client.plan_remove(cart_id=CART, fixture_payload=bundle)
+        plan2 = client.plan_remove(cart_id=CART, fixture_payload=model)
         client.execute(plan2, approve=False)
         self.assertFalse(plan2.posted)
         self.assertEqual(calls, [])
@@ -251,7 +320,12 @@ class ClientGateTests(unittest.TestCase):
             form = parse_qs(body.decode("utf-8"))
             self.assertEqual((form.get("api") or [""])[0], API_ULTRON_ASYNC)
             data = json.loads((form.get("data") or ["{}"])[0])
+            assert_full_ultron_params(data, CART)
             self.assertEqual(data["params"]["operator"], "item_9001")
+            self.assertIn("item_9002", data["params"]["data"])
+            self.assertIn("hierarchy", data["params"])
+            self.assertIn("endpoint", data["params"])
+            self.assertIn("linkage", data["params"])
             return {
                 "status": 200,
                 "headers": {},
@@ -259,17 +333,17 @@ class ClientGateTests(unittest.TestCase):
                 "url": url,
             }
 
-        bundle = json.loads(BUNDLE.read_text(encoding="utf-8"))
+        model = json.loads(ULTRON_MODEL.read_text(encoding="utf-8"))
         client = UltronMutateClient(
             self._session(), transport=transport, now_ms=lambda: 1710000000000
         )
-        plan = client.plan_set_qty(cart_id=CART, quantity=9, fixture_payload=bundle)
+        plan = client.plan_set_qty(cart_id=CART, quantity=9, fixture_payload=model)
         client.execute(plan, approve=True)
         self.assertTrue(plan.posted)
         self.assertEqual(len(calls), 1)
         self.assertIn(".async/", calls[0])
 
-        plan2 = client.plan_remove(cart_id=CART, fixture_payload=bundle)
+        plan2 = client.plan_remove(cart_id=CART, fixture_payload=model)
         client.execute(plan2, approve=True)
         self.assertTrue(plan2.posted)
         self.assertEqual(len(calls), 2)
@@ -370,7 +444,7 @@ class CliTests(unittest.TestCase):
             "--qty",
             "9",
             "--fixture",
-            str(BUNDLE),
+            str(ULTRON_MODEL),
             "--json",
         )
         self.assertEqual(qty.returncode, EXIT_OK, qty.stderr)
@@ -381,6 +455,13 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             payload["data"]["params"]["data"]["item_9001"]["fields"]["quantity"], 9
         )
+        for key in REQUIRED_ULTRON_PARAM_KEYS:
+            self.assertIn(key, payload["data"]["params"])
+        self.assertEqual(payload["ultronKeys"], list(REQUIRED_ULTRON_PARAM_KEYS))
+        self.assertIn("item_9002", payload["itemKeys"])
+        self.assertEqual(
+            payload["data"]["params"]["linkage"]["signature"], "***"
+        )
         self.assertEqual(payload["approveFlag"], APPROVE_SET_QTY)
 
         rm = self._run(
@@ -388,7 +469,7 @@ class CliTests(unittest.TestCase):
             "--cart-id",
             CART,
             "--fixture",
-            str(BUNDLE),
+            str(ULTRON_MODEL),
             "--json",
         )
         self.assertEqual(rm.returncode, EXIT_OK, rm.stderr)
@@ -399,6 +480,20 @@ class CliTests(unittest.TestCase):
         self.assertFalse(deleted["posted"])
         self.assertEqual(deleted["approveFlag"], APPROVE_REMOVE_ONE)
         self.assertNotIn(SYNTHETIC_TOKEN, qty.stdout + rm.stdout)
+
+    def test_set_qty_phase1_bundle_without_ultron_keys_is_usage(self):
+        proc = self._run(
+            "set-qty",
+            "--cart-id",
+            CART,
+            "--qty",
+            "9",
+            "--fixture",
+            str(BUNDLE),
+        )
+        self.assertEqual(proc.returncode, EXIT_USAGE)
+        self.assertIn("endpoint", proc.stderr)
+        self.assertNotIn("posted=true", proc.stdout)
 
     def test_ultron_without_fixture_or_session_is_usage(self):
         proc = self._run("set-qty", "--cart-id", CART, "--qty", "9")
@@ -426,6 +521,8 @@ class SafetyTests(unittest.TestCase):
         self.assertIn(APPROVE_ADD_ONE, source)
         self.assertIn(APPROVE_SET_QTY, source)
         self.assertIn(APPROVE_REMOVE_ONE, source)
+        self.assertNotIn("_one_item_params", source)
+        self.assertIn("extract_ultron_model", source)
         self.assertEqual(ALLOWED_MUTATE_APIS, {API_ADDCARGO, API_ULTRON_ASYNC})
 
     def test_fixtures_have_no_live_tokens(self):
@@ -449,6 +546,7 @@ class SafetyTests(unittest.TestCase):
             "biz_param",
         )
         self.assertEqual(classify_mutate_ret(["ULTRON_HIERARCHY::"]), "ultron_pack")
+        self.assertEqual(classify_mutate_ret(["SYSTEM_ERROR::null"]), "ultron_pack")
         msg = mutate_block_message("risk_control", ["RGV508::风控"])
         self.assertIn("卡在風控", msg)
         self.assertIn("RGV508", msg)

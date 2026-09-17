@@ -2,12 +2,15 @@
 
 Same API for both ops: mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0
 
-- set-qty: operator=item_{cartId}; fields.quantity = new qty
-- delete: events.deleteClick[] with actived=true and deleteItem
+Live async packs need the **full** Ultron model cloned from a Phase 1 render
+response: ``params.{endpoint, operator, linkage, data, hierarchy}``. Only the
+target ``item_{cartId}`` is patched:
 
-Minimal Ultron: copy the ``item_{cartId}`` node from a Phase 1 **render**
-(or asyncload) response, then mutate quantity or deleteClick. Do not invent
-the full cart hierarchy.
+- set-qty: ``fields.quantity`` (and ``selectedQuantity`` when already present)
+- delete: existing ``events.deleteClick[]`` ``actived=true`` + deleteItem
+
+Do not invent endpoint / linkage / hierarchy if render lacks them (fail closed).
+Do not invent modifySku. A one-item ``params.data`` pack is refused for POST.
 
 CLI: ``python -m reverse_audit.mtop_mutate set-qty|remove``.
 """
@@ -17,7 +20,7 @@ import copy
 import re
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from reverse_audit.cart_network_recon import unwrap_jsonish
 from reverse_audit.mtop_http import (
@@ -38,6 +41,14 @@ from reverse_audit.mtop_sign import H5_APP_KEY
 APPROVE_SET_QTY = "--i-approve-set-qty"
 APPROVE_REMOVE_ONE = "--i-approve-remove-one"
 _ITEM_KEY_RE = re.compile(r"^item_(\d+)$")
+REQUIRED_ULTRON_PARAM_KEYS: Tuple[str, ...] = (
+    "endpoint",
+    "operator",
+    "linkage",
+    "data",
+    "hierarchy",
+)
+_MODEL_DICT_KEYS: Tuple[str, ...] = ("endpoint", "linkage", "hierarchy", "data")
 
 
 class ItemNodeError(ValueError):
@@ -114,7 +125,7 @@ def collect_item_nodes(payload: Any) -> Dict[str, Dict[str, Any]]:
 
 
 def extract_item_node(payload: Any, cart_id: Any) -> Dict[str, Any]:
-    """Deep-copy the Phase 1 render item node. Does not invent a cart tree."""
+    """Deep-copy one Phase 1 render item node (diagnostics / tests)."""
     cid = _cart_id(cart_id)
     nodes = collect_item_nodes(payload)
     node = nodes.get(cid)
@@ -126,67 +137,203 @@ def extract_item_node(payload: Any, cart_id: Any) -> Dict[str, Any]:
     return copy.deepcopy(node)
 
 
-def _one_item_params(cart_id: str, item_node: Dict[str, Any]) -> Dict[str, Any]:
-    cid = _cart_id(cart_id)
-    if not isinstance(item_node, dict):
-        raise MutateSafetyError("Ultron item node must be an object")
-    # Only this line — never the rest of the cart hierarchy.
-    data = {f"item_{cid}": copy.deepcopy(item_node)}
-    extra_items = [k for k in data if _ITEM_KEY_RE.match(str(k)) and k != f"item_{cid}"]
-    if extra_items:
-        raise MutateSafetyError("refusing Ultron payload with extra item_* keys")
-    params = {
-        "operator": f"item_{cid}",
-        "data": data,
-    }
-    return {"params": params}
+def _looks_like_ultron_model(obj: Any) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    for key in _MODEL_DICT_KEYS:
+        if key not in obj or not isinstance(obj.get(key), dict):
+            return False
+    return True
 
 
-def build_set_qty_data(item_node: Dict[str, Any], cart_id: Any, quantity: Any) -> Dict[str, Any]:
+def _find_ultron_model(obj: Any, depth: int = 0) -> Optional[Dict[str, Any]]:
+    if obj is None or depth > 12:
+        return None
+    if isinstance(obj, str):
+        parsed = unwrap_jsonish(obj)
+        if parsed is not obj:
+            return _find_ultron_model(parsed, depth + 1)
+        return None
+    if isinstance(obj, list):
+        for item in obj:
+            hit = _find_ultron_model(item, depth + 1)
+            if hit is not None:
+                return hit
+        return None
+    if not isinstance(obj, dict):
+        return None
+    params = obj.get("params")
+    if _looks_like_ultron_model(params):
+        return params
+    if _looks_like_ultron_model(obj):
+        return obj
+    for key in ("render", "data", "model", "asyncload"):
+        if key in obj:
+            hit = _find_ultron_model(obj.get(key), depth + 1)
+            if hit is not None:
+                return hit
+    for val in obj.values():
+        if isinstance(val, (dict, list, str)):
+            hit = _find_ultron_model(val, depth + 1)
+            if hit is not None:
+                return hit
+    return None
+
+
+def extract_ultron_model(payload: Any) -> Dict[str, Any]:
+    """Return the render Ultron model that holds endpoint/linkage/hierarchy/data.
+
+    Fail closed if those keys are missing — do not invent a cart pack.
+    """
+    found = _find_ultron_model(unwrap_jsonish(payload))
+    if found is None:
+        raise MutateSafetyError(
+            "Phase 1 render has no full Ultron model "
+            "(need endpoint + linkage + hierarchy + data). "
+            "Will not invent those keys. Live set-qty/remove must clone the render pack."
+        )
+    return copy.deepcopy(found)
+
+
+def clone_ultron_params(payload: Any, cart_id: Any) -> Dict[str, Any]:
+    """Clone the full render model and set ``operator=item_{cartId}``."""
     cid = _cart_id(cart_id)
-    node = copy.deepcopy(item_node)
+    cloned = extract_ultron_model(payload)
+    cloned["operator"] = f"item_{cid}"
+    inner = cloned.get("data")
+    if not isinstance(inner, dict) or not isinstance(inner.get(f"item_{cid}"), dict):
+        known = []
+        if isinstance(inner, dict):
+            known = sorted(
+                k[5:] for k in inner if _ITEM_KEY_RE.match(str(k))
+            )[:12]
+        raise ItemNodeError(
+            f"cartId {cid} not found in Ultron params.data (known={known})"
+        )
+    return cloned
+
+
+def _item_ref(model: Dict[str, Any], cart_id: str) -> Dict[str, Any]:
+    inner = model.get("data")
+    if not isinstance(inner, dict):
+        raise MutateSafetyError("Ultron params.data missing")
+    node = inner.get(f"item_{cart_id}")
+    if not isinstance(node, dict):
+        raise ItemNodeError(f"cartId {cart_id} not found in Ultron params.data")
+    return node
+
+
+def assert_full_ultron_params(envelope: Dict[str, Any], cart_id: Any) -> None:
+    """Approve-path payload must be a full Ultron pack, not one item."""
+    cid = _cart_id(cart_id)
+    if not isinstance(envelope, dict):
+        raise MutateSafetyError("Ultron envelope must be an object")
+    params = envelope.get("params")
+    if not isinstance(params, dict):
+        raise MutateSafetyError("Ultron data.params missing")
+    missing = [k for k in REQUIRED_ULTRON_PARAM_KEYS if k not in params]
+    if missing:
+        raise MutateSafetyError(
+            f"Ultron params missing {missing}; live async needs "
+            f"{list(REQUIRED_ULTRON_PARAM_KEYS)} (clone render, do not send one item)"
+        )
+    for key in ("endpoint", "linkage", "hierarchy", "data"):
+        if not isinstance(params.get(key), dict):
+            raise MutateSafetyError(f"Ultron params.{key} must be an object")
+    if str(params.get("operator") or "") != f"item_{cid}":
+        raise MutateSafetyError("Ultron operator must be item_{cartId}")
+    inner = params.get("data")
+    node = inner.get(f"item_{cid}") if isinstance(inner, dict) else None
+    if not isinstance(node, dict):
+        raise MutateSafetyError(f"Ultron params.data.item_{cid} missing")
+
+
+def _patch_set_qty(node: Dict[str, Any], cart_id: str, quantity: int) -> None:
     fields = node.get("fields")
     if not isinstance(fields, dict):
         fields = {}
         node["fields"] = fields
-    fields["quantity"] = _as_qty(quantity)
-    fields.setdefault("cartId", _maybe_int_id(cid))
-    node.setdefault("id", f"item_{cid}")
+    fields["quantity"] = quantity
+    if "selectedQuantity" in fields:
+        fields["selectedQuantity"] = quantity
+    fields.setdefault("cartId", _maybe_int_id(cart_id))
+    node.setdefault("id", f"item_{cart_id}")
     # Do not invent modifySku — fields.quantity is authoritative.
-    envelope = _one_item_params(cid, node)
-    assert_allowed_mutate_api(API_ULTRON_ASYNC, envelope)
-    return envelope
 
 
-def build_delete_data(item_node: Dict[str, Any], cart_id: Any) -> Dict[str, Any]:
-    cid = _cart_id(cart_id)
-    node = copy.deepcopy(item_node)
-    fields = node.get("fields")
-    if not isinstance(fields, dict):
-        fields = {}
-        node["fields"] = fields
-    fields.setdefault("cartId", _maybe_int_id(cid))
-    node.setdefault("id", f"item_{cid}")
-    purchase_type = fields.get("purchaseType")
+def _delete_click_entry(fields: Dict[str, Any]) -> Dict[str, Any]:
     click_fields: Dict[str, Any] = {"cartId": fields.get("cartId")}
+    purchase_type = fields.get("purchaseType")
     if purchase_type not in (None, ""):
         click_fields["purchaseType"] = purchase_type
+    return {
+        "actived": True,
+        "eventType": "deleteItem",
+        "key": "deleteItem",
+        "type": "deleteItem",
+        "fields": click_fields,
+    }
+
+
+def _is_delete_item_click(click: Any) -> bool:
+    if not isinstance(click, dict):
+        return False
+    for key in ("type", "eventType", "key"):
+        if str(click.get(key) or "") == "deleteItem":
+            return True
+    return False
+
+
+def _patch_delete(node: Dict[str, Any], cart_id: str) -> None:
+    fields = node.get("fields")
+    if not isinstance(fields, dict):
+        fields = {}
+        node["fields"] = fields
+    fields.setdefault("cartId", _maybe_int_id(cart_id))
+    node.setdefault("id", f"item_{cart_id}")
     events = node.get("events")
     if not isinstance(events, dict):
         events = {}
         node["events"] = events
-    events["deleteClick"] = [
-        {
-            "actived": True,
-            "eventType": "deleteItem",
-            "key": "deleteItem",
-            "type": "deleteItem",
-            "fields": click_fields,
-        }
-    ]
-    envelope = _one_item_params(cid, node)
+    clicks = events.get("deleteClick")
+    activated = False
+    if isinstance(clicks, list):
+        for click in clicks:
+            if _is_delete_item_click(click):
+                click["actived"] = True
+                click.setdefault("eventType", "deleteItem")
+                click.setdefault("key", "deleteItem")
+                click.setdefault("type", "deleteItem")
+                activated = True
+        if not activated:
+            clicks.append(_delete_click_entry(fields))
+        events["deleteClick"] = clicks
+    else:
+        events["deleteClick"] = [_delete_click_entry(fields)]
+
+
+def _envelope(model: Dict[str, Any], cart_id: str) -> Dict[str, Any]:
+    envelope = {"params": model}
     assert_allowed_mutate_api(API_ULTRON_ASYNC, envelope)
+    assert_full_ultron_params(envelope, cart_id)
     return envelope
+
+
+def build_set_qty_data(payload: Any, cart_id: Any, quantity: Any) -> Dict[str, Any]:
+    """Clone the full render Ultron model and patch ``item_{cartId}`` quantity."""
+    cid = _cart_id(cart_id)
+    qty = _as_qty(quantity)
+    model = clone_ultron_params(payload, cid)
+    _patch_set_qty(_item_ref(model, cid), cid, qty)
+    return _envelope(model, cid)
+
+
+def build_delete_data(payload: Any, cart_id: Any) -> Dict[str, Any]:
+    """Clone the full render Ultron model and activate deleteClick on the line."""
+    cid = _cart_id(cart_id)
+    model = clone_ultron_params(payload, cid)
+    _patch_delete(_item_ref(model, cid), cid)
+    return _envelope(model, cid)
 
 
 def ultron_item_from_data(data: Dict[str, Any], cart_id: str) -> Dict[str, Any]:
@@ -196,17 +343,24 @@ def ultron_item_from_data(data: Dict[str, Any], cart_id: str) -> Dict[str, Any]:
     inner = params.get("data")
     if not isinstance(inner, dict):
         raise MutateSafetyError("Ultron params.data missing")
-    keys = [k for k in inner if _ITEM_KEY_RE.match(str(k))]
-    if keys != [f"item_{cart_id}"]:
-        raise MutateSafetyError(
-            f"Ultron params.data must contain only item_{cart_id}, got {keys}"
-        )
     if str(params.get("operator") or "") != f"item_{cart_id}":
         raise MutateSafetyError("Ultron operator must be item_{cartId}")
     node = inner.get(f"item_{cart_id}")
     if not isinstance(node, dict):
         raise MutateSafetyError("Ultron item node missing")
     return node
+
+
+def ultron_preview_summary(data: Dict[str, Any], cart_id: str) -> Dict[str, Any]:
+    """Dry-run summary. Built ``data`` on the plan is still the full pack."""
+    params = data.get("params") if isinstance(data, dict) else {}
+    inner = params.get("data") if isinstance(params, dict) else {}
+    keys = list(inner) if isinstance(inner, dict) else []
+    return {
+        "ultronKeys": [k for k in REQUIRED_ULTRON_PARAM_KEYS if isinstance(params, dict) and k in params],
+        "itemKeys": keys,
+        "dataNodeCount": len(keys),
+    }
 
 
 @dataclass
@@ -232,6 +386,7 @@ class UltronPlan:
             node = {}
         fields = node.get("fields") if isinstance(node.get("fields"), dict) else {}
         events = node.get("events") if isinstance(node.get("events"), dict) else {}
+        summary = ultron_preview_summary(self.data, self.cart_id)
         return mask_for_log(
             {
                 "phase": 2,
@@ -247,7 +402,9 @@ class UltronPlan:
                 "skuId": fields.get("skuId"),
                 "quantity": fields.get("quantity") if self.quantity is None else self.quantity,
                 "hasDeleteClick": bool(events.get("deleteClick")),
-                "itemKeys": list((self.data.get("params") or {}).get("data") or {}),
+                "ultronKeys": summary["ultronKeys"],
+                "itemKeys": summary["itemKeys"],
+                "dataNodeCount": summary["dataNodeCount"],
                 "data": self.data,
                 "form": preview_form_fields(self.api, self.data, token=token, t=t),
                 "source": self.source,
@@ -257,7 +414,7 @@ class UltronPlan:
 
 
 class UltronMutateClient:
-    """Build one Ultron async op from a render item node; POST at most once."""
+    """Build one Ultron async op from a full render model; POST at most once."""
 
     def __init__(
         self,
@@ -283,8 +440,9 @@ class UltronMutateClient:
             return fixture_payload
         if self.session is None:
             raise MutateSafetyError(
-                "need --fixture (Phase 1 render/bundle) or --cdp/--cookie-jar "
-                "to read the item node. Will not invent a cart hierarchy."
+                "need --fixture (Phase 1 render with full Ultron model) or "
+                "--cdp/--cookie-jar to read render. Will not invent "
+                "endpoint / linkage / hierarchy."
             )
         reader = ReadCartClient(
             self.session,
@@ -292,8 +450,7 @@ class UltronMutateClient:
             now_ms=self.now_ms,
             address_id=self.address_id,
         )
-        render = reader.render()
-        return render.get("data")
+        return reader.render()
 
     def plan_set_qty(
         self,
@@ -301,16 +458,11 @@ class UltronMutateClient:
         cart_id: Any,
         quantity: Any,
         fixture_payload: Any = None,
-        item_node: Optional[Dict[str, Any]] = None,
         source: str = "",
     ) -> UltronPlan:
         cid = _cart_id(cart_id)
-        node = (
-            copy.deepcopy(item_node)
-            if item_node is not None
-            else extract_item_node(self.load_render_payload(fixture_payload=fixture_payload), cid)
-        )
-        data = build_set_qty_data(node, cid, quantity)
+        payload = self.load_render_payload(fixture_payload=fixture_payload)
+        data = build_set_qty_data(payload, cid, quantity)
         return UltronPlan(
             action="set-qty",
             data=data,
@@ -326,16 +478,11 @@ class UltronMutateClient:
         *,
         cart_id: Any,
         fixture_payload: Any = None,
-        item_node: Optional[Dict[str, Any]] = None,
         source: str = "",
     ) -> UltronPlan:
         cid = _cart_id(cart_id)
-        node = (
-            copy.deepcopy(item_node)
-            if item_node is not None
-            else extract_item_node(self.load_render_payload(fixture_payload=fixture_payload), cid)
-        )
-        data = build_delete_data(node, cid)
+        payload = self.load_render_payload(fixture_payload=fixture_payload)
+        data = build_delete_data(payload, cid)
         return UltronPlan(
             action="remove",
             data=data,
@@ -351,6 +498,7 @@ class UltronMutateClient:
             plan.posted = False
             plan.dry_run = True
             return plan
+        assert_full_ultron_params(plan.data, plan.cart_id)
         if self.session is None:
             raise MutateSafetyError(
                 f"refusing POST {plan.approve_flag()}: need --cdp or --cookie-jar "

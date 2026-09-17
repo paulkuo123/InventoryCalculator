@@ -10,8 +10,8 @@ exactly one explicit flag:
 Usage:
   python -m reverse_audit.mtop_mutate add --offer-id ID --spec-id SPEC --qty 1
   python -m reverse_audit.mtop_mutate add --offer-id ID --sku-id SKU --detail-html FILE --qty 1
-  python -m reverse_audit.mtop_mutate set-qty --cart-id ID --qty N --fixture bundle.json
-  python -m reverse_audit.mtop_mutate remove --cart-id ID --fixture bundle.json
+  python -m reverse_audit.mtop_mutate set-qty --cart-id ID --qty N --fixture ultron_render_model.json
+  python -m reverse_audit.mtop_mutate remove --cart-id ID --fixture ultron_render_model.json
 
 Live one-op (operator machine, already-logged-in Chrome; CI must stay offline):
   python -m reverse_audit.mtop_mutate add --offer-id ID --spec-id SPEC --qty 1 \\
@@ -140,7 +140,7 @@ def build_parser() -> argparse.ArgumentParser:
     qty_p.add_argument(
         "--fixture",
         default=None,
-        help="Phase 1 render / bundle JSON (offline item node). Required for dry-run without --cdp.",
+        help="Phase 1 render JSON with full Ultron model (endpoint/linkage/hierarchy/data). Required for dry-run without --cdp.",
     )
     qty_p.add_argument(
         "--address-id",
@@ -161,7 +161,7 @@ def build_parser() -> argparse.ArgumentParser:
     rm_p.add_argument(
         "--fixture",
         default=None,
-        help="Phase 1 render / bundle JSON (offline item node). Required for dry-run without --cdp.",
+        help="Phase 1 render JSON with full Ultron model (endpoint/linkage/hierarchy/data). Required for dry-run without --cdp.",
     )
     rm_p.add_argument(
         "--address-id",
@@ -190,9 +190,9 @@ def _load_fixture(path: Optional[str], *, required: bool) -> Any:
     if not path:
         if required:
             raise MutateSafetyError(
-                "need --fixture (Phase 1 render/bundle JSON) for dry-run, "
-                "or --cdp/--cookie-jar to read the live item node. "
-                "Will not invent a cart hierarchy."
+                "need --fixture (Phase 1 render with full Ultron model) for dry-run, "
+                "or --cdp/--cookie-jar to read live render. "
+                "Will not invent endpoint / linkage / hierarchy."
             )
         return None
     fixture_path = Path(path)

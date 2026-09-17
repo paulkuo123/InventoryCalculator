@@ -38,8 +38,8 @@ Phase 2 **signed mtop HTTP**（獨立於上面 CDP 批次 mutate；預設只組 
 
 ```bash
 python -m reverse_audit.mtop_mutate add --offer-id ID --spec-id SPEC --qty 1
-python -m reverse_audit.mtop_mutate set-qty --cart-id ID --qty N --fixture tests/fixtures/1688_mtop_read_cart/bundle.json
-python -m reverse_audit.mtop_mutate remove --cart-id ID --fixture tests/fixtures/1688_mtop_read_cart/bundle.json
+python -m reverse_audit.mtop_mutate set-qty --cart-id ID --qty N --fixture tests/fixtures/1688_mtop_mutate/ultron_render_model.json
+python -m reverse_audit.mtop_mutate remove --cart-id ID --fixture tests/fixtures/1688_mtop_mutate/ultron_render_model.json
 # 本機一次 live（CI 禁止）：加 --cdp 與 --i-approve-add-one / --i-approve-set-qty / --i-approve-remove-one
 ```
 
