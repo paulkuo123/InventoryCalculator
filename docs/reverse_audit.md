@@ -34,7 +34,7 @@ python -m reverse_audit mutate --date YYYYMMDD --i-approve-remove
 
 也可用 `--dir reports/reverse_audit_YYYYMMDD` 覆寫路徑。未給 `--date`／`--dir` 時，日期預設為 **Asia/Taipei 今天**（`YYYYMMDD`）。
 
-Phase 2 **signed mtop HTTP**（獨立於上面 CDP 批次 mutate；預設只組 payload）：
+Phase 2 **signed mtop HTTP**（獨立 one-op；預設只組 payload）：
 
 ```bash
 python -m reverse_audit.mtop_mutate add --offer-id ID --spec-id SPEC --qty 1
@@ -44,6 +44,8 @@ python -m reverse_audit.mtop_mutate remove --cart-id ID --fixture tests/fixtures
 ```
 
 說明：[`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)。禁止結算／付款／清空整車／批次洗加。
+
+**Phase 3**：路 B 批次 mutate／路 A 整頁加車可改走同一套 HTTP。預設仍 CDP／DOM。加 `--via-mtop` 或 `ALIBABA_RESTOCK_VIA_MTOP=1`（**不是核准**）。見 [`docs/1688_mtop_restock.md`](1688_mtop_restock.md)。
 
 輸出一律落在：`reports/reverse_audit_YYYYMMDD/`。
 
@@ -109,6 +111,7 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 | `--i-approve-mutate` | **只加車**（`missing_to_add.csv`）；不隱含改量／刪除 |
 | `--i-approve-set-qty` | **只改量**到 expected（shortfall 上補＋excess 下砍）；不隱含加車／刪除 |
 | `--i-approve-remove` | **只刪** `removable=true`；庭安須真的說刪；預設不刪 |
+| `--via-mtop` | mutate 改走 signed mtop HTTP（預設關＝CDP 腳本）。不是核准。亦可 `ALIBABA_RESTOCK_VIA_MTOP=1`。失敗 fail-closed，不回退 DOM。見 [`docs/1688_mtop_restock.md`](1688_mtop_restock.md) |
 | `--sources-only` | freeze／refresh 只凍本地來源，不跑 CDP |
 | `--cdp URL` | 可選，設 `ALIBABA_RESTOCK_CDP`；freeze 會優先連此端點（連不上才退回內建 9223／9227），mutate 腳本直接使用 |
 
@@ -149,7 +152,7 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 
 - `refresh` 等於 freeze 四池再 dry-run；每次預覽請用這個，不要沿用舊 live dump
 - `freeze` 先凍 `sources/`；完整模式再跑 CDP。缺腳本時退回 sources-only（不假裝已抓 live）。
-- `freeze`／`mutate` 為 CDP 腳本的薄封裝：
+- `freeze`／`mutate` 為 CDP 腳本的薄封裝（`--via-mtop` 時 mutate 改走 `reverse_audit.mtop_restock`，不跑這些腳本）：
   - `scripts/freeze_reverse_audit_pools_20260905.py`
   - `scripts/mutate_add_missing_cdp_20260906.py`（加車）
   - `scripts/mutate_set_qty_cdp.py`（改量）
@@ -166,3 +169,4 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 - 1688 採購車 Network 偵察（讀車／加車／改量／刪列 mtop，CDP recorder）：`docs/1688_cart_network_recon.md`
 - 1688 mtop 唯讀讀車（Phase 1）：`docs/1688_mtop_read_cart.md`
 - 1688 mtop mutate HTTP（Phase 2；預設 dry-run，POST 須 one-op 旗標）：`docs/1688_mtop_mutate.md`
+- 1688 整頁補貨／mutate 接 mtop（Phase 3；預設 DOM，`--via-mtop` 才改 HTTP）：`docs/1688_mtop_restock.md`

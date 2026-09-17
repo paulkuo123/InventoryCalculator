@@ -111,6 +111,16 @@ def build_parser() -> argparse.ArgumentParser:
         dest="i_approve_remove",
         help="明確核准刪除 removable=true（庭安須真的說刪；預設不刪）",
     )
+    mut_p.add_argument(
+        "--via-mtop",
+        action="store_true",
+        dest="via_mtop",
+        help=(
+            "改走 Phase 2 signed mtop HTTP（addcargo／Ultron），不要 DOM／CDP 點擊。"
+            "預設關閉＝既有 CDP 腳本。亦可設 ALIBABA_RESTOCK_VIA_MTOP=1。"
+            "此旗標不是核准；仍須 --i-approve-*。mtop 失敗 fail-closed，不回退 DOM。"
+        ),
+    )
     return p
 
 
@@ -167,6 +177,11 @@ def main(argv: list[str] | None = None) -> int:
 
         os.environ["ALIBABA_RESTOCK_CDP"] = str(args.cdp)
 
+    if getattr(args, "via_mtop", False):
+        from reverse_audit.mtop_switch import apply_via_mtop_cli
+
+        apply_via_mtop_cli(True)
+
     if args.command == "freeze":
         return run_freeze(out_dir, sources_only=bool(args.sources_only))
     if args.command == "refresh":
@@ -201,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 approve_add=approve_add,
                 approve_set_qty=approve_set_qty,
                 approve_remove=approve_remove,
+                via_mtop=True if getattr(args, "via_mtop", False) else None,
             )
         except SystemExit as exc:
             msg = exc.code if isinstance(exc.code, str) else str(exc)

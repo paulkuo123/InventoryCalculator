@@ -43,10 +43,11 @@
 
 - 套件：`reverse_audit/`，進入點 `python -m reverse_audit …`。
 - 固定流程：**freeze → dry-run（離線）→ 人工核准 → mutate**。每次看最新預覽請用 **refresh** 重抓四池，不要沿用舊的 `live_*.json`。
-- freeze／mutate 是 CDP 腳本的薄封裝，以 `runpy` 載入 `scripts/` 內現行實作（含日期戳檔名，**不可刪**）。
+- freeze／mutate 是 CDP 腳本的薄封裝，以 `runpy` 載入 `scripts/` 內現行實作（含日期戳檔名，**不可刪**）。`--via-mtop` 時 mutate 改走 signed mtop，不跑 CDP 點擊腳本。
 - 採購車／加車／改量／刪列 **Network 偵察**（唯讀 CDP recorder）：`scripts/record_1688_cart_network.py`，說明見 [`docs/1688_cart_network_recon.md`](docs/1688_cart_network_recon.md)。2026-09-17 live 已確認加車 `addcargo`、改量／刪列 Ultron `astoreservice.async`。
 - **Phase 1 唯讀 mtop 讀車**（signed HTTP；render + asyncload）：`python -m reverse_audit.mtop_read_cart`，說明見 [`docs/1688_mtop_read_cart.md`](docs/1688_mtop_read_cart.md)。Session 來自已登入 Chrome CDP 或本機 cookie-jar。CI 用 `--dry-run`／`--fixture`。
 - **Phase 2 mtop mutate HTTP**（addcargo／Ultron set-qty／deleteClick）：`python -m reverse_audit.mtop_mutate`，說明見 [`docs/1688_mtop_mutate.md`](docs/1688_mtop_mutate.md)。**預設 dry-run，不 POST**。本機一次 live 須 `--i-approve-add-one`／`--i-approve-set-qty`／`--i-approve-remove-one`。禁止結算／付款／清空車／批次洗加。CI 必須離線。
+- **Phase 3 整頁補貨／mutate 接 mtop**（預設仍 DOM／CDP）：`ALIBABA_RESTOCK_VIA_MTOP=1` 或 `--via-mtop`。說明見 [`docs/1688_mtop_restock.md`](docs/1688_mtop_restock.md)。開關**不是核准**；路 A 仍須 `--i-approve-watchlist-restock`，路 B 仍須 `--i-approve-*`。mtop 失敗 fail-closed，不回退 DOM。
 - 完整說明與成功標準：[`docs/reverse_audit.md`](docs/reverse_audit.md)。
 - 與「定期掃庫存 → 提醒 → 核准才補 → 對帳」最終閉環的差距：[`docs/restock_closed_loop_review.md`](docs/restock_closed_loop_review.md)。
 
@@ -370,6 +371,7 @@ InventoryCalculator/
 │   ├── 1688_cart_network_recon.md
 │   ├── 1688_mtop_read_cart.md   # Phase 1 唯讀 mtop 讀車
 │   ├── 1688_mtop_mutate.md      # Phase 2 addcargo／Ultron；預設 dry-run
+│   ├── 1688_mtop_restock.md     # Phase 3 整頁補貨／mutate 接 mtop；預設 DOM
 │   ├── cart-reconciliation.md
 │   ├── ads_analysis_rules.md
 │   ├── ads_metrics_dictionary.md

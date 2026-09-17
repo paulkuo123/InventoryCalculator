@@ -373,11 +373,19 @@ def _write_plan_json(path: Path, payload: Dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _use_via_mtop(via_mtop: Optional[bool]) -> bool:
+    from reverse_audit.mtop_switch import via_mtop_enabled
+
+    return via_mtop_enabled(flag=via_mtop) if via_mtop is not None else via_mtop_enabled()
+
+
 def run_set_qty_action(
     out_dir: Path,
     *,
     root: Optional[Path] = None,
     dispatch: Optional[DispatchFn] = None,
+    via_mtop: Optional[bool] = None,
+    mtop_hooks: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Process shortfall UP + excess DOWN to expected. Does not add/remove."""
     root = root or repo_root()
@@ -389,6 +397,7 @@ def run_set_qty_action(
         {
             "action": "set_quantity",
             "approve_flag": APPROVE_SET_QTY_FLAG,
+            "viaMtop": _use_via_mtop(via_mtop),
             "accepted": accepted,
             "skipped": skipped,
             "counts": {"accepted": len(accepted), "skipped": len(skipped)},
@@ -403,6 +412,12 @@ def run_set_qty_action(
         print("[mutate:set-qty] no accepted rows — nothing to change", flush=True)
         return 0
 
+    if _use_via_mtop(via_mtop):
+        from reverse_audit.mtop_restock import run_set_qty_via_mtop
+
+        print("[mutate:set-qty] path=mtop (ALIBABA_RESTOCK_VIA_MTOP / --via-mtop)", flush=True)
+        return run_set_qty_via_mtop(out_dir, approve=True, **(mtop_hooks or {}))
+
     script = mutate_set_qty_script_path(root)
     _prepare_env(out_dir, root)
     if dispatch is not None:
@@ -415,6 +430,8 @@ def run_remove_action(
     *,
     root: Optional[Path] = None,
     dispatch: Optional[DispatchFn] = None,
+    via_mtop: Optional[bool] = None,
+    mtop_hooks: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Remove only removable=true unexpected rows after runtime re-check."""
     root = root or repo_root()
@@ -430,6 +447,7 @@ def run_remove_action(
         {
             "action": "remove",
             "approve_flag": APPROVE_REMOVE_FLAG,
+            "viaMtop": _use_via_mtop(via_mtop),
             "accepted": accepted,
             "skipped": skipped,
             "counts": {"accepted": len(accepted), "skipped": len(skipped)},
@@ -444,6 +462,12 @@ def run_remove_action(
         print("[mutate:remove] no accepted removable rows — nothing to delete", flush=True)
         return 0
 
+    if _use_via_mtop(via_mtop):
+        from reverse_audit.mtop_restock import run_remove_via_mtop
+
+        print("[mutate:remove] path=mtop (ALIBABA_RESTOCK_VIA_MTOP / --via-mtop)", flush=True)
+        return run_remove_via_mtop(out_dir, approve=True, **(mtop_hooks or {}))
+
     script = mutate_remove_script_path(root)
     _prepare_env(out_dir, root)
     if dispatch is not None:
@@ -457,6 +481,8 @@ def run_add_action(
     root: Optional[Path] = None,
     set_qty_completed: bool = False,
     dispatch: Optional[DispatchFn] = None,
+    via_mtop: Optional[bool] = None,
+    mtop_hooks: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Add missing_to_add.csv SKUs. Blocked by non-empty shortfall unless set-qty done."""
     root = root or repo_root()
@@ -479,10 +505,16 @@ def run_add_action(
         )
         return 2
 
-    script = mutate_add_script_path(root)
-    _prepare_env(out_dir, root)
     print(f"[mutate:add] APPROVED via {APPROVE_ADD_FLAG}", flush=True)
     print(f"[mutate:add] OUT={out_dir} csv={csv_path}", flush=True)
+    if _use_via_mtop(via_mtop):
+        from reverse_audit.mtop_restock import run_add_via_mtop
+
+        print("[mutate:add] path=mtop (ALIBABA_RESTOCK_VIA_MTOP / --via-mtop)", flush=True)
+        return run_add_via_mtop(out_dir, approve=True, **(mtop_hooks or {}))
+
+    script = mutate_add_script_path(root)
+    _prepare_env(out_dir, root)
     if dispatch is not None:
         return int(dispatch(script, out_dir))
     return _run_script(script, root)
@@ -496,6 +528,8 @@ def run_mutate_actions(
     approve_remove: bool = False,
     root: Optional[Path] = None,
     dispatch: Optional[DispatchFn] = None,
+    via_mtop: Optional[bool] = None,
+    mtop_hooks: Optional[Dict[str, Any]] = None,
 ) -> int:
     """Independent flags; order set-qty → remove → add. Missing flag → no touch for that action."""
     require_any_approve(
@@ -506,16 +540,29 @@ def run_mutate_actions(
     root = root or repo_root()
     out_dir = Path(out_dir)
     set_qty_completed = False
+    hooks = mtop_hooks or {}
 
     if approve_set_qty:
-        rc = run_set_qty_action(out_dir, root=root, dispatch=dispatch)
+        rc = run_set_qty_action(
+            out_dir,
+            root=root,
+            dispatch=dispatch,
+            via_mtop=via_mtop,
+            mtop_hooks=hooks,
+        )
         if rc != 0:
             return rc
         set_qty_completed = True
         print("[mutate] step set-qty ok", flush=True)
 
     if approve_remove:
-        rc = run_remove_action(out_dir, root=root, dispatch=dispatch)
+        rc = run_remove_action(
+            out_dir,
+            root=root,
+            dispatch=dispatch,
+            via_mtop=via_mtop,
+            mtop_hooks=hooks,
+        )
         if rc != 0:
             return rc
         print("[mutate] step remove ok", flush=True)
@@ -526,6 +573,8 @@ def run_mutate_actions(
             root=root,
             set_qty_completed=set_qty_completed,
             dispatch=dispatch,
+            via_mtop=via_mtop,
+            mtop_hooks=hooks,
         )
         if rc != 0:
             return rc

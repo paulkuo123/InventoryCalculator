@@ -14,7 +14,7 @@ P0 偵察：**CDP Network recorder + 欄位對照**，不是正式 HTTP 購物�
 
 **Phase 1 唯讀 HTTP 讀車**：`python -m reverse_audit.mtop_read_cart`，見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)。
 
-**Phase 2 mutate HTTP**（加車／改量／刪列 one-op）：`python -m reverse_audit.mtop_mutate`，見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)。**預設 dry-run，不 POST**；live 須 `--i-approve-add-one`／`--i-approve-set-qty`／`--i-approve-remove-one`。禁止結算／付款／清空整車／批次洗加。本 recorder 仍不自動點加／改／刪。
+**Phase 3 整頁補貨／mutate 接 HTTP**：`ALIBABA_RESTOCK_VIA_MTOP=1` 或 `--via-mtop`，見 [`docs/1688_mtop_restock.md`](1688_mtop_restock.md)。**預設仍 DOM／CDP**。開關不是核准。本 recorder 仍不自動點加／改／刪。
 
 ## 這支腳本會做／不會做
 
@@ -177,9 +177,9 @@ python scripts/record_1688_cart_network.py \
 ### 與現有 DOM 路徑的落差
 
 - **讀車**：freeze 已經吃 mtop body，不必再 GUI 化。本 recorder 用來固定 URL／header／`data=` 形狀。Phase 1 已有唯讀 signed client：`python -m reverse_audit.mtop_read_cart`（見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)）。
-- **加車**：整頁補貨現況仍是 DOM 點「加采购车」。live 請求是詳情頁 `addcargo` + 字串化 `goodsParams`（specId／offerId／qty）。Phase 2 HTTP：`python -m reverse_audit.mtop_mutate add`（預設 dry-run；`--i-approve-add-one` 才 POST 一筆）。禁止觀察清單整批加車。
-- **改量**：整頁補貨現況是 CDP 改 InputNumber。PC 車沒有獨立 `updateQuantity`；mutate XHR 是 Ultron `astoreservice.async`。Phase 2 HTTP：`… set-qty`（`--i-approve-set-qty`）。Recorder **不會**自動改量。
-- **刪列**：整頁補貨現況是 CDP 點刪除。PC 車沒有獨立 `deleteItem` API 名稱；mutate XHR 仍是同一個 Ultron `astoreservice.async`，靠 `events.deleteClick[]`／`deleteItem` 區分。Phase 2 HTTP：`… remove`（`--i-approve-remove-one`）。Recorder **不會**自動點刪。
+- **加車**：預設仍 DOM 點「加采购车」。`--via-mtop`／`ALIBABA_RESTOCK_VIA_MTOP=1` 改走 Phase 2 `addcargo`（見 [`docs/1688_mtop_restock.md`](1688_mtop_restock.md)）。live 請求是詳情頁 `addcargo` + 字串化 `goodsParams`（specId／offerId／qty）。Phase 2 one-op：`python -m reverse_audit.mtop_mutate add`。
+- **改量**：預設仍 CDP 改 InputNumber。via-mtop 改走 Ultron `astoreservice.async`。PC 車沒有獨立 `updateQuantity`。
+- **刪列**：預設仍 CDP 點刪除。via-mtop 走同一個 Ultron `async` 的 `deleteClick`／`deleteItem`。
 
 ## 操作者 live 再抓（可選；加／量／刪已確認）
 
