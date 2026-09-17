@@ -21,6 +21,10 @@ build/
 debug.log
 cookies.json
 .cookie_refresh_state.json
+# 1688 mtop session exports (never commit real cookies / _m_h5_tk)
+*.cookie-jar
+1688_cookies*.json
+1688_cookies*.txt
 data/*
 data/1688_master/
 *.kb.tmp.db
