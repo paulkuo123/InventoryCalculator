@@ -6,11 +6,13 @@ Live async packs need the **full** Ultron model cloned from a Phase 1 render
 response: ``params.{endpoint, operator, linkage, data, hierarchy}``. Only the
 target ``item_{cartId}`` is patched:
 
-- set-qty: ``fields.quantity`` (and ``selectedQuantity`` when already present)
+- set-qty: ``fields.quantity`` (and ``selectedQuantity`` when already present);
+  activate existing ``events.modifyClick[]`` where type is ``modifyQuantity``
 - delete: existing ``events.deleteClick[]`` ``actived=true`` + deleteItem
 
 Do not invent endpoint / linkage / hierarchy if render lacks them (fail closed).
-Do not invent modifySku. A one-item ``params.data`` pack is refused for POST.
+Do not invent odd eventTypes or modifySku. A one-item ``params.data`` pack is
+refused for POST.
 
 CLI: ``python -m reverse_audit.mtop_mutate set-qty|remove``.
 """
@@ -248,6 +250,15 @@ def assert_full_ultron_params(envelope: Dict[str, Any], cart_id: Any) -> None:
         raise MutateSafetyError(f"Ultron params.data.item_{cid} missing")
 
 
+def _event_matches(click: Any, event_name: str) -> bool:
+    if not isinstance(click, dict):
+        return False
+    for key in ("type", "eventType", "key"):
+        if str(click.get(key) or "") == event_name:
+            return True
+    return False
+
+
 def _patch_set_qty(node: Dict[str, Any], cart_id: str, quantity: int) -> None:
     fields = node.get("fields")
     if not isinstance(fields, dict):
@@ -258,7 +269,43 @@ def _patch_set_qty(node: Dict[str, Any], cart_id: str, quantity: int) -> None:
         fields["selectedQuantity"] = quantity
     fields.setdefault("cartId", _maybe_int_id(cart_id))
     node.setdefault("id", f"item_{cart_id}")
+    events = node.get("events")
+    if not isinstance(events, dict):
+        events = {}
+        node["events"] = events
+    clicks = events.get("modifyClick")
+    activated = False
+    if isinstance(clicks, list):
+        for click in clicks:
+            if _event_matches(click, "modifyQuantity"):
+                click["actived"] = True
+                click.setdefault("eventType", "modifyQuantity")
+                click.setdefault("key", "modifyQuantity")
+                click.setdefault("type", "modifyQuantity")
+                activated = True
+        if not activated:
+            clicks.append(_modify_quantity_entry(fields, quantity))
+        events["modifyClick"] = clicks
+    else:
+        events["modifyClick"] = [_modify_quantity_entry(fields, quantity)]
     # Do not invent modifySku — fields.quantity is authoritative.
+
+
+def _modify_quantity_entry(fields: Dict[str, Any], quantity: int) -> Dict[str, Any]:
+    click_fields: Dict[str, Any] = {
+        "cartId": fields.get("cartId"),
+        "quantity": quantity,
+    }
+    purchase_type = fields.get("purchaseType")
+    if purchase_type not in (None, ""):
+        click_fields["purchaseType"] = purchase_type
+    return {
+        "actived": True,
+        "eventType": "modifyQuantity",
+        "key": "modifyQuantity",
+        "type": "modifyQuantity",
+        "fields": click_fields,
+    }
 
 
 def _delete_click_entry(fields: Dict[str, Any]) -> Dict[str, Any]:
@@ -276,12 +323,7 @@ def _delete_click_entry(fields: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _is_delete_item_click(click: Any) -> bool:
-    if not isinstance(click, dict):
-        return False
-    for key in ("type", "eventType", "key"):
-        if str(click.get(key) or "") == "deleteItem":
-            return True
-    return False
+    return _event_matches(click, "deleteItem")
 
 
 def _patch_delete(node: Dict[str, Any], cart_id: str) -> None:
@@ -402,6 +444,11 @@ class UltronPlan:
                 "skuId": fields.get("skuId"),
                 "quantity": fields.get("quantity") if self.quantity is None else self.quantity,
                 "hasDeleteClick": bool(events.get("deleteClick")),
+                "hasModifyQuantity": any(
+                    _event_matches(click, "modifyQuantity") and click.get("actived")
+                    for click in (events.get("modifyClick") or [])
+                    if isinstance(click, dict)
+                ),
                 "ultronKeys": summary["ultronKeys"],
                 "itemKeys": summary["itemKeys"],
                 "dataNodeCount": summary["dataNodeCount"],

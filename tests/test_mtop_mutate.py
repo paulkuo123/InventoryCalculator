@@ -175,6 +175,17 @@ class UltronShapeTests(unittest.TestCase):
         )
         # Do not invent a new modifySku; existing sibling event keeps old qty.
         self.assertEqual(item["events"]["modifySku"][0]["fields"]["quantity"], 40)
+        clicks = item["events"]["modifyClick"]
+        self.assertEqual(len(clicks), 1)
+        self.assertTrue(clicks[0]["actived"])
+        self.assertEqual(clicks[0]["type"], "modifyQuantity")
+        self.assertEqual(clicks[0]["eventType"], "modifyQuantity")
+        self.assertEqual(clicks[0]["key"], "modifyQuantity")
+        self.assertFalse(
+            payload["render"]["data"]["data"]["item_9001"]["events"]["modifyClick"][0][
+                "actived"
+            ]
+        )
         # Source fixture is not mutated.
         self.assertEqual(source_item["fields"]["quantity"], 40)
         self.assertEqual(
@@ -202,6 +213,7 @@ class UltronShapeTests(unittest.TestCase):
         self.assertIn("hierarchy", del_data["params"])
         # Existing modifySku event is kept; delete only activates deleteClick.
         self.assertEqual(len(del_item["events"]["modifySku"]), 1)
+        self.assertFalse(del_item["events"]["modifyClick"][0]["actived"])
         self.assertFalse(
             payload["render"]["data"]["data"]["item_9001"]["events"]["deleteClick"][0][
                 "actived"
@@ -248,6 +260,27 @@ class UltronShapeTests(unittest.TestCase):
         self.assertTrue(clicks[0]["actived"])
         self.assertEqual(clicks[0]["type"], "deleteItem")
         self.assertEqual(clicks[0]["fields"]["purchaseType"], "main_purchase_type")
+
+    def test_set_qty_activates_existing_modify_quantity(self):
+        payload = self._model()
+        payload["render"]["data"]["data"]["item_9001"]["events"]["modifyClick"].append(
+            {
+                "actived": False,
+                "eventType": "oddUnusedType",
+                "key": "oddUnusedType",
+                "type": "oddUnusedType",
+            }
+        )
+        data = build_set_qty_data(payload, CART, 2)
+        clicks = ultron_item_from_data(data, CART)["events"]["modifyClick"]
+        self.assertEqual(len(clicks), 2)
+        qty_click = next(c for c in clicks if c.get("type") == "modifyQuantity")
+        odd = next(c for c in clicks if c.get("type") == "oddUnusedType")
+        self.assertTrue(qty_click["actived"])
+        self.assertEqual(qty_click["eventType"], "modifyQuantity")
+        self.assertEqual(qty_click["key"], "modifyQuantity")
+        self.assertFalse(odd["actived"])
+        self.assertEqual(ultron_item_from_data(data, CART)["fields"]["quantity"], 2)
 
     def test_clone_with_batch_add_item_label_passes_set_qty_safety(self):
         payload = self._model()
@@ -490,6 +523,12 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             payload["data"]["params"]["data"]["item_9001"]["fields"]["quantity"], 9
         )
+        qty_click = payload["data"]["params"]["data"]["item_9001"]["events"][
+            "modifyClick"
+        ][0]
+        self.assertTrue(qty_click["actived"])
+        self.assertEqual(qty_click["type"], "modifyQuantity")
+        self.assertTrue(payload["hasModifyQuantity"])
         for key in REQUIRED_ULTRON_PARAM_KEYS:
             self.assertIn(key, payload["data"]["params"])
         self.assertEqual(payload["ultronKeys"], list(REQUIRED_ULTRON_PARAM_KEYS))

@@ -105,20 +105,26 @@ python -m reverse_audit.mtop_mutate read --cdp http://127.0.0.1:9227
 # 1) add / set-qty / remove：先不要旗標看 payload，再加對應 --i-approve-*
 ```
 
-**2026-09-17 再 smoke（addcargo 已 PASS；同一測線）：** cartId=`7023719468331`，offer `703961968928`，當時 qty=1。先改量 1→2，成功後再刪列。**不要** checkout／clear／Golden／auto_approve。
+**2026-09-17 再 smoke：** 測線 `7023719468331` 已被 remove 刪掉。請 **先加 1 筆測線**（offer／spec 與先前 addcargo 相同即可），讀車拿新 `cartId`，再 set-qty 1→2，成功後 remove 清掉。**不要** checkout／clear／Golden／auto_approve。
 
 ```bash
-# 先 dry-run 確認 params 有 endpoint / linkage / hierarchy / data（不是只有 item_*）
+python -m reverse_audit.mtop_mutate add \
+  --offer-id 703961968928 --spec-id '<specId>' --qty 1 \
+  --cdp http://127.0.0.1:9227 --i-approve-add-one
+
+python -m reverse_audit.mtop_mutate read --cdp http://127.0.0.1:9227
+
+# 用讀車拿到的新 cartId；dry-run 應看到 modifyClick.modifyQuantity actived=true
 python -m reverse_audit.mtop_mutate set-qty \
-  --cart-id 7023719468331 --qty 2 \
+  --cart-id '<newCartId>' --qty 2 \
   --cdp http://127.0.0.1:9227
 
 python -m reverse_audit.mtop_mutate set-qty \
-  --cart-id 7023719468331 --qty 2 \
+  --cart-id '<newCartId>' --qty 2 \
   --cdp http://127.0.0.1:9227 --i-approve-set-qty
 
 python -m reverse_audit.mtop_mutate remove \
-  --cart-id 7023719468331 \
+  --cart-id '<newCartId>' \
   --cdp http://127.0.0.1:9227 --i-approve-remove-one
 ```
 
@@ -147,7 +153,7 @@ python -m reverse_audit.mtop_mutate remove \
 
 mtop `data={"params":{...}}`。`params` **必須**含 live 成功包那組鍵：`endpoint`、`operator`、`linkage`、`data`（整車 nodes）、`hierarchy`。來源是 Phase 1 **render 回包裡的完整 Ultron model**（不要發明缺的鍵）。clone 後只 patch 目標 `item_{cartId}`，`operator=item_{cartId}`。
 
-- 改量：覆寫 `fields.quantity`＝新量；若 render 上已有 `selectedQuantity` 一併改。不發明 `modifySku`
+- 改量：覆寫 `fields.quantity`＝新量；若 render 上已有 `selectedQuantity` 一併改。找出既有 `events.modifyClick[]` 裡 `eventType`／`key`／`type=modifyQuantity` 的那筆，設 `actived=true`。不發明奇怪的 eventType，不發明 `modifySku`
 - 刪列：既有 `events.deleteClick[]` 裡 `deleteItem` 設 `actived=true`（沒有才補一筆 documented 形狀）；其他 events／nodes 原樣保留
 - dry-run 可印摘要（`ultronKeys`／`itemKeys`）；**核准 POST 的 body 必須是整包**，不是 `{operator, data:{item_X}}` 最小包（那包 live 會 `SYSTEM_ERROR::null`）
 - 安全閘：禁止結算／清空車／batch-add **API 名稱**。clone 包裡的 UI 標籤（`batchAddItemLabel`、畫面上的「结算」）**不是**那些 API，`operator=item_*` 的 async one-op 不以 payload 子字串擋它們。addcargo 仍掃我們自己組的 body。
@@ -185,4 +191,4 @@ python -m unittest tests.test_mtop_mutate tests.test_mtop_read_cart
 | cookie-jar / `_m_h5_tk` | 環境沒有（也不該有） |
 | 公開詳情頁 GET（`--fetch-detail`，不加車） | `detail.1688.com` 回 **x5 punish** 小頁（約 1KB，無 `skuMapOriginal`）。雲端 IP 被攔，不是 parser 錯。 |
 
-遠端 CDP 第一次 smoke：**addcargo PASS**（車 23→24，新 cartId=`7023719468331` qty=1）。**set-qty／remove** 先 FAIL `SYSTEM_ERROR::null`（最小 item 包），改 clone 整包後 dry-run 曾被 UI 標籤 `batchAddItemLabel` 誤擋。本修：`operator=item_*` 的 async 不再用 payload 子字串擋 clone 標籤。**請 Grok 再跑上面 1→2 再刪列**；這台 cloud 仍無法 POST。
+遠端 CDP 第一次 smoke：**addcargo PASS**（車 23→24，新 cartId=`7023719468331` qty=1）。**remove PASS**（24→23，該列已刪）。**set-qty** 曾 FAIL `INVALID_PARAM::未经定义的事件类型`（只改 quantity、沒開 `modifyClick`／`modifyQuantity`）。本修會啟動既有 `modifyQuantity`。**請 Grok：先加 1 測線 → set-qty 1→2 → remove 清掉**；這台 cloud 仍無法 POST。

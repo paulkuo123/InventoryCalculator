@@ -31,6 +31,15 @@
                 "fields": {"cartId": 9001, "purchaseType": "main_purchase_type"}
               }
             ],
+            "modifyClick": [
+              {
+                "actived": false,
+                "eventType": "modifyQuantity",
+                "key": "modifyQuantity",
+                "type": "modifyQuantity",
+                "fields": {"cartId": 9001, "quantity": 40}
+              }
+            ],
             "modifySku": [
               {"actived": false, "fields": {"quantity": 40}}
             ]
