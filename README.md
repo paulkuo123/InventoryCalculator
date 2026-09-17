@@ -353,7 +353,7 @@ InventoryCalculator/
 ├── ads_weekly.py           # 週報抓取（預設遠端 CDP，不走 Mac）
 ├── ads_session.py          # 遠端工作階段／BLOCKER 輔助
 ├── crawler.py              # 蝦皮爬蟲與廣告匯出
-├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / CDP mutate；Phase 1 讀車 + Phase 2 mtop HTTP）
+├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / CDP mutate；Phase 1 讀車 + Phase 2 mtop HTTP；Phase 3 `--via-mtop` 預設關）
 ├── restock_loop/           # 唯讀觀察清單應補摘要（python -m restock_loop scan）
 ├── scripts/                # 現行 CDP 輔助腳本（freeze／mutate 以 runpy 載入，勿刪）
 │   ├── freeze_reverse_audit_pools_20260905.py
@@ -377,6 +377,8 @@ InventoryCalculator/
 │   ├── ads_metrics_dictionary.md
 │   ├── ads_report_prompt_spec.md
 │   ├── ads_weekly_pipeline.md
+│   ├── ads_cost_margin_design.md   # 廣告引用 1688 成本（設計 only）
+│   ├── ads_sop_review_fable5.md    # 現行廣告 SOP 審閱（2026-09-13）
 │   ├── mapping_eval.md
 │   ├── sku_mapping_knowhow_engine.md
 │   ├── offer_discovery_spike.md  # TASK 9：第 1 層 offer 來源（設計 only）
@@ -422,7 +424,7 @@ InventoryCalculator/
 
 - 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。Know-how Engine 總覽、TASK 1 vs 現況數字與 auto-approve 反事實精度見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。第 1 層 offer 來源（設計 spike，不寫爬蟲）見 [`docs/offer_discovery_spike.md`](docs/offer_discovery_spike.md)。全表 AI 補完 vs 2026-09-09 暫停（PRs #41–#46 勿合）見 [`docs/golden_ai_automation_review.md`](docs/golden_ai_automation_review.md)。
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
-- 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。若要使用 Gemini、Grok 或 DeepSeek，仍可透過 `SKU_MAPPING_AI_PROVIDER` 與對應的 API Key／模型設定切換，不需也不應改跑其他初始化腳本。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
+- 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。若要使用 Gemini、Grok 或 DeepSeek，可執行對應的 `python3 setup_gemini_key.py`、`python3 setup_xai_key.py` 或 `python3 setup_deepseek_key.py`，或直接編輯 `.env.local` 設定 `SKU_MAPPING_AI_PROVIDER` 與對應的 API Key／模型。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。
 - 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 
