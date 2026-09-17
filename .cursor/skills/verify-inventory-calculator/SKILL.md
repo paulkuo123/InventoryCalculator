@@ -73,7 +73,7 @@ Doctor is read-only. It must show all of:
 - Recorded pid is alive and `/proc/<pid>/cmdline` contains `main.py`
 - Port 8080 is in use
 - `GET /` is 200 and the body names 莉莉安蝦皮庫存管理系統
-- `GET /ads.html`, `/inbound.html`, `/sku-mapping.html`, `/products.html` are 200
+- `GET /ads.html`, `/inbound.html`, `/sku-mapping.html`, `/products.html`, `/golden-import.html` are 200
 - `GET /api/inbound/status` returns JSON with `"status": "success"`
 - `golden_table.json` SHA-256 matches the hash recorded at launch
 
