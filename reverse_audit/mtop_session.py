@@ -25,6 +25,33 @@ _RELEVANT_DOMAIN_RE = re.compile(
 )
 
 
+def _cookie_host(domain: str) -> str:
+    return str(domain or "").lstrip(".").lower()
+
+
+def _is_1688_cookie_domain(domain: str) -> bool:
+    host = _cookie_host(domain)
+    return host == "1688.com" or host.endswith(".1688.com")
+
+
+def _domain_preference(domain: str) -> int:
+    """Higher wins when the same cookie name exists on multiple domains.
+
+    h5api.m.1688.com must pair 1688 ``_m_h5_tk`` with 1688 ``cookie2`` (etc.).
+    CDP often also has ``.taobao.com`` / ``.tmall.com`` copies; those must not win.
+    """
+    host = _cookie_host(domain)
+    if host == "1688.com":
+        return 4
+    if host.endswith(".1688.com"):
+        return 3
+    if not host:
+        return 1
+    if host.endswith("taobao.com") or host.endswith("tmall.com"):
+        return 0
+    return 2
+
+
 class SessionError(RuntimeError):
     """Operator-facing session problem (not logged in / missing jar / CDP)."""
 
@@ -57,12 +84,22 @@ class MtopSession:
     source: str = "unknown"
     cdp: Optional[str] = None
 
-    def get(self, name: str) -> str:
+    def _best_row(self, name: str) -> Optional[CookieRow]:
         wanted = str(name or "")
-        for row in reversed(self.cookies):
-            if row.name == wanted and row.value:
-                return row.value
-        return ""
+        best: Optional[CookieRow] = None
+        best_score = (-1, 0)
+        for idx, row in enumerate(self.cookies):
+            if row.name != wanted or not row.value:
+                continue
+            score = (_domain_preference(row.domain), -idx)
+            if best is None or score > best_score:
+                best = row
+                best_score = score
+        return best
+
+    def get(self, name: str) -> str:
+        row = self._best_row(name)
+        return row.value if row else ""
 
     @property
     def m_h5_tk(self) -> str:
@@ -82,17 +119,23 @@ class MtopSession:
         return token
 
     def cookie_header(self) -> str:
-        """Build a Cookie header. Caller must not log the return value."""
+        """Cookie header for h5api.m.1688.com. Duplicate names prefer 1688 domains.
+
+        Caller must not log the return value.
+        """
         parts: List[str] = []
         seen = set()
         for row in self.cookies:
             key = row.name
-            if not key or key in seen or not row.value:
+            if not key or key in seen:
                 continue
-            if "\r" in row.value or "\n" in row.value or "\r" in key or "\n" in key:
+            best = self._best_row(key)
+            if best is None:
+                continue
+            if "\r" in best.value or "\n" in best.value or "\r" in key or "\n" in key:
                 continue
             seen.add(key)
-            parts.append(f"{key}={row.value}")
+            parts.append(f"{key}={best.value}")
         return "; ".join(parts)
 
     def summary(self) -> Dict[str, Any]:

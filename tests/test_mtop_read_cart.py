@@ -174,6 +174,35 @@ class SessionTests(unittest.TestCase):
             session = load_cookie_jar(path)
             self.assertEqual(session.token(), SYNTHETIC_TOKEN)
 
+    def test_cookie_header_prefers_1688_domain_over_taobao(self):
+        """CDP often has cookie2 on both .taobao.com and .1688.com; 1688 must win."""
+        taobao_first = session_from_playwright_cookies(
+            [
+                {"name": "cookie2", "value": "taobao-cookie2", "domain": ".taobao.com"},
+                {"name": "cookie2", "value": "1688-cookie2", "domain": ".1688.com"},
+                {"name": "_m_h5_tk", "value": "taobao-tk_1", "domain": ".taobao.com"},
+                {"name": "_m_h5_tk", "value": SYNTHETIC_TK, "domain": ".1688.com"},
+                {"name": "cna", "value": "only-taobao-cna", "domain": ".taobao.com"},
+            ],
+            source="test",
+        )
+        tmall_second = session_from_playwright_cookies(
+            [
+                {"name": "cookie2", "value": "1688-cookie2", "domain": "cart.1688.com"},
+                {"name": "cookie2", "value": "tmall-cookie2", "domain": ".tmall.com"},
+                {"name": "_m_h5_tk", "value": SYNTHETIC_TK, "domain": ".1688.com"},
+            ],
+            source="test",
+        )
+        for session in (taobao_first, tmall_second):
+            header = session.cookie_header()
+            self.assertIn("cookie2=1688-cookie2", header)
+            self.assertNotIn("taobao-cookie2", header)
+            self.assertNotIn("tmall-cookie2", header)
+            self.assertEqual(session.get("cookie2"), "1688-cookie2")
+            self.assertEqual(session.token(), SYNTHETIC_TOKEN)
+        self.assertIn("cna=only-taobao-cna", taobao_first.cookie_header())
+
     def test_missing_token_is_not_logged_in(self):
         session = session_from_playwright_cookies(
             [{"name": "unb", "value": "1", "domain": ".1688.com"}],

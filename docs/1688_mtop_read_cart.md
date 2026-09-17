@@ -70,6 +70,8 @@ appKey = 12574478   # 1688 H5 典型值，不是 secret
 
 `t` 是毫秒時間戳；`data` 是會送出的 compact JSON 字串。缺 `_m_h5_tk` 或 `FAIL_SYS_SESSION_EXPIRED` → 未登入。`FAIL_SYS_ILLEGAL_ACCESS`／非法请求 → 簽章或 token 過期，請重匯 jar 或重掛同一個已登入 profile。
 
+打 `h5api.m.1688.com` 時，同名 cookie（例如 `cookie2`、`_m_h5_tk`）**優先用 `.1688.com`／1688 子網域**，不讓 CDP 裡的 `.taobao.com`／`.tmall.com` 值贏。否則會出現「Chrome 明明有 1688 `_m_h5_tk`，HTTP 卻 `FAIL_SYS_SESSION_EXPIRED`」。沒有 1688 對應名稱的 taobao cookie 仍會帶上。
+
 ## 測試
 
 ```bash
