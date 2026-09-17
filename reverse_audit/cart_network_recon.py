@@ -1,9 +1,10 @@
 """Classify and parse 1688 cart Network captures (read / add / qty).
 
 Recon only: no HTTP cart client, no CDP launch, no cart mutation.
-Field names come from freeze (`mtopPurchaseAstoreService` / buycenter+cart)
-plus known offer-page addCargo / sku-selector shapes. Exact live add/qty
-URLs that freeze never recorded stay TODO until operator-side capture.
+Read-cart shapes come from freeze (`mtopPurchaseAstoreService` / buycenter+cart).
+add_to_cart / change_qty were live-confirmed 2026-09-17 (one offer / one sku):
+addcargo on the detail page; Ultron `astoreservice.async` on the cart page.
+sku-selector exact path is still a candidate.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ Kind = str  # read_cart | add_to_cart | change_qty | sku_selector | other_cart |
 SECRET_KEYS = frozenset(
     {
         "cookie",
+        "cookie2",
         "set-cookie",
         "authorization",
         "proxy-authorization",
@@ -26,11 +28,22 @@ SECRET_KEYS = frozenset(
         "sign",
         "_m_h5_tk",
         "_m_h5_tk_enc",
+        "umid",
+        "umidtoken",
+        "_umid",
+        "cna",
+        "_tb_token_",
+        "sessionid",
         "password",
         "passwd",
         "secret",
     }
 )
+
+# Ultron qty mutate: params.operator = item_{cartId}
+_ITEM_OPERATOR_RE = re.compile(r"^item_(\d+)$")
+# `.async` must not match `.asyncload`
+_ASTORE_ASYNC_RE = re.compile(r"astoreservice\.async(?:/|\?|$|[^a-z])")
 
 IDENTITY_KEYS = (
     "offerId",
@@ -63,7 +76,7 @@ FREEZE_READ_HINTS = (
 # Host + path pattern freeze already dumps as cart_{render,asyncload,async}.json
 H5_HOST = "h5api.m.1688.com"
 
-# Code-analysis field map. `status` is confirmed_from_freeze | candidate | TODO_live.
+# Field map. status: confirmed_from_freeze | confirmed_live | candidate | TODO_live
 KNOWN_FIELD_MAP: List[Dict[str, Any]] = [
     {
         "kind": "read_cart",
@@ -97,52 +110,63 @@ KNOWN_FIELD_MAP: List[Dict[str, Any]] = [
     },
     {
         "kind": "add_to_cart",
-        "status": "candidate",
+        "status": "confirmed_live",
         "request_url": (
-            "https://h5api.m.1688.com/h5/<api-contains-addCargo-or-MtopPurchaseService>/…"
+            "https://h5api.m.1688.com/h5/"
+            "com.alibaba.china.buy.service.purchase.mtoppurchaseservice.addcargo/1.0/"
         ),
-        "url_match": "addCargo | MtopPurchaseService (offer page, not freeze cart)",
-        "method": "POST (window.lib.mtop.request) — TODO_live exact path",
+        "url_match": (
+            "com.alibaba.china.buy.service.purchase.mtoppurchaseservice.addcargo/1.0 "
+            "(offer/detail page — cart-only attach misses it)"
+        ),
+        "method": "POST application/x-www-form-urlencoded; form field `data` is a JSON string",
         "key_headers": [
             "referer=https://detail.1688.com/offer/<offerId>.html",
             "origin=https://detail.1688.com",
-            "cookie (session; do not log values)",
-            "mtop sign / _m_h5_tk (do not log values)",
+            "content-type: application/x-www-form-urlencoded",
+            "cookie / mtop sign / _m_h5_tk (session; do not log values)",
         ],
         "body_fields": [
-            "data.goodsParams: JSON array of {specId, offerId, quantity, flow, ext, selectedTradeServices}",
+            "data.client typically 'pc'",
+            "data.goodsParams: STRINGIFIED array "
+            "[{specId, offerId, quantity, flow, ext, selectedTradeServices}]",
             "flow typically 'general'; ext.sceneCode often ''",
             "skuId is NOT in goodsParams — map skuId→specId via sku_selector first",
             "quantity = this add amount (server may merge into existing cartId)",
         ],
         "notes": (
-            "Current restocker still clicks DOM 加采购车 "
-            "(alibaba_restocker.click_add_to_cart). Do not batch-add watchlist. "
-            "Exact live URL/api string is TODO until operator CDP records 1 sku."
+            "Live-confirmed 2026-09-17 on one offer/sku (sample ids in "
+            "docs/1688_cart_network_recon.md; examples only). Restocker still "
+            "clicks DOM 加采购车. Not a production HTTP client. Do not batch-add."
         ),
     },
     {
         "kind": "change_qty",
-        "status": "TODO_live",
-        "request_url": "TODO live capture",
-        "url_match": (
-            "candidate: mtoppurchaseastoreservice.{update,modify} / "
-            "updateQuantity / updateCart — unconfirmed"
+        "status": "confirmed_live",
+        "request_url": (
+            "https://h5api.m.1688.com/h5/"
+            "mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0/"
         ),
-        "method": "TODO_live (likely POST form, same mtop envelope)",
+        "url_match": (
+            "mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0 "
+            "(Ultron; PC cart has no separate updateQuantity API name)"
+        ),
+        "method": "POST form; Ultron `params` blob (not a distinct updateQuantity name)",
         "key_headers": [
             "referer=https://cart.1688.com/cart.htm",
-            "cookie (session; do not log values)",
-            "mtop sign / _m_h5_tk (do not log values)",
+            "cookie / mtop sign / _m_h5_tk (session; do not log values)",
         ],
         "body_fields": [
-            "expected: cartId + quantity (absolute, matching cart_cdp_ops.set_line_quantity)",
-            "offerId / skuId may ride along or only cartId",
-            "TODO_live: confirm field names vs cartId / qty / offerId / skuId",
+            "params.operator = item_{cartId}",
+            "params.data.item_{cartId}.fields.cartId / offerId / skuId / specId",
+            "params.data.item_{cartId}.fields.quantity = NEW qty (authoritative)",
+            "events.modifySku[0].fields.quantity may still be the OLD qty — do not trust alone",
         ],
         "notes": (
-            "Current mutate path is DOM InputNumber, not HTTP. Recorder must not "
-            "set-qty or remove. Operator may bump one line while --watch-seconds runs."
+            "Live-confirmed 2026-09-17 (8→9 on one cart line; sample ids are "
+            "examples only). `.asyncload` / `.render` stay read_cart. URL-only "
+            "`.async` without Ultron operator is not enough. Recorder must not "
+            "set-qty. Not a production HTTP client."
         ),
     },
     {
@@ -203,10 +227,85 @@ def parse_query_and_form(url: str, post_data: Optional[str] = None) -> Dict[str,
         else:
             for key, vals in parse_qs(text, keep_blank_values=True).items():
                 out[key] = vals[0] if len(vals) == 1 else vals
-    for key in ("data", "goodsParams"):
+    for key in ("data", "goodsParams", "params"):
         if key in out and isinstance(out[key], str):
             out[key] = maybe_json(unquote(out[key]))
+    data = out.get("data")
+    if isinstance(data, dict) and isinstance(data.get("params"), str):
+        data = dict(data)
+        data["params"] = maybe_json(unquote(data["params"]))
+        out["data"] = data
     return out
+
+
+def _as_dict(value: Any) -> Optional[Dict[str, Any]]:
+    parsed = unwrap_jsonish(value)
+    return parsed if isinstance(parsed, dict) else None
+
+
+def ultron_params_from_envelope(envelope: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Return the Ultron `params` object from a parsed mtop envelope, if any."""
+    if not isinstance(envelope, dict):
+        return None
+    params = envelope.get("params")
+    if params is None:
+        data = envelope.get("data")
+        if isinstance(data, dict):
+            params = data.get("params")
+        elif isinstance(data, str):
+            decoded = _as_dict(data)
+            if decoded is not None:
+                params = decoded.get("params")
+    return _as_dict(params)
+
+
+def extract_ultron_qty_change(
+    url: str = "",
+    post_data: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """If postData is an Ultron qty mutate, return authoritative identity fields.
+
+    Trusts ``params.data.item_{cartId}.fields.quantity`` (the new qty).
+    ``events.modifySku[*].fields.quantity`` may still be the old value.
+    """
+    envelope = parse_query_and_form(url, post_data)
+    params = ultron_params_from_envelope(envelope)
+    if not params:
+        return None
+    operator = str(params.get("operator") or "").strip()
+    matched = _ITEM_OPERATOR_RE.match(operator)
+    if not matched:
+        return None
+    cart_id = matched.group(1)
+    data = _as_dict(params.get("data")) or {}
+    item = _as_dict(data.get(f"item_{cart_id}")) or {}
+    fields = _as_dict(item.get("fields")) or {}
+    if "quantity" not in fields:
+        return None
+    modify_qty = None
+    events = _as_dict(item.get("events")) or {}
+    modify = events.get("modifySku")
+    if isinstance(modify, list) and modify:
+        first = _as_dict(modify[0]) or {}
+        ev_fields = _as_dict(first.get("fields")) or {}
+        if "quantity" in ev_fields:
+            modify_qty = ev_fields.get("quantity")
+    return {
+        "operator": operator,
+        "cartId": str(fields.get("cartId") or cart_id),
+        "offerId": fields.get("offerId"),
+        "skuId": fields.get("skuId"),
+        "specId": fields.get("specId"),
+        "quantity": fields.get("quantity"),
+        "modifySkuQuantity": modify_qty,
+    }
+
+
+def looks_like_ultron_qty_mutate(
+    url: str = "",
+    post_data: Optional[str] = None,
+) -> bool:
+    return extract_ultron_qty_change(url, post_data) is not None
 
 
 def maybe_json(value: Any) -> Any:
@@ -352,11 +451,16 @@ def classify_cart_event(
     )
     if any(tok in blob for tok in qty_tokens):
         return "change_qty"
+    # PC cart qty mutate is Ultron `.async` + operator=item_{cartId}.
+    # URL-only `.async` (and `.asyncload`) stay read_cart.
+    if looks_like_ultron_qty_mutate(url, post_data):
+        return "change_qty"
     if "mtoppurchaseastoreservice" in blob:
-        # Method suffix on the same service: update/modify vs render/async.
         if re.search(r"astoreservice\.(delete|remove)", blob):
             return "other_cart"
         if re.search(r"astoreservice\.(update|modify)", blob):
+            return "change_qty"
+        if _ASTORE_ASYNC_RE.search(blob) and looks_like_ultron_qty_mutate(url, post_data):
             return "change_qty"
         return "read_cart"
     if "mtop" in blob and "buycenter" in blob and "cart" in blob:
@@ -421,6 +525,11 @@ def extract_identity_fields(obj: Any, acc: Optional[Dict[str, Any]] = None, dept
     if isinstance(obj.get("cartIds"), list):
         for cid in obj["cartIds"]:
             _add("cartId", cid)
+    operator = obj.get("operator")
+    if operator is not None:
+        matched = _ITEM_OPERATOR_RE.match(str(operator).strip())
+        if matched:
+            _add("cartId", matched.group(1))
 
     gp = obj.get("goodsParams")
     if gp is not None:
@@ -509,6 +618,7 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         extract_identity_fields(item, identity)
 
     headers_in = raw.get("headers") or raw.get("requestHeaders") or {}
+    ultron_qty = extract_ultron_qty_change(url, post_data)
     return {
         "kind": kind,
         "method": method or None,
@@ -518,6 +628,15 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
         "headers": redact_headers(headers_in) if isinstance(headers_in, dict) else {},
         "requestEnvelopeKeys": sorted(str(k) for k in envelope.keys()),
         "identity": {k: v for k, v in identity.items() if v},
+        "ultronQty": (
+            {
+                key: val
+                for key, val in ultron_qty.items()
+                if val is not None and val != ""
+            }
+            if ultron_qty
+            else None
+        ),
         "status": raw.get("status"),
         "resourceType": raw.get("resourceType"),
         "freezeReadMatch": is_freeze_cart_url(url),
@@ -601,6 +720,8 @@ def summarize_records(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]
             status = "observed_candidate"
         elif observed and status == "confirmed_from_freeze":
             status = "confirmed_from_freeze_and_observed"
+        elif observed and status == "confirmed_live":
+            status = "confirmed_live_and_observed"
         rows.append(
             {
                 **known,
@@ -654,15 +775,20 @@ def field_table_markdown(rows: Iterable[Dict[str, Any]]) -> str:
 
 
 def iter_cdp_endpoints(explicit: Optional[str] = None) -> List[str]:
-    """ALIBABA_RESTOCK_CDP first, then freeze's 9223 / 9227 fallbacks."""
+    """ALIBABA_RESTOCK_CDP first, then 9227 (computerUse / profile-5), then 9223.
+
+    The port must match the Chrome profile the operator actually clicks.
+    computerUse is often :9227 (chrome-profile-5), not :9232 (profile-10).
+    Do not silently prefer a mismatched debugging port.
+    """
     import os
 
     ordered: List[str] = []
     for candidate in (
         str(explicit or "").strip(),
         str(os.environ.get("ALIBABA_RESTOCK_CDP") or "").strip(),
-        "http://127.0.0.1:9223",
         "http://127.0.0.1:9227",
+        "http://127.0.0.1:9223",
     ):
         if candidate and candidate not in ordered:
             ordered.append(candidate)

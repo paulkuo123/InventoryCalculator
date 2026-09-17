@@ -2,12 +2,15 @@
 """CDP Network recorder for 1688 cart / add-to-cart / change-qty recon.
 
 Attaches to an already-running 1688 Chrome via connect_over_cdp.
-Default mode is read-only observation (open cart, record mtop).
+Listens on every existing page in the browser context plus pages opened
+later (detail + cart at minimum). Default mode is read-only.
 
 Hard rules:
 - never launch Chrome / never kill Chrome
 - never click 加采购车, never set-qty, never remove, never batch-add watchlist
 - not a production HTTP cart client — capture + field map only
+- CDP port must match the Chrome profile the operator actually clicks
+  (computerUse is often :9227 / chrome-profile-5, not :9232 / profile-10)
 """
 from __future__ import annotations
 
@@ -78,7 +81,20 @@ def write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def attach_network(page, bucket: List[Dict[str, Any]]) -> None:
+def _page_already_closed(page) -> bool:
+    try:
+        return bool(page.is_closed())
+    except Exception:
+        return False
+
+
+def attach_network(page, bucket: List[Dict[str, Any]]) -> bool:
+    """Listen on one Playwright page. Safe to call more than once per page."""
+    if page is None or _page_already_closed(page):
+        return False
+    if getattr(page, "_cart_network_attached", False):
+        return False
+
     def on_request(request) -> None:
         url = request.url or ""
         if not is_interesting_url(url):
@@ -146,10 +162,74 @@ def attach_network(page, bucket: List[Dict[str, Any]]) -> None:
 
     page.on("request", on_request)
     page.on("response", on_response)
+    try:
+        page._cart_network_attached = True
+    except Exception:
+        pass
+    return True
+
+
+def attach_network_to_context(context, bucket: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Attach to every current page and every page this context opens later."""
+    attached = 0
+    if context is None:
+        return {"attachedPages": 0, "listenNewPages": False}
+    for page in list(getattr(context, "pages", None) or []):
+        if attach_network(page, bucket):
+            attached += 1
+
+    def on_page(page) -> None:
+        attach_network(page, bucket)
+
+    try:
+        context.on("page", on_page)
+        listen_new = True
+    except Exception as exc:  # noqa: BLE001
+        log(f"context page listener skipped: {exc}")
+        listen_new = False
+    return {"attachedPages": attached, "listenNewPages": listen_new}
+
+
+def attach_network_to_browser(browser, bucket: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Attach to all existing contexts/pages and newly created ones."""
+    attached = 0
+    listen_new_pages = False
+    listen_new_contexts = False
+    if browser is None:
+        return {
+            "attachedPages": 0,
+            "listenNewPages": False,
+            "listenNewContexts": False,
+            "contexts": 0,
+        }
+    contexts = list(getattr(browser, "contexts", None) or [])
+    for ctx in contexts:
+        info = attach_network_to_context(ctx, bucket)
+        attached += int(info.get("attachedPages") or 0)
+        listen_new_pages = listen_new_pages or bool(info.get("listenNewPages"))
+
+    def on_context(ctx) -> None:
+        attach_network_to_context(ctx, bucket)
+
+    try:
+        browser.on("context", on_context)
+        listen_new_contexts = True
+    except Exception as exc:  # noqa: BLE001
+        log(f"browser context listener skipped: {exc}")
+    return {
+        "attachedPages": attached,
+        "listenNewPages": listen_new_pages,
+        "listenNewContexts": listen_new_contexts,
+        "contexts": len(contexts),
+    }
 
 
 def connect_existing_chrome(playwright, endpoint: Optional[str] = None):
-    """connect_over_cdp only. Never launch Chrome or a persistent context."""
+    """connect_over_cdp only. Never launch Chrome or a persistent context.
+
+    Does not create a page — caller attaches listeners first, then opens tabs.
+    The debugging port must match the profile the operator clicks.
+    """
     notes: List[str] = []
     last_err: Optional[BaseException] = None
     for url in iter_cdp_endpoints(endpoint):
@@ -159,15 +239,20 @@ def connect_existing_chrome(playwright, endpoint: Optional[str] = None):
             if not browser.contexts:
                 raise RuntimeError("CDP browser has no contexts")
             ctx = browser.contexts[0]
-            page = ctx.new_page()
-            notes.append(f"connected {url}")
-            return browser, ctx, page, url, notes
+            notes.append(
+                f"connected {url} (contexts={len(browser.contexts)}; "
+                "port must match the Chrome profile you click; "
+                "computerUse is often :9227 profile-5, not :9232)"
+            )
+            return browser, ctx, url, notes
         except Exception as exc:  # noqa: BLE001 — try next candidate
             last_err = exc
             notes.append(f"fail {url}: {type(exc).__name__}: {exc}")
             log(f"CDP {url} failed: {exc}")
     raise RuntimeError(
         "No CDP endpoint available (operator-side Chrome with remote debugging). "
+        "Set ALIBABA_RESTOCK_CDP to the port of the profile you actually click "
+        "(computerUse often http://127.0.0.1:9227, not :9232). "
         + "; ".join(notes)
         + (f" last={last_err}" if last_err else "")
     )
@@ -299,7 +384,8 @@ def run_live(args: argparse.Namespace) -> int:
     raw_events: List[Dict[str, Any]] = []
     cdp_url = None
     cdp_notes: List[str] = []
-    page = None
+    attach_info: Dict[str, Any] = {}
+    opened_pages: List[Any] = []
     observe: Dict[str, Any] = {}
     offer_obs: Optional[Dict[str, Any]] = None
     login_wall = False
@@ -307,18 +393,27 @@ def run_live(args: argparse.Namespace) -> int:
     try:
         with sync_playwright() as playwright:
             try:
-                _browser, _ctx, page, cdp_url, cdp_notes = connect_existing_chrome(
+                _browser, ctx, cdp_url, cdp_notes = connect_existing_chrome(
                     playwright, args.cdp
                 )
             except RuntimeError as exc:
                 log(str(exc))
                 log(
                     "Live capture is operator-side: start Chrome with "
-                    "--remote-debugging-port (ALIBABA_RESTOCK_CDP), already "
-                    "logged into 1688. Cloud Linux has no 1688 session."
+                    "--remote-debugging-port matching the profile you click "
+                    "(ALIBABA_RESTOCK_CDP; computerUse often :9227, not :9232), "
+                    "already logged into 1688. Cloud Linux has no 1688 session."
                 )
                 return 2
-            attach_network(page, raw_events)
+            # Listen on every existing tab (detail + cart) before we open ours.
+            attach_info = attach_network_to_browser(_browser, raw_events)
+            log(
+                "network listeners: "
+                f"{attach_info.get('attachedPages')} existing page(s); "
+                f"new pages={attach_info.get('listenNewPages')}"
+            )
+            page = ctx.new_page()
+            opened_pages.append(page)
             observe = observe_cart(
                 page,
                 max_expand=0 if args.no_expand else int(args.max_expand),
@@ -329,9 +424,15 @@ def run_live(args: argparse.Namespace) -> int:
                 log(f"LOGIN WALL at {observe.get('url')} — stop, do not invent login")
             else:
                 if args.offer_url:
-                    log(f"observe offer (no add-to-cart click): {args.offer_url}")
+                    log(
+                        "observe offer on a new tab (no add-to-cart click; "
+                        "addcargo fires on detail, not cart): "
+                        f"{args.offer_url}"
+                    )
+                    offer_page = ctx.new_page()
+                    opened_pages.append(offer_page)
                     offer_obs = observe_offer(
-                        page, args.offer_url, settle_ms=int(args.settle_ms)
+                        offer_page, args.offer_url, settle_ms=int(args.settle_ms)
                     )
                     if offer_obs.get("login_wall"):
                         login_wall = True
@@ -339,22 +440,26 @@ def run_live(args: argparse.Namespace) -> int:
                 watch = int(args.watch_seconds)
                 if watch > 0 and not login_wall:
                     log(
-                        f"watching {watch}s — operator may manually change 1 sku qty "
-                        "or click 加采购车 once; this script will not"
+                        f"watching {watch}s on all attached pages — operator may "
+                        "manually click 加采购车 once on the detail tab or change "
+                        "1 sku qty on the cart tab; this script will not"
                     )
                     deadline = time.time() + watch
+                    waiter = opened_pages[0]
                     while time.time() < deadline:
-                        page.wait_for_timeout(500)
-            # Close only the page we opened. Never kill Chrome.
-            try:
-                page.close()
-            except Exception:
-                pass
-            page = None
+                        waiter.wait_for_timeout(500)
+            # Close only pages we opened. Never kill Chrome or operator tabs.
+            while opened_pages:
+                extra = opened_pages.pop()
+                try:
+                    extra.close()
+                except Exception:
+                    pass
     finally:
-        if page is not None:
+        while opened_pages:
+            extra = opened_pages.pop()
             try:
-                page.close()
+                extra.close()
             except Exception:
                 pass
 
@@ -364,14 +469,24 @@ def run_live(args: argparse.Namespace) -> int:
         "liveCapture": True,
         "cdp": cdp_url,
         "cdpNotes": cdp_notes,
+        "attach": attach_info,
+        "listenAllPages": True,
+        "cdpPortHint": (
+            "ALIBABA_RESTOCK_CDP must be the remote-debugging port of the "
+            "Chrome profile the operator actually clicks. computerUse is "
+            "often :9227 (chrome-profile-5), not :9232 (profile-10). Wrong "
+            "port looks like a live desktop with empty Network."
+        ),
         "cart": observe,
         "offer": offer_obs,
         "loginWall": login_wall,
         "watchSeconds": int(args.watch_seconds),
         "maxExpand": 0 if args.no_expand else int(args.max_expand),
         "operatorSideNote": (
-            "Requires already-logged-in 1688 Chrome with remote debugging. "
-            "Cloud Linux has no 1688 session."
+            "Requires already-logged-in 1688 Chrome with remote debugging on "
+            "the same profile the operator clicks. addcargo fires on the "
+            "detail page — cart-only attach misses it. Cloud Linux has no "
+            "1688 session."
         ),
         "didNotLaunchChrome": True,
         "didNotClickAddToCart": True,
@@ -393,13 +508,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Record 1688 cart Network (read / add / qty) via CDP attach. "
+            "Listens on all existing and newly opened pages (detail + cart). "
             "Default is read-only. Does not launch Chrome or mutate cart."
         )
     )
     parser.add_argument(
         "--cdp",
         default=None,
-        help="CDP URL (else ALIBABA_RESTOCK_CDP, then 9223 / 9227)",
+        help=(
+            "CDP URL of the Chrome profile you actually click "
+            "(else ALIBABA_RESTOCK_CDP, then 9227 / 9223). "
+            "computerUse is often http://127.0.0.1:9227 (profile-5), not :9232"
+        ),
     )
     parser.add_argument(
         "--out",
@@ -421,7 +541,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--offer-url",
         default=None,
-        help="Optional one offer URL to open (sku-selector observe). Never clicks add.",
+        help=(
+            "Optional one offer URL opened in a new tab (sku-selector / addcargo "
+            "observe). Never clicks add. addcargo fires on detail, not cart."
+        ),
     )
     parser.add_argument(
         "--watch-seconds",
