@@ -152,4 +152,5 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 - 方案（**不在 git**，請勿 commit）：本機 handoff `/workspace/_handoff/reverse-restock-audit-plan-20260905.md`（工作區沒掛 `_handoff/` 則略過）
 - 購物車核對：`docs/cart-reconciliation.md`
 - 補貨閉環差距（提醒／核准／加車／對帳尚未串起來）：`docs/restock_closed_loop_review.md`
-- 1688 採購車 Network 偵察（讀車／加車／改量 mtop，CDP recorder、非正式 client）：`docs/1688_cart_network_recon.md`
+- 1688 採購車 Network 偵察（讀車／加車／改量／刪列 mtop，CDP recorder）：`docs/1688_cart_network_recon.md`
+- 1688 mtop 唯讀讀車（Phase 1；mutate = 另 PR + 庭安 go）：`docs/1688_mtop_read_cart.md`

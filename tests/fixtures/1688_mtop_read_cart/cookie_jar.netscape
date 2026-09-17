@@ -1,0 +1,5 @@
+# Netscape HTTP Cookie File
+# SYNTHETIC — not a live 1688 session. Do not treat as credentials.
+.1688.com	TRUE	/	TRUE	0	_m_h5_tk	deadbeefcafebabe0123456789abcdef_1710000000000
+.1688.com	TRUE	/	TRUE	0	_m_h5_tk_enc	SYNTHETIC_ENC_NOT_A_TOKEN
+.1688.com	TRUE	/	FALSE	0	unb	0000000000
