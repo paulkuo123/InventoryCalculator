@@ -150,6 +150,7 @@ mtop `data={"params":{...}}`。`params` **必須**含 live 成功包那組鍵：
 - 改量：覆寫 `fields.quantity`＝新量；若 render 上已有 `selectedQuantity` 一併改。不發明 `modifySku`
 - 刪列：既有 `events.deleteClick[]` 裡 `deleteItem` 設 `actived=true`（沒有才補一筆 documented 形狀）；其他 events／nodes 原樣保留
 - dry-run 可印摘要（`ultronKeys`／`itemKeys`）；**核准 POST 的 body 必須是整包**，不是 `{operator, data:{item_X}}` 最小包（那包 live 會 `SYSTEM_ERROR::null`）
+- 安全閘：禁止結算／清空車／batch-add **API 名稱**。clone 包裡的 UI 標籤（`batchAddItemLabel`、畫面上的「结算」）**不是**那些 API，`operator=item_*` 的 async one-op 不以 payload 子字串擋它們。addcargo 仍掃我們自己組的 body。
 
 分類時 deleteClick 優先於 `fields.quantity`（與 recon 相同）。
 
@@ -184,4 +185,4 @@ python -m unittest tests.test_mtop_mutate tests.test_mtop_read_cart
 | cookie-jar / `_m_h5_tk` | 環境沒有（也不該有） |
 | 公開詳情頁 GET（`--fetch-detail`，不加車） | `detail.1688.com` 回 **x5 punish** 小頁（約 1KB，無 `skuMapOriginal`）。雲端 IP 被攔，不是 parser 錯。 |
 
-遠端 CDP 第一次 smoke：**addcargo PASS**（車 23→24，新 cartId=`7023719468331` qty=1）。**set-qty／remove FAIL** `SYSTEM_ERROR::null`，根因是最小 item 包。本修已改為 clone 整包。**請 Grok 再跑上面 1→2 再刪列**；這台 cloud 仍無法 POST。
+遠端 CDP 第一次 smoke：**addcargo PASS**（車 23→24，新 cartId=`7023719468331` qty=1）。**set-qty／remove** 先 FAIL `SYSTEM_ERROR::null`（最小 item 包），改 clone 整包後 dry-run 曾被 UI 標籤 `batchAddItemLabel` 誤擋。本修：`operator=item_*` 的 async 不再用 payload 子字串擋 clone 標籤。**請 Grok 再跑上面 1→2 再刪列**；這台 cloud 仍無法 POST。

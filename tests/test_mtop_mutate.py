@@ -125,10 +125,19 @@ class AddCargoShapeTests(unittest.TestCase):
             build_addcargo_data(spec_id=SPEC, offer_id=OFFER, quantity=0)
         with self.assertRaises(ForbiddenApiError):
             assert_allowed_mutate_api("mtop.1688.trade.checkout", {})
+        with self.assertRaises(ForbiddenApiError):
+            assert_allowed_mutate_api("mtop.1688.buycenter.batchadd", {})
+        with self.assertRaises(ForbiddenApiError):
+            assert_allowed_mutate_api("mtop.trade.clearcart", {})
         with self.assertRaises(MutateSafetyError):
             assert_allowed_mutate_api(
                 API_ADDCARGO,
                 {"client": "pc", "goodsParams": "[]", "checkout": True},
+            )
+        with self.assertRaises(MutateSafetyError):
+            assert_allowed_mutate_api(
+                API_ADDCARGO,
+                {"client": "pc", "goodsParams": "[]", "batchAdd": True},
             )
 
 
@@ -160,6 +169,10 @@ class UltronShapeTests(unittest.TestCase):
         # Sibling line and shop node stay as on the render pack.
         self.assertEqual(inner["item_9002"]["fields"]["quantity"], 10)
         self.assertEqual(inner["shop_1"]["id"], "shop_1")
+        self.assertEqual(
+            inner["footer_1"]["fields"]["batchAddItemLabel"],
+            "synthetic UI label — not a batch-add API",
+        )
         # Do not invent a new modifySku; existing sibling event keeps old qty.
         self.assertEqual(item["events"]["modifySku"][0]["fields"]["quantity"], 40)
         # Source fixture is not mutated.
@@ -235,6 +248,28 @@ class UltronShapeTests(unittest.TestCase):
         self.assertTrue(clicks[0]["actived"])
         self.assertEqual(clicks[0]["type"], "deleteItem")
         self.assertEqual(clicks[0]["fields"]["purchaseType"], "main_purchase_type")
+
+    def test_clone_with_batch_add_item_label_passes_set_qty_safety(self):
+        payload = self._model()
+        raw = json.dumps(payload, ensure_ascii=False)
+        self.assertIn("batchAddItemLabel", raw)
+        self.assertIn("结算", raw)
+        data = build_set_qty_data(payload, CART, 2)
+        assert_full_ultron_params(data, CART)
+        packed = json.dumps(data, ensure_ascii=False)
+        self.assertIn("batchAddItemLabel", packed)
+        self.assertIn("结算", packed)
+        assert_allowed_mutate_api(API_ULTRON_ASYNC, data)
+        self.assertEqual(ultron_item_from_data(data, CART)["fields"]["quantity"], 2)
+        self.assertEqual(data["params"]["operator"], "item_9001")
+
+    def test_ultron_without_item_operator_still_scans_payload(self):
+        with self.assertRaises(MutateSafetyError) as ctx:
+            assert_allowed_mutate_api(
+                API_ULTRON_ASYNC,
+                {"params": {"operator": "cartFooter", "batchAdd": True}},
+            )
+        self.assertIn("batchAdd", str(ctx.exception))
 
     def test_sign_reuses_phase1_h5_formula(self):
         data = build_set_qty_data(self._model(), CART, 9)
@@ -459,6 +494,10 @@ class CliTests(unittest.TestCase):
             self.assertIn(key, payload["data"]["params"])
         self.assertEqual(payload["ultronKeys"], list(REQUIRED_ULTRON_PARAM_KEYS))
         self.assertIn("item_9002", payload["itemKeys"])
+        self.assertIn("footer_1", payload["itemKeys"])
+        packed = json.dumps(payload["data"], ensure_ascii=False)
+        self.assertIn("batchAddItemLabel", packed)
+        self.assertIn("结算", packed)
         self.assertEqual(
             payload["data"]["params"]["linkage"]["signature"], "***"
         )

@@ -77,13 +77,22 @@
           "id": "shop_1",
           "tag": "shop",
           "type": "shop"
+        },
+        "footer_1": {
+          "fields": {
+            "batchAddItemLabel": "synthetic UI label — not a batch-add API",
+            "submitLabel": "结算"
+          },
+          "id": "footer_1",
+          "tag": "footer",
+          "type": "footer"
         }
       },
       "hierarchy": {
-        "component": ["root", "shop_1", "item_9001", "item_9002"],
+        "component": ["root", "shop_1", "item_9001", "item_9002", "footer_1"],
         "root": "root",
         "structure": {
-          "root": ["shop_1"],
+          "root": ["shop_1", "footer_1"],
           "shop_1": ["item_9001", "item_9002"]
         }
       }

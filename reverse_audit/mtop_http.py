@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 import time
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlencode
@@ -53,8 +54,9 @@ DETAIL_ORIGIN = "https://detail.1688.com"
 CART_ORIGIN = "https://cart.1688.com"
 CART_REFERER = "https://cart.1688.com/cart.htm"
 
-# Tokens that mean checkout / payment / wipe-cart / spam-add. Refuse even on
-# an allowed API name if the body sneaks them in.
+# Tokens that mean checkout / payment / wipe-cart / spam-add in a *constructed*
+# body (addcargo). Not applied to a cloned Ultron async pack: live render trees
+# contain UI labels such as ``batchAddItemLabel`` and on-screen 「结算」.
 _FORBIDDEN_PAYLOAD_TOKENS = (
     "checkout",
     "createOrder",
@@ -84,6 +86,8 @@ _FORBIDDEN_API_TOKENS = (
     "cleancart",
     "batchadd",
 )
+
+_ULTRON_ITEM_OPERATOR_RE = re.compile(r"^item_\d+$")
 
 _MASK_KEYS = frozenset(
     {
@@ -183,8 +187,24 @@ def mutate_block_message(kind: str, ret: Optional[List[str]] = None) -> str:
     return (hints.get(kind) or hints["error"]) + suffix
 
 
+def _ultron_one_line_operator(data: Any) -> bool:
+    """True when this is the allowed async one-op: ``params.operator=item_{id}``."""
+    if not isinstance(data, dict):
+        return False
+    params = data.get("params") if isinstance(data.get("params"), dict) else data
+    if not isinstance(params, dict):
+        return False
+    return bool(_ULTRON_ITEM_OPERATOR_RE.match(str(params.get("operator") or "")))
+
+
 def assert_allowed_mutate_api(api: str, data: Any = None) -> None:
-    """Refuse checkout / payment / clear-cart / unknown mutate APIs."""
+    """Refuse checkout / payment / clear-cart / unknown mutate APIs.
+
+    Payload substring scan applies to constructed bodies (addcargo). A cloned
+    Ultron ``astoreservice.async`` pack with ``operator=item_*`` is gated on
+    API name + that operator instead — UI labels like ``batchAddItemLabel``
+    / 「结算」 are not batch-add or checkout.
+    """
     name = str(api or "").strip()
     low = name.lower()
     if name not in ALLOWED_MUTATE_APIS:
@@ -198,6 +218,8 @@ def assert_allowed_mutate_api(api: str, data: Any = None) -> None:
             raise ForbiddenApiError(
                 f"Phase 2 refuses API {name!r} (matches forbidden token {token!r})."
             )
+    if name == API_ULTRON_ASYNC and _ultron_one_line_operator(data):
+        return
     data_str = _blob(data)
     for token in _FORBIDDEN_PAYLOAD_TOKENS:
         if token in data_str:
