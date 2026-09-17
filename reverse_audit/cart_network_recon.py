@@ -1,10 +1,10 @@
-"""Classify and parse 1688 cart Network captures (read / add / qty).
+"""Classify and parse 1688 cart Network captures (read / add / qty / delete).
 
 Recon only: no HTTP cart client, no CDP launch, no cart mutation.
 Read-cart shapes come from freeze (`mtopPurchaseAstoreService` / buycenter+cart).
-add_to_cart / change_qty were live-confirmed 2026-09-17 (one offer / one sku):
-addcargo on the detail page; Ultron `astoreservice.async` on the cart page.
-sku-selector exact path is still a candidate.
+add_to_cart / change_qty / delete_line were live-confirmed 2026-09-17:
+addcargo on the detail page; Ultron `astoreservice.async` for qty and delete.
+sku-selector exact XHR path is still a candidate (this sample used HTML skuMapOriginal).
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 from urllib.parse import parse_qs, unquote, urlparse
 
-Kind = str  # read_cart | add_to_cart | change_qty | sku_selector | other_cart | ignore
+Kind = str  # read_cart | add_to_cart | change_qty | delete_line | sku_selector | other_cart | ignore
 
 SECRET_KEYS = frozenset(
     {
@@ -170,6 +170,36 @@ KNOWN_FIELD_MAP: List[Dict[str, Any]] = [
         ),
     },
     {
+        "kind": "delete_line",
+        "status": "confirmed_live",
+        "request_url": (
+            "https://h5api.m.1688.com/h5/"
+            "mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0/"
+        ),
+        "url_match": (
+            "mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0 "
+            "(same Ultron API as change_qty; distinguish by events.deleteClick)"
+        ),
+        "method": "POST form; Ultron `params` blob (not a distinct deleteItem API name)",
+        "key_headers": [
+            "referer=https://cart.1688.com/cart.htm",
+            "cookie / mtop sign / _m_h5_tk (session; do not log values)",
+        ],
+        "body_fields": [
+            "params.operator = item_{cartId}",
+            "params.data.item_{cartId}.events.deleteClick[]",
+            "deleteClick[].actived = true",
+            "deleteClick[].eventType / key / type = deleteItem",
+            "deleteClick[].fields.cartId / purchaseType",
+        ],
+        "notes": (
+            "Live-confirmed 2026-09-17 (one cart line; cart count 24→23; "
+            "no checkout). Same async Ultron endpoint as change_qty — "
+            "classify deleteClick/deleteItem before fields.quantity. "
+            "Recorder must not auto-click delete. Not a production HTTP client."
+        ),
+    },
+    {
         "kind": "sku_selector",
         "status": "candidate",
         "request_url": (
@@ -187,8 +217,10 @@ KNOWN_FIELD_MAP: List[Dict[str, Any]] = [
             "skuId, specId, specAttrs, price, canBookCount",
         ],
         "notes": (
-            "Supporting add-to-cart field map only (skuId→specId). Opening one "
-            "offer URL is read-only; do not click 加采购车."
+            "Supporting add-to-cart field map only (skuId→specId). 2026-09-17 "
+            "sample mapped sku→specId from detail HTML skuMapOriginal; clicking "
+            "specs did not hit this XHR. Other page types may still fire it. "
+            "Opening one offer URL is read-only; do not click 加采购车."
         ),
     },
 ]
@@ -259,6 +291,81 @@ def ultron_params_from_envelope(envelope: Optional[Dict[str, Any]]) -> Optional[
     return _as_dict(params)
 
 
+def _ultron_item_from_params(
+    params: Dict[str, Any],
+) -> Optional[tuple]:
+    """Return (operator, cart_id, item_dict) for params.operator=item_{cartId}."""
+    operator = str(params.get("operator") or "").strip()
+    matched = _ITEM_OPERATOR_RE.match(operator)
+    if not matched:
+        return None
+    cart_id = matched.group(1)
+    data = _as_dict(params.get("data")) or {}
+    item = _as_dict(data.get(f"item_{cart_id}")) or {}
+    return operator, cart_id, item
+
+
+def _delete_click_entries(item: Dict[str, Any]) -> List[Dict[str, Any]]:
+    events = _as_dict(item.get("events")) or {}
+    clicks = events.get("deleteClick")
+    if not isinstance(clicks, list):
+        return []
+    return [_as_dict(entry) or {} for entry in clicks]
+
+
+def _is_active_delete_click(entry: Dict[str, Any]) -> bool:
+    if not entry:
+        return False
+    actived = entry.get("actived")
+    if actived is True or str(actived).strip().lower() == "true":
+        return True
+    for key in ("eventType", "key", "type"):
+        if str(entry.get(key) or "").strip() == "deleteItem":
+            return True
+    return False
+
+
+def extract_ultron_delete(
+    url: str = "",
+    post_data: Optional[str] = None,
+) -> Optional[Dict[str, Any]]:
+    """If postData is an Ultron deleteClick/deleteItem, return identity fields.
+
+    Same ``astoreservice.async`` endpoint as qty mutate. Distinguish by
+    ``events.deleteClick[]`` (actived / eventType / key / type = deleteItem).
+    """
+    envelope = parse_query_and_form(url, post_data)
+    params = ultron_params_from_envelope(envelope)
+    if not params:
+        return None
+    parsed = _ultron_item_from_params(params)
+    if not parsed:
+        return None
+    operator, cart_id, item = parsed
+    active = next((entry for entry in _delete_click_entries(item) if _is_active_delete_click(entry)), None)
+    if active is None:
+        return None
+    fields = _as_dict(item.get("fields")) or {}
+    ev_fields = _as_dict(active.get("fields")) or {}
+    return {
+        "operator": operator,
+        "cartId": str(ev_fields.get("cartId") or fields.get("cartId") or cart_id),
+        "offerId": fields.get("offerId"),
+        "skuId": fields.get("skuId"),
+        "specId": fields.get("specId"),
+        "purchaseType": ev_fields.get("purchaseType") or fields.get("purchaseType"),
+        "eventType": active.get("eventType") or active.get("key") or active.get("type"),
+        "actived": active.get("actived"),
+    }
+
+
+def looks_like_ultron_delete(
+    url: str = "",
+    post_data: Optional[str] = None,
+) -> bool:
+    return extract_ultron_delete(url, post_data) is not None
+
+
 def extract_ultron_qty_change(
     url: str = "",
     post_data: Optional[str] = None,
@@ -267,18 +374,19 @@ def extract_ultron_qty_change(
 
     Trusts ``params.data.item_{cartId}.fields.quantity`` (the new qty).
     ``events.modifySku[*].fields.quantity`` may still be the old value.
+    Delete packets on the same async API may also carry ``fields.quantity``;
+    those are not qty mutates — see ``extract_ultron_delete``.
     """
+    if looks_like_ultron_delete(url, post_data):
+        return None
     envelope = parse_query_and_form(url, post_data)
     params = ultron_params_from_envelope(envelope)
     if not params:
         return None
-    operator = str(params.get("operator") or "").strip()
-    matched = _ITEM_OPERATOR_RE.match(operator)
-    if not matched:
+    parsed = _ultron_item_from_params(params)
+    if not parsed:
         return None
-    cart_id = matched.group(1)
-    data = _as_dict(params.get("data")) or {}
-    item = _as_dict(data.get(f"item_{cart_id}")) or {}
+    operator, cart_id, item = parsed
     fields = _as_dict(item.get("fields")) or {}
     if "quantity" not in fields:
         return None
@@ -451,6 +559,15 @@ def classify_cart_event(
     )
     if any(tok in blob for tok in qty_tokens):
         return "change_qty"
+    # Same Ultron `.async` as qty: deleteClick/deleteItem wins over fields.quantity.
+    if looks_like_ultron_delete(url, post_data):
+        return "delete_line"
+    if (
+        _ASTORE_ASYNC_RE.search(blob)
+        and "deleteclick" in blob
+        and "deleteitem" in blob
+    ):
+        return "delete_line"
     # PC cart qty mutate is Ultron `.async` + operator=item_{cartId}.
     # URL-only `.async` (and `.asyncload`) stay read_cart.
     if looks_like_ultron_qty_mutate(url, post_data):
@@ -619,6 +736,7 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
 
     headers_in = raw.get("headers") or raw.get("requestHeaders") or {}
     ultron_qty = extract_ultron_qty_change(url, post_data)
+    ultron_delete = extract_ultron_delete(url, post_data)
     return {
         "kind": kind,
         "method": method or None,
@@ -635,6 +753,15 @@ def normalize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
                 if val is not None and val != ""
             }
             if ultron_qty
+            else None
+        ),
+        "ultronDelete": (
+            {
+                key: val
+                for key, val in ultron_delete.items()
+                if val is not None and val != ""
+            }
+            if ultron_delete
             else None
         ),
         "status": raw.get("status"),
@@ -681,6 +808,7 @@ def summarize_records(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]
         "read_cart": [],
         "add_to_cart": [],
         "change_qty": [],
+        "delete_line": [],
         "sku_selector": [],
         "other_cart": [],
     }
