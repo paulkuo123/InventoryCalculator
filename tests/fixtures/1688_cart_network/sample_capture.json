@@ -1,5 +1,5 @@
 {
-  "comment": "Synthetic 1688 cart Network fixture for CI. Not a live dump. Secrets already redacted. Shapes match confirmed addcargo + Ultron async qty (2026-09-17).",
+  "comment": "Synthetic 1688 cart Network fixture for CI. Not a live dump. Secrets already redacted. Shapes match confirmed addcargo + Ultron async qty/delete (2026-09-17).",
   "records": [
     {
       "phase": "response",
@@ -54,6 +54,17 @@
       },
       "postData": "api=mtop.1688.buycenter.mtoppurchaseastoreservice.async&v=1.0&data=%7B%22params%22%3A%7B%22operator%22%3A%22item_9001%22%2C%22data%22%3A%7B%22item_9001%22%3A%7B%22fields%22%3A%7B%22cartId%22%3A9001%2C%22offerId%22%3A752797767076%2C%22skuId%22%3A%225228880725920%22%2C%22specId%22%3A%22spec-aaa%22%2C%22quantity%22%3A41%7D%2C%22events%22%3A%7B%22modifySku%22%3A%5B%7B%22fields%22%3A%7B%22quantity%22%3A40%7D%7D%5D%7D%7D%7D%7D%7D",
       "comment": "Synthetic Ultron qty mutate. fields.quantity=41 is the new qty; modifySku quantity=40 is the old value and must not be trusted alone."
+    },
+    {
+      "phase": "request",
+      "method": "POST",
+      "url": "https://h5api.m.1688.com/h5/mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0/",
+      "headers": {
+        "referer": "https://cart.1688.com/cart.htm",
+        "content-type": "application/x-www-form-urlencoded"
+      },
+      "postData": "api=mtop.1688.buycenter.mtoppurchaseastoreservice.async&v=1.0&data=%7B%22params%22%3A%7B%22operator%22%3A%22item_9001%22%2C%22data%22%3A%7B%22item_9001%22%3A%7B%22fields%22%3A%7B%22cartId%22%3A9001%2C%22offerId%22%3A752797767076%2C%22skuId%22%3A%225228880725920%22%2C%22specId%22%3A%22spec-aaa%22%2C%22quantity%22%3A41%2C%22purchaseType%22%3A%22normal%22%7D%2C%22events%22%3A%7B%22deleteClick%22%3A%5B%7B%22actived%22%3Atrue%2C%22eventType%22%3A%22deleteItem%22%2C%22key%22%3A%22deleteItem%22%2C%22type%22%3A%22deleteItem%22%2C%22fields%22%3A%7B%22cartId%22%3A9001%2C%22purchaseType%22%3A%22normal%22%7D%7D%5D%7D%7D%7D%7D%7D",
+      "comment": "Synthetic Ultron delete. Same async API as qty; deleteClick/deleteItem wins even though fields.quantity is present."
     }
   ]
 }

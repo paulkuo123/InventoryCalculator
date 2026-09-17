@@ -18,11 +18,13 @@ from reverse_audit.cart_network_recon import (  # noqa: E402
     KNOWN_FIELD_MAP,
     classify_cart_event,
     extract_identity_fields,
+    extract_ultron_delete,
     extract_ultron_qty_change,
     is_freeze_cart_url,
     is_interesting_url,
     iter_cdp_endpoints,
     load_capture_fixture,
+    looks_like_ultron_delete,
     looks_like_ultron_qty_mutate,
     mtop_api_from_url,
     normalize_record,
@@ -64,6 +66,16 @@ ULTRON_QTY_POST = (
     '"skuId":"5228880725920","specId":"spec-aaa","quantity":41},'
     '"events":{"modifySku":[{"fields":{"quantity":40}}]}}}}}'
 )
+ULTRON_DELETE_POST = (
+    "data="
+    '{"params":{"operator":"item_9001","data":{"item_9001":{'
+    '"fields":{"cartId":9001,"offerId":752797767076,'
+    '"skuId":"5228880725920","specId":"spec-aaa","quantity":41,'
+    '"purchaseType":"normal"},'
+    '"events":{"deleteClick":[{"actived":true,'
+    '"eventType":"deleteItem","key":"deleteItem","type":"deleteItem",'
+    '"fields":{"cartId":9001,"purchaseType":"normal"}}]}}}}}'
+)
 ADD_POST = (
     "data="
     '{"client":"pc","goodsParams":"[{\\"specId\\":\\"spec-aaa\\",'
@@ -91,6 +103,10 @@ class ClassifyUrlTests(unittest.TestCase):
             classify_cart_event(QTY_ASYNC_URL, method="POST", post_data=ULTRON_QTY_POST),
             "change_qty",
         )
+        self.assertEqual(
+            classify_cart_event(QTY_ASYNC_URL, method="POST", post_data=ULTRON_DELETE_POST),
+            "delete_line",
+        )
         self.assertEqual(classify_cart_event(LEGACY_QTY_URL, method="POST"), "change_qty")
         self.assertEqual(classify_cart_event(SKU_URL, method="GET"), "sku_selector")
 
@@ -113,6 +129,41 @@ class ClassifyUrlTests(unittest.TestCase):
         self.assertEqual(
             classify_cart_event(QTY_ASYNC_URL, method="POST", post_data=modify_only),
             "read_cart",
+        )
+
+    def test_ultron_delete_wins_over_fields_quantity(self):
+        parsed = extract_ultron_delete(QTY_ASYNC_URL, ULTRON_DELETE_POST)
+        self.assertIsNotNone(parsed)
+        self.assertEqual(parsed["operator"], "item_9001")
+        self.assertEqual(str(parsed["cartId"]), "9001")
+        self.assertEqual(parsed["eventType"], "deleteItem")
+        self.assertTrue(parsed["actived"] is True or str(parsed["actived"]).lower() == "true")
+        self.assertEqual(parsed["purchaseType"], "normal")
+        self.assertTrue(looks_like_ultron_delete(QTY_ASYNC_URL, ULTRON_DELETE_POST))
+        self.assertFalse(looks_like_ultron_qty_mutate(QTY_ASYNC_URL, ULTRON_DELETE_POST))
+        self.assertIsNone(extract_ultron_qty_change(QTY_ASYNC_URL, ULTRON_DELETE_POST))
+        self.assertEqual(
+            classify_cart_event(QTY_ASYNC_URL, method="POST", post_data=ULTRON_DELETE_POST),
+            "delete_line",
+        )
+        inactive = (
+            "data="
+            '{"params":{"operator":"item_9001","data":{"item_9001":{'
+            '"fields":{"cartId":9001,"quantity":41},'
+            '"events":{"deleteClick":[{"actived":false}]}}}}}'
+        )
+        self.assertFalse(looks_like_ultron_delete(QTY_ASYNC_URL, inactive))
+        self.assertEqual(
+            classify_cart_event(QTY_ASYNC_URL, method="POST", post_data=inactive),
+            "change_qty",
+        )
+        self.assertEqual(
+            classify_cart_event(
+                "https://h5api.m.1688.com/h5/"
+                "mtop.1688.buycenter.mtoppurchaseastoreservice.delete/1.0/",
+                method="POST",
+            ),
+            "other_cart",
         )
 
     def test_add_from_goodsparams_body_even_if_url_generic(self):
@@ -168,6 +219,7 @@ class FixtureParserTests(unittest.TestCase):
         self.assertIn("read_cart", kinds)
         self.assertIn("add_to_cart", kinds)
         self.assertIn("change_qty", kinds)
+        self.assertIn("delete_line", kinds)
         self.assertIn("sku_selector", kinds)
 
         render = next(row for row in records if row["api"].endswith(".render"))
@@ -195,6 +247,15 @@ class FixtureParserTests(unittest.TestCase):
         self.assertIn("41", qty["identity"].get("quantity", []))
         self.assertEqual(str(qty["ultronQty"]["quantity"]), "41")
         self.assertEqual(str(qty["ultronQty"]["modifySkuQuantity"]), "40")
+        self.assertIsNone(qty.get("ultronDelete"))
+
+        delete = next(row for row in records if row["kind"] == "delete_line")
+        self.assertTrue(delete["api"].endswith(".async"))
+        self.assertIn("9001", delete["identity"].get("cartId", []))
+        self.assertIsNone(delete.get("ultronQty"))
+        self.assertEqual(str(delete["ultronDelete"]["cartId"]), "9001")
+        self.assertEqual(delete["ultronDelete"]["eventType"], "deleteItem")
+        self.assertEqual(delete["ultronDelete"]["purchaseType"], "normal")
 
     def test_summary_status_when_unobserved_and_observed(self):
         summary = summarize_records([])
@@ -202,6 +263,7 @@ class FixtureParserTests(unittest.TestCase):
         self.assertEqual(by_kind["read_cart"]["status"], "confirmed_from_freeze")
         self.assertEqual(by_kind["add_to_cart"]["status"], "confirmed_live")
         self.assertEqual(by_kind["change_qty"]["status"], "confirmed_live")
+        self.assertEqual(by_kind["delete_line"]["status"], "confirmed_live")
         self.assertEqual(by_kind["sku_selector"]["status"], "candidate")
         self.assertEqual(by_kind["read_cart"]["observedCount"], 0)
 
@@ -209,6 +271,7 @@ class FixtureParserTests(unittest.TestCase):
         by_obs = {row["kind"]: row for row in observed}
         self.assertEqual(by_obs["add_to_cart"]["status"], "confirmed_live_and_observed")
         self.assertEqual(by_obs["change_qty"]["status"], "confirmed_live_and_observed")
+        self.assertEqual(by_obs["delete_line"]["status"], "confirmed_live_and_observed")
         self.assertIn(
             "com.alibaba.china.buy.service.purchase.mtoppurchaseservice.addcargo",
             by_obs["add_to_cart"]["observedApis"],
@@ -217,11 +280,16 @@ class FixtureParserTests(unittest.TestCase):
             "mtop.1688.buycenter.mtoppurchaseastoreservice.async",
             by_obs["change_qty"]["observedApis"],
         )
+        self.assertIn(
+            "mtop.1688.buycenter.mtoppurchaseastoreservice.async",
+            by_obs["delete_line"]["observedApis"],
+        )
 
     def test_known_map_has_required_columns(self):
         kinds = {row["kind"] for row in KNOWN_FIELD_MAP}
         self.assertEqual(
-            kinds, {"read_cart", "add_to_cart", "change_qty", "sku_selector"}
+            kinds,
+            {"read_cart", "add_to_cart", "change_qty", "delete_line", "sku_selector"},
         )
         for row in KNOWN_FIELD_MAP:
             self.assertTrue(row.get("request_url"))
@@ -231,8 +299,11 @@ class FixtureParserTests(unittest.TestCase):
         by_kind = {row["kind"]: row for row in KNOWN_FIELD_MAP}
         self.assertNotIn("TODO_live", str(by_kind["add_to_cart"]))
         self.assertNotIn("TODO_live", str(by_kind["change_qty"]))
+        self.assertNotIn("TODO_live", str(by_kind["delete_line"]))
         self.assertIn("addcargo", by_kind["add_to_cart"]["request_url"])
         self.assertIn("astoreservice.async", by_kind["change_qty"]["request_url"])
+        self.assertIn("astoreservice.async", by_kind["delete_line"]["request_url"])
+        self.assertIn("deleteClick", " ".join(by_kind["delete_line"]["body_fields"]))
 
     def test_cdp_candidates_prefer_env_then_computeruse_port(self):
         with mock.patch.dict(os.environ, {"ALIBABA_RESTOCK_CDP": ""}, clear=False):
@@ -280,17 +351,22 @@ class DryRunCliTests(unittest.TestCase):
             self.assertIn("read_cart", kinds)
             self.assertIn("add_to_cart", kinds)
             self.assertIn("change_qty", kinds)
+            self.assertIn("delete_line", kinds)
             markdown = (out / "field_table.md").read_text(encoding="utf-8")
             self.assertIn("read_cart", markdown)
             self.assertIn("addcargo", markdown)
             self.assertIn("astoreservice.async", markdown)
+            self.assertIn("deleteClick", markdown)
             by_kind = {row["kind"]: row for row in table}
             self.assertTrue(by_kind["add_to_cart"]["status"].startswith("confirmed_live"))
             self.assertTrue(by_kind["change_qty"]["status"].startswith("confirmed_live"))
+            self.assertTrue(by_kind["delete_line"]["status"].startswith("confirmed_live"))
             self.assertNotIn("TODO_live", by_kind["add_to_cart"]["status"])
             self.assertNotIn("TODO_live", by_kind["change_qty"]["status"])
+            self.assertNotIn("TODO_live", by_kind["delete_line"]["status"])
             self.assertNotIn("TODO_live", by_kind["add_to_cart"]["method"])
             self.assertNotIn("TODO_live", by_kind["change_qty"]["method"])
+            self.assertNotIn("TODO_live", by_kind["delete_line"]["method"])
             capture_text = (out / "capture.json").read_text(encoding="utf-8")
             raw_text = (out / "raw_events.json").read_text(encoding="utf-8")
             self.assertNotIn("cookie2=", capture_text)
