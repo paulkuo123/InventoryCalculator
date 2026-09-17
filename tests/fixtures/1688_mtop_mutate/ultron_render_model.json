@@ -1,0 +1,110 @@
+{
+  "comment": "Synthetic Phase 1 render → Ultron async model. Not a live dump. No session tokens / addressId / live cartId / live spec hashes. Shape matches live async params keys (endpoint, operator, linkage, data, hierarchy) so set-qty/remove clone the pack and patch only item_9001.",
+  "render": {
+    "api": "mtop.1688.buycenter.mtoppurchaseastoreservice.render",
+    "v": "1.0",
+    "ret": ["SUCCESS::调用成功"],
+    "data": {
+      "endpoint": {
+        "mode": "pc",
+        "osVersion": "synthetic-os",
+        "protocolVersion": "2.0",
+        "standard": "ultron",
+        "ultronage": "true"
+      },
+      "operator": "",
+      "linkage": {
+        "common": {"compress": false},
+        "input": {},
+        "request": {"page": 1},
+        "signature": "synthetic-linkage-sig-not-live"
+      },
+      "data": {
+        "item_9001": {
+          "events": {
+            "deleteClick": [
+              {
+                "actived": false,
+                "eventType": "deleteItem",
+                "key": "deleteItem",
+                "type": "deleteItem",
+                "fields": {"cartId": 9001, "purchaseType": "main_purchase_type"}
+              }
+            ],
+            "modifyClick": [
+              {
+                "actived": false,
+                "eventType": "modifyQuantity",
+                "key": "modifyQuantity",
+                "type": "modifyQuantity",
+                "fields": {"cartId": 9001, "quantity": 40}
+              }
+            ],
+            "modifySku": [
+              {"actived": false, "fields": {"quantity": 40}}
+            ]
+          },
+          "fields": {
+            "cartId": 9001,
+            "offerId": 752797767076,
+            "skuId": "5228880725920",
+            "specId": "spec-aaa",
+            "skuTitle": "紫花蝴蝶绳",
+            "quantity": 40,
+            "selectedQuantity": 40,
+            "effective": true,
+            "purchaseType": "main_purchase_type"
+          },
+          "hidden": {},
+          "id": "item_9001",
+          "position": 0,
+          "scriptKey": "item",
+          "status": "normal",
+          "tag": "item",
+          "type": "item"
+        },
+        "item_9002": {
+          "events": {},
+          "fields": {
+            "cartId": 9002,
+            "offerId": 676841046990,
+            "skuId": "1",
+            "skuTitle": "爱心熊黑绳",
+            "quantity": 10,
+            "effective": true
+          },
+          "hidden": {},
+          "id": "item_9002",
+          "position": 1,
+          "scriptKey": "item",
+          "status": "normal",
+          "tag": "item",
+          "type": "item"
+        },
+        "shop_1": {
+          "fields": {"title": "synthetic-shop"},
+          "id": "shop_1",
+          "tag": "shop",
+          "type": "shop"
+        },
+        "footer_1": {
+          "fields": {
+            "batchAddItemLabel": "synthetic UI label — not a batch-add API",
+            "submitLabel": "结算"
+          },
+          "id": "footer_1",
+          "tag": "footer",
+          "type": "footer"
+        }
+      },
+      "hierarchy": {
+        "component": ["root", "shop_1", "item_9001", "item_9002", "footer_1"],
+        "root": "root",
+        "structure": {
+          "root": ["shop_1", "footer_1"],
+          "shop_1": ["item_9001", "item_9002"]
+        }
+      }
+    }
+  }
+}

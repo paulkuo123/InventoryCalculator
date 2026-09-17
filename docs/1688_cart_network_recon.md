@@ -12,7 +12,9 @@ P0 偵察：**CDP Network recorder + 欄位對照**，不是正式 HTTP 購物�
 
 **2026-09-17 live 已確認加車 `addcargo`、改量／刪列 Ultron `astoreservice.async`**（一筆 offer／一筆 sku；未結算、未付款）。`TODO_live` 對加／量／刪已清除。sku-selector 獨立 XHR 精確 path 仍是 candidate（本樣本 sku→specId 走詳情頁 HTML `skuMapOriginal`）。
 
-**Phase 1 唯讀 HTTP 讀車骨架**（庭安 OK；render + asyncload）：`python -m reverse_audit.mtop_read_cart`，說明見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)。**不**實作 mutate HTTP client（加車／改量／刪列／結算）；mutate = 另一個 PR + 庭安明確 go。
+**Phase 1 唯讀 HTTP 讀車**：`python -m reverse_audit.mtop_read_cart`，見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)。
+
+**Phase 2 mutate HTTP**（加車／改量／刪列 one-op）：`python -m reverse_audit.mtop_mutate`，見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)。**預設 dry-run，不 POST**；live 須 `--i-approve-add-one`／`--i-approve-set-qty`／`--i-approve-remove-one`。禁止結算／付款／清空整車／批次洗加。本 recorder 仍不自動點加／改／刪。
 
 ## 這支腳本會做／不會做
 
@@ -73,7 +75,7 @@ python scripts/record_1688_cart_network.py \
 |---|---|---|---|---|---|
 | read_cart | **confirmed_from_freeze** | `https://h5api.m.1688.com/h5/mtop.1688.buycenter.mtoppurchaseastoreservice.render/1.0/`；freeze 另存 `.asyncload`（頁面片段）。URL-only `.async` 沒有 Ultron `operator` 時仍當讀車 | GET jsonp 或 POST form（mtop `type=jsonp`／`data=`） | `referer=https://cart.1688.com/cart.htm`；`origin=https://cart.1688.com`；POST 時 `content-type=application/x-www-form-urlencoded`；`cookie`（session，**不要記錄值**） | query/form：`api, v, jsv, appKey, t, sign, data`；response `data.model`（JSON 字串）→ `data.item_<cartId>.fields`：`cartId, offerId, skuId, skuTitle, quantity, effective, sellerId`；`events[].fields.cartId`／`sourceCartId`／`cartIds` |
 | add_to_cart | **confirmed_live**（TODO_live 已清） | `com.alibaba.china.buy.service.purchase.mtoppurchaseservice.addcargo/1.0`（詳情頁；`https://h5api.m.1688.com/h5/...`） | POST；`application/x-www-form-urlencoded`；欄位 `data`＝JSON 字串 | `referer=https://detail.1688.com/offer/<offerId>.html`；`origin=https://detail.1688.com`；`cookie`／mtop `sign`／`_m_h5_tk`（**不要記錄值**） | `data.client` 多為 `pc`；`data.goodsParams` 是**字串化後的陣列** `[{specId, offerId, quantity, flow, ext, selectedTradeServices}]`；`flow` 多為 `general`；**skuId 不在 goodsParams**，需先用 sku_selector 把 skuId→specId；`quantity` 是本次加購量（伺服器可能併入既有 `cartId`） |
-| change_qty | **confirmed_live**（TODO_live 已清） | `mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0`（Ultron）。PC 採購車**沒有**獨立的 `updateQuantity` API 名稱 | POST form；Ultron `params` 大包 | `referer=https://cart.1688.com/cart.htm`；`cookie`／sign（**不要記錄值**） | `params.operator=item_{cartId}`；新數量＝`params.data.item_{cartId}.fields.quantity`（**以此為準**）；同包可帶 `fields.cartId`／`offerId`／`skuId`／`specId`。`events.modifySku[0].fields.quantity` 可能仍是舊值，勿單獨依賴 |
+| change_qty | **confirmed_live**（TODO_live 已清） | `mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0`（Ultron）。PC 採購車**沒有**獨立的 `updateQuantity` API 名稱 | POST form；Ultron `params` 大包 | `referer=https://cart.1688.com/cart.htm`；`cookie`／sign（**不要記錄值**） | `params.operator=item_{cartId}`；新數量＝`params.data.item_{cartId}.fields.quantity`（**以此為準**）；既有 `events.modifyClick[]` 裡 `modifyQuantity` 須 `actived=true`。`events.modifySku[0].fields.quantity` 可能仍是舊值，勿單獨依賴 |
 | delete_line | **confirmed_live**（TODO_live 已清） | **同一個** `mtop.1688.buycenter.mtoppurchaseastoreservice.async/1.0`（Ultron）。PC 採購車**沒有**獨立的 `deleteItem` API 名稱 | POST form；Ultron `params` 大包 | `referer=https://cart.1688.com/cart.htm`；`cookie`／sign（**不要記錄值**） | `params.operator=item_{cartId}`；`params.data.item_{cartId}.events.deleteClick[]`：`actived=true`，`eventType`／`key`／`type=deleteItem`，`fields.cartId`／`purchaseType`。分類時 **deleteClick 優先於** `fields.quantity`（刪列包也可能帶數量欄） |
 | sku_selector（加車輔助） | **candidate** | `wosc.queryofferskuselectormodel` | GET jsonp 或 POST — 精確 path 仍待補 | `referer` 商品頁；`cookie` 遮罩 | `data.skuSelectorBizModel.skuInfoMap[skuId]`：`skuId, specId, specAttrs, price, canBookCount`。**本樣本** sku→specId 來自詳情頁 HTML `skuMapOriginal`；點規格未打此 XHR |
 
@@ -123,12 +125,14 @@ python scripts/record_1688_cart_network.py \
 
 | 欄位路徑 | 說明 |
 |----------|------|
+| `params.endpoint`／`linkage`／`hierarchy` | live 成功包必帶（與 `operator`／`data` 一起）；Phase 2 HTTP 從 render 整包 clone，不要只送 `data.item_*` |
 | `params.operator` | `item_{cartId}` |
 | `params.data.item_{cartId}.fields.cartId` | 車內行 id |
 | `params.data.item_{cartId}.fields.offerId` | Offer |
 | `params.data.item_{cartId}.fields.skuId` | 車內 sku |
 | `params.data.item_{cartId}.fields.specId` | 規格 id |
 | `params.data.item_{cartId}.fields.quantity` | **新數量（以此為準）** |
+| `…events.modifyClick[]` `modifyQuantity` | live 改量必須把既有這筆 `actived=true`；沒開會 `INVALID_PARAM::未经定义的事件类型` |
 | `…events.modifySku[0].fields.quantity` | 可能仍是舊值，勿單獨依賴 |
 
 改量當下也常伴隨：`asyncload`（頁面片段）、tracking `cart_goods_number_edit`。分類時 `.asyncload`／`.render` 仍是 `read_cart`；只有帶 Ultron `operator=item_{cartId}` 且 `fields.quantity`、**且沒有** `deleteClick`／`deleteItem` 的 `.async` 才是 `change_qty`。
@@ -173,9 +177,9 @@ python scripts/record_1688_cart_network.py \
 ### 與現有 DOM 路徑的落差
 
 - **讀車**：freeze 已經吃 mtop body，不必再 GUI 化。本 recorder 用來固定 URL／header／`data=` 形狀。Phase 1 已有唯讀 signed client：`python -m reverse_audit.mtop_read_cart`（見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)）。
-- **加車**：現況仍是 DOM 點「加采购车」。live 請求是詳情頁 `addcargo` + 字串化 `goodsParams`（specId／offerId／qty）。**尚未**實作 HTTP client；要再抓形狀時，操作者對 **1 sku** 手動點一次即可，禁止觀察清單整批加車。
-- **改量**：現況是 CDP 改 InputNumber。PC 車沒有獨立 `updateQuantity`；mutate XHR 是 Ultron `astoreservice.async`。腳本**不會**自動改量；`--watch-seconds` 期間操作者可自行改 1 列。
-- **刪列**：現況是 CDP 點刪除。PC 車沒有獨立 `deleteItem` API 名稱；mutate XHR 仍是同一個 Ultron `astoreservice.async`，靠 `events.deleteClick[]`／`deleteItem` 區分。腳本**不會**自動點刪；`--watch-seconds` 期間操作者可自行刪 1 列。
+- **加車**：整頁補貨現況仍是 DOM 點「加采购车」。live 請求是詳情頁 `addcargo` + 字串化 `goodsParams`（specId／offerId／qty）。Phase 2 HTTP：`python -m reverse_audit.mtop_mutate add`（預設 dry-run；`--i-approve-add-one` 才 POST 一筆）。禁止觀察清單整批加車。
+- **改量**：整頁補貨現況是 CDP 改 InputNumber。PC 車沒有獨立 `updateQuantity`；mutate XHR 是 Ultron `astoreservice.async`。Phase 2 HTTP：`… set-qty`（`--i-approve-set-qty`）。Recorder **不會**自動改量。
+- **刪列**：整頁補貨現況是 CDP 點刪除。PC 車沒有獨立 `deleteItem` API 名稱；mutate XHR 仍是同一個 Ultron `astoreservice.async`，靠 `events.deleteClick[]`／`deleteItem` 區分。Phase 2 HTTP：`… remove`（`--i-approve-remove-one`）。Recorder **不會**自動點刪。
 
 ## 操作者 live 再抓（可選；加／量／刪已確認）
 
@@ -184,7 +188,7 @@ python scripts/record_1688_cart_network.py \
 3. 若要再看加車：`--offer-url` 開 1 個 offer **分頁**，在 watch 視窗於**詳情頁**手動點一次「加采购车」（不要用 restocker 批次）。
 4. 若要再看改量：在**購物車分頁**手動改 1 個 sku 的數量（不要跑 `mutate --i-approve-set-qty`）。
 5. 若要再看刪列：在**購物車分頁**手動刪 1 列（不要跑 `mutate --i-approve-remove`）。Recorder 預設**不**自動點刪。
-6. 分類器應標出 `addcargo`、Ultron 改量 `.async`，以及帶 `deleteClick`／`deleteItem` 的刪列 `.async`。Phase 1 只重放 **read**（`render`／`asyncload`）。mutate HTTP（加／改／刪／結算）仍不要寫，另開 PR + 庭安明確 go。
+6. 分類器應標出 `addcargo`、Ultron 改量 `.async`，以及帶 `deleteClick`／`deleteItem` 的刪列 `.async`。Phase 1 重放 **read**。Phase 2 重放加／改／刪 HTTP，但**預設不 POST**，須明確 one-op 旗標（見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)）。結算／付款不要寫。
 
 ## 測試
 

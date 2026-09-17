@@ -45,7 +45,8 @@
 - 固定流程：**freeze → dry-run（離線）→ 人工核准 → mutate**。每次看最新預覽請用 **refresh** 重抓四池，不要沿用舊的 `live_*.json`。
 - freeze／mutate 是 CDP 腳本的薄封裝，以 `runpy` 載入 `scripts/` 內現行實作（含日期戳檔名，**不可刪**）。
 - 採購車／加車／改量／刪列 **Network 偵察**（唯讀 CDP recorder）：`scripts/record_1688_cart_network.py`，說明見 [`docs/1688_cart_network_recon.md`](docs/1688_cart_network_recon.md)。2026-09-17 live 已確認加車 `addcargo`、改量／刪列 Ultron `astoreservice.async`。
-- **Phase 1 唯讀 mtop 讀車**（signed HTTP；render + asyncload）：`python -m reverse_audit.mtop_read_cart`，說明見 [`docs/1688_mtop_read_cart.md`](docs/1688_mtop_read_cart.md)。Session 來自已登入 Chrome CDP 或本機 cookie-jar。**禁止**加車／改量／刪列／結算；mutate = 另 PR + 庭安明確 go。CI 用 `--dry-run`／`--fixture`。
+- **Phase 1 唯讀 mtop 讀車**（signed HTTP；render + asyncload）：`python -m reverse_audit.mtop_read_cart`，說明見 [`docs/1688_mtop_read_cart.md`](docs/1688_mtop_read_cart.md)。Session 來自已登入 Chrome CDP 或本機 cookie-jar。CI 用 `--dry-run`／`--fixture`。
+- **Phase 2 mtop mutate HTTP**（addcargo／Ultron set-qty／deleteClick）：`python -m reverse_audit.mtop_mutate`，說明見 [`docs/1688_mtop_mutate.md`](docs/1688_mtop_mutate.md)。**預設 dry-run，不 POST**。本機一次 live 須 `--i-approve-add-one`／`--i-approve-set-qty`／`--i-approve-remove-one`。禁止結算／付款／清空車／批次洗加。CI 必須離線。
 - 完整說明與成功標準：[`docs/reverse_audit.md`](docs/reverse_audit.md)。
 - 與「定期掃庫存 → 提醒 → 核准才補 → 對帳」最終閉環的差距：[`docs/restock_closed_loop_review.md`](docs/restock_closed_loop_review.md)。
 
@@ -351,7 +352,7 @@ InventoryCalculator/
 ├── ads_weekly.py           # 週報抓取（預設遠端 CDP，不走 Mac）
 ├── ads_session.py          # 遠端工作階段／BLOCKER 輔助
 ├── crawler.py              # 蝦皮爬蟲與廣告匯出
-├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / mutate；Phase 1 唯讀 mtop 讀車）
+├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / CDP mutate；Phase 1 讀車 + Phase 2 mtop HTTP）
 ├── restock_loop/           # 唯讀觀察清單應補摘要（python -m restock_loop scan）
 ├── scripts/                # 現行 CDP 輔助腳本（freeze／mutate 以 runpy 載入，勿刪）
 │   ├── freeze_reverse_audit_pools_20260905.py
@@ -367,7 +368,8 @@ InventoryCalculator/
 │   ├── reverse_audit.md
 │   ├── 1688_purchase_history_kb.md
 │   ├── 1688_cart_network_recon.md
-│   ├── 1688_mtop_read_cart.md   # Phase 1 唯讀 mtop 讀車；mutate 另 PR
+│   ├── 1688_mtop_read_cart.md   # Phase 1 唯讀 mtop 讀車
+│   ├── 1688_mtop_mutate.md      # Phase 2 addcargo／Ultron；預設 dry-run
 │   ├── cart-reconciliation.md
 │   ├── ads_analysis_rules.md
 │   ├── ads_metrics_dictionary.md
