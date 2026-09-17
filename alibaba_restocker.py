@@ -2741,12 +2741,29 @@ def verify_single_sku_in_cart_after_submit(
     return None
 
 
+def add_to_cart_via_mtop(page, cart_items: List[Dict[str, Any]], debug: DebugLogger) -> Dict[str, Any]:
+    """Path A: signed addcargo instead of DOM 加采购车. Fail-closed on mtop errors."""
+    from reverse_audit.mtop_restock import restock_add_via_mtop
+
+    return restock_add_via_mtop(page, cart_items, debug, approve=True)
+
+
 def add_to_cart_with_retry(
     page,
     cart_items: List[Dict[str, Any]],
     debug: DebugLogger,
 ) -> Dict[str, Any]:
     """同一 1688 商品頁的已選 SKU 一次加入採購車。"""
+    from reverse_audit.mtop_switch import via_mtop_enabled
+
+    if via_mtop_enabled():
+        debug.log("add_to_cart_via_mtop", {
+            "modelNames": [str(item.get("modelName") or "") for item in cart_items],
+            "itemCount": len(cart_items),
+            "quantityTotal": sum(int(item.get("quantity") or 0) for item in cart_items),
+        })
+        return add_to_cart_via_mtop(page, cart_items, debug)
+
     attempts = []
     final_status = "failed"
     feedback: Dict[str, Any] = {}
@@ -3575,7 +3592,22 @@ def main() -> None:
     parser.add_argument("--headless", default="false")
     parser.add_argument("--pause-seconds", type=int, default=0)
     parser.add_argument("--add-to-cart", action="store_true")
+    parser.add_argument(
+        "--via-mtop",
+        action="store_true",
+        dest="via_mtop",
+        help=(
+            "加車改走 signed mtop HTTP（addcargo），不要 DOM 點擊。"
+            "預設關閉。亦可設 ALIBABA_RESTOCK_VIA_MTOP=1。"
+            "mtop 失敗 fail-closed，不回退 DOM。"
+        ),
+    )
     args = parser.parse_args()
+
+    if args.via_mtop:
+        from reverse_audit.mtop_switch import apply_via_mtop_cli
+
+        apply_via_mtop_cli(True)
 
     payload = load_payload(args.input)
     if args.add_to_cart:

@@ -175,9 +175,9 @@ python -m unittest tests.test_mtop_mutate tests.test_mtop_read_cart
 ## 與現有路徑的關係
 
 - Phase 1 `python -m reverse_audit.mtop_read_cart` 仍**唯讀**，繼續拒絕 addcargo／async mutate。
-- `python -m reverse_audit mutate --i-approve-*` 仍是 **CDP 批次**路 B，沒改成這支 HTTP client。
+- `python -m reverse_audit mutate --i-approve-*` **預設仍是 CDP 批次**路 B。加 `--via-mtop`（或 `ALIBABA_RESTOCK_VIA_MTOP=1`）才改走本 HTTP client；開關不是核准。見 [`docs/1688_mtop_restock.md`](1688_mtop_restock.md)。
 - `alibaba_client.py` 仍是 Open Platform AOP stub，**不要**接到這條 H5 路徑。
-- 整頁補貨／restocker 執行層現況仍是 DOM／CDP；本 PR 只提供「帶旗標的 HTTP one-op」。
+- 整頁補貨／restocker 執行層**預設**仍 DOM／CDP；Phase 3 用同一開關改走 HTTP。
 
 ## 水位（這台 cloud 通到哪／卡在哪）
 

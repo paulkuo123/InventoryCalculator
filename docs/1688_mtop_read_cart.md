@@ -2,7 +2,9 @@
 
 **Phase 1 = 唯讀。** 這支 client 只重放已確認的讀車 mtop，把車內列印成遮罩後的行摘要。
 
-**mutate HTTP = Phase 2**（[`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)）：預設 dry-run，POST 須 `--i-approve-add-one`／`--i-approve-set-qty`／`--i-approve-remove-one`。本模組仍**不實作、不呼叫** mutate。
+**mutate HTTP = Phase 2**（[`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)）：預設 dry-run，POST 須 one-op 旗標。本模組仍**不實作、不呼叫** mutate。
+
+整頁補貨／路 B mutate **接到**這套 HTTP 是 Phase 3（[`docs/1688_mtop_restock.md`](1688_mtop_restock.md)）：預設仍 DOM／CDP；`--via-mtop` 才改走。Phase 1 這支 CLI 維持唯讀。
 
 庭安已 OK 開這個低爆破 Phase 1 骨架。不要把這支合進「會改車」的流程，也不要寫 `golden_table`／auto_approve／Golden #41–#46。
 

@@ -54,7 +54,9 @@ PATH_A_EPILOG = (
     "任務 1 唯讀摘要：python -m restock_loop scan\n"
     "批次 completed／completed_with_gaps 後自動 reverse_audit dry-run（預設重抓 live cart；永不 mutate）。\n"
     "有登入中的 Chrome CDP 時會先凍加車前購物車、結束後再凍 after 並對帳。\n"
-    "CI／離線請加 --sources-only（不開 Chrome、不假裝 live）。"
+    "CI／離線請加 --sources-only（不開 Chrome、不假裝 live）。\n"
+    "加車執行層預設仍 DOM 點「加采购车」。要改走 signed mtop HTTP："
+    "加 --via-mtop 或設 ALIBABA_RESTOCK_VIA_MTOP=1（仍須本核准旗標才會 POST batches）。"
 )
 
 
@@ -402,6 +404,17 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
             "與 --refreeze 同時出現時以此為準。永不 mutate。"
         ),
     )
+    parser.add_argument(
+        "--via-mtop",
+        action="store_true",
+        dest="via_mtop",
+        help=(
+            "整頁加車改走 signed mtop HTTP（addcargo），不要 DOM 點「加采购车」。"
+            "預設關閉。亦可設 ALIBABA_RESTOCK_VIA_MTOP=1。"
+            f"此旗標不是核准；仍須 {APPROVE_WATCHLIST_RESTOCK_FLAG}。"
+            "mtop 失敗 fail-closed，不回退 DOM。"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -618,6 +631,10 @@ def terminate_process(process: Optional[Any]) -> None:
 
 def main(argv: Optional[list] = None) -> int:
     args = parse_args(argv)
+    if getattr(args, "via_mtop", False):
+        from reverse_audit.mtop_switch import apply_via_mtop_cli
+
+        apply_via_mtop_cli(True)
     try:
         if args.resume:
             return run_resume(args)

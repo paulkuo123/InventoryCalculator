@@ -3,6 +3,11 @@
 This module does not talk to 1688. It freezes the homepage-visible list,
 decides when to pause, and writes artifacts the homepage can resume from.
 
+The 1688 add/set-qty/remove execution lives in ``alibaba_restocker`` /
+``reverse_audit mutate``. Default is DOM/CDP. ``ALIBABA_RESTOCK_VIA_MTOP=1``
+or launcher ``--via-mtop`` selects signed mtop HTTP instead; the env is
+inherited by the restocker child. This module still never mutates cart.
+
 Terminal success-ish statuses (`completed` / `completed_with_gaps`) automatically
 run reverse_audit **dry-run only**. When Chrome CDP is already up, default is to
 re-fetch live cart (after) and reconcile — not sources-only. Approved restock

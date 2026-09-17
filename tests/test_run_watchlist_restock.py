@@ -1,4 +1,5 @@
 import io
+import os
 import shutil
 import subprocess
 import sys
@@ -88,6 +89,7 @@ class RunWatchlistRestockTests(unittest.TestCase):
         self.assertEqual(args.keyword, "")
         self.assertIsNone(args.resume)
         self.assertFalse(args.cart_cleared)
+        self.assertFalse(args.via_mtop)
 
     def test_yes_and_restock_alone_are_not_approve(self):
         args = parse_args(["--restock", "--yes"])
@@ -334,6 +336,7 @@ class WatchlistRestockApproveGateTests(unittest.TestCase):
         self.assertIn("restock_loop scan", help_text)
         self.assertIn("--refreeze", help_text)
         self.assertIn("--sources-only", help_text)
+        self.assertIn("--via-mtop", help_text)
         self.assertIn("不開 Chrome", help_text)
 
     def test_without_flag_restock_yes_prints_scan_and_does_not_post(self):
@@ -367,6 +370,18 @@ class WatchlistRestockApproveGateTests(unittest.TestCase):
             if call["method"] == "POST" and BATCHES_PATH in str(call["url"])
         ]
         self.assertEqual(batch_posts, [])
+
+    def test_via_mtop_without_approve_does_not_post(self):
+        calls, fake_request_json = self._posts()
+        with patch.dict(os.environ, {"ALIBABA_RESTOCK_VIA_MTOP": ""}):
+            with tempfile.TemporaryDirectory() as tmp:
+                root = _stage_root(Path(tmp))
+                code, stdout = self._run_main(["--via-mtop"], root, fake_request_json)
+        self.assertEqual(code, 0)
+        self.assertIn("尚未加車", stdout)
+        self.assertFalse(
+            any(call["method"] == "POST" and BATCHES_PATH in str(call["url"]) for call in calls)
+        )
 
     def test_without_flag_default_does_not_post(self):
         calls, fake_request_json = self._posts()
