@@ -11,6 +11,7 @@ This module builds the payload and can POST once when
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
@@ -37,15 +38,26 @@ from reverse_audit.mtop_sku_map import (
 
 DEFAULT_FLOW = "general"
 APPROVE_ADD_ONE = "--i-approve-add-one"
+_OFFER_IN_URL_RE = re.compile(r"/offer/(\d+)", re.I)
 
 
-def _as_offer_id(value: Any) -> Any:
+def parse_offer_id(value: Any) -> str:
+    """Accept a digits offerId or a detail.1688.com/offer/<id>.html URL."""
     text = str(value or "").strip()
     if not text:
         raise MutateSafetyError("offerId is required")
-    if not text.isdigit():
-        raise MutateSafetyError(f"offerId must be digits, got {text!r}")
-    return int(text)
+    if text.isdigit():
+        return text
+    matched = _OFFER_IN_URL_RE.search(text)
+    if matched:
+        return matched.group(1)
+    raise MutateSafetyError(
+        f"offerId must be digits or an offer URL, got {text[:80]!r}"
+    )
+
+
+def _as_offer_id(value: Any) -> Any:
+    return int(parse_offer_id(value))
 
 
 def _as_qty(value: Any) -> int:

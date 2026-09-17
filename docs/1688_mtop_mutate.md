@@ -94,9 +94,20 @@ python -m reverse_audit.mtop_mutate remove \
 
 可改 `--cookie-jar /tmp/1688.cookie-jar`。若改量／刪列要離線組包、只在 POST 時用 session，可同時帶 `--fixture`（item node 來自 fixture，不發明整車）。
 
-skuId 而沒有 specId、又想 live 解：`--fetch-detail` 會 **GET** `https://detail.1688.com/offer/<id>.html`（唯讀，不加車）。CI 請用 `--detail-html`。
+skuId 而沒有 specId、又想 live 解：`--fetch-detail` 會 **GET** `https://detail.1688.com/offer/<id>.html`（唯讀，不加車）。CI 請用 `--detail-html`。`--offer-url 'https://detail.1688.com/offer/<id>.html'` 可代替 `--offer-id`。
 
-離開碼：`0` 成功（含 dry-run）；`1` 用法／安全拒絕；`2` 連不上 CDP；`3` 未登入；`4` 簽章失敗；`5` 其他 mtop 錯。
+Grok 遠端 CDP 一次 smoke（庭安已授權；**先 dry-run 再帶旗標**；cloud CI 不要跑）：
+
+```bash
+# 0) 先讀車（Phase 1 唯讀）拿 cartId
+python -m reverse_audit.mtop_mutate read --cdp http://127.0.0.1:9227
+
+# 1) add / set-qty / remove：先不要旗標看 payload，再加對應 --i-approve-*
+```
+
+若失敗，stderr 會以「卡在登入／簽章／風控／業務參數／Ultron 包」開頭。**停，不要重試洗車。**
+
+離開碼：`0` 成功（含 dry-run）；`1` 用法／安全拒絕；`2` 連不上 CDP；`3` 未登入；`4` 簽章失敗；`5` 其他 mtop 錯（含風控／業務參數／Ultron 包；看「卡在…」）。
 
 ## Payload 形狀
 
@@ -142,3 +153,17 @@ python -m unittest tests.test_mtop_mutate tests.test_mtop_read_cart
 - `python -m reverse_audit mutate --i-approve-*` 仍是 **CDP 批次**路 B，沒改成這支 HTTP client。
 - `alibaba_client.py` 仍是 Open Platform AOP stub，**不要**接到這條 H5 路徑。
 - 整頁補貨／restocker 執行層現況仍是 DOM／CDP；本 PR 只提供「帶旗標的 HTTP one-op」。
+
+## 水位（這台 cloud 通到哪／卡在哪）
+
+**已通（離線，可重放）：** addcargo／Ultron set-qty／deleteClick 的 payload 形狀、Phase 1 sign 重用、沒旗標不 POST、skuMapOriginal 合成 HTML、禁止結算／清空車。unittest 綠。
+
+**卡在 live smoke（這台 Linux cloud，2026-09-17）：**
+
+| 檢查 | 結果 |
+|------|------|
+| CDP `:9227`／`:9223`／`:9232` | `ConnectionRefusedError`（沒有已登入 Chrome） |
+| cookie-jar / `_m_h5_tk` | 環境沒有（也不該有） |
+| 公開詳情頁 GET（`--fetch-detail`，不加車） | `detail.1688.com` 回 **x5 punish** 小頁（約 1KB，無 `skuMapOriginal`）。雲端 IP 被攔，不是 parser 錯。 |
+
+因此 **加／改／刪的 HTTP POST 無法在這台機器實打**。庭安已授權的一次 live smoke 請 Grok 在**有 1688 session 的遠端 CDP** 跑（指令見上）。失敗時看 stderr「卡在…」，不要在 cloud 重試。

@@ -26,7 +26,7 @@ import sys
 from pathlib import Path
 from typing import Any, Optional, Sequence
 
-from reverse_audit.mtop_addcargo import APPROVE_ADD_ONE, AddCargoClient
+from reverse_audit.mtop_addcargo import APPROVE_ADD_ONE, AddCargoClient, parse_offer_id
 from reverse_audit.mtop_http import (
     EXIT_OK,
     EXIT_USAGE,
@@ -95,7 +95,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     add_p = sub.add_parser("add", help="addcargo one SKU (default dry-run)")
     _add_session_args(add_p)
-    add_p.add_argument("--offer-id", dest="offer_id", required=True, help="1688 offerId")
+    add_p.add_argument(
+        "--offer-id",
+        dest="offer_id",
+        default=None,
+        help="1688 offerId (digits). Or pass --offer-url.",
+    )
+    add_p.add_argument(
+        "--offer-url",
+        dest="offer_url",
+        default=None,
+        help="detail.1688.com/offer/<id>.html (parsed to offerId; still one SKU)",
+    )
     add_p.add_argument("--spec-id", dest="spec_id", default=None, help="SKU specId (preferred)")
     add_p.add_argument(
         "--sku-id",
@@ -235,9 +246,13 @@ def _preview_token(session) -> str:
 
 def run_add(args: argparse.Namespace) -> int:
     session = _load_session(args)
+    offer_raw = args.offer_id or args.offer_url
+    if not offer_raw:
+        raise MutateSafetyError("need --offer-id or --offer-url")
+    offer_id = parse_offer_id(offer_raw)
     client = AddCargoClient(session)
     plan = client.plan(
-        offer_id=args.offer_id,
+        offer_id=offer_id,
         quantity=args.qty,
         spec_id=args.spec_id,
         sku_id=args.sku_id,
@@ -279,7 +294,12 @@ def run_ultron(args: argparse.Namespace, *, action: str) -> int:
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = build_parser().parse_args(list(sys.argv[1:] if argv is None else argv))
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "read":
+        from reverse_audit.mtop_read_cart import main as read_main
+
+        return read_main(argv[1:])
+    args = build_parser().parse_args(argv)
     if getattr(args, "cdp", None) is not None and str(args.cdp).strip():
         os.environ["ALIBABA_RESTOCK_CDP"] = str(args.cdp).strip()
 

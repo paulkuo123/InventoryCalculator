@@ -126,6 +126,61 @@ def _blob(data: Any) -> str:
     return canonical_data_json(data)
 
 
+def classify_mutate_ret(ret: Any) -> str:
+    """Phase 2 ret taxonomy: success | not_logged_in | bad_sign | risk_control | biz_param | ultron_pack | error."""
+    kind = classify_mtop_ret(ret)
+    if kind != "error":
+        return kind
+    if isinstance(ret, list):
+        text = " ".join(str(x) for x in ret)
+    else:
+        text = str(ret or "")
+    upper = text.upper()
+    risk_markers = (
+        "RGV",
+        "RISK_CONTROL",
+        "RISKCONTROL",
+        "FAIL_SYS_USERVALIDATE",
+        "SLIDER",
+        "CAPTCHA",
+        "PUNISH",
+        "风控",
+        "風險",
+        "验证码",
+        "驗證碼",
+    )
+    if any(marker.upper() in upper or marker in text for marker in risk_markers):
+        return "risk_control"
+    biz_markers = ("BIZPARAM", "缺少业务参数", "缺少業務參數")
+    if any(marker.upper() in upper or marker in text for marker in biz_markers):
+        return "biz_param"
+    ultron_markers = (
+        "HIERARCHY",
+        "ULTRON",
+        "INVALID_OPERATOR",
+        "ENDPOINT_INVALID",
+        "PROTOCOL_ERROR",
+    )
+    if any(marker.upper() in upper or marker in text for marker in ultron_markers):
+        return "ultron_pack"
+    return "error"
+
+
+def mutate_block_message(kind: str, ret: Optional[List[str]] = None) -> str:
+    """Operator-facing 通到哪／卡在哪 line. Safe: no cookies / signs."""
+    joined = "; ".join(str(x) for x in (ret or [])[:4])
+    suffix = f" ret={joined}" if joined else ""
+    hints = {
+        "not_logged_in": "卡在登入：CDP 埠須對上正在點的已登入 profile，或重匯 cookie-jar。",
+        "bad_sign": "卡在簽章：刷新同一 profile 的 _m_h5_tk（token 是第一個 '_' 之前）。不要改 appKey。",
+        "risk_control": "卡在風控：mtop 回風控／驗證。停，不要重試洗車。",
+        "biz_param": "卡在業務參數：缺欄。對照 docs/1688_cart_network_recon.md，不要猜結算欄。",
+        "ultron_pack": "卡在 Ultron 包：item node／operator 不被接受。只抄 render 的 item_{cartId}，不要發明整棵車樹。",
+        "error": "卡在其他 mtop 錯。停，帶 ret 回報；不要改打結算／清空車。",
+    }
+    return (hints.get(kind) or hints["error"]) + suffix
+
+
 def assert_allowed_mutate_api(api: str, data: Any = None) -> None:
     """Refuse checkout / payment / clear-cart / unknown mutate APIs."""
     name = str(api or "").strip()
@@ -242,21 +297,15 @@ def post_signed_mtop(
         if text.strip()
         else {"ret": [f"HTTP {raw.get('status')}"], "data": {}, "kind": "error"}
     )
-    kind = envelope.get("kind") or classify_mtop_ret(envelope.get("ret"))
     ret = envelope.get("ret") or []
+    kind = classify_mutate_ret(ret)
+    envelope["kind"] = kind
     if kind == "not_logged_in":
-        raise NotLoggedInError(f"not logged in ({'; '.join(ret) or 'session expired'})")
+        raise NotLoggedInError(mutate_block_message(kind, ret))
     if kind == "bad_sign":
-        raise MtopCallError(
-            f"bad mtop sign ({'; '.join(ret) or 'FAIL_SYS_ILLEGAL_ACCESS'}). "
-            "Need a fresh _m_h5_tk from the same jar (token before '_'); "
-            f"H5 appKey is typically {H5_APP_KEY}.",
-            kind="bad_sign",
-            ret=ret,
-        )
+        raise MtopCallError(mutate_block_message(kind, ret), kind="bad_sign", ret=ret)
     if kind != "success":
-        joined = "; ".join(ret) or f"HTTP {raw.get('status')}"
-        raise MtopCallError(f"mtop error ({joined}).", kind="mtop_error", ret=ret)
+        raise MtopCallError(mutate_block_message(kind, ret), kind=kind, ret=ret)
     return envelope
 
 
@@ -295,9 +344,11 @@ __all__ = [
     "MutateSafetyError",
     "Transport",
     "assert_allowed_mutate_api",
+    "classify_mutate_ret",
     "dumps_pretty",
     "exit_for_exc",
     "mask_for_log",
+    "mutate_block_message",
     "offer_detail_url",
     "post_signed_mtop",
     "preview_form_fields",

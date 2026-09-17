@@ -151,6 +151,7 @@ def build_set_qty_data(item_node: Dict[str, Any], cart_id: Any, quantity: Any) -
         node["fields"] = fields
     fields["quantity"] = _as_qty(quantity)
     fields.setdefault("cartId", _maybe_int_id(cid))
+    node.setdefault("id", f"item_{cid}")
     # Do not invent modifySku — fields.quantity is authoritative.
     envelope = _one_item_params(cid, node)
     assert_allowed_mutate_api(API_ULTRON_ASYNC, envelope)
@@ -165,6 +166,7 @@ def build_delete_data(item_node: Dict[str, Any], cart_id: Any) -> Dict[str, Any]
         fields = {}
         node["fields"] = fields
     fields.setdefault("cartId", _maybe_int_id(cid))
+    node.setdefault("id", f"item_{cid}")
     purchase_type = fields.get("purchaseType")
     click_fields: Dict[str, Any] = {"cartId": fields.get("cartId")}
     if purchase_type not in (None, ""):

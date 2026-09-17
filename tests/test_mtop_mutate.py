@@ -21,6 +21,7 @@ from reverse_audit.mtop_addcargo import (  # noqa: E402
     AddCargoClient,
     assert_addcargo_shape,
     build_addcargo_data,
+    parse_offer_id,
     resolve_spec_id,
 )
 from reverse_audit.mtop_http import (  # noqa: E402
@@ -32,7 +33,9 @@ from reverse_audit.mtop_http import (  # noqa: E402
     ForbiddenApiError,
     MutateSafetyError,
     assert_allowed_mutate_api,
+    classify_mutate_ret,
     mask_for_log,
+    mutate_block_message,
 )
 from reverse_audit.mtop_mutate import main as mutate_main  # noqa: E402
 from reverse_audit.mtop_session import load_cookie_jar  # noqa: E402
@@ -95,6 +98,15 @@ class AddCargoShapeTests(unittest.TestCase):
         self.assertEqual(query["sign"], sign_h5(SYNTHETIC_TOKEN, t, data))
         self.assertEqual(len(query["sign"]), 32)
 
+    def test_parse_offer_id_from_url(self):
+        self.assertEqual(parse_offer_id(OFFER), OFFER)
+        self.assertEqual(
+            parse_offer_id(f"https://detail.1688.com/offer/{OFFER}.html"),
+            OFFER,
+        )
+        with self.assertRaises(MutateSafetyError):
+            parse_offer_id("https://cart.1688.com/cart.htm")
+
     def test_sku_map_original_resolves_spec(self):
         html = DETAIL_HTML.read_text(encoding="utf-8")
         self.assertEqual(spec_id_for_sku(html, SKU), SPEC)
@@ -129,6 +141,7 @@ class UltronShapeTests(unittest.TestCase):
         self.assertEqual(qty_data["params"]["operator"], "item_9001")
         self.assertEqual(list(qty_data["params"]["data"]), ["item_9001"])
         self.assertEqual(item["fields"]["quantity"], 41)
+        self.assertEqual(item["id"], "item_9001")
         self.assertEqual(item["fields"]["skuId"], SKU)
         # Original render qty stays on the source node; we copied then mutated.
         self.assertEqual(node["fields"]["quantity"], 40)
@@ -293,6 +306,28 @@ class CliTests(unittest.TestCase):
         self.assertNotIn("_m_h5_tk", blob)
         self.assertNotIn("cookie2", blob.lower())
 
+    def test_add_offer_url_dry_run(self):
+        proc = self._run(
+            "add",
+            "--offer-url",
+            f"https://detail.1688.com/offer/{OFFER}.html",
+            "--spec-id",
+            SPEC,
+            "--qty",
+            "1",
+            "--json",
+        )
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        payload = json.loads(proc.stdout)
+        self.assertEqual(payload["offerId"], OFFER)
+        self.assertFalse(payload["posted"])
+
+    def test_read_alias_is_phase1_offline(self):
+        proc = self._run("read", "--dry-run")
+        self.assertEqual(proc.returncode, EXIT_OK, proc.stderr)
+        self.assertIn("readOnly=true", proc.stdout)
+        self.assertIn("cartId=9001", proc.stdout)
+
     def test_add_sku_id_via_detail_html(self):
         proc = self._run(
             "add",
@@ -403,6 +438,20 @@ class SafetyTests(unittest.TestCase):
                 self.assertNotRegex(text, r"[a-f0-9]{32}_1[6-9]\d{11}")
             self.assertNotIn("2214213826537", text, path.name)
             self.assertNotIn("7ccb9e57d1d5f349172254f5c3eb0f3e", text, path.name)
+
+    def test_mutate_ret_taxonomy(self):
+        self.assertEqual(classify_mutate_ret(["SUCCESS::"]), "success")
+        self.assertEqual(classify_mutate_ret(["FAIL_SYS_ILLEGAL_ACCESS::非法请求"]), "bad_sign")
+        self.assertEqual(classify_mutate_ret(["FAIL_SYS_SESSION_EXPIRED::"]), "not_logged_in")
+        self.assertEqual(classify_mutate_ret(["RGV508::风控"]), "risk_control")
+        self.assertEqual(
+            classify_mutate_ret(["FAIL_SYS_BIZPARAM_MISSED::缺少业务参数"]),
+            "biz_param",
+        )
+        self.assertEqual(classify_mutate_ret(["ULTRON_HIERARCHY::"]), "ultron_pack")
+        msg = mutate_block_message("risk_control", ["RGV508::风控"])
+        self.assertIn("卡在風控", msg)
+        self.assertIn("RGV508", msg)
 
     def test_preview_masks_sign(self):
         data = build_addcargo_data(spec_id=SPEC, offer_id=OFFER, quantity=1)
