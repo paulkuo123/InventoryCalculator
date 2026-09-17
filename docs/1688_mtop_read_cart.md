@@ -44,7 +44,23 @@ python -m reverse_audit.mtop_read_cart --cookie-jar /tmp/1688.cookie-jar
 
 CDP 與 freeze／recorder 相同：`--cdp` 或 `ALIBABA_RESTOCK_CDP`（例如 `http://127.0.0.1:9227`），未設時依序試 `9227`、`9223`。只 attach，不新開、不殺掉 Chrome。computerUse 常見是 `:9227`（`chrome-profile-5`），不是 `:9232`。
 
-可選：`--json` 印 identity-only JSON；`--out PATH` 寫同一份（仍不含 cookie／token）；`--no-asyncload` 只打 render。
+可選：`--json` 印 identity-only JSON；`--out PATH` 寫同一份（仍不含 cookie／token）；`--no-asyncload` 只打 render；`--address-id` 見下方。
+
+## 請求 `data` 形狀（live）
+
+`render` **必須**帶業務參數，否則 mtop 回 `FAIL_SYS_BIZPARAM_MISSED::缺少业务参数platformType`。預設（**不含**帳戶 `addressId`）：
+
+```json
+{"purchaseType":"main_purchase_type","platformType":"PC","cartPageOption":{}}
+```
+
+先這樣打。若 live 仍要 `addressId`，本機再帶，**不要**寫進 repo／fixture：
+
+```bash
+PYTHONPATH=. python -m reverse_audit.mtop_read_cart --cdp http://127.0.0.1:9227 --address-id '<from cart page>'
+```
+
+`asyncload` 預設是 `data.param`：`pageNo`、`platformType`、`purchaseType`、`needClean=false`、`hitNewPromotionExpressionAB=true`，以及從 **render 回包**組出的 `itemAsyncParams`（cartId／offerId／qty／seller…）。`buyerUserId` 優先從 render 取，否則用 session 的 `unb` cookie。`receiveAddressCityCode` 只在 render 裡有才帶。真實 `buyerUserId`／`addressId` **不要**寫死在程式或 fixture。
 
 離開碼：`0` 成功；`1` 用法／fixture；`2` 連不上 CDP；`3` 未登入／缺 `_m_h5_tk`／session 過期；`4` 簽章失敗；`5` 其他 mtop 錯。
 

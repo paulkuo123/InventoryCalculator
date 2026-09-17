@@ -1,11 +1,11 @@
 {
-  "comment": "Synthetic Phase 1 read-cart fixture. Not a live dump. No session tokens. Shape matches docs/1688_cart_network_recon.md render + asyncload (item_<cartId>.fields).",
+  "comment": "Synthetic Phase 1 read-cart fixture. Not a live dump. No session tokens / addressId / real buyerUserId. Shape matches docs/1688_cart_network_recon.md render + asyncload (item_<cartId>.fields) plus live request extras used to build asyncload.param.",
   "render": {
     "api": "mtop.1688.buycenter.mtoppurchaseastoreservice.render",
     "v": "1.0",
     "ret": ["SUCCESS::调用成功"],
     "data": {
-      "model": "{\"data\":{\"item_9001\":{\"tag\":\"item\",\"fields\":{\"cartId\":9001,\"offerId\":752797767076,\"skuId\":\"5228880725920\",\"skuTitle\":\"紫花蝴蝶绳\",\"quantity\":40,\"effective\":true,\"sellerId\":123}},\"item_9002\":{\"tag\":\"item\",\"fields\":{\"cartId\":9002,\"offerId\":\"676841046990\",\"skuId\":\"1\",\"skuTitle\":\"爱心熊黑绳\",\"quantity\":10,\"effective\":true,\"sellerId\":456}},\"item_group_1\":{\"fields\":{\"offerId\":752797767076,\"title\":\"demo\"}}}}"
+      "model": "{\"global\":{\"buyerUserId\":88001},\"data\":{\"item_9001\":{\"tag\":\"item\",\"fields\":{\"cartId\":9001,\"offerId\":752797767076,\"skuId\":\"5228880725920\",\"skuTitle\":\"紫花蝴蝶绳\",\"quantity\":40,\"effective\":true,\"sellerId\":123,\"sellerUserId\":123,\"sellerMemberId\":\"b2b-synthetic-seller-a\",\"firstLevelCategoryId\":100,\"placeOrderFlow\":\"general\",\"supportStock\":true}},\"item_9002\":{\"tag\":\"item\",\"fields\":{\"cartId\":9002,\"offerId\":\"676841046990\",\"skuId\":\"1\",\"skuTitle\":\"爱心熊黑绳\",\"quantity\":10,\"effective\":true,\"sellerId\":456,\"sellerUserId\":456,\"sellerMemberId\":\"b2b-synthetic-seller-b\",\"firstLevelCategoryId\":200,\"placeOrderFlow\":\"general\",\"supportStock\":true}},\"item_group_1\":{\"fields\":{\"offerId\":752797767076,\"title\":\"demo\"}}}}"
     }
   },
   "asyncload": {

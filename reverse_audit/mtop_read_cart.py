@@ -12,6 +12,7 @@ Usage:
   python -m reverse_audit.mtop_read_cart --fixture tests/fixtures/1688_mtop_read_cart/bundle.json
   python -m reverse_audit.mtop_read_cart --cdp http://127.0.0.1:9227
   python -m reverse_audit.mtop_read_cart --cookie-jar /path/to/local.cookie-jar
+  python -m reverse_audit.mtop_read_cart --cdp http://127.0.0.1:9227 --address-id '<optional>'
 """
 from __future__ import annotations
 
@@ -56,6 +57,10 @@ CART_ORIGIN = "https://cart.1688.com"
 API_RENDER = "mtop.1688.buycenter.mtoppurchaseastoreservice.render"
 API_ASYNCLOAD = "mtop.1688.buycenter.mtoppurchaseastoreservice.asyncload"
 ALLOWED_APIS = frozenset({API_RENDER, API_ASYNCLOAD})
+
+# Live render requires these; addressId is account-specific and must stay optional.
+PLATFORM_TYPE = "PC"
+PURCHASE_TYPE = "main_purchase_type"
 
 # Request-body tokens that belong to mutate flows. Refuse even if api were swapped.
 _FORBIDDEN_PAYLOAD_TOKENS = (
@@ -268,6 +273,167 @@ def _walk_cart(obj: Any, bucket: Dict[str, CartLine], *, source_api: str, depth:
             _walk_cart(val, bucket, source_api=source_api, depth=depth + 1)
 
 
+def _maybe_int_id(value: Any) -> Any:
+    if value is None or value == "" or isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        return value
+    text = str(value).strip()
+    if text.isdigit():
+        return int(text)
+    return value
+
+
+def _walk_unwrapped(obj: Any, visit, depth: int = 0) -> None:
+    if obj is None or depth > 12:
+        return
+    if isinstance(obj, str):
+        parsed = unwrap_jsonish(obj)
+        if parsed is not obj:
+            _walk_unwrapped(parsed, visit, depth + 1)
+        return
+    if isinstance(obj, list):
+        for item in obj:
+            _walk_unwrapped(item, visit, depth + 1)
+        return
+    if not isinstance(obj, dict):
+        return
+    visit(obj)
+    if "data" in obj and ("api" in obj or "ret" in obj):
+        _walk_unwrapped(obj.get("data"), visit, depth + 1)
+        return
+    if "model" in obj:
+        _walk_unwrapped(obj.get("model"), visit, depth + 1)
+    for val in obj.values():
+        if isinstance(val, (dict, list)):
+            _walk_unwrapped(val, visit, depth + 1)
+        elif isinstance(val, str) and val.strip()[:1] in "{[":
+            _walk_unwrapped(val, visit, depth + 1)
+
+
+def extract_buyer_user_id(payload: Any) -> Optional[Any]:
+    """Pull buyerUserId from a render envelope. Never invent an account id."""
+    found: List[Any] = []
+
+    def visit(obj: Dict[str, Any]) -> None:
+        for key in ("buyerUserId", "buyer_user_id"):
+            if key in obj and obj.get(key) not in (None, ""):
+                found.append(obj.get(key))
+
+    _walk_unwrapped(unwrap_jsonish(payload), visit)
+    if not found:
+        return None
+    return _maybe_int_id(found[0])
+
+
+def extract_receive_address_city_code(payload: Any) -> Optional[str]:
+    found: List[str] = []
+
+    def visit(obj: Dict[str, Any]) -> None:
+        val = obj.get("receiveAddressCityCode")
+        if val not in (None, ""):
+            found.append(str(val).strip())
+
+    _walk_unwrapped(unwrap_jsonish(payload), visit)
+    return found[0] if found else None
+
+
+def session_buyer_user_id(session: Optional[MtopSession]) -> Optional[int]:
+    """``unb`` cookie is the usual numeric buyer id. Skip 0 / empty. Do not log."""
+    if session is None:
+        return None
+    raw = str(session.get("unb") or "").strip()
+    if raw.isdigit() and int(raw) > 0:
+        return int(raw)
+    return None
+
+
+def extract_item_async_params(payload: Any) -> List[Dict[str, Any]]:
+    """Build asyncload ``itemAsyncParams`` from a render (or asyncload) body."""
+    found: Dict[str, Dict[str, Any]] = {}
+
+    def visit(obj: Dict[str, Any]) -> None:
+        fields = obj.get("fields") if isinstance(obj.get("fields"), dict) else None
+        if not fields or fields.get("cartId") is None:
+            return
+        cid = str(fields.get("cartId") or "").strip()
+        if not cid:
+            return
+        row = found.setdefault(cid, {})
+        row["cartId"] = _maybe_int_id(fields.get("cartId"))
+        offer = fields.get("offerId")
+        if offer is not None and offer != "":
+            row["offerId"] = _maybe_int_id(_digits(offer) or offer)
+        qty = _as_qty(fields.get("quantity"))
+        if qty is not None:
+            row["quantity"] = qty
+        if fields.get("firstLevelCategoryId") not in (None, ""):
+            row["firstLevelCategoryId"] = _maybe_int_id(fields.get("firstLevelCategoryId"))
+        flow = fields.get("placeOrderFlow") or fields.get("flow")
+        if flow:
+            row["placeOrderFlow"] = str(flow)
+        if fields.get("sellerMemberId"):
+            row["sellerMemberId"] = str(fields.get("sellerMemberId"))
+        seller_uid = fields.get("sellerUserId")
+        if seller_uid in (None, "") and fields.get("sellerId") not in (None, ""):
+            seller_uid = fields.get("sellerId")
+        if seller_uid not in (None, ""):
+            row["sellerUserId"] = _maybe_int_id(seller_uid)
+        if "supportStock" in fields:
+            row["supportStock"] = bool(fields.get("supportStock"))
+
+    _walk_unwrapped(unwrap_jsonish(payload), visit)
+    rows: List[Dict[str, Any]] = []
+    for cid, row in found.items():
+        if row.get("offerId") in (None, "") and row.get("quantity") is None:
+            continue
+        row.setdefault("placeOrderFlow", "general")
+        row.setdefault("supportStock", True)
+        rows.append(row)
+    rows.sort(key=lambda item: str(item.get("cartId") or ""))
+    return rows
+
+
+def default_render_data(*, address_id: Optional[str] = None) -> Dict[str, Any]:
+    """Live-required render keys. ``addressId`` is omitted unless the operator passes it."""
+    data: Dict[str, Any] = {
+        "purchaseType": PURCHASE_TYPE,
+        "platformType": PLATFORM_TYPE,
+        "cartPageOption": {},
+    }
+    if address_id not in (None, ""):
+        data["addressId"] = str(address_id)
+    return data
+
+
+def default_asyncload_data(
+    *,
+    page_no: int = 1,
+    render_payload: Any = None,
+    session: Optional[MtopSession] = None,
+) -> Dict[str, Any]:
+    """Live asyncload envelope: ``data.param`` with pageNo + rows from render."""
+    param: Dict[str, Any] = {
+        "hitNewPromotionExpressionAB": True,
+        "needClean": False,
+        "pageNo": int(page_no),
+        "platformType": PLATFORM_TYPE,
+        "purchaseType": PURCHASE_TYPE,
+    }
+    items = extract_item_async_params(render_payload) if render_payload is not None else []
+    if items:
+        param["itemAsyncParams"] = items
+    buyer = extract_buyer_user_id(render_payload) if render_payload is not None else None
+    if buyer in (None, "", 0):
+        buyer = session_buyer_user_id(session)
+    if buyer not in (None, "", 0):
+        param["buyerUserId"] = buyer
+    city = extract_receive_address_city_code(render_payload) if render_payload is not None else None
+    if city:
+        param["receiveAddressCityCode"] = city
+    return {"param": param}
+
+
 def extract_cart_lines(payload: Any, *, source_api: str = "") -> List[CartLine]:
     """Pull cartId / offerId / skuId / qty rows out of a render or asyncload envelope."""
     parsed = payload
@@ -349,11 +515,13 @@ class ReadCartClient:
         transport: Optional[Transport] = None,
         app_key: str = H5_APP_KEY,
         now_ms: Optional[Callable[[], int]] = None,
+        address_id: Optional[str] = None,
     ):
         self.session = session
         self.transport = transport or default_http_transport
         self.app_key = app_key
         self.now_ms = now_ms or (lambda: int(time.time() * 1000))
+        self.address_id = str(address_id).strip() if address_id not in (None, "") else None
 
     def call(self, api: str, data: Any = None) -> Dict[str, Any]:
         _assert_read_only(api, data)
@@ -399,29 +567,55 @@ class ReadCartClient:
                 ret=ret,
             )
         if kind != "success":
+            joined = "; ".join(ret) or f"HTTP {raw.get('status')}"
+            hint = ""
+            low = joined.lower()
+            if "addressid" in low or ("address" in low and "bizparam" in low):
+                hint = (
+                    " If the API requires addressId, re-run with --address-id "
+                    "(value from the cart page; do not commit it)."
+                )
+            elif "platformtype" in low or "purchasetype" in low:
+                hint = " Client should send platformType=PC and purchaseType=main_purchase_type."
             raise MtopCallError(
-                f"mtop error ({'; '.join(ret) or f'HTTP {raw.get('status')}'})",
+                f"mtop error ({joined}).{hint}",
                 kind="mtop_error",
                 ret=ret,
             )
         return envelope
 
     def render(self, data: Any = None) -> Dict[str, Any]:
-        return self.call(API_RENDER, {} if data is None else data)
+        payload = default_render_data(address_id=self.address_id) if data is None else data
+        return self.call(API_RENDER, payload)
 
-    def asyncload(self, data: Any = None) -> Dict[str, Any]:
-        return self.call(API_ASYNCLOAD, {"pageNo": 1} if data is None else data)
+    def asyncload(
+        self,
+        data: Any = None,
+        *,
+        render_payload: Any = None,
+        page_no: int = 1,
+    ) -> Dict[str, Any]:
+        payload = (
+            default_asyncload_data(
+                page_no=page_no,
+                render_payload=render_payload,
+                session=self.session,
+            )
+            if data is None
+            else data
+        )
+        return self.call(API_ASYNCLOAD, payload)
 
     def read_cart(self, *, include_asyncload: bool = True, page_no: int = 1) -> ReadCartResult:
         result = ReadCartResult(source=self.session.source, readOnly=True)
-        render = self.render({})
+        render = self.render()
         result.apisCalled.append(API_RENDER)
         result.ret.extend(render.get("ret") or [])
         bucket: Dict[str, CartLine] = {}
         for line in extract_cart_lines(render.get("data"), source_api=API_RENDER):
             _merge_line(bucket, line)
         if include_asyncload:
-            async_env = self.asyncload({"pageNo": int(page_no)})
+            async_env = self.asyncload(render_payload=render.get("data"), page_no=int(page_no))
             result.apisCalled.append(API_ASYNCLOAD)
             result.ret.extend(async_env.get("ret") or [])
             for line in extract_cart_lines(async_env.get("data"), source_api=API_ASYNCLOAD):
@@ -578,6 +772,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="asyncload pageNo (default 1). Still read-only.",
     )
     parser.add_argument(
+        "--address-id",
+        dest="address_id",
+        default=None,
+        help=(
+            "Optional render addressId (account-specific). Omit first; only pass "
+            "if mtop still says 缺少业务参数 addressId. Do not commit the value."
+        ),
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         dest="as_json",
@@ -635,7 +838,7 @@ def run_live(args: argparse.Namespace) -> int:
         else:
             session = load_session_from_cdp(args.cdp)
         session.require_token()
-        client = ReadCartClient(session)
+        client = ReadCartClient(session, address_id=getattr(args, "address_id", None))
         result = client.read_cart(
             include_asyncload=not args.no_asyncload,
             page_no=int(args.page_no),

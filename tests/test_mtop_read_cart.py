@@ -27,9 +27,15 @@ from reverse_audit.mtop_read_cart import (  # noqa: E402
     EXIT_OK,
     EXIT_USAGE,
     ForbiddenApiError,
+    PLATFORM_TYPE,
+    PURCHASE_TYPE,
     ReadCartClient,
     classify_mtop_ret,
+    default_asyncload_data,
+    default_render_data,
+    extract_buyer_user_id,
     extract_cart_lines,
+    extract_item_async_params,
     format_line_summary,
     h5_url,
     load_read_cart_fixture,
@@ -275,6 +281,7 @@ class ClientTests(unittest.TestCase):
         self.assertEqual(result.apisCalled, [API_RENDER, API_ASYNCLOAD])
         self.assertEqual({line.cartId for line in result.lines}, {"9001", "9002", "9003"})
         self.assertEqual(len(calls), 2)
+        parsed_bodies = []
         for call in calls:
             self.assertEqual(call["method"], "POST")
             self.assertTrue(any(api in call["url"] for api in ALLOWED_APIS))
@@ -282,11 +289,80 @@ class ClientTests(unittest.TestCase):
             self.assertNotIn(".async/", call["url"].replace("asyncload", ""))
             form = parse_qs(call["body"].decode("utf-8"))
             data = (form.get("data") or ["{}"])[0]
+            parsed_bodies.append(json.loads(data))
             self.assertEqual(
                 (form.get("sign") or [""])[0],
                 sign_h5(SYNTHETIC_TOKEN, "1710000000000", data),
             )
             self.assertEqual((form.get("appKey") or [""])[0], "12574478")
+        render_data, async_data = parsed_bodies
+        self.assertEqual(render_data["platformType"], PLATFORM_TYPE)
+        self.assertEqual(render_data["purchaseType"], PURCHASE_TYPE)
+        self.assertEqual(render_data["cartPageOption"], {})
+        self.assertNotIn("addressId", render_data)
+        self.assertIn("param", async_data)
+        self.assertEqual(async_data["param"]["platformType"], PLATFORM_TYPE)
+        self.assertEqual(async_data["param"]["purchaseType"], PURCHASE_TYPE)
+        self.assertEqual(async_data["param"]["pageNo"], 1)
+        self.assertFalse(async_data["param"]["needClean"])
+        cart_ids = {str(row["cartId"]) for row in async_data["param"]["itemAsyncParams"]}
+        self.assertEqual(cart_ids, {"9001", "9002"})
+        self.assertEqual(async_data["param"]["buyerUserId"], 88001)
+        self.assertNotIn("addressId", async_data["param"])
+        self.assertNotIn("350100", json.dumps(async_data))
+
+    def test_default_render_omits_address_id_unless_passed(self):
+        bare = default_render_data()
+        self.assertEqual(
+            bare,
+            {
+                "purchaseType": "main_purchase_type",
+                "platformType": "PC",
+                "cartPageOption": {},
+            },
+        )
+        self.assertNotIn("addressId", bare)
+        with_addr = default_render_data(address_id="999")
+        self.assertEqual(with_addr["addressId"], "999")
+
+    def test_asyncload_param_is_derived_from_render_not_hardcoded_account(self):
+        bundle = json.loads(BUNDLE.read_text(encoding="utf-8"))
+        buyer = extract_buyer_user_id(bundle["render"])
+        items = extract_item_async_params(bundle["render"])
+        self.assertEqual(buyer, 88001)
+        self.assertEqual({str(row["cartId"]) for row in items}, {"9001", "9002"})
+        built = default_asyncload_data(page_no=1, render_payload=bundle["render"])
+        self.assertEqual(built["param"]["buyerUserId"], 88001)
+        self.assertEqual(built["param"]["itemAsyncParams"][0]["placeOrderFlow"], "general")
+        blob = json.dumps(built)
+        self.assertNotIn("2214213826537", blob)
+        self.assertNotIn("<REDACTED>", blob)
+        self.assertNotIn("350100", blob)
+
+    def test_optional_address_id_is_sent_only_on_render(self):
+        calls: List[str] = []
+
+        def transport(url: str, method: str, headers: Dict[str, str], body: bytes):
+            form = parse_qs(body.decode("utf-8"))
+            calls.append((form.get("api") or [""])[0])
+            payload = json.loads((form.get("data") or ["{}"])[0])
+            calls.append(payload)
+            bundle = json.loads(BUNDLE.read_text(encoding="utf-8"))
+            api = (form.get("api") or [""])[0]
+            text = bundle["render"] if api == API_RENDER else bundle["asyncload"]
+            return {"status": 200, "headers": {}, "text": json.dumps(text), "url": url}
+
+        client = ReadCartClient(
+            self._session(),
+            transport=transport,
+            now_ms=lambda: 1710000000000,
+            address_id="999",
+        )
+        client.read_cart()
+        self.assertEqual(calls[0], API_RENDER)
+        self.assertEqual(calls[1]["addressId"], "999")
+        self.assertEqual(calls[1]["platformType"], "PC")
+        self.assertNotIn("addressId", calls[3].get("param", {}))
 
     def test_refuses_mutate_api_and_payload(self):
         client = ReadCartClient(self._session(), transport=lambda *a, **k: {})
@@ -411,6 +487,12 @@ class SafetyTests(unittest.TestCase):
                 self.assertNotIn(tok, text, path.name)
             if path.suffix == ".json":
                 self.assertNotRegex(text, r"[a-f0-9]{32}_1[6-9]\d{11}")
+            self.assertNotIn("2214213826537", text, path.name)
+            self.assertNotIn("<REDACTED>", text, path.name)
+        source = "\n".join(p.read_text(encoding="utf-8") for p in CLIENT_FILES)
+        self.assertNotIn("350100", source)
+        self.assertNotIn("2214213826537", source)
+        self.assertIn("platformType", source)
         # Synthetic jar token is the obvious deadbeef fixture, not a live dump.
         jar = COOKIE_JAR.read_text(encoding="utf-8")
         self.assertIn("SYNTHETIC", jar)
