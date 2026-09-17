@@ -2,7 +2,7 @@
 
 **Phase 1 = 唯讀。** 這支 client 只重放已確認的讀車 mtop，把車內列印成遮罩後的行摘要。
 
-**mutate（加車／改量／刪列／結算／付款）= 另一個 PR，而且要庭安明確點頭。** 本 PR 不實作、不呼叫。
+**mutate HTTP = Phase 2**（[`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)）：預設 dry-run，POST 須 `--i-approve-add-one`／`--i-approve-set-qty`／`--i-approve-remove-one`。本模組仍**不實作、不呼叫** mutate。
 
 庭安已 OK 開這個低爆破 Phase 1 骨架。不要把這支合進「會改車」的流程，也不要寫 `golden_table`／auto_approve／Golden #41–#46。
 
@@ -23,9 +23,9 @@
 |------|-----|---------|
 | 讀整車 | `mtop.1688.buycenter.mtoppurchaseastoreservice.render/1.0` | **會打** |
 | 讀更多列 | `…astoreservice.asyncload/1.0` | **會打**（可 `--no-asyncload`） |
-| 加車 | `…mtoppurchaseservice.addcargo/1.0` | 禁止 |
-| 改量 | Ultron `…astoreservice.async` + `fields.quantity` | 禁止 |
-| 刪列 | 同一個 `.async` + `events.deleteClick[]`／`deleteItem` | 禁止 |
+| 加車 | `…mtoppurchaseservice.addcargo/1.0` | 禁止（見 Phase 2） |
+| 改量 | Ultron `…astoreservice.async` + `fields.quantity` | 禁止（見 Phase 2） |
+| 刪列 | 同一個 `.async` + `events.deleteClick[]`／`deleteItem` | 禁止（見 Phase 2） |
 | 結算／付款 | — | 禁止 |
 
 ## 怎麼跑
@@ -101,8 +101,9 @@ python -m unittest tests.test_mtop_read_cart
 - `alibaba_client.py` 仍是 Open Platform AOP stub（建單），**不是**這支 H5 mtop client。
 - 讀車 freeze 仍走 CDP Network：`scripts/freeze_reverse_audit_pools_20260905.py`。
 - Network 偵察／欄位表：`scripts/record_1688_cart_network.py` + [`docs/1688_cart_network_recon.md`](1688_cart_network_recon.md)。
-- 加車／改量／刪列執行層仍是 DOM／CDP mutate；本骨架只證明「帶 cookie 的 HTTP 讀車」做得出來。
+- 加車／改量／刪列的 **HTTP one-op** 在 Phase 2：`python -m reverse_audit.mtop_mutate`（預設 dry-run；見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)）。本模組仍只證明「帶 cookie 的 HTTP 讀車」。
+- DOM／CDP 批次 mutate（`python -m reverse_audit mutate`）仍在；兩條路不要混。
 
 ## 水位
 
-Phase 1 合進 `main` 之後，**不要**接著把 mutate client 塞進同一條 PR。要做零網頁加／改／刪，另開 PR，並等庭安明確說 go。
+Phase 1 維持唯讀。Phase 2 mutate HTTP 已另開 PR，**預設不 POST**，且須庭安／操作者明確旗標；**不要 merge 進會自動改車的流程**。

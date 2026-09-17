@@ -5,7 +5,7 @@ Calls only:
   - mtop.1688.buycenter.mtoppurchaseastoreservice.asyncload/1.0
 
 Forbidden in this module: add-to-cart, change-qty, delete, checkout/payment.
-Mutate HTTP = a separate PR and requires 庭安 explicit go.
+Phase 2 mutate HTTP is ``python -m reverse_audit.mtop_mutate`` (default dry-run).
 
 Usage:
   python -m reverse_audit.mtop_read_cart --dry-run

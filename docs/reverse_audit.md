@@ -34,6 +34,17 @@ python -m reverse_audit mutate --date YYYYMMDD --i-approve-remove
 
 也可用 `--dir reports/reverse_audit_YYYYMMDD` 覆寫路徑。未給 `--date`／`--dir` 時，日期預設為 **Asia/Taipei 今天**（`YYYYMMDD`）。
 
+Phase 2 **signed mtop HTTP**（獨立於上面 CDP 批次 mutate；預設只組 payload）：
+
+```bash
+python -m reverse_audit.mtop_mutate add --offer-id ID --spec-id SPEC --qty 1
+python -m reverse_audit.mtop_mutate set-qty --cart-id ID --qty N --fixture tests/fixtures/1688_mtop_read_cart/bundle.json
+python -m reverse_audit.mtop_mutate remove --cart-id ID --fixture tests/fixtures/1688_mtop_read_cart/bundle.json
+# 本機一次 live（CI 禁止）：加 --cdp 與 --i-approve-add-one / --i-approve-set-qty / --i-approve-remove-one
+```
+
+說明：[`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)。禁止結算／付款／清空整車／批次洗加。
+
 輸出一律落在：`reports/reverse_audit_YYYYMMDD/`。
 
 ## 如何改數量
@@ -153,4 +164,5 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 - 購物車核對：`docs/cart-reconciliation.md`
 - 補貨閉環差距（提醒／核准／加車／對帳尚未串起來）：`docs/restock_closed_loop_review.md`
 - 1688 採購車 Network 偵察（讀車／加車／改量／刪列 mtop，CDP recorder）：`docs/1688_cart_network_recon.md`
-- 1688 mtop 唯讀讀車（Phase 1；mutate = 另 PR + 庭安 go）：`docs/1688_mtop_read_cart.md`
+- 1688 mtop 唯讀讀車（Phase 1）：`docs/1688_mtop_read_cart.md`
+- 1688 mtop mutate HTTP（Phase 2；預設 dry-run，POST 須 one-op 旗標）：`docs/1688_mtop_mutate.md`

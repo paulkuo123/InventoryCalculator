@@ -1,0 +1,6 @@
+{
+  "api": "com.alibaba.china.buy.service.purchase.mtoppurchaseservice.addcargo",
+  "v": "1.0",
+  "ret": ["SUCCESS::调用成功"],
+  "data": {"comment": "synthetic addcargo success — no session tokens"}
+}

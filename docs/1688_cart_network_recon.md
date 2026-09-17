@@ -12,7 +12,9 @@ P0 偵察：**CDP Network recorder + 欄位對照**，不是正式 HTTP 購物�
 
 **2026-09-17 live 已確認加車 `addcargo`、改量／刪列 Ultron `astoreservice.async`**（一筆 offer／一筆 sku；未結算、未付款）。`TODO_live` 對加／量／刪已清除。sku-selector 獨立 XHR 精確 path 仍是 candidate（本樣本 sku→specId 走詳情頁 HTML `skuMapOriginal`）。
 
-**Phase 1 唯讀 HTTP 讀車骨架**（庭安 OK；render + asyncload）：`python -m reverse_audit.mtop_read_cart`，說明見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)。**不**實作 mutate HTTP client（加車／改量／刪列／結算）；mutate = 另一個 PR + 庭安明確 go。
+**Phase 1 唯讀 HTTP 讀車**：`python -m reverse_audit.mtop_read_cart`，見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)。
+
+**Phase 2 mutate HTTP**（加車／改量／刪列 one-op）：`python -m reverse_audit.mtop_mutate`，見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)。**預設 dry-run，不 POST**；live 須 `--i-approve-add-one`／`--i-approve-set-qty`／`--i-approve-remove-one`。禁止結算／付款／清空整車／批次洗加。本 recorder 仍不自動點加／改／刪。
 
 ## 這支腳本會做／不會做
 
@@ -173,9 +175,9 @@ python scripts/record_1688_cart_network.py \
 ### 與現有 DOM 路徑的落差
 
 - **讀車**：freeze 已經吃 mtop body，不必再 GUI 化。本 recorder 用來固定 URL／header／`data=` 形狀。Phase 1 已有唯讀 signed client：`python -m reverse_audit.mtop_read_cart`（見 [`docs/1688_mtop_read_cart.md`](1688_mtop_read_cart.md)）。
-- **加車**：現況仍是 DOM 點「加采购车」。live 請求是詳情頁 `addcargo` + 字串化 `goodsParams`（specId／offerId／qty）。**尚未**實作 HTTP client；要再抓形狀時，操作者對 **1 sku** 手動點一次即可，禁止觀察清單整批加車。
-- **改量**：現況是 CDP 改 InputNumber。PC 車沒有獨立 `updateQuantity`；mutate XHR 是 Ultron `astoreservice.async`。腳本**不會**自動改量；`--watch-seconds` 期間操作者可自行改 1 列。
-- **刪列**：現況是 CDP 點刪除。PC 車沒有獨立 `deleteItem` API 名稱；mutate XHR 仍是同一個 Ultron `astoreservice.async`，靠 `events.deleteClick[]`／`deleteItem` 區分。腳本**不會**自動點刪；`--watch-seconds` 期間操作者可自行刪 1 列。
+- **加車**：整頁補貨現況仍是 DOM 點「加采购车」。live 請求是詳情頁 `addcargo` + 字串化 `goodsParams`（specId／offerId／qty）。Phase 2 HTTP：`python -m reverse_audit.mtop_mutate add`（預設 dry-run；`--i-approve-add-one` 才 POST 一筆）。禁止觀察清單整批加車。
+- **改量**：整頁補貨現況是 CDP 改 InputNumber。PC 車沒有獨立 `updateQuantity`；mutate XHR 是 Ultron `astoreservice.async`。Phase 2 HTTP：`… set-qty`（`--i-approve-set-qty`）。Recorder **不會**自動改量。
+- **刪列**：整頁補貨現況是 CDP 點刪除。PC 車沒有獨立 `deleteItem` API 名稱；mutate XHR 仍是同一個 Ultron `astoreservice.async`，靠 `events.deleteClick[]`／`deleteItem` 區分。Phase 2 HTTP：`… remove`（`--i-approve-remove-one`）。Recorder **不會**自動點刪。
 
 ## 操作者 live 再抓（可選；加／量／刪已確認）
 
@@ -184,7 +186,7 @@ python scripts/record_1688_cart_network.py \
 3. 若要再看加車：`--offer-url` 開 1 個 offer **分頁**，在 watch 視窗於**詳情頁**手動點一次「加采购车」（不要用 restocker 批次）。
 4. 若要再看改量：在**購物車分頁**手動改 1 個 sku 的數量（不要跑 `mutate --i-approve-set-qty`）。
 5. 若要再看刪列：在**購物車分頁**手動刪 1 列（不要跑 `mutate --i-approve-remove`）。Recorder 預設**不**自動點刪。
-6. 分類器應標出 `addcargo`、Ultron 改量 `.async`，以及帶 `deleteClick`／`deleteItem` 的刪列 `.async`。Phase 1 只重放 **read**（`render`／`asyncload`）。mutate HTTP（加／改／刪／結算）仍不要寫，另開 PR + 庭安明確 go。
+6. 分類器應標出 `addcargo`、Ultron 改量 `.async`，以及帶 `deleteClick`／`deleteItem` 的刪列 `.async`。Phase 1 重放 **read**。Phase 2 重放加／改／刪 HTTP，但**預設不 POST**，須明確 one-op 旗標（見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)）。結算／付款不要寫。
 
 ## 測試
 
