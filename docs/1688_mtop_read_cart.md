@@ -108,4 +108,4 @@ python -m unittest tests.test_mtop_read_cart
 
 ## 水位
 
-Phase 1 維持唯讀。Phase 2 mutate HTTP 已另開 PR，**預設不 POST**，且須庭安／操作者明確旗標；**不要 merge 進會自動改車的流程**。
+Phase 1 維持唯讀。Phase 2 mutate HTTP（#105）與 Phase 3 restock via-mtop（#106）**已在 main**（見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)、[`docs/1688_mtop_restock.md`](1688_mtop_restock.md)）。mutate 預設 dry-run；via-mtop 預設關、開關 ≠ 核准。不要把這支唯讀 client 合進會自動改車的流程。

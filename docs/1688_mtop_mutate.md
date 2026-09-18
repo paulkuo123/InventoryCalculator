@@ -4,7 +4,7 @@
 
 要真的打 1688，必須由操作者在**已登入的本機**加上對應的 **one-op 核准旗標**。CI／cloud Linux **必須保持離線**（`--dry-run` 形狀即可；單元測試用假 transport）。
 
-庭安已 OK 開這個 mutate HTTP PR；**請不要自行 merge**（改車爆破半徑大，等 Grok 跟庭安確認）。
+Phase 2（#105）與 Phase 3（#106）**已在 main**。本 CLI 預設 dry-run；真 POST 仍須 one-op `--i-approve-*`。`--via-mtop`／`ALIBABA_RESTOCK_VIA_MTOP` **預設關**，且開關 ≠ 核准。
 
 ## 硬門檻
 
