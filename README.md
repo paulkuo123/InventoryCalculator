@@ -56,7 +56,7 @@
 - SoT：`procurement.db` 的 `kb_*` 表（與採購／入庫同一檔、加表不改舊表）。歷史訂單**不**進 `inbound_orders`。
 - 模組：`purchase_history_store.py`、`purchase_history_import.py`。預設 dry-run；寫入須 `--i-approve-kb-import` + `--allow-order-ids` + 隔離 `--db-path`。
 - **不做** live crawl／開 Chrome／寫 `golden_table.json`。說明：[`docs/1688_purchase_history_kb.md`](docs/1688_purchase_history_kb.md)。
-- Mapping Engine 階段 1：`python -m mapping_kb_import dry-run` 把 Golden 核准列（＋可選 `--source-kb`）收成**另一個隔離檔**。寫入須 `--i-approve-kb-import` 與隔離 `--db-path`。營運機種子預期 `/workspace/_handoff/kb_excel_success_isolated_20260912.db`（雲端可缺）。階段 2.1：`SkuMappingService.historical_support` 可選唯讀隔離 KB（`--kb-db` 或 `MAPPING_KB_DB=/workspace/_handoff/mapping_kb_isolated_20260920.db`；缺檔不中斷）。階段 2.2：第 1 層 offer 建議（只讀歷史，不搜站）`python -m offer_discovery suggest --product-id … --model-id …`。說明：[`docs/mapping_kb_isolated_import.md`](docs/mapping_kb_isolated_import.md)、[`docs/offer_discovery.md`](docs/offer_discovery.md)。
+- Mapping Engine 階段 1：`python -m mapping_kb_import dry-run` 把 Golden 核准列（＋可選 `--source-kb`）收成**另一個隔離檔**。寫入須 `--i-approve-kb-import` 與隔離 `--db-path`。營運機種子預期 `/workspace/_handoff/kb_excel_success_isolated_20260912.db`（雲端可缺）。階段 2.1：`SkuMappingService.historical_support` 可選唯讀隔離 KB（`--kb-db` 或 `MAPPING_KB_DB=/workspace/_handoff/mapping_kb_isolated_20260920.db`；缺檔不中斷）。階段 2.2：第 1 層 offer 建議（只讀歷史，不搜站）`python -m offer_discovery suggest --product-id … --model-id …`。階段 2.3：離線評估信心分層＋對帳 `python -m mapping_eval run --fixture tests/fixtures/mapping_eval`（見 [`docs/mapping_eval.md`](docs/mapping_eval.md)）。說明：[`docs/mapping_kb_isolated_import.md`](docs/mapping_kb_isolated_import.md)、[`docs/offer_discovery.md`](docs/offer_discovery.md)。
 
 ### 廣告
 
@@ -347,7 +347,7 @@ InventoryCalculator/
 ├── alibaba_restocker.py    # 正向 1688 加採購車
 ├── restock_batch.py / restock_rules.py
 ├── sku_mapping_service.py  # SKU 快照、候選、AI 與審核
-├── mapping_eval.py         # 離線 mapping 評估 baseline（不改 golden、不 auto-approve）
+├── mapping_eval.py         # 離線 mapping 評估 baseline（2.3 分層＋對帳；不改 golden、不 auto-approve）
 ├── mapping_knowledge.py    # mapping 知識包載入（config／aliases／rules／categories）
 ├── mapping_knowledge_pack/ # 知識包檔（config、aliases、rules、categories）
 ├── ads_analysis.py         # Shopee 廣告分析
@@ -384,7 +384,7 @@ InventoryCalculator/
 │   ├── ads_weekly_pipeline.md
 │   ├── ads_cost_margin_design.md   # 廣告引用 1688 成本（設計 only）
 │   ├── ads_sop_review_fable5.md    # 現行廣告 SOP 審閱（2026-09-13）
-│   ├── mapping_eval.md
+│   ├── mapping_eval.md        # 離線評估；2.3 信心分層＋對帳
 │   ├── sku_mapping_knowhow_engine.md
 │   ├── offer_discovery_spike.md  # TASK 9：第 1 層 offer 來源（設計）
 │   ├── offer_discovery.md        # Mapping Engine 2.2：第 1 層唯讀建議

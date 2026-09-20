@@ -130,6 +130,17 @@ class EvaluationMetricsTests(unittest.TestCase):
         self.assertIn("ai_reviewed", metrics["by_mapping_source"])
         self.assertIn("legacy_user_approved", metrics["by_mapping_source"])
         self.assertIsNone(metrics["ai"])
+        layers = metrics["confidence_layers"]
+        self.assertTrue(layers["layers_are_distinct"])
+        self.assertFalse(layers["can_auto_write_golden"]["enabled"])
+        self.assertEqual(layers["can_auto_write_golden"]["n_true"], 0)
+        self.assertEqual(layers["can_auto_write_golden"]["annotation"], "不可寫")
+        self.assertEqual(layers["review_tier"]["role"], "human_batching")
+        self.assertEqual(layers["final_score"]["role"], "ranking_only")
+        self.assertFalse(layers["kb_source_reliability"]["changes_score"])
+        self.assertFalse(metrics["auto_approve"]["enabled"])
+        self.assertEqual(metrics["auto_approve"]["n_would_pass"], 0)
+        self.assertEqual(metrics["auto_approve"]["annotation"], "不可寫")
 
 
 class ReportAndCliTests(unittest.TestCase):
@@ -146,9 +157,13 @@ class ReportAndCliTests(unittest.TestCase):
             self.assertTrue((out / "summary.md").is_file())
             self.assertTrue((out / "failures.jsonl").is_file())
             self.assertTrue((out / "run_meta.json").is_file())
+            self.assertTrue((out / "confidence_layers.json").is_file())
             summary = (out / "summary.md").read_text(encoding="utf-8")
             self.assertIn("Top-1 accuracy", summary)
             self.assertIn("Green precision", summary)
+            self.assertIn("Confidence layers", summary)
+            self.assertIn("不可寫", summary)
+            self.assertIn("n_would_pass", summary)
             failures = [
                 json.loads(line)
                 for line in (out / "failures.jsonl").read_text(encoding="utf-8").splitlines()

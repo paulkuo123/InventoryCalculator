@@ -2,6 +2,8 @@
 
 `python -m mapping_eval` 是既有 `SkuMappingService` 的離線 baseline，**不是**第二套 mapping 引擎。它只呼叫 `generate_candidates()` 與 `classify_review_tier()`；`--ai` 才會再呼叫現有 AI judge。不會改 `golden_table.json` schema，也不會 auto-approve。
 
+**Mapping Engine 2.3（本刀）：** 同一支 CLI 加**信心分層**與**對帳報表**。四層禁止混用（SPEC §11）：KB 來源可靠度 ≠ `final_score` ≠ `review_tier` ≠ 可自動寫 Golden（永遠 false／「不可寫」）。第 2 層指標仍是 Top-1／Top-3／Green Precision／FN／反事實 `n_would_pass`。可選 `--layer1` 對缺 URL 樣本跑 2.2 `offer_discovery`（缺 kb-db 跳過種子層、不中斷）。**不**改 matcher 打分、**不**寫 Golden、**不**灌 live、**不**開 `auto_approve`。死連標註是另刀，不在本報告。
+
 報告寫到 `data/mapping_eval/`（已 gitignore）或 `--out`。**不要提交** `procurement.db`、`.env.local`、cookies 或評估報告。
 
 ## 本機 baseline（真實 DB）
@@ -233,6 +235,67 @@ Headline 與 TASK 1 持平：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)�
 
 `run` 另寫 `auto_approve.json`（反事實）。fixture 上 SPEC 5.1 全閘：**0** 案會自動過關，精度 **n/a (0/0)**。`enabled` 仍為 `false`。
 
+## Mapping Engine 2.3：信心分層＋對帳
+
+同一引擎、同一 `run`／`compare`。報告多寫 `confidence_layers.json`（以及可選 `layer1.json`），`summary.md` 有四層對帳表。**不**另做 matcher。
+
+### 怎麼跑
+
+```bash
+# 第 2 層 Know-how fixture（CI；含四層信心，不含站內搜）
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --out /tmp/mapping_eval_2_3
+
+# 可選：第 1 層缺 URL 切片（2.2 offer_discovery；缺 kb-db 跳過種子層）
+python -m mapping_eval run \
+  --fixture tests/fixtures/mapping_eval \
+  --layer1 \
+  --layer1-golden tests/fixtures/offer_discovery/golden.json \
+  --kb-db /workspace/_handoff/mapping_kb_isolated_20260920.db \
+  --out /tmp/mapping_eval_2_3_layer1
+
+python -m mapping_eval compare \
+  --baseline tests/fixtures/mapping_eval/task1_baseline \
+  --candidate /tmp/mapping_eval_2_3
+
+python -m unittest tests.test_mapping_eval tests.test_mapping_eval_layering tests.test_mapping_auto_approve_eval
+```
+
+隔離庫路徑僅本機 smoke 提及，可缺：`/workspace/_handoff/mapping_kb_isolated_20260920.db`。CI 用 fixtures，不要提交營運 `.db`。
+
+### 四層信心（禁止混用）
+
+| 層 | 報告欄 | 意思 | 本刀做什麼 |
+|---|---|---|---|
+| 1. KB 來源可靠度 | `confidence_layers.kb_source_reliability` | 枚舉／rank：`golden_approved`＞`inbound_exact`／`seed_history`＞`golden_sibling`＞… | 只標註。**不**改 `score_weights`／`final_score` 公式 |
+| 2. 建議 `final_score` | `confidence_layers.final_score` | 既有四分量加權，**只排序** | 讀 matcher 已算的值；不重算 |
+| 3. 綠／黃／紅 | `confidence_layers.review_tier` | `classify_review_tier` 給人看的批次 | 沿用；綠仍要人核 |
+| 4. 可自動寫 Golden | `can_auto_write_golden` | 寫入閘門 | **永遠 false／未開**，標「不可寫」。`n_would_pass` 是反事實「若開自動會過幾筆」，不是授權 |
+
+一眼對帳：同一列可以同時是 `golden_approved`＋高 `final_score`＋`review_tier=green`，但第 4 層仍是 **false**。這四個值型別與角色都不同，報告表會並排列出。
+
+Layer-2 fixture 的 `truth_source` 是 `golden_approved`（評估分母＝Golden 已核准列）。隔離服務沒有歷史正例時 `support_source=none`。這不降低真相來源，只說明 matcher 這次沒吃到歷史支持。
+
+### 報表欄位
+
+| 檔 | 內容 |
+|---|---|
+| `metrics.json` | 既有 Top-1／Top-3／FN／Green Precision，加上 `confidence_layers`、`auto_approve.n_would_pass`（`annotation=不可寫`） |
+| `confidence_layers.json` | 四層定義、KB 計數、`final_score` min／mean／max、綠黃紅人數、`can_auto_write_golden.n_true`（必須 0） |
+| `auto_approve.json` | 反事實閘門；`enabled=false`；`n_would_pass` |
+| `summary.md` | 對帳表＋「不可寫」 |
+| `layer1.json` | 僅 `--layer1`：seed vs sibling 命中率、`conflict`／`needsHuman` 比例 |
+
+### 第 1 層切片（可選、便宜）
+
+`--layer1` 對缺 URL 樣本呼叫既有 `offer_discovery.suggest_offers`／`SkuMappingService.suggest_layer1_offers` 同一套函式。
+
+- **不要**站內搜、**不要** Chrome 探活。
+- `--kb-db` 缺檔或不可讀 → `kb_skipped=true`、`seed_history` 為空，兄弟檔仍可算，**不中斷**。
+- 預設 `--layer1-golden` 用 `tests/fixtures/offer_discovery/golden.json`（若存在）。
+- 切片**不**寫 Golden／live `procurement.db`。
+
 ## Fixture 報告摘錄（無秘密）
 
 ```text
@@ -248,6 +311,19 @@ Headline 與 TASK 1 持平：`n_cases=5`、`n_scorable=4`、Top-1 `50.0%` (2/4)�
 - Green precision (Top-1 among green; core metric): **100.0%** (2/2)
 - Yellow truth coverage: **100.0%** (1 cases)
 - Red truth coverage: **0.0%** (2 cases)
+
+## Confidence layers (SPEC §11 — four distinct axes)
+
+| Layer | Role | This run |
+|---|---|---|
+| 1. KB source reliability | provenance enum / rank; **not** a score | golden_approved=5 |
+| 2. `final_score` | ranking only | mean=0.440 min=0.410 max=0.500 |
+| 3. `review_tier` | human batching | green=2 yellow=1 red=2 |
+| 4. 可自動寫 Golden | write gate | **false / 未開**（不可寫）； n_true=0 |
+
+## Auto-approve counterfactual (not enabled)
+
+- would auto-pass if enabled (`n_would_pass`): **0** / 5 — still **不可寫**
 ```
 
-數字來自 `tests/fixtures/mapping_eval/cases.json` 的規則層結果；本機再跑 fixture 指令即可覆核。
+數字來自 `tests/fixtures/mapping_eval/cases.json` 的規則層結果；本機再跑 fixture 指令即可覆核。四層在表上不相等：KB 是枚舉、分數是 0.41–0.50、分級是綠黃紅、寫入閘門永遠 false。
