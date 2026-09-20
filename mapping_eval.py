@@ -6,6 +6,17 @@ not invent a parallel matcher, change ``golden_table.json`` schema, or
 enable auto-approve.  Reports a counterfactual auto-approve precision
 against ``mapping_knowledge_pack/config.json`` (SPEC 5.1) only.
 
+Mapping Engine 2.3 adds a **reconciliation report** and SPEC §11
+**confidence layers** (report / enum only — ranking formula unchanged):
+
+1. KB source reliability (``golden_approved`` > seed/history > ``golden_sibling``)
+2. suggestion ``final_score`` (ranking only)
+3. green / yellow / red ``review_tier``
+4. 「可自動寫 Golden」— always false / not enabled (annotate only)
+
+Optional cheap layer-1 (2.2) slice: missing-URL samples via
+``offer_discovery.suggest_offers``; missing kb-db skips the seed layer.
+
 Reports are written under ``data/mapping_eval/`` (gitignored) or ``--out``.
 Never point this tool at a path you intend to commit.
 """
@@ -41,9 +52,48 @@ from sku_mapping_service import (
 DEFAULT_DB_PATH = "procurement.db"
 DEFAULT_GOLDEN_PATH = "golden_table.json"
 DEFAULT_CATEGORIES_PATH = "mapping_knowledge_pack/categories.json"
+DEFAULT_LAYER1_FIXTURE_GOLDEN = Path("tests/fixtures/offer_discovery/golden.json")
 DEFAULT_SAMPLE_SEED = 42
 DEFAULT_AI_LIMIT = 50
+DEFAULT_LAYER1_LIMIT = 50
 EXIT_USAGE = 2
+
+# SPEC §11 — report-only provenance rank. Does **not** change scoring.
+# Higher rank = more reliable. Never treat rank as final_score or green.
+KB_SOURCE_RANK = {
+    "golden_approved": 40,
+    "inbound_exact": 30,
+    "seed_history": 25,
+    "kb_seed": 25,
+    "golden_sibling": 20,
+    "search": 10,  # listed for completeness; this knife never runs search
+    "unknown": 5,
+    "none": 0,
+}
+KB_SOURCE_ORDER = (
+    "golden_approved",
+    "inbound_exact",
+    "seed_history",
+    "golden_sibling",
+    "search",
+    "unknown",
+    "none",
+)
+KB_SOURCE_ALIASES = {
+    "golden_approved": "golden_approved",
+    "inbound_exact": "inbound_exact",
+    "seed_history": "seed_history",
+    "kb_seed": "seed_history",
+    "seed": "seed_history",
+    "history": "seed_history",
+    "golden_sibling": "golden_sibling",
+    "sibling": "golden_sibling",
+    "search": "search",
+    "unknown": "unknown",
+    "none": "none",
+    "": "none",
+}
+WRITE_GOLDEN_CLOSED_NOTE = "不可寫"
 
 # SPEC 5.1 auto-approve gates (counterfactual only; enabled stays false).
 AUTO_APPROVE_CONDITION_ORDER = (
@@ -161,6 +211,20 @@ def truth_in_skus(skus: Sequence[Dict[str, Any]], truth: Dict[str, str]) -> bool
     return any(isinstance(sku, dict) and sku_matches_truth(sku, truth) for sku in skus)
 
 
+def candidate_final_score(candidate: Optional[Dict[str, Any]]) -> Optional[float]:
+    """Read the existing matcher ``final_score``; do not recompute weights."""
+    if not isinstance(candidate, dict):
+        return None
+    for payload in (candidate, _candidate_evidence(candidate)):
+        if "final_score" not in payload:
+            continue
+        try:
+            return float(payload.get("final_score") or 0)
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
 def public_candidate(candidate: Dict[str, Any], rank: int) -> Dict[str, Any]:
     evidence = candidate.get("evidence") if isinstance(candidate.get("evidence"), dict) else {}
     return {
@@ -171,6 +235,7 @@ def public_candidate(candidate: Dict[str, Any], rank: int) -> Dict[str, Any]:
         "spec_text": candidate.get("spec_text") or "",
         "candidate_key": candidate.get("candidate_key") or "",
         "deterministic_score": float(candidate.get("deterministic_score") or 0),
+        "final_score": candidate_final_score(candidate),
         "complete": evidence.get("complete") is True,
     }
 
@@ -550,6 +615,292 @@ def summarize_auto_approve(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "conditions": {
             key: settings.get(key) for key in ("enabled",) + AUTO_APPROVE_CONDITION_ORDER
         },
+        "can_auto_write_golden": False,
+        "annotation": WRITE_GOLDEN_CLOSED_NOTE,
+    }
+
+
+def normalize_kb_source(raw: Any) -> str:
+    text = str(raw or "").strip()
+    if text in KB_SOURCE_ALIASES:
+        return KB_SOURCE_ALIASES[text]
+    return "unknown" if text else "none"
+
+
+def best_kb_source(*sources: Any) -> str:
+    ranked = [normalize_kb_source(item) for item in sources if item is not None]
+    if not ranked:
+        return "none"
+    return max(ranked, key=lambda name: KB_SOURCE_RANK.get(name, 0))
+
+
+def _historical_example_sources(candidates: Sequence[Dict[str, Any]]) -> List[str]:
+    sources: List[str] = []
+    for candidate in candidates or []:
+        blobs: List[Any] = []
+        if isinstance(candidate.get("historical_examples"), list):
+            blobs.extend(candidate.get("historical_examples") or [])
+        evidence = _candidate_evidence(candidate)
+        if isinstance(evidence.get("historical_examples"), list):
+            blobs.extend(evidence.get("historical_examples") or [])
+        for row in blobs:
+            if isinstance(row, dict) and row.get("source") is not None:
+                sources.append(normalize_kb_source(row.get("source")))
+    return sources
+
+
+def annotate_confidence_layers(
+    *,
+    review_tier: str,
+    candidates: Sequence[Dict[str, Any]],
+    truth_kb_source: str = "golden_approved",
+    would_auto_approve: bool = False,
+) -> Dict[str, Any]:
+    """SPEC §11 four layers. Report / enum only — never conflate, never write."""
+    top = candidates[0] if candidates else None
+    support_sources = _historical_example_sources(candidates)
+    support_source = best_kb_source(*support_sources) if support_sources else "none"
+    kb_source = best_kb_source(truth_kb_source, support_source)
+    return {
+        "kb_source_reliability": {
+            "source": kb_source,
+            "rank": KB_SOURCE_RANK.get(kb_source, 0),
+            "truth_source": normalize_kb_source(truth_kb_source),
+            "support_source": support_source,
+            "order": "golden_approved > inbound_exact / seed_history > golden_sibling > …",
+            "role": "provenance_enum",
+            "changes_score": False,
+        },
+        "final_score": {
+            "value": candidate_final_score(top),
+            "role": "ranking_only",
+            "decides_review_tier": False,
+            "can_write_golden": False,
+        },
+        "review_tier": {
+            "value": review_tier,
+            "role": "human_batching",
+            "can_write_golden": False,
+        },
+        "can_auto_write_golden": {
+            "value": False,
+            "enabled": False,
+            "would_auto_approve": bool(would_auto_approve),
+            "annotation": WRITE_GOLDEN_CLOSED_NOTE,
+            "role": "write_gate_closed",
+        },
+    }
+
+
+def summarize_confidence_layers(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Aggregate the four SPEC §11 layers so they stay visibly unequal."""
+    kb_counts: Dict[str, int] = defaultdict(int)
+    scores: List[float] = []
+    tier_counts: Dict[str, int] = defaultdict(int)
+    n_write_true = 0
+    n_would = 0
+    for record in records:
+        layers = record.get("confidence_layers")
+        if not isinstance(layers, dict):
+            layers = {}
+        kb = layers.get("kb_source_reliability") if isinstance(layers.get("kb_source_reliability"), dict) else {}
+        kb_counts[str(kb.get("source") or "none")] += 1
+        final_row = layers.get("final_score") if isinstance(layers.get("final_score"), dict) else {}
+        value = final_row.get("value")
+        if isinstance(value, (int, float)):
+            scores.append(float(value))
+        tier_row = layers.get("review_tier") if isinstance(layers.get("review_tier"), dict) else {}
+        tier_counts[str(tier_row.get("value") or record.get("tier") or "red")] += 1
+        write_row = layers.get("can_auto_write_golden") if isinstance(layers.get("can_auto_write_golden"), dict) else {}
+        if write_row.get("value") is True:
+            n_write_true += 1
+        auto = record.get("auto_approve") if isinstance(record.get("auto_approve"), dict) else {}
+        if auto.get("would_auto_approve"):
+            n_would += 1
+    return {
+        "definition": {
+            "kb_source_reliability": "provenance enum / rank; does not change scoring",
+            "final_score": "weighted ranker only; not green; not write-authorized",
+            "review_tier": "human batching (green / yellow / red); green still needs a person",
+            "can_auto_write_golden": "always false / not enabled — 不可寫",
+        },
+        "kb_source_reliability": {
+            "counts": {key: kb_counts[key] for key in KB_SOURCE_ORDER if key in kb_counts},
+            "order": list(KB_SOURCE_ORDER),
+            "changes_score": False,
+            "role": "provenance_enum",
+        },
+        "final_score": {
+            "n": len(scores),
+            "mean": (sum(scores) / len(scores)) if scores else None,
+            "min": min(scores) if scores else None,
+            "max": max(scores) if scores else None,
+            "role": "ranking_only",
+            "decides_review_tier": False,
+        },
+        "review_tier": {
+            "green": int(tier_counts.get("green") or 0),
+            "yellow": int(tier_counts.get("yellow") or 0),
+            "red": int(tier_counts.get("red") or 0),
+            "role": "human_batching",
+            "can_write_golden": False,
+        },
+        "can_auto_write_golden": {
+            "enabled": False,
+            "n_true": n_write_true,
+            "n_false": len(records) - n_write_true,
+            "n_would_pass": n_would,
+            "annotation": WRITE_GOLDEN_CLOSED_NOTE,
+            "role": "write_gate_closed",
+        },
+        "layers_are_distinct": True,
+        "note": (
+            "Four axes are not interchangeable: a high final_score is not green; "
+            "green is not write-authorized; write stays closed (不可寫)."
+        ),
+    }
+
+
+def evaluate_layer1_slice(
+    *,
+    golden: Optional[Dict[str, Any]] = None,
+    golden_path: Optional[Path] = None,
+    kb_db_path: Optional[str] = "",
+    base_dir: Optional[str] = None,
+    work_db_path: Optional[str] = None,
+    limit: int = DEFAULT_LAYER1_LIMIT,
+) -> Dict[str, Any]:
+    """Cheap 2.2 missing-URL slice. No site search, no live probe, no writes.
+
+    Missing kb-db skips the seed layer and does not crash.
+    """
+    from offer_discovery import (
+        SOURCE_GOLDEN_SIBLING,
+        SOURCE_SEED_HISTORY,
+        iter_golden_models,
+        load_golden_table,
+        suggest_offers,
+    )
+
+    empty = {
+        "skipped": True,
+        "reason": "no layer-1 golden",
+        "n_missing_url": 0,
+        "n_evaluated": 0,
+        "kb_present": False,
+        "kb_skipped": True,
+        "seed_hits": 0,
+        "sibling_hits": 0,
+        "seed_hit_rate": None,
+        "sibling_hit_rate": None,
+        "conflict": 0,
+        "conflict_rate": None,
+        "needs_human": 0,
+        "needs_human_rate": None,
+        "site_search": False,
+        "live_probe": False,
+        "can_auto_write_golden": False,
+        "annotation": WRITE_GOLDEN_CLOSED_NOTE,
+        "rows": [],
+    }
+    table = golden
+    if table is None and golden_path is not None:
+        path = Path(golden_path)
+        if path.is_file():
+            table = load_golden_table(path)
+    if not isinstance(table, dict) or not table:
+        return empty
+
+    missing = [row for row in iter_golden_models(table) if not row.get("has_url")]
+    capped = missing[: max(0, int(limit))]
+    # Never open live procurement.db from this slice unless the caller
+    # explicitly passed a work_db_path. Missing file → no layer-2 conflict.
+    isolated_work = work_db_path if work_db_path else str(Path("/tmp/mapping_eval_layer1_no_work.db"))
+    n_seed = 0
+    n_sib = 0
+    n_conflict = 0
+    n_human = 0
+    kb_present_any = False
+    kb_absent_any = False
+    rows_out: List[Dict[str, Any]] = []
+    for row in capped:
+        try:
+            payload = suggest_offers(
+                row["product_id"],
+                row["model_id"],
+                kb_db_path=kb_db_path,
+                base_dir=base_dir,
+                golden=table,
+                work_db_path=isolated_work,
+            )
+        except Exception as exc:
+            rows_out.append({
+                "product_id": row.get("product_id"),
+                "model_id": row.get("model_id"),
+                "error": str(exc),
+                "kb_present": False,
+            })
+            kb_absent_any = True
+            continue
+        if payload.get("kbPresent"):
+            kb_present_any = True
+        else:
+            kb_absent_any = True
+        suggestions = payload.get("suggestions") or []
+        sources: List[str] = []
+        for suggestion in suggestions:
+            if not isinstance(suggestion, dict):
+                continue
+            listed = suggestion.get("sources")
+            if isinstance(listed, list) and listed:
+                sources.extend(str(item) for item in listed)
+            elif suggestion.get("source"):
+                sources.append(str(suggestion.get("source")))
+        source_set = set(sources)
+        if SOURCE_SEED_HISTORY in source_set:
+            n_seed += 1
+        if SOURCE_GOLDEN_SIBLING in source_set:
+            n_sib += 1
+        if payload.get("conflict"):
+            n_conflict += 1
+        if payload.get("needsHuman"):
+            n_human += 1
+        rows_out.append({
+            "product_id": payload.get("productId"),
+            "model_id": payload.get("modelId"),
+            "kb_present": bool(payload.get("kbPresent")),
+            "n_suggestions": len(suggestions),
+            "sources": sorted(source_set),
+            "conflict": bool(payload.get("conflict")),
+            "needsHuman": bool(payload.get("needsHuman")),
+            "conflictReasons": list(payload.get("conflictReasons") or []),
+            "can_auto_write_golden": False,
+        })
+    n_eval = len(capped)
+    return {
+        "skipped": False,
+        "reason": (
+            "mapping KB missing or unreadable; seed_history skipped"
+            if kb_absent_any and not kb_present_any
+            else ""
+        ),
+        "n_missing_url": len(missing),
+        "n_evaluated": n_eval,
+        "kb_present": kb_present_any,
+        "kb_skipped": bool(kb_absent_any and not kb_present_any),
+        "seed_hits": n_seed,
+        "sibling_hits": n_sib,
+        "seed_hit_rate": _rate(n_seed, n_eval),
+        "sibling_hit_rate": _rate(n_sib, n_eval),
+        "conflict": n_conflict,
+        "conflict_rate": _rate(n_conflict, n_eval),
+        "needs_human": n_human,
+        "needs_human_rate": _rate(n_human, n_eval),
+        "site_search": False,
+        "live_probe": False,
+        "can_auto_write_golden": False,
+        "annotation": WRITE_GOLDEN_CLOSED_NOTE,
+        "rows": rows_out,
     }
 
 
@@ -607,6 +958,12 @@ def evaluate_case(
             snapshot_status="ok",
         ),
     }
+    record["confidence_layers"] = annotate_confidence_layers(
+        review_tier=tier,
+        candidates=candidates,
+        truth_kb_source="golden_approved",
+        would_auto_approve=bool(record["auto_approve"].get("would_auto_approve")),
+    )
     if isinstance(ai_result, dict):
         decision = str(ai_result.get("decision") or "abstain")
         source = str(ai_result.get("source") or "")
@@ -756,6 +1113,7 @@ def compute_metrics(records: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
         "by_mapping_source": {key: _finalize_group(value) for key, value in sorted(by_source.items())},
         "ai": None,
         "auto_approve": summarize_auto_approve(records),
+        "confidence_layers": summarize_confidence_layers(records),
     }
     if ai_called:
         metrics["ai"] = {
@@ -826,6 +1184,7 @@ def write_report(out_dir: Path, metrics: Dict[str, Any], records: Sequence[Dict[
                 "rank": record.get("rank"),
                 "candidates": record.get("candidates"),
                 "ai": record.get("ai"),
+                "confidence_layers": record.get("confidence_layers"),
             }
             handle.write(json.dumps(payload, ensure_ascii=False) + "\n")
     (out_dir / "summary.md").write_text(render_summary_markdown(metrics, meta), encoding="utf-8")
@@ -835,12 +1194,30 @@ def write_report(out_dir: Path, metrics: Dict[str, Any], records: Sequence[Dict[
             json.dumps(auto_approve, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
+    layers = metrics.get("confidence_layers")
+    if isinstance(layers, dict):
+        (out_dir / "confidence_layers.json").write_text(
+            json.dumps(layers, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+    layer1 = metrics.get("layer1")
+    if isinstance(layer1, dict):
+        (out_dir / "layer1.json").write_text(
+            json.dumps(layer1, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
 
 def _pct(value: Optional[float]) -> str:
     if value is None:
         return "n/a"
     return f"{value * 100:.1f}%"
+
+
+def _format_optional_float(value: Any) -> str:
+    if not isinstance(value, (int, float)):
+        return "n/a"
+    return f"{float(value):.3f}"
 
 
 def render_summary_markdown(metrics: Dict[str, Any], meta: Optional[Dict[str, Any]] = None) -> str:
@@ -872,17 +1249,50 @@ def render_summary_markdown(metrics: Dict[str, Any], meta: Optional[Dict[str, An
         f"({(metrics.get('red') or {}).get('n', 0)} cases)",
         "",
     ]
+    layers = metrics.get("confidence_layers")
+    if isinstance(layers, dict):
+        kb = layers.get("kb_source_reliability") or {}
+        score = layers.get("final_score") or {}
+        tier = layers.get("review_tier") or {}
+        write = layers.get("can_auto_write_golden") or {}
+        kb_counts = kb.get("counts") or {}
+        kb_bits = ", ".join(f"{name}={kb_counts[name]}" for name in KB_SOURCE_ORDER if name in kb_counts)
+        lines.extend([
+            "## Confidence layers (SPEC §11 — four distinct axes)",
+            "",
+            "These four are **not interchangeable**. A high `final_score` is not green; "
+            "green is not write-authorized; write stays closed.",
+            "",
+            "| Layer | Role | This run |",
+            "|---|---|---|",
+            f"| 1. KB source reliability | provenance enum / rank; **not** a score | "
+            f"{kb_bits or 'n/a'} (order: golden_approved > seed/history > golden_sibling) |",
+            f"| 2. `final_score` | ranking only | "
+            f"mean={_format_optional_float(score.get('mean'))} "
+            f"min={_format_optional_float(score.get('min'))} "
+            f"max={_format_optional_float(score.get('max'))} |",
+            f"| 3. `review_tier` | human batching | "
+            f"green={tier.get('green', 0)} yellow={tier.get('yellow', 0)} red={tier.get('red', 0)} |",
+            f"| 4. 可自動寫 Golden | write gate | "
+            f"**false / 未開**（{write.get('annotation') or WRITE_GOLDEN_CLOSED_NOTE}）；"
+            f" n_true={write.get('n_true', 0)} |",
+            "",
+            f"- layers_are_distinct: **{str(layers.get('layers_are_distinct')).lower()}**",
+            f"- {layers.get('note') or ''}",
+            "",
+        ])
     auto_approve = metrics.get("auto_approve")
     if isinstance(auto_approve, dict):
         lines.extend([
             "## Auto-approve counterfactual (not enabled)",
             "",
             f"- config `auto_approve.enabled`: **{str(auto_approve.get('enabled')).lower()}**",
-            f"- would auto-pass if enabled: **{auto_approve.get('n_would_pass', 0)}** / "
-            f"{auto_approve.get('n_evaluated', 0)}",
+            f"- would auto-pass if enabled (`n_would_pass`): **{auto_approve.get('n_would_pass', 0)}** / "
+            f"{auto_approve.get('n_evaluated', 0)} — still **{auto_approve.get('annotation') or WRITE_GOLDEN_CLOSED_NOTE}**",
             f"- correct among those: **{auto_approve.get('n_correct', 0)}**",
             f"- Auto-approve precision: **{_pct(auto_approve.get('precision'))}** "
             f"({auto_approve.get('n_correct', 0)}/{auto_approve.get('n_would_pass', 0)})",
+            f"- 可自動寫 Golden: **false**（{auto_approve.get('annotation') or WRITE_GOLDEN_CLOSED_NOTE}）",
             "",
         ])
         failed_counts = auto_approve.get("failed_condition_counts") or {}
@@ -931,6 +1341,29 @@ def render_summary_markdown(metrics: Dict[str, Any], meta: Optional[Dict[str, An
             f"- AI wrong / deterministic Top-1 right: {ai.get('ai_wrong_det_right', 0)}",
             f"- deterministic Top-1 wrong / AI right: {ai.get('det_wrong_ai_right', 0)}",
         ])
+    layer1 = metrics.get("layer1")
+    if isinstance(layer1, dict) and not layer1.get("skipped"):
+        lines.extend([
+            "",
+            "## Layer-1 (2.2) missing-URL slice",
+            "",
+            "Read-only `offer_discovery.suggest_offers`. No site search, no live probe, no Golden write.",
+            "",
+            f"- missing-URL samples: **{layer1.get('n_evaluated', 0)}** / {layer1.get('n_missing_url', 0)}",
+            f"- kb-db present: **{str(layer1.get('kb_present')).lower()}** "
+            f"(skipped seed layer: {str(layer1.get('kb_skipped')).lower()})",
+            f"- seed_history hit rate: **{_pct(layer1.get('seed_hit_rate'))}** "
+            f"({layer1.get('seed_hits', 0)}/{layer1.get('n_evaluated', 0)})",
+            f"- golden_sibling hit rate: **{_pct(layer1.get('sibling_hit_rate'))}** "
+            f"({layer1.get('sibling_hits', 0)}/{layer1.get('n_evaluated', 0)})",
+            f"- conflict rate: **{_pct(layer1.get('conflict_rate'))}** "
+            f"({layer1.get('conflict', 0)}/{layer1.get('n_evaluated', 0)})",
+            f"- needsHuman rate: **{_pct(layer1.get('needs_human_rate'))}** "
+            f"({layer1.get('needs_human', 0)}/{layer1.get('n_evaluated', 0)})",
+            f"- 可自動寫 Golden: **false**（{layer1.get('annotation') or WRITE_GOLDEN_CLOSED_NOTE}）",
+        ])
+        if layer1.get("reason"):
+            lines.append(f"- note: {layer1.get('reason')}")
     if meta:
         lines.extend([
             "",
@@ -999,6 +1432,11 @@ def run_evaluation(
     mode: str = "fixture",
     extra_meta: Optional[Dict[str, Any]] = None,
     kb_db_path: Optional[str] = "",
+    layer1: bool = False,
+    layer1_golden_path: Optional[Path] = None,
+    layer1_limit: int = DEFAULT_LAYER1_LIMIT,
+    layer1_base_dir: Optional[str] = None,
+    layer1_work_db_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     selected = sample_cases(cases, sample, seed)
     category_mode = (
@@ -1035,6 +1473,14 @@ def run_evaluation(
                 )
             )
     metrics = compute_metrics(records)
+    if layer1:
+        metrics["layer1"] = evaluate_layer1_slice(
+            golden_path=layer1_golden_path,
+            kb_db_path=kb_db_path,
+            base_dir=layer1_base_dir,
+            work_db_path=layer1_work_db_path,
+            limit=layer1_limit,
+        )
     meta = {
         "mode": mode,
         "n_input": len(cases),
@@ -1047,6 +1493,7 @@ def run_evaluation(
         "ai_estimated": estimated_ai,
         "prompt_version": PROMPT_VERSION,
         "category_mode": category_mode,
+        "layer1": bool(layer1),
         "elapsed_seconds": round(time.time() - started, 3),
         "out_dir": str(out_dir),
     }
@@ -1071,6 +1518,12 @@ def _metric_pairs() -> List[Tuple[str, str]]:
         ("auto_approve.n_would_pass", "auto_approve.n_would_pass"),
         ("auto_approve.n_correct", "auto_approve.n_correct"),
         ("auto_approve.precision", "auto_approve.precision"),
+        ("confidence_layers.review_tier.green", "confidence_layers.review_tier.green"),
+        ("confidence_layers.can_auto_write_golden.n_true", "confidence_layers.can_auto_write_golden.n_true"),
+        ("layer1.seed_hit_rate", "layer1.seed_hit_rate"),
+        ("layer1.sibling_hit_rate", "layer1.sibling_hit_rate"),
+        ("layer1.conflict_rate", "layer1.conflict_rate"),
+        ("layer1.needs_human_rate", "layer1.needs_human_rate"),
         ("ai.match_precision", "ai.match_precision"),
         ("ai.abstain_rate", "ai.abstain_rate"),
         ("ai.ai_wrong_det_right", "ai.ai_wrong_det_right"),
@@ -1183,8 +1636,32 @@ def build_parser() -> argparse.ArgumentParser:
             "Optional isolated Mapping KB SQLite (read-only historical_support). "
             "Empty / missing file = today's behavior. Env: MAPPING_KB_DB "
             "(HTTP / SkuMappingService constructor). "
-            "Default empty so fixture numbers do not inherit the env."
+            "Default empty so fixture numbers do not inherit the env. "
+            "Also used by --layer1 (missing file skips seed layer)."
         ),
+    )
+    run_p.add_argument(
+        "--layer1",
+        action="store_true",
+        help=(
+            "Optional cheap 2.2 missing-URL slice via offer_discovery.suggest_offers. "
+            "No site search / live probe. Missing kb-db skips seed layer."
+        ),
+    )
+    run_p.add_argument(
+        "--layer1-golden",
+        default="",
+        help=(
+            "Golden JSON for --layer1 missing-URL samples. "
+            f"Default: {DEFAULT_LAYER1_FIXTURE_GOLDEN} when that fixture exists, "
+            "else --golden-path."
+        ),
+    )
+    run_p.add_argument(
+        "--layer1-limit",
+        type=int,
+        default=DEFAULT_LAYER1_LIMIT,
+        help="Max missing-URL samples for --layer1",
     )
 
     compare_p = sub.add_parser("compare", help="Diff two evaluation run directories")
@@ -1227,9 +1704,20 @@ def cmd_run(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
     kb_db = getattr(args, "kb_db", "") or ""
+    extra = dict(extra)
     if kb_db:
-        extra = dict(extra)
         extra["kb_db"] = kb_db
+    layer1 = bool(getattr(args, "layer1", False))
+    layer1_golden = Path(args.layer1_golden) if getattr(args, "layer1_golden", "") else None
+    if layer1 and layer1_golden is None:
+        default_layer1 = Path(DEFAULT_LAYER1_FIXTURE_GOLDEN)
+        if default_layer1.is_file():
+            layer1_golden = default_layer1
+        elif Path(args.golden_path).is_file():
+            layer1_golden = Path(args.golden_path)
+    if layer1:
+        extra["layer1"] = True
+        extra["layer1_golden"] = str(layer1_golden) if layer1_golden else ""
     out_dir = Path(args.out) if args.out else default_out_dir()
     result = run_evaluation(
         cases=cases,
@@ -1244,6 +1732,9 @@ def cmd_run(args: argparse.Namespace) -> int:
         mode=mode,
         extra_meta=extra,
         kb_db_path=kb_db,
+        layer1=layer1,
+        layer1_golden_path=layer1_golden,
+        layer1_limit=int(getattr(args, "layer1_limit", DEFAULT_LAYER1_LIMIT) or DEFAULT_LAYER1_LIMIT),
     )
     print(f"Wrote mapping_eval report to {out_dir}")
     print(render_summary_markdown(result["metrics"], result["meta"]))

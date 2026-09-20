@@ -1,8 +1,8 @@
 # 蝦皮 × 1688 AI Mapping Engine SPEC v0
 
-**狀態：** 唯讀盤點＋規格（階段 0 已合 main）。階段 1 隔離 schema／唯讀匯入見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.2 第 1 層 offer 建議見 [`offer_discovery.md`](offer_discovery.md)。本文件仍是契約；**不得**據此寫 Golden 或 live `procurement.db`。  
+**狀態：** 唯讀盤點＋規格（階段 0 已合 main）。階段 1 隔離 schema／唯讀匯入見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.2 第 1 層 offer 建議見 [`offer_discovery.md`](offer_discovery.md)。**2.3（本刀）** 離線評估信心分層＋對帳報表見 [`mapping_eval.md`](mapping_eval.md)。本文件仍是契約；**不得**據此寫 Golden 或 live `procurement.db`。  
 **日期：** 2026-09-20  
-**基準：** `main` @ `8199a5c`（#110 SPEC on main）  
+**基準：** `main` @ `5b231bd`（#113 2.2 on main；2.3 在此之上）  
 **產品頁：** Notion 已有（協調者持有連結；本 SPEC 對齊週五最終目標 B）  
 **前一版脈絡：** Know-how Engine v1（TASK 1–9 已合 main：#51＋#60）；交接摘要見 uploads 的 `sku-mapping-knowhow-engine-SPEC-v1`；完整 Know-how 規格預期在 `/workspace/_handoff/sku-mapping-knowhow-engine-SPEC-v1-FULL-20260912.md`（本 VM 未掛上）。
 
@@ -471,13 +471,15 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 
 **2.1：** 階段 1 的隔離 KB 能被 `historical_support` 穩定唯讀（`--kb-db`／`MAPPING_KB_DB`；缺檔不中斷）。見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。
 
-**2.2（本刀）：** 第 1 層 offer 建議，只讀隔離種子＋Golden 兄弟檔，不做站內搜。見 [`offer_discovery.md`](offer_discovery.md)。
+**2.2：** 第 1 層 offer 建議，只讀隔離種子＋Golden 兄弟檔，不做站內搜。見 [`offer_discovery.md`](offer_discovery.md)。
+
+**2.3（本刀）：** 離線評估信心分層＋對帳報表。第 2 層沿用既有 Know-how／`mapping_eval`（不另做 matcher）：輸出 Top-1、Top-3、Green Precision、FN、反事實 `n_would_pass`（仍標「不可寫」）。四層信心拆開，禁止混用：KB 來源可靠度 ≠ 建議 `final_score` ≠ `review_tier` ≠ 可自動寫 Golden（永遠 false／未開；本刀只標註）。可選第 1 層缺 URL 切片（`offer_discovery`；缺 kb-db 跳過種子層）。見 [`mapping_eval.md`](mapping_eval.md)。
 
 其後才做：
 
 1. （2.2 已做）第 1 層建議：種子 offer → 兄弟檔 offer →（仍不做站內搜）。
-2. 第 2 層沿用 Know-how；評估看 Top-1、Green Precision、FN、反事實 `n_would_pass`。
-3. 信心分層：KB 來源可靠度 ≠ 建議 `final_score` ≠ 綠燈 ≠ 可自動寫。
+2. （2.3 已做）第 2 層沿用 Know-how；評估看 Top-1、Green Precision、FN、反事實 `n_would_pass`。
+3. （2.3 已做）信心分層：KB 來源可靠度 ≠ 建議 `final_score` ≠ 綠燈 ≠ 可自動寫（報告欄／枚舉；不改打分公式）。
 4. 規則／別名仍走知識包；要用人工結果長新規則，另開任務。
 
 ### 階段 3 — 高信心自動（未排程）
@@ -516,9 +518,10 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 | 名稱 | 現在在哪 | 意思 | 可否寫 Golden |
 |---|---|---|---|
 | AI `confidence` | `suggestions.confidence`、`evidence_json.ai` | 模型對「選中這個候選」的把握 | 否 |
-| `final_score` | 建議／候選 | 四分量加權，只排序 | 否 |
-| 綠／黃／紅 | `review_tier` | 給人看的批次分級 | 綠仍要人核 |
-| KB 來源可靠度（未來） | 尚未建 | 例如 `golden_approved`＞`inbound_exact`＞種子買過＞兄弟檔＞搜尋 | 否 |
+| `final_score` | 建議／候選；`mapping_eval` 報告第 2 層 | 四分量加權，**只排序** | 否 |
+| 綠／黃／紅 | `review_tier`；`mapping_eval` 報告第 3 層 | 給人看的批次分級 | 綠仍要人核 |
+| KB 來源可靠度 | `mapping_eval` 報告第 1 層（枚舉／rank；**不**改打分） | `golden_approved`＞`inbound_exact`／種子歷史＞`golden_sibling`＞… | 否 |
+| 可自動寫 Golden | `mapping_eval` 報告第 4 層；`auto_approve.enabled` | **永遠 false／未開**；`n_would_pass` 只是反事實 | **否（不可寫）** |
 
 原因（reason）分兩類：
 
@@ -557,7 +560,7 @@ cp docs/ai_mapping_engine_SPEC_v0.md \
 | 第 2 層 matcher＋綠黃紅＋explain＋eval＋反事實；第 1 層 offer 建議（2.2 唯讀，不搜站、不寫 Golden） | 第 1 層仍不搜站、不自動填 URL／不寫 Golden |
 | `kb_*` schema＋gated import stub＋fixture | live 無 `kb_*`；Golden→`kb_mappings` 會丢掉無 sku_id 的核准列 |
 | 負例表＋原因代碼＋歷史正例通道 | 負例／審核沒有匯入隔離 KB 的現成 CLI |
-| 複合分四分量（feature／historical／rule／llm） | 特徵不是獨立 KB；信心三層未產品化 |
+| 複合分四分量（feature／historical／rule／llm）；2.3 評估把四層信心拆開（報告欄，不改公式） | 特徵不是獨立 KB；自動寫 Golden 仍關 |
 | 暫停文件把 #41–#46 與寫入閘門講清楚 | 全表補完仍暫停；不得當本任務順手做 |
 
 **v0 一句話收尾：** 知識已經散落在 Golden、知識包、執行期表、以及營運機種子庫；Mapping Engine 第一步是**收成可讀的隔離 KB，而且只讀**。人核過的對應與 Know-how 優先，模型排後面。在隔離匯入通過、且庭安解暫停之前，Golden、live DB、auto_approve、#41–#46 全部維持不動。
