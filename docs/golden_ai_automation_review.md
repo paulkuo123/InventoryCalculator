@@ -11,7 +11,9 @@
 - `mapping_knowledge_pack/config.json` 的 `auto_approve.enabled` 維持 **false**。
 - 不重啟 Golden 寫入管線、不改 live `procurement.db`、不發明 URL／skuId。
 
-相關：[`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)、[`mapping_eval.md`](mapping_eval.md)、[`offer_discovery_spike.md`](offer_discovery_spike.md)、[`1688_purchase_history_kb.md`](1688_purchase_history_kb.md)、[`restock_closed_loop_review.md`](restock_closed_loop_review.md)。
+相關：[`ai_mapping_engine_SPEC_v0.md`](ai_mapping_engine_SPEC_v0.md)、[`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)、[`mapping_eval.md`](mapping_eval.md)、[`offer_discovery.md`](offer_discovery.md)、[`offer_discovery_spike.md`](offer_discovery_spike.md)、[`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)、[`1688_purchase_history_kb.md`](1688_purchase_history_kb.md)、[`restock_closed_loop_review.md`](restock_closed_loop_review.md)。
+
+主線後續（本審查寫作之後已合 main，基準 `58ce01b`／#114）：Mapping Engine 階段 0–2.3（#110–#114）。第 1 層建議、隔離 KB harvest、評估四層對帳已落地；**仍不**自動填 URL、**不**寫 Golden。
 
 ## 1. 最終目標 vs main 現況管線
 
@@ -24,7 +26,7 @@
        → 人核准（長期）；auto_approve 只有在真實 DB 精度＋可撤回之後才談
        → golden_table.json 成為補貨／入庫真相
 
-main 現況（第 2 層已落地；第 1 層只有設計）
+main 現況（第 2 層已落地；第 1 層建議已落地 #113，掃描仍跳過無 URL）
   已有 阿里巴巴商品URL 的型號
        → EgoBrowser1688.fetch(已知 URL) 或 7 天內快照
        → SkuMappingService.generate_candidates / classify_review_tier
@@ -33,14 +35,16 @@ main 現況（第 2 層已落地；第 1 層只有設計）
        → _write_approved_mapping → golden_table.json
 
   沒有 URL 的型號
-       → _scope_models() 直接 continue
+       → _scope_models() 直接 continue（第 2 層掃描不變）
        → queue 只顯示 missing_url／紅色「尚未設定 1688 URL」
-       → Know-how 與 auto-approve 反事實都沒有分母
+       → 另有唯讀第 1 層建議（#113）：python -m offer_discovery／GET /api/sku-mapping/offer-suggestions
+       → 不自動填 URL、不寫 Golden；人確認 URL 後才進第 2 層
+       → Know-how 與 auto-approve 反事實在人填 URL 之前都沒有分母
 ```
 
 Know-how Engine v1 **已在 main**：知識包、硬／軟規則、歷史正負例、`final_score`、`GET /api/sku-mapping/explain`、`python -m mapping_eval`（含 auto-approve **反事實**）。它**不是**第二套引擎，也**不會**自動寫 golden。fixture 上 SPEC 5.1 全閘 `n_would_pass=0`。
 
-第 1 層（蝦皮商品 → 1688 offer）只有 [`offer_discovery_spike.md`](offer_discovery_spike.md)：建議層，先讀隔離種子，不要先做站內搜尋。**未實作。**
+第 1 層（蝦皮商品 → 1688 offer）已在 main 落地（#113）：`offer_discovery.py` ＋唯讀 `GET /api/sku-mapping/offer-suggestions`（測試：`tests/test_offer_discovery.py`）。先讀隔離種子，再讀同商品兄弟檔，不做站內搜尋。契約見 [`offer_discovery.md`](offer_discovery.md)；設計依據仍是 [`offer_discovery_spike.md`](offer_discovery_spike.md)。**不**自動填 URL、**不**寫 Golden。工作台掃描仍跳過無 URL；UI 可能尚未呼叫建議 API。
 
 `AlibabaApiClient` 沒有 `search_offers`。`crawler.py` 是蝦皮賣家中心，不是 1688。
 
@@ -69,7 +73,7 @@ main 上實際在用的「可補／certain」比較鬆，見 §4。
 - **說明：** `SkuMappingService.explain`、`GET /api/sku-mapping/explain`。
 - **離線評估：** `python -m mapping_eval run|compare|audit`。Green Precision 是「綠燈裡 Top-1 對不對」，**不是**寫檔授權。
 - **反事實 auto-approve：** `mapping_eval.assess_auto_approve_counterfactual` — 只報告，不把 `enabled` 設 true。
-- **第 1 層建議（設計、未做）：** 隔離種子 `kb_excel_success_isolated_20260912.db`（約 3309 筆成功單，有 `price_cny`）＋同商品兄弟檔已綁 offer。
+- **第 1 層建議（#113 已落地、唯讀）：** `offer_discovery.suggest_offers`／`GET /api/sku-mapping/offer-suggestions`：隔離種子 `kb_excel_success_isolated_20260912.db`（約 3309 筆成功單，有 `price_cny`）＋同商品兄弟檔已綁 offer。缺 KB 不中斷。測試：`tests/test_offer_discovery.py`。見 [`offer_discovery.md`](offer_discovery.md)。
 
 ### 人（或操作者已登入的 CDP）仍必須
 
@@ -167,13 +171,14 @@ Know-how 第 2 層（main 已有）
 - 負例寫進 `mapping_negative_examples`（原因代碼 SPEC 5.3）。
 - **閘門：** 沒有「會過關集合非空且精度 100%＋一鍵撤回」以前，不開 auto-approve（Know-how 文件 §為何仍然關閉）。
 
-### 階段 X — 擴大（仍是建議層）
+### 階段 X — 擴大（建議層已落地；仍要人確認 URL）
 
-1. 實作第 1 層來源 1：唯讀種子 DB，coverage／unique／conflict 報告（spike §4），CI 用小型 fixture，不提交 `.db`。
-2. 來源 2：兄弟檔 offer。
-3. 只對 `no_url`（945）與 AI-2 確認死掉的 `url_suspect` 出建議。
-4. 站內搜尋維持不做或極窄備援。
-5. 再回到階段 R→W，批次放大。
+來源 1（唯讀種子）與來源 2（兄弟檔）已在 #113 落地：`python -m offer_discovery`／`GET /api/sku-mapping/offer-suggestions`（CI fixture：`tests/fixtures/offer_discovery/`，不提交 `.db`）。見 [`offer_discovery.md`](offer_discovery.md)。
+
+1. **人確認 URL。** 第 1 層只出建議；**不要**自動填 `阿里巴巴商品URL`、**不要**寫 Golden。
+2. 只對 `no_url`（945）與 AI-2 確認死掉的 `url_suspect` 出建議，等人選 URL。
+3. 站內搜尋維持不做或極窄備援。
+4. 再回到階段 R→W，批次放大（仍須庭安解暫停）。
 
 ### 永遠由人做
 
