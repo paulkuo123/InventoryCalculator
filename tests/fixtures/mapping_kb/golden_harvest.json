@@ -1,0 +1,83 @@
+{
+  "p-copied": {
+    "商品名稱": "石墨黑手機殼 Graphite",
+    "商品圖片網址": "https://example.test/p-copied.jpg",
+    "型號": [
+      {
+        "型號名稱": "Graphite 17",
+        "規格ID": "m-copied",
+        "型號圖片網址": "https://example.test/m-copied.jpg",
+        "阿里巴巴商品名稱": "手机壳",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/111111111111.html",
+        "1688_offer_id": "111111111111",
+        "1688_sku_id": "2222222222222",
+        "1688_sku_name": "石墨黑",
+        "1688_sku_second_name": "17",
+        "1688_spec_text": "石墨黑;17",
+        "1688_mapping_status": "approved",
+        "1688_mapping_source": "manual",
+        "1688_verified_at": "2026-01-01T00:00:00Z"
+      }
+    ]
+  },
+  "p-name-only": {
+    "商品名稱": "中筒襪卡其",
+    "型號": [
+      {
+        "型號名稱": "卡其 M",
+        "規格ID": "m-name-only",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/333333333333.html",
+        "1688_offer_id": "333333333333",
+        "1688_sku_id": "",
+        "1688_sku_name": "卡其",
+        "1688_sku_second_name": "M",
+        "1688_spec_text": "卡其/M",
+        "1688_mapping_status": "approved",
+        "1688_verified_at": "2026-02-01T00:00:00Z"
+      }
+    ]
+  },
+  "p-pending": {
+    "商品名稱": "壓克力吊飾",
+    "型號": [
+      {
+        "型號名稱": "待審",
+        "規格ID": "m-pending",
+        "1688_offer_id": "444444444444",
+        "1688_sku_id": "5555555555555",
+        "1688_mapping_status": "pending"
+      }
+    ]
+  },
+  "p-name-id": {
+    "商品名稱": "Apple Watch 錶帶",
+    "型號": [
+      {
+        "型號名稱": "唯一名稱型號",
+        "規格ID": "",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/666666666666.html",
+        "1688_offer_id": "666666666666",
+        "1688_sku_id": "7777777777777",
+        "1688_sku_name": "藍",
+        "1688_mapping_status": "approved"
+      }
+    ]
+  },
+  "p-ambiguous": {
+    "商品名稱": "其他未分類",
+    "型號": [
+      {
+        "型號名稱": "同名",
+        "規格ID": "",
+        "1688_mapping_status": "approved",
+        "1688_sku_name": "A"
+      },
+      {
+        "型號名稱": "同名",
+        "規格ID": "",
+        "1688_mapping_status": "approved",
+        "1688_sku_name": "B"
+      }
+    ]
+  }
+}

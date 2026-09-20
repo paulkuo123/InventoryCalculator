@@ -56,6 +56,7 @@
 - SoT：`procurement.db` 的 `kb_*` 表（與採購／入庫同一檔、加表不改舊表）。歷史訂單**不**進 `inbound_orders`。
 - 模組：`purchase_history_store.py`、`purchase_history_import.py`。預設 dry-run；寫入須 `--i-approve-kb-import` + `--allow-order-ids` + 隔離 `--db-path`。
 - **不做** live crawl／開 Chrome／寫 `golden_table.json`。說明：[`docs/1688_purchase_history_kb.md`](docs/1688_purchase_history_kb.md)。
+- Mapping Engine 階段 1：`python -m mapping_kb_import dry-run` 把 Golden 核准列（＋可選 `--source-kb`）收成**另一個隔離檔**。寫入須 `--i-approve-kb-import` 與隔離 `--db-path`。營運機種子預期 `/workspace/_handoff/kb_excel_success_isolated_20260912.db`（雲端可缺）。說明：[`docs/mapping_kb_isolated_import.md`](docs/mapping_kb_isolated_import.md)。
 
 ### 廣告
 
@@ -365,9 +366,12 @@ InventoryCalculator/
 │   └── run_watchlist_restock.py
 ├── purchase_history_store.py / purchase_history_import.py
 │                           # 1688 歷史採購 KB（kb_*；Phase 2 schema／dry-run stub）
+├── mapping_kb_import.py    # Mapping KB 隔離收成（Golden 唯讀 → 隔離 db；預設 dry-run）
 ├── docs/
 │   ├── reverse_audit.md
 │   ├── 1688_purchase_history_kb.md
+│   ├── mapping_kb_isolated_import.md
+│   ├── ai_mapping_engine_SPEC_v0.md
 │   ├── 1688_cart_network_recon.md
 │   ├── 1688_mtop_read_cart.md   # Phase 1 唯讀 mtop 讀車
 │   ├── 1688_mtop_mutate.md      # Phase 2 addcargo／Ultron；預設 dry-run

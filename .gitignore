@@ -27,6 +27,7 @@ cookies.json
 1688_cookies*.txt
 data/*
 data/1688_master/
+_handoff/
 *.kb.tmp.db
 *.kb-isolated.db
 .qwen/

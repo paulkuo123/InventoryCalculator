@@ -20,10 +20,12 @@ from inbound_store import parse_offer_id
 from procurement_store import DB_FILE, dict_from_row, normalize_identifier, now_ts
 
 
-KB_SCHEMA_VERSION = 1
+KB_SCHEMA_VERSION = 2
 KB_MAPPING_SOURCES = frozenset({"golden_approved", "inbound_exact", "manual"})
 KB_PARSERS = frozenset({"api", "dom", "list"})
 UNRESOLVED_SKU_PREFIX = "unresolved:"
+KB_NEGATIVE_SOURCES = frozenset({"harvest_copy", "fixture", "runtime_export"})
+KB_SHOPEE_SOURCES = frozenset({"golden", "kb_seed"})
 
 KB_TABLES = (
     "kb_schema_meta",
@@ -35,6 +37,18 @@ KB_TABLES = (
     "kb_mappings",
     "kb_crawl_state",
     "kb_errors",
+    "kb_shopee_products",
+    "kb_shopee_models",
+    "kb_name_positives",
+    "kb_negative_examples",
+)
+
+# Mapping-harvest tables live on isolated --db-path only (never live procurement.db).
+KB_HARVEST_TABLES = (
+    "kb_shopee_products",
+    "kb_shopee_models",
+    "kb_name_positives",
+    "kb_negative_examples",
 )
 
 
@@ -293,6 +307,75 @@ class PurchaseHistoryStore:
                     resolved_at INTEGER
                 );
 
+                CREATE TABLE IF NOT EXISTS kb_shopee_products (
+                    shopee_product_id TEXT PRIMARY KEY,
+                    product_name TEXT,
+                    image_url TEXT,
+                    category_id TEXT,
+                    source TEXT NOT NULL,
+                    copied_at INTEGER NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS kb_shopee_models (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    shopee_product_id TEXT NOT NULL,
+                    shopee_model_id TEXT NOT NULL,
+                    model_name TEXT,
+                    image_url TEXT,
+                    offer_id TEXT,
+                    sku_id TEXT,
+                    sku_name TEXT,
+                    sku_second_name TEXT,
+                    spec_text TEXT,
+                    mapping_status TEXT,
+                    mapping_source TEXT,
+                    verified_at TEXT,
+                    harvest_bucket TEXT NOT NULL,
+                    skip_reason TEXT,
+                    source TEXT NOT NULL,
+                    copied_at INTEGER NOT NULL,
+                    UNIQUE (shopee_product_id, shopee_model_id),
+                    FOREIGN KEY (shopee_product_id) REFERENCES kb_shopee_products(shopee_product_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS kb_name_positives (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    shopee_product_id TEXT NOT NULL,
+                    shopee_model_id TEXT NOT NULL,
+                    offer_id TEXT,
+                    model_name TEXT,
+                    sku_name TEXT,
+                    sku_second_name TEXT,
+                    spec_text TEXT,
+                    mapping_status TEXT,
+                    source TEXT NOT NULL,
+                    skip_reason TEXT NOT NULL,
+                    verified_at TEXT,
+                    copied_at INTEGER NOT NULL,
+                    UNIQUE (shopee_product_id, shopee_model_id, source)
+                );
+
+                CREATE TABLE IF NOT EXISTS kb_negative_examples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    product_id TEXT NOT NULL,
+                    model_id TEXT NOT NULL,
+                    model_name TEXT NOT NULL DEFAULT '',
+                    product_name TEXT NOT NULL DEFAULT '',
+                    offer_id TEXT NOT NULL DEFAULT '',
+                    candidate_key TEXT NOT NULL DEFAULT '',
+                    sku_id TEXT NOT NULL DEFAULT '',
+                    sku_name TEXT NOT NULL DEFAULT '',
+                    second_name TEXT NOT NULL DEFAULT '',
+                    reason_code TEXT NOT NULL,
+                    reason_text TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL,
+                    source TEXT NOT NULL,
+                    reviewer TEXT NOT NULL DEFAULT 'local_user',
+                    created_at INTEGER NOT NULL,
+                    copied_at INTEGER NOT NULL,
+                    UNIQUE (product_id, model_id, offer_id, candidate_key)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_kb_skus_offer_sku
                     ON kb_skus(offer_id, sku_id);
                 CREATE INDEX IF NOT EXISTS idx_kb_order_items_offer_sku
@@ -301,13 +384,20 @@ class PurchaseHistoryStore:
                     ON kb_order_items(alibaba_order_id);
                 CREATE INDEX IF NOT EXISTS idx_kb_errors_entity
                     ON kb_errors(entity_key, created_at);
+                CREATE INDEX IF NOT EXISTS idx_kb_shopee_models_offer
+                    ON kb_shopee_models(offer_id);
+                CREATE INDEX IF NOT EXISTS idx_kb_name_positives_offer
+                    ON kb_name_positives(offer_id);
+                CREATE INDEX IF NOT EXISTS idx_kb_negative_examples_product_model
+                    ON kb_negative_examples(product_id, model_id);
                 """
             )
             self._migrate_additive(conn)
             conn.execute(
                 """
                 INSERT INTO kb_schema_meta(key, value) VALUES ('schema_version', ?)
-                ON CONFLICT(key) DO NOTHING
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+                WHERE CAST(kb_schema_meta.value AS INTEGER) < CAST(excluded.value AS INTEGER)
                 """,
                 (str(KB_SCHEMA_VERSION),),
             )
@@ -917,6 +1007,246 @@ class PurchaseHistoryStore:
             ).fetchone()
         return dict_from_row(row)
 
+    def upsert_shopee_product(self, payload: Mapping[str, Any], *, ts: Optional[int] = None) -> Dict[str, Any]:
+        """Harvest catalog for a Shopee product. Isolated --db-path only."""
+        product_id = normalize_identifier(
+            payload.get("shopee_product_id") or payload.get("product_id") or payload.get("productId")
+        )
+        if not product_id:
+            raise ValueError("kb_shopee_products 需要 shopee_product_id")
+        source = optional_text(payload.get("source")) or "golden"
+        if source not in KB_SHOPEE_SOURCES:
+            raise ValueError("kb_shopee_products.source 僅允許 golden|kb_seed")
+        ts = ts if ts is not None else now_ts()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO kb_shopee_products (
+                    shopee_product_id, product_name, image_url, category_id, source, copied_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shopee_product_id) DO UPDATE SET
+                    product_name = COALESCE(excluded.product_name, kb_shopee_products.product_name),
+                    image_url = COALESCE(excluded.image_url, kb_shopee_products.image_url),
+                    category_id = COALESCE(excluded.category_id, kb_shopee_products.category_id),
+                    source = excluded.source,
+                    copied_at = excluded.copied_at
+                """,
+                (
+                    product_id,
+                    optional_text(payload.get("product_name") or payload.get("productName")),
+                    optional_text(payload.get("image_url") or payload.get("imageUrl")),
+                    optional_text(payload.get("category_id") or payload.get("categoryId")),
+                    source,
+                    ts,
+                ),
+            )
+            row = conn.execute(
+                "SELECT * FROM kb_shopee_products WHERE shopee_product_id = ?",
+                (product_id,),
+            ).fetchone()
+        return dict_from_row(row)
+
+    def upsert_shopee_model(self, payload: Mapping[str, Any], *, ts: Optional[int] = None) -> Dict[str, Any]:
+        """Harvest catalog for one Shopee model row. Isolated --db-path only."""
+        product_id = normalize_identifier(
+            payload.get("shopee_product_id") or payload.get("product_id")
+        )
+        model_id = normalize_identifier(
+            payload.get("shopee_model_id") or payload.get("model_id") or payload.get("specId")
+        )
+        if not (product_id and model_id):
+            raise ValueError("kb_shopee_models 需要 shopee_product_id、shopee_model_id")
+        bucket = optional_text(payload.get("harvest_bucket")) or "skipped"
+        source = optional_text(payload.get("source")) or "golden"
+        if source not in KB_SHOPEE_SOURCES:
+            raise ValueError("kb_shopee_models.source 僅允許 golden|kb_seed")
+        ts = ts if ts is not None else now_ts()
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO kb_shopee_models (
+                    shopee_product_id, shopee_model_id, model_name, image_url, offer_id, sku_id,
+                    sku_name, sku_second_name, spec_text, mapping_status, mapping_source,
+                    verified_at, harvest_bucket, skip_reason, source, copied_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shopee_product_id, shopee_model_id) DO UPDATE SET
+                    model_name = COALESCE(excluded.model_name, kb_shopee_models.model_name),
+                    image_url = COALESCE(excluded.image_url, kb_shopee_models.image_url),
+                    offer_id = COALESCE(excluded.offer_id, kb_shopee_models.offer_id),
+                    sku_id = COALESCE(excluded.sku_id, kb_shopee_models.sku_id),
+                    sku_name = COALESCE(excluded.sku_name, kb_shopee_models.sku_name),
+                    sku_second_name = COALESCE(excluded.sku_second_name, kb_shopee_models.sku_second_name),
+                    spec_text = COALESCE(excluded.spec_text, kb_shopee_models.spec_text),
+                    mapping_status = COALESCE(excluded.mapping_status, kb_shopee_models.mapping_status),
+                    mapping_source = COALESCE(excluded.mapping_source, kb_shopee_models.mapping_source),
+                    verified_at = COALESCE(excluded.verified_at, kb_shopee_models.verified_at),
+                    harvest_bucket = excluded.harvest_bucket,
+                    skip_reason = excluded.skip_reason,
+                    source = excluded.source,
+                    copied_at = excluded.copied_at
+                """,
+                (
+                    product_id,
+                    model_id,
+                    optional_text(payload.get("model_name") or payload.get("modelName")),
+                    optional_text(payload.get("image_url") or payload.get("imageUrl")),
+                    normalize_identifier(payload.get("offer_id") or payload.get("offerId")) or None,
+                    normalize_identifier(payload.get("sku_id") or payload.get("skuId")) or None,
+                    optional_text(payload.get("sku_name") or payload.get("skuName")),
+                    optional_text(payload.get("sku_second_name") or payload.get("second_name")),
+                    optional_text(payload.get("spec_text") or payload.get("specText")),
+                    optional_text(payload.get("mapping_status") or payload.get("mappingStatus")),
+                    optional_text(payload.get("mapping_source") or payload.get("mappingSource")),
+                    optional_text(payload.get("verified_at") or payload.get("verifiedAt")),
+                    bucket,
+                    optional_text(payload.get("skip_reason") or payload.get("skipReason")),
+                    source,
+                    ts,
+                ),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM kb_shopee_models
+                WHERE shopee_product_id = ? AND shopee_model_id = ?
+                """,
+                (product_id, model_id),
+            ).fetchone()
+        return dict_from_row(row)
+
+    def upsert_name_positive(self, payload: Mapping[str, Any], *, ts: Optional[int] = None) -> Dict[str, Any]:
+        """Retain an approved Golden row that has no real sku_id. Never invents sku_id."""
+        product_id = normalize_identifier(
+            payload.get("shopee_product_id") or payload.get("product_id")
+        )
+        model_id = normalize_identifier(
+            payload.get("shopee_model_id") or payload.get("model_id")
+        )
+        source = optional_text(payload.get("source")) or "golden_approved"
+        if source not in KB_MAPPING_SOURCES:
+            raise ValueError("kb_name_positives.source 僅允許 golden_approved|inbound_exact|manual")
+        if not (product_id and model_id):
+            raise ValueError("kb_name_positives 需要 shopee_product_id、shopee_model_id")
+        if normalize_identifier(payload.get("sku_id") or payload.get("skuId")):
+            raise ValueError("kb_name_positives 禁止寫入真實 sku_id；有 sku_id 應走 kb_mappings")
+        ts = ts if ts is not None else now_ts()
+        skip_reason = optional_text(payload.get("skip_reason") or payload.get("skipReason")) or (
+            "approved_without_sku_id"
+        )
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO kb_name_positives (
+                    shopee_product_id, shopee_model_id, offer_id, model_name,
+                    sku_name, sku_second_name, spec_text, mapping_status,
+                    source, skip_reason, verified_at, copied_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(shopee_product_id, shopee_model_id, source) DO UPDATE SET
+                    offer_id = excluded.offer_id,
+                    model_name = COALESCE(excluded.model_name, kb_name_positives.model_name),
+                    sku_name = COALESCE(excluded.sku_name, kb_name_positives.sku_name),
+                    sku_second_name = COALESCE(excluded.sku_second_name, kb_name_positives.sku_second_name),
+                    spec_text = COALESCE(excluded.spec_text, kb_name_positives.spec_text),
+                    mapping_status = excluded.mapping_status,
+                    skip_reason = excluded.skip_reason,
+                    verified_at = excluded.verified_at,
+                    copied_at = excluded.copied_at
+                """,
+                (
+                    product_id,
+                    model_id,
+                    normalize_identifier(payload.get("offer_id") or payload.get("offerId")) or None,
+                    optional_text(payload.get("model_name") or payload.get("modelName")),
+                    optional_text(payload.get("sku_name") or payload.get("skuName")),
+                    optional_text(payload.get("sku_second_name") or payload.get("second_name")),
+                    optional_text(payload.get("spec_text") or payload.get("specText")),
+                    optional_text(payload.get("mapping_status") or payload.get("mappingStatus")) or "approved",
+                    source,
+                    skip_reason,
+                    optional_text(payload.get("verified_at") or payload.get("verifiedAt")),
+                    ts,
+                ),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM kb_name_positives
+                WHERE shopee_product_id = ? AND shopee_model_id = ? AND source = ?
+                """,
+                (product_id, model_id, source),
+            ).fetchone()
+        return dict_from_row(row)
+
+    def upsert_negative_example(self, payload: Mapping[str, Any], *, ts: Optional[int] = None) -> Dict[str, Any]:
+        """Isolated copy of a negative Ground Truth row. No suggestion/review FKs."""
+        product_id = normalize_identifier(payload.get("product_id") or payload.get("productId"))
+        model_id = normalize_identifier(payload.get("model_id") or payload.get("modelId"))
+        if not (product_id and model_id):
+            raise ValueError("kb_negative_examples 需要 product_id、model_id")
+        reason_code = optional_text(payload.get("reason_code") or payload.get("reasonCode"))
+        if not reason_code:
+            raise ValueError("kb_negative_examples 需要 reason_code")
+        origin = optional_text(payload.get("origin"))
+        if not origin:
+            raise ValueError("kb_negative_examples 需要 origin")
+        source = optional_text(payload.get("source")) or "harvest_copy"
+        if source not in KB_NEGATIVE_SOURCES:
+            raise ValueError("kb_negative_examples.source 僅允許 harvest_copy|fixture|runtime_export")
+        reason_text = optional_text(payload.get("reason_text") or payload.get("reasonText")) or ""
+        if reason_code == "OTHER" and not reason_text:
+            raise ValueError("kb_negative_examples.reason_code=OTHER 必須填 reason_text")
+        ts = ts if ts is not None else now_ts()
+        created_at = optional_int(payload.get("created_at")) or ts
+        offer_id = normalize_identifier(payload.get("offer_id") or payload.get("offerId"))
+        candidate_key = optional_text(payload.get("candidate_key") or payload.get("candidateKey")) or ""
+        with self.connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO kb_negative_examples (
+                    product_id, model_id, model_name, product_name, offer_id, candidate_key,
+                    sku_id, sku_name, second_name, reason_code, reason_text, origin,
+                    source, reviewer, created_at, copied_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(product_id, model_id, offer_id, candidate_key) DO UPDATE SET
+                    model_name = COALESCE(excluded.model_name, kb_negative_examples.model_name),
+                    product_name = COALESCE(excluded.product_name, kb_negative_examples.product_name),
+                    sku_id = COALESCE(excluded.sku_id, kb_negative_examples.sku_id),
+                    sku_name = COALESCE(excluded.sku_name, kb_negative_examples.sku_name),
+                    second_name = COALESCE(excluded.second_name, kb_negative_examples.second_name),
+                    reason_code = excluded.reason_code,
+                    reason_text = excluded.reason_text,
+                    origin = excluded.origin,
+                    source = excluded.source,
+                    reviewer = excluded.reviewer,
+                    created_at = kb_negative_examples.created_at,
+                    copied_at = excluded.copied_at
+                """,
+                (
+                    product_id,
+                    model_id,
+                    optional_text(payload.get("model_name") or payload.get("modelName")) or "",
+                    optional_text(payload.get("product_name") or payload.get("productName")) or "",
+                    offer_id,
+                    candidate_key,
+                    normalize_identifier(payload.get("sku_id") or payload.get("skuId")),
+                    optional_text(payload.get("sku_name") or payload.get("skuName")) or "",
+                    optional_text(payload.get("second_name") or payload.get("sku_second_name")) or "",
+                    reason_code,
+                    reason_text,
+                    origin,
+                    source,
+                    optional_text(payload.get("reviewer")) or "local_user",
+                    created_at,
+                    ts,
+                ),
+            )
+            row = conn.execute(
+                """
+                SELECT * FROM kb_negative_examples
+                WHERE product_id = ? AND model_id = ? AND offer_id = ? AND candidate_key = ?
+                """,
+                (product_id, model_id, offer_id, candidate_key),
+            ).fetchone()
+        return dict_from_row(row)
+
     def export_jsonl(self, out_dir: str) -> Dict[str, str]:
         """Write gitignored JSONL helpers. Does not change golden or inbound tables."""
         os.makedirs(out_dir, exist_ok=True)
@@ -930,6 +1260,10 @@ class PurchaseHistoryStore:
             ("kb_mappings", "SELECT * FROM kb_mappings ORDER BY id"),
             ("kb_crawl_state", "SELECT * FROM kb_crawl_state ORDER BY source"),
             ("kb_errors", "SELECT * FROM kb_errors ORDER BY id"),
+            ("kb_shopee_products", "SELECT * FROM kb_shopee_products ORDER BY shopee_product_id"),
+            ("kb_shopee_models", "SELECT * FROM kb_shopee_models ORDER BY shopee_product_id, shopee_model_id"),
+            ("kb_name_positives", "SELECT * FROM kb_name_positives ORDER BY id"),
+            ("kb_negative_examples", "SELECT * FROM kb_negative_examples ORDER BY id"),
         )
         with self.connect() as conn:
             for name, sql in exports:
