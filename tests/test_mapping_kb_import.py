@@ -192,7 +192,12 @@ class MappingKbImportTest(unittest.TestCase):
         for table in KB_HARVEST_TABLES:
             self.assertIn(table, store.table_names())
         with store.connect() as conn:
-            mappings = conn.execute("SELECT * FROM kb_mappings ORDER BY shopee_model_id").fetchall()
+            mappings = conn.execute(
+                "SELECT * FROM kb_mappings WHERE source = 'golden_approved' ORDER BY shopee_model_id"
+            ).fetchall()
+            seed_mappings = conn.execute(
+                "SELECT COUNT(*) AS n FROM kb_mappings WHERE source = 'inbound_exact'"
+            ).fetchone()["n"]
             names = conn.execute("SELECT * FROM kb_name_positives").fetchall()
             negatives = conn.execute("SELECT * FROM kb_negative_examples").fetchall()
             products = conn.execute("SELECT COUNT(*) AS n FROM kb_shopee_products").fetchone()["n"]
@@ -209,6 +214,7 @@ class MappingKbImportTest(unittest.TestCase):
                 (SKIP_APPROVED_WITHOUT_SKU_ID,),
             ).fetchone()["n"]
         self.assertEqual(len(mappings), 2)
+        self.assertEqual(seed_mappings, 1)
         self.assertEqual({row["shopee_model_id"] for row in mappings}, {"m-copied", "唯一名稱型號"})
         self.assertEqual(len(names), 1)
         self.assertEqual(names[0]["shopee_model_id"], "m-name-only")
