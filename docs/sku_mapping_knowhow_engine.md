@@ -5,7 +5,8 @@
 
 **TASK 9**（第 1 層：Shopee product → 1688 offer）是設計 spike，見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。結論：值得做建議層，但**先讀隔離種子歷史 Offer，不要先做站內搜尋**；本文件與本分支都不實作 crawler。
 
-CLI 細節見 [`mapping_eval.md`](mapping_eval.md)。知識包載入見 `mapping_knowledge.py`。
+CLI 細節見 [`mapping_eval.md`](mapping_eval.md)。知識包載入見 `mapping_knowledge.py`。  
+Mapping Engine 隔離 KB 收成（階段 1）見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)；**不**另做 matcher。
 
 ## 架構
 

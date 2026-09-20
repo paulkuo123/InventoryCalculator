@@ -1,8 +1,8 @@
 # 蝦皮 × 1688 AI Mapping Engine SPEC v0
 
-**狀態：** 唯讀盤點＋規格。本文件**不**實作引擎、**不**改 schema、**不**寫資料。  
+**狀態：** 唯讀盤點＋規格（階段 0 已合 main）。階段 1 隔離 schema／唯讀匯入見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。本文件仍是契約；**不得**據此寫 Golden 或 live `procurement.db`。  
 **日期：** 2026-09-20  
-**基準：** `main` @ `3c36203`（本機核對與 `origin/main` 相同）  
+**基準：** `main` @ `8199a5c`（#110 SPEC on main）  
 **產品頁：** Notion 已有（協調者持有連結；本 SPEC 對齊週五最終目標 B）  
 **前一版脈絡：** Know-how Engine v1（TASK 1–9 已合 main：#51＋#60）；交接摘要見 uploads 的 `sku-mapping-knowhow-engine-SPEC-v1`；完整 Know-how 規格預期在 `/workspace/_handoff/sku-mapping-knowhow-engine-SPEC-v1-FULL-20260912.md`（本 VM 未掛上）。
 
@@ -450,15 +450,15 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 - 凍結禁令與路徑。
 - 開 docs-only PR，**不合併也不碰資料**。
 
-### 階段 1 — KB schema ＋ 唯讀匯入（下一刀，需另核准）
+### 階段 1 — KB schema ＋ 唯讀匯入（本實作）
 
-範圍小、可測、可刪：
+範圍小、可測、可刪。CLI：`python -m mapping_kb_import`（預設 dry-run；寫入須 `--i-approve-kb-import` + 隔離 `--db-path`）。
 
-1. 隔離 `--db-path` 工作檔（可用既有 `kb_*`，必要時**另開 PR** 加「名稱正例」存放，不加進 live）。
+1. 隔離 `--db-path` 工作檔：沿用既有 `kb_*`，並加 `kb_shopee_*`／`kb_name_positives`／`kb_negative_examples`（不加進 live）。
 2. Dry-run：Golden approved 分桶（有 sku_id／僅名稱／非 approved）。
-3. 唯讀核對種子 DB 表與列數。
-4. Fixture 測試覆蓋 copy／拒絕 live／拒絕無 allowlist。
-5. 報告寫 `data/` 或 `/tmp`（gitignore），不提交 `.db`。
+3. 唯讀核對種子 DB 表與列數（`--source-kb`；檔不存在就跳過）。
+4. Fixture 測試覆蓋 copy／拒絕 live／拒絕無核准旗標。
+5. 報告寫 stdout；輸出 `.db` 走 `reports/` 或 `/workspace/_handoff/mapping_kb_isolated_YYYYMMDD.db`（gitignore），不提交。
 
 **仍禁止：** 寫 Golden、seed→live、`auto_approve=true`、合併 #41–#46。
 
@@ -496,7 +496,7 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 9. **不得**用名稱／圖片相似度合併 `unresolved_id`。
 10. **不得**讓綠燈或高 `final_score` 等於可採購／certain。
 
-本 PR 允許的唯一 repo 變更：新增本 SPEC 檔。
+階段 0 文件 PR 只准新增本 SPEC。階段 1 只准隔離 schema、唯讀匯入 CLI、fixture 測試與短文件；上列禁令仍全部有效。
 
 ---
 

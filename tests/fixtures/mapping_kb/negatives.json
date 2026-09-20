@@ -1,0 +1,29 @@
+{
+  "negatives": [
+    {
+      "product_id": "p-copied",
+      "model_id": "m-copied",
+      "model_name": "Graphite 17",
+      "product_name": "石墨黑手機殼 Graphite",
+      "offer_id": "111111111111",
+      "candidate_key": "wrong-black",
+      "sku_id": "9999999999999",
+      "sku_name": "黑色",
+      "second_name": "17",
+      "reason_code": "COLOR_MISMATCH",
+      "reason_text": "",
+      "origin": "explicit_reject"
+    },
+    {
+      "product_id": "p-name-only",
+      "model_id": "m-name-only",
+      "model_name": "卡其 M",
+      "offer_id": "333333333333",
+      "candidate_key": "lookalike",
+      "sku_name": "卡其仿款",
+      "reason_code": "OTHER",
+      "reason_text": "外觀接近但包裝不同，fixture 保留 OTHER 必填文字",
+      "origin": "no_match"
+    }
+  ]
+}

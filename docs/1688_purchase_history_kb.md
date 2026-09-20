@@ -84,13 +84,16 @@ kb_mappings                衍生複本：source = golden_approved | inbound_exa
 
 | 表 | 重點 |
 |---|---|
-| `kb_schema_meta` | `schema_version`（目前常數 `KB_SCHEMA_VERSION = 1`）；舊庫用加欄 migration |
+| `kb_schema_meta` | `schema_version`（目前常數 `KB_SCHEMA_VERSION = 2`）；舊庫用加欄／加表 migration |
 | `kb_products` | PK `offer_id`；url／title／shop_id／raw_json／fingerprint／first／last seen／last_crawled |
 | `kb_skus` | `(offer_id, sku_key)` unique；有 `sku_id` 時用真實 id；沒有則 `unresolved_id`，**不**依相似度合併 |
 | `kb_orders` | `alibaba_order_id` unique；status／ordered_at／seller／raw_json／schema_version |
 | `kb_order_items` | unique `(alibaba_order_id, source_line_id)`；qty／price 可 NULL；provenance：`parser=api\|dom\|list`、source_url、raw_hash |
 | `kb_purchase_history` | 依 offer+sku_key 彙總：order_count、total_qty、first／last order id、last_price_cny、last_ordered_at |
 | `kb_mappings` | 1688→蝦皮衍生連結；不寫 Golden |
+| `kb_shopee_products`／`kb_shopee_models` | Mapping 收成清冊（隔離檔；不是 Canonical 合併） |
+| `kb_name_positives` | 核准但無 sku_id 的名稱正例；不發明 sku_id |
+| `kb_negative_examples` | 負例複本（無 suggestion FK） |
 | `kb_crawl_state` | PK `source`；`last_processed_order_id` + `cursor_json`（page／pageSize）；不假設總頁數 |
 | `kb_errors` | entity_key、error_class、message、raw_excerpt、created_at、resolved_at |
 
@@ -102,10 +105,11 @@ Phase 1.5 欄位現實（設計對齊，本階段不打 API）：
 
 ## 模組
 
-- `purchase_history_store.py`：建表、upsert、冪等 `import_order`、彙總、mapping 快照、crawl_state、JSONL 匯出。支援 `db_path=` 隔離檔。
+- `purchase_history_store.py`：建表、upsert、冪等 `import_order`、彙總、mapping 快照、crawl_state、JSONL 匯出。支援 `db_path=` 隔離檔。`KB_SCHEMA_VERSION = 2` 在隔離檔加蝦皮清冊／名稱正例／負例表（仍不寫 live）。
 - `purchase_history_import.py`：讀本地 JSON、正規化 list／detail、dry-run 預設、gated 寫入。
+- `mapping_kb_import.py`：Golden（＋可選種子）→ **另一個**隔離 KB。說明見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。
 
-測試：`tests/test_purchase_history_store.py`、`tests/test_purchase_history_import.py`，fixture 在 `tests/fixtures/historical_kb/`。
+測試：`tests/test_purchase_history_store.py`、`tests/test_purchase_history_import.py`、`tests/test_mapping_kb_import.py`；fixture 在 `tests/fixtures/historical_kb/`、`tests/fixtures/mapping_kb/`。
 
 ## Phase 3 會怎麼用
 
