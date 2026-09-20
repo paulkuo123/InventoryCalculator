@@ -1,6 +1,6 @@
 # 蝦皮 × 1688 AI Mapping Engine SPEC v0
 
-**狀態：** 唯讀盤點＋規格（階段 0 已合 main）。階段 1 隔離 schema／唯讀匯入見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。本文件仍是契約；**不得**據此寫 Golden 或 live `procurement.db`。  
+**狀態：** 唯讀盤點＋規格（階段 0 已合 main）。階段 1 隔離 schema／唯讀匯入見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.2 第 1 層 offer 建議見 [`offer_discovery.md`](offer_discovery.md)。本文件仍是契約；**不得**據此寫 Golden 或 live `procurement.db`。  
 **日期：** 2026-09-20  
 **基準：** `main` @ `8199a5c`（#110 SPEC on main）  
 **產品頁：** Notion 已有（協調者持有連結；本 SPEC 對齊週五最終目標 B）  
@@ -49,7 +49,8 @@ Golden 全表工程（#41–#46）**仍然暫停**。本階段只准文件與隔
 | [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md) | 第 2 層 Know-how 已落地總覽；**不是**第二套引擎 |
 | [`mapping_eval.md`](mapping_eval.md) | 離線評估 CLI；不寫 Golden、不 auto-approve |
 | [`1688_purchase_history_kb.md`](1688_purchase_history_kb.md) | 歷史採購 `kb_*` schema；Golden 最高優先、只抄不回寫 |
-| [`offer_discovery_spike.md`](offer_discovery_spike.md) | 第 1 層設計 only；先讀隔離種子 |
+| [`offer_discovery_spike.md`](offer_discovery_spike.md) | 第 1 層設計；先讀隔離種子 |
+| [`offer_discovery.md`](offer_discovery.md) | 第 1 層 2.2 唯讀建議（種子 → 兄弟檔；不搜站） |
 | [`golden_ai_automation_review.md`](golden_ai_automation_review.md) | 目標 B 審查；#41–#46 暫停約束 |
 
 Know-how Engine **已在 main**。Mapping Engine v0 是在它上面加「可匯入、可回寫的知識庫契約」，不是另做 matcher。
@@ -425,7 +426,7 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 
 | 層 | 輸入 | 輸出 | 現況 |
 |---|---|---|---|
-| 1 | 蝦皮型號（常缺 URL） | 建議 `offer_id`／URL | 設計 only；`_scope_models()` 沒 URL 就 skip |
+| 1 | 蝦皮型號（常缺 URL） | 建議 `offer_id`／URL | 2.2 唯讀建議：`python -m offer_discovery suggest`／`GET /api/sku-mapping/offer-suggestions`。`_scope_models()` 仍跳過無 URL（第 2 層掃描不變） |
 | 2 | 已知 offer 快照 | 綠／黃／紅 SKU 候選 | **已落地** |
 
 隔離種子優先服務第 1 層（我們是否買過某個 offer）。Golden 兄弟檔是第 1 層來源 2。兩層 top offer 不同 → 衝突，進人工，**禁止自動消解**。
@@ -468,11 +469,13 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 
 ### 階段 2 — 候選／AI／規則／信心（更後面）
 
-**2.1（本刀）：** 階段 1 的隔離 KB 能被 `historical_support` 穩定唯讀（`--kb-db`／`MAPPING_KB_DB`；缺檔不中斷）。見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。
+**2.1：** 階段 1 的隔離 KB 能被 `historical_support` 穩定唯讀（`--kb-db`／`MAPPING_KB_DB`；缺檔不中斷）。見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。
+
+**2.2（本刀）：** 第 1 層 offer 建議，只讀隔離種子＋Golden 兄弟檔，不做站內搜。見 [`offer_discovery.md`](offer_discovery.md)。
 
 其後才做：
 
-1. 第 1 層建議：種子 offer → 兄弟檔 offer →（仍不做站內搜）。
+1. （2.2 已做）第 1 層建議：種子 offer → 兄弟檔 offer →（仍不做站內搜）。
 2. 第 2 層沿用 Know-how；評估看 Top-1、Green Precision、FN、反事實 `n_would_pass`。
 3. 信心分層：KB 來源可靠度 ≠ 建議 `final_score` ≠ 綠燈 ≠ 可自動寫。
 4. 規則／別名仍走知識包；要用人工結果長新規則，另開任務。
@@ -551,7 +554,7 @@ cp docs/ai_mapping_engine_SPEC_v0.md \
 |---|---|
 | Golden 355／5918；核准 3800 是正例 SoT；SHA 已凍結 | 本環境無 live DB、無隔離種子檔，無法核對 `kb_*` 實列 |
 | Know-how 包：規則 4 條、顏色別名、類別、門檻；auto_approve 關 | 沒有正規 Canonical Product 表；蝦皮／1688 身分未統一 |
-| 第 2 層 matcher＋綠黃紅＋explain＋eval＋反事實 | 第 1 層 offer 建議未實作 |
+| 第 2 層 matcher＋綠黃紅＋explain＋eval＋反事實；第 1 層 offer 建議（2.2 唯讀，不搜站、不寫 Golden） | 第 1 層仍不搜站、不自動填 URL／不寫 Golden |
 | `kb_*` schema＋gated import stub＋fixture | live 無 `kb_*`；Golden→`kb_mappings` 會丢掉無 sku_id 的核准列 |
 | 負例表＋原因代碼＋歷史正例通道 | 負例／審核沒有匯入隔離 KB 的現成 CLI |
 | 複合分四分量（feature／historical／rule／llm） | 特徵不是獨立 KB；信心三層未產品化 |

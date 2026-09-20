@@ -107,7 +107,7 @@ python -m unittest tests.test_mapping_kb_import tests.test_purchase_history_stor
 |---|---|
 | 建構子 `kb_db_path=` | 單元測試／程式呼叫 |
 | 環境變數 `MAPPING_KB_DB` | HTTP／`SkuMappingService()` 預設會讀；空／`off`／缺檔＝今天的行為 |
-| `--kb-db` | `python -m mapping_eval run --kb-db …`；`python -m sku_mapping_service historical-contrast --kb-db …` |
+| `--kb-db` | `python -m mapping_eval run --kb-db …`；`python -m sku_mapping_service historical-contrast --kb-db …`；`python -m offer_discovery suggest --kb-db …` |
 
 營運機常見路徑（不進 git；雲端 VM 可缺）：
 
@@ -121,6 +121,8 @@ export MAPPING_KB_DB=/workspace/_handoff/mapping_kb_isolated_20260920.db
 python -m mapping_eval run --fixture tests/fixtures/mapping_eval \
   --kb-db /workspace/_handoff/mapping_kb_isolated_20260920.db
 python -m sku_mapping_service historical-contrast \
+  --kb-db /workspace/_handoff/mapping_kb_isolated_20260920.db
+python -m offer_discovery suggest --product-id <id> --model-id <規格ID> \
   --kb-db /workspace/_handoff/mapping_kb_isolated_20260920.db
 ```
 

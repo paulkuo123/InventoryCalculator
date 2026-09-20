@@ -3,10 +3,10 @@
 本文件是 TASK 1–7 落地後的總覽，以及 **TASK 8** 的評估對照與 auto-approve **反事實**精度。  
 **不是**第二套 mapping 引擎。**不**改 `golden_table.json` schema。**不**啟用 `auto_approve.enabled`。
 
-**TASK 9**（第 1 層：Shopee product → 1688 offer）是設計 spike，見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。結論：值得做建議層，但**先讀隔離種子歷史 Offer，不要先做站內搜尋**；本文件與本分支都不實作 crawler。
+**TASK 9**（第 1 層：Shopee product → 1688 offer）設計見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。Mapping Engine 2.2 已落地唯讀建議層：[`offer_discovery.md`](offer_discovery.md)（種子歷史 → Golden 兄弟檔；**不**搜站、**不**寫 Golden）。
 
 CLI 細節見 [`mapping_eval.md`](mapping_eval.md)。知識包載入見 `mapping_knowledge.py`。  
-Mapping Engine 隔離 KB 收成（階段 1）見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.1：`historical_support` 可選唯讀 `--kb-db`／`MAPPING_KB_DB`；**不**另做 matcher。
+Mapping Engine 隔離 KB 收成（階段 1）見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.1：`historical_support` 可選唯讀 `--kb-db`／`MAPPING_KB_DB`；**不**另做 matcher。階段 2.2：第 1 層 offer 建議見 [`offer_discovery.md`](offer_discovery.md)。
 
 ## 架構
 

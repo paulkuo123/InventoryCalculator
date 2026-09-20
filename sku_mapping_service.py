@@ -3148,6 +3148,25 @@ class SkuMappingService:
             "skus": skus,
         }
 
+    def suggest_layer1_offers(
+        self,
+        product_id: str,
+        model_id: str = "",
+        model_name: str = "",
+    ) -> Dict[str, Any]:
+        """Read-only layer-1 offer suggestions. Does not write Golden."""
+        from offer_discovery import suggest_offers
+
+        return suggest_offers(
+            product_id,
+            model_id=model_id,
+            model_name=model_name,
+            kb_db_path="" if self.kb_db_path is None else str(self.kb_db_path),
+            base_dir=str(self.base_dir),
+            golden=self._golden(),
+            work_db_path=str(self.db_path),
+        )
+
     def catalog_for_model(self, product_id: str, model_id: str) -> Dict[str, Any]:
         product_id = normalize_id(product_id)
         model_id = normalize_id(model_id)

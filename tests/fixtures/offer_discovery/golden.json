@@ -1,0 +1,80 @@
+{
+  "p-socks": {
+    "商品名稱": "純色棉襪 Graphite Socks",
+    "型號": [
+      {
+        "型號名稱": "白色 M",
+        "規格ID": "m-socks-missing",
+        "1688_mapping_status": "missing"
+      },
+      {
+        "型號名稱": "黑色 L",
+        "規格ID": "m-socks-sibling",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/999999999999.html",
+        "1688_offer_id": "999999999999",
+        "1688_sku_id": "8888888888888",
+        "1688_sku_name": "黑色",
+        "1688_mapping_status": "approved",
+        "1688_mapping_source": "manual"
+      }
+    ]
+  },
+  "p-case": {
+    "商品名稱": "石墨黑手機殼 Graphite",
+    "型號": [
+      {
+        "型號名稱": "Graphite 17",
+        "規格ID": "m-case-missing",
+        "1688_mapping_status": "missing"
+      },
+      {
+        "型號名稱": "Graphite 17 核准",
+        "規格ID": "m-case-sibling",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/111111111111.html",
+        "1688_offer_id": "111111111111",
+        "1688_sku_id": "2222222222222",
+        "1688_sku_name": "石墨黑",
+        "1688_mapping_status": "approved"
+      }
+    ]
+  },
+  "p-sib-only": {
+    "商品名稱": "只有兄弟檔沒歷史",
+    "型號": [
+      {
+        "型號名稱": "缺 URL",
+        "規格ID": "m-sib-missing",
+        "1688_mapping_status": "missing"
+      },
+      {
+        "型號名稱": "已核准",
+        "規格ID": "m-sib-approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/555555555555.html",
+        "1688_offer_id": "555555555555",
+        "1688_mapping_status": "approved"
+      }
+    ]
+  },
+  "p-orphan": {
+    "商品名稱": "完全沒有歷史也沒兄弟檔",
+    "型號": [
+      {
+        "型號名稱": "空",
+        "規格ID": "m-orphan",
+        "1688_mapping_status": "missing"
+      }
+    ]
+  },
+  "p-layer2": {
+    "商品名稱": "純色棉襪 Graphite Socks",
+    "型號": [
+      {
+        "型號名稱": "白色 M",
+        "規格ID": "m-layer2",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/777777777777.html",
+        "1688_offer_id": "777777777777",
+        "1688_mapping_status": "pending"
+      }
+    ]
+  }
+}
