@@ -61,6 +61,18 @@ def load_json(path: str):
         return json.load(handle)
 
 
+def optional_file_fingerprint(path: str):
+    """Snapshot an optional file. Missing files are a valid operator/CI state."""
+    if not os.path.isfile(path):
+        return {"exists": False, "sha256": None, "mtime_ns": None, "size": None}
+    return {
+        "exists": True,
+        "sha256": file_sha256(path),
+        "mtime_ns": os.stat(path).st_mtime_ns,
+        "size": os.path.getsize(path),
+    }
+
+
 class MappingKbImportTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -139,8 +151,14 @@ class MappingKbImportTest(unittest.TestCase):
         self.assertIn(APPROVE_FLAG, str(ctx.exception))
         self.assertFalse(os.path.exists(self.db_path))
 
+    def _assert_optional_file_unchanged(self, path: str, before: dict) -> None:
+        after = optional_file_fingerprint(path)
+        self.assertEqual(after["exists"], before["exists"])
+        self.assertEqual(after, before)
+
     def test_import_live_procurement_db_always_refused(self):
         live = os.path.join(ROOT, "procurement.db")
+        before = optional_file_fingerprint(live)
         self.assertFalse(PHASE3_HISTORY_IMPORT_ENABLED)
         with self.assertRaises(SystemExit) as ctx:
             run_gated_import(
@@ -150,7 +168,41 @@ class MappingKbImportTest(unittest.TestCase):
                 base_dir=ROOT,
             )
         self.assertIn("procurement.db", str(ctx.exception))
-        self.assertFalse(os.path.exists(live))
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "mapping_kb_import",
+                "import",
+                "--golden",
+                GOLDEN_FIXTURE,
+                "--db-path",
+                live,
+                APPROVE_FLAG,
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(proc.returncode, 2, proc.stderr)
+        self.assertIn("procurement.db", proc.stderr)
+        self._assert_optional_file_unchanged(live, before)
+
+        fake_live = os.path.join(self.tmp.name, "procurement.db")
+        with open(fake_live, "wb") as handle:
+            handle.write(b"live-sentinel-not-a-kb\n")
+        fake_before = optional_file_fingerprint(fake_live)
+        with self.assertRaises(SystemExit) as fake_ctx:
+            run_gated_import(
+                golden_path=GOLDEN_FIXTURE,
+                db_path=fake_live,
+                approved=True,
+                base_dir=self.tmp.name,
+            )
+        self.assertIn("procurement.db", str(fake_ctx.exception))
+        self._assert_optional_file_unchanged(fake_live, fake_before)
+        with open(fake_live, "rb") as handle:
+            self.assertEqual(handle.read(), b"live-sentinel-not-a-kb\n")
 
     def test_import_refuses_source_kb_as_destination(self):
         seed = self._build_seed_kb()
