@@ -56,7 +56,7 @@
 - SoT：`procurement.db` 的 `kb_*` 表（與採購／入庫同一檔、加表不改舊表）。歷史訂單**不**進 `inbound_orders`。
 - 模組：`purchase_history_store.py`、`purchase_history_import.py`。預設 dry-run；寫入須 `--i-approve-kb-import` + `--allow-order-ids` + 隔離 `--db-path`。
 - **不做** live crawl／開 Chrome／寫 `golden_table.json`。說明：[`docs/1688_purchase_history_kb.md`](docs/1688_purchase_history_kb.md)。
-- Mapping Engine 階段 1：`python -m mapping_kb_import dry-run` 把 Golden 核准列（＋可選 `--source-kb`）收成**另一個隔離檔**。寫入須 `--i-approve-kb-import` 與隔離 `--db-path`。營運機種子預期 `/workspace/_handoff/kb_excel_success_isolated_20260912.db`（雲端可缺）。階段 2.1：`SkuMappingService.historical_support` 可選唯讀隔離 KB（`--kb-db` 或 `MAPPING_KB_DB=/workspace/_handoff/mapping_kb_isolated_20260920.db`；缺檔不中斷）。說明：[`docs/mapping_kb_isolated_import.md`](docs/mapping_kb_isolated_import.md)。
+- Mapping Engine 階段 1：`python -m mapping_kb_import dry-run` 把 Golden 核准列（＋可選 `--source-kb`）收成**另一個隔離檔**。寫入須 `--i-approve-kb-import` 與隔離 `--db-path`。營運機種子預期 `/workspace/_handoff/kb_excel_success_isolated_20260912.db`（雲端可缺）。階段 2.1：`SkuMappingService.historical_support` 可選唯讀隔離 KB（`--kb-db` 或 `MAPPING_KB_DB=/workspace/_handoff/mapping_kb_isolated_20260920.db`；缺檔不中斷）。階段 2.2：第 1 層 offer 建議（只讀歷史，不搜站）`python -m offer_discovery suggest --product-id … --model-id …`。說明：[`docs/mapping_kb_isolated_import.md`](docs/mapping_kb_isolated_import.md)、[`docs/offer_discovery.md`](docs/offer_discovery.md)。
 
 ### 廣告
 
@@ -367,6 +367,7 @@ InventoryCalculator/
 ├── purchase_history_store.py / purchase_history_import.py
 │                           # 1688 歷史採購 KB（kb_*；Phase 2 schema／dry-run stub）
 ├── mapping_kb_import.py    # Mapping KB 隔離收成（Golden 唯讀 → 隔離 db；預設 dry-run）
+├── offer_discovery.py      # 第 1 層 offer 建議（唯讀；種子歷史 → 兄弟檔；不搜站）
 ├── docs/
 │   ├── reverse_audit.md
 │   ├── 1688_purchase_history_kb.md
@@ -385,7 +386,8 @@ InventoryCalculator/
 │   ├── ads_sop_review_fable5.md    # 現行廣告 SOP 審閱（2026-09-13）
 │   ├── mapping_eval.md
 │   ├── sku_mapping_knowhow_engine.md
-│   ├── offer_discovery_spike.md  # TASK 9：第 1 層 offer 來源（設計 only）
+│   ├── offer_discovery_spike.md  # TASK 9：第 1 層 offer 來源（設計）
+│   ├── offer_discovery.md        # Mapping Engine 2.2：第 1 層唯讀建議
 │   ├── restock_closed_loop_review.md   # Goal A：補貨閉環現況 vs 最終流程
 │   └── golden_ai_automation_review.md  # Goal B：Golden AI；#41–#46 暫停中勿合
 ├── tests/                  # unittest（含 reverse_audit 離線安全測試）

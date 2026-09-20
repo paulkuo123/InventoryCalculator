@@ -1,0 +1,89 @@
+{
+  "note": "Synthetic buyerOrderList-shaped fixture for layer-1 offer discovery. Not live 1688 data.",
+  "serviceId": "OrderListDataLineService.buyerOrderList",
+  "orders": [
+    {
+      "orderId": "900000000000000001",
+      "status": "success",
+      "gmtCreate": "2024-03-01 10:15:00",
+      "seller": "fixture-socks-shop",
+      "items": [
+        {
+          "id": "line-socks-1",
+          "sourceId": "682877407287",
+          "skuId": "4020601521981",
+          "specId": "spec-white-m",
+          "specItems": [
+            {"specName": "颜色", "specValue": "白色"},
+            {"specName": "尺码", "specValue": "M"}
+          ],
+          "price": "2.50",
+          "quantity": "20",
+          "productName": "純色棉襪 Graphite Socks"
+        }
+      ]
+    },
+    {
+      "orderId": "900000000000000002",
+      "status": "success",
+      "gmtCreate": "2024-04-02 09:00:00",
+      "seller": "fixture-socks-shop",
+      "items": [
+        {
+          "id": "line-socks-2",
+          "sourceId": "682877407287",
+          "skuId": "4020601521981",
+          "specId": "spec-white-m",
+          "specItems": [
+            {"specName": "颜色", "specValue": "白色"},
+            {"specName": "尺码", "specValue": "M"}
+          ],
+          "price": "2.40",
+          "quantity": "10",
+          "productName": "純色棉襪 Graphite Socks"
+        }
+      ]
+    },
+    {
+      "orderId": "900000000000000003",
+      "status": "success",
+      "gmtCreate": "2024-05-01 12:00:00",
+      "seller": "fixture-case-shop",
+      "items": [
+        {
+          "id": "line-case-1",
+          "sourceId": "111111111111",
+          "skuId": "2222222222222",
+          "specId": "spec-graphite-17",
+          "specItems": [
+            {"specName": "颜色", "specValue": "石墨黑"},
+            {"specName": "型号", "specValue": "17"}
+          ],
+          "price": "8.00",
+          "quantity": "5",
+          "productName": "石墨黑手機殼 Graphite"
+        }
+      ]
+    },
+    {
+      "orderId": "900000000000000099",
+      "status": "cancelled",
+      "gmtCreate": "2024-01-01 00:00:00",
+      "seller": "fixture-cancelled-shop",
+      "items": [
+        {
+          "id": "line-cancelled",
+          "sourceId": "444444444444",
+          "skuId": "4444444444440",
+          "specItems": [
+            {"specName": "颜色", "specValue": "白色"},
+            {"specName": "尺码", "specValue": "M"}
+          ],
+          "price": "1.00",
+          "quantity": "1",
+          "productName": "純色棉襪 Graphite Socks"
+        }
+      ]
+    }
+  ]
+}

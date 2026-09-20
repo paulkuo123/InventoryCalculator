@@ -1,8 +1,10 @@
-# TASK 9：Offer Discovery Spike（第 1 層，設計 only）
+# TASK 9：Offer Discovery Spike（第 1 層）
 
 本文件是 1688 SKU Mapping Know-how Engine v1 的 **TASK 9** 設計 spike。  
 **只討論**「蝦皮商品／型號 → 1688 offer」要不要自動化、先用哪一個來源。  
-**不是**實作。**不**寫 crawler／搜尋自動化。**不**開 Chrome。**不**改 `golden_table.json` schema。**不**啟用 `auto_approve.enabled`。
+設計結論不變：**不**寫 crawler／搜尋自動化、**不**開 Chrome、**不**改 `golden_table.json` schema、**不**啟用 `auto_approve.enabled`。
+
+Mapping Engine 2.2 已依本 spike 落地**唯讀建議層**（種子歷史 → Golden 兄弟檔）。呼叫方式見 [`offer_discovery.md`](offer_discovery.md)。本檔仍是來源優先序與禁令的設計說明。
 
 Know-how Engine 總覽見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)。歷史 KB schema 見 [`1688_purchase_history_kb.md`](1688_purchase_history_kb.md)。
 
@@ -11,7 +13,7 @@ Know-how Engine 總覽見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_
 現況 matcher（`SkuMappingService`）是 **第 2 層**：已經有 1688 offer URL／`offer_id`，再對該 offer 的 SKU 清單做綠／黃／紅建議。
 
 ```text
-第 1 層  Shopee product / model  ──?──►  1688 offer（本 spike）
+第 1 層  Shopee product / model  ──►  1688 offer 建議（2.2 唯讀；本 spike 的來源 1→2）
 第 2 層  已知 offer snapshot     ──►    1688 SKU（TASK 1–8，已落地）
 ```
 
@@ -202,7 +204,7 @@ Know-how Engine 總覽見 [`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_
 | 2 | 同蝦皮商品其他型號已綁 Golden offer | 緊接，本機即可，零瀏覽器 |
 | 3 | 1688 站內搜尋 | **不做**；只保留為備援假設 |
 
-來源 1 比搜尋穩：offer 來自已付款／交易成功紀錄，可用 `PurchaseHistoryStore` 既有表，不必新爬蟲。種子未掛進此工作區也不要改 production 模組去「補」它；下一步若實作，用 `--db-path` 唯讀 attach，並用小型 fixture 覆蓋查詢，不提交 `.db`。
+來源 1 比搜尋穩：offer 來自已付款／交易成功紀錄，可用 `PurchaseHistoryStore` 既有表，不必新爬蟲。Mapping Engine 2.2 已用 `--kb-db`／`MAPPING_KB_DB` 唯讀 attach，CI 用 `tests/fixtures/offer_discovery/`，不提交營運 `.db`。見 [`offer_discovery.md`](offer_discovery.md)。
 
 ## 刻意不做（本 PR / 本文件）
 
