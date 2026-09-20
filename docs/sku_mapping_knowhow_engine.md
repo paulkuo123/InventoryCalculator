@@ -6,7 +6,7 @@
 **TASK 9**（第 1 層：Shopee product → 1688 offer）是設計 spike，見 [`offer_discovery_spike.md`](offer_discovery_spike.md)。結論：值得做建議層，但**先讀隔離種子歷史 Offer，不要先做站內搜尋**；本文件與本分支都不實作 crawler。
 
 CLI 細節見 [`mapping_eval.md`](mapping_eval.md)。知識包載入見 `mapping_knowledge.py`。  
-Mapping Engine 隔離 KB 收成（階段 1）見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)；**不**另做 matcher。
+Mapping Engine 隔離 KB 收成（階段 1）見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.1：`historical_support` 可選唯讀 `--kb-db`／`MAPPING_KB_DB`；**不**另做 matcher。
 
 ## 架構
 
@@ -26,7 +26,7 @@ mapping_knowledge_pack/     知識包（檔案 + SHA-256 knowledge_version）
 SkuMappingService.generate_candidates()
   硬規則剔除（尺寸／手機代數／英數代碼／同型號負例）
   完整匹配優先，再優先嚴格字面（strict_exact）
-  historical_support（同 offer 其他核准／跨 offer 同名核准）
+  historical_support（Golden ＋ 可選同 DB kb_mappings ＋ 可選隔離 Mapping KB）
   final_score = Σ weight_i × component_i   ← 只排序，不改綠色條件
         │
         ▼

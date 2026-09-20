@@ -111,7 +111,7 @@ API：`POST /api/sku-mapping/decisions` 接受 `reasonCode`／`reasonText`；OTH
 
 ## TASK 5 歷史正負例進入 judging
 
-`SkuMappingService.historical_support()` 把 Golden 已核准列（可選 `kb_mappings`）餵進既有 `generate_candidates()`／AI judge，**不是**第二套引擎、不改 ranking 公式、不啟用 auto-approve。
+`SkuMappingService.historical_support()` 把 Golden 已核准列（可選同 DB `kb_mappings`，以及可選隔離 Mapping KB：`--kb-db`／`MAPPING_KB_DB`）餵進既有 `generate_candidates()`／AI judge，**不是**第二套引擎、不改 ranking 公式、不啟用 auto-approve。隔離 `kb_name_positives` 只當名稱組合支持訊號，不發明 `sku_id`。指向方式見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。
 
 - **Same-offer**：同一 offer 上**其他**已核准型號的 `model_name ↔ 1688_sku_name` 作為命名慣例證據。
 - **Cross-offer**：`normalize_text(model_name)` 相同的過去核准 `1688_sku_name`。

@@ -391,13 +391,17 @@ v0 **不實作**這條寫入。沒有 live DB 也無從匯出。文件先訂：�
 
 **原則：不發明第二套引擎。** 候選生成、綠黃紅、AI judge、評估 CLI 全部繼續走現有模組。
 
-### 8.1 讀徑（v0 之後實作時）
+### 8.1 讀徑（階段 2.1：隔離 KB → `historical_support`）
 
 ```text
-隔離 KB（正例／可選負例複本）
-        │  只讀
+隔離 Mapping KB（--kb-db / MAPPING_KB_DB，可缺）
+        │  唯讀；缺檔＝今天的行為
         ▼
-SkuMappingService.historical_support()     已支援同 DB kb_mappings
+SkuMappingService.historical_support()
+  Golden approved
+  ＋ 同工作 DB kb_mappings（缺表忽略）
+  ＋ 隔離檔 kb_mappings（sku 正例）
+  ＋ 隔離檔 kb_name_positives（名稱組合支持訊號 only；不發明 sku_id）
 SkuMappingService._apply_negative_gate()   讀 mapping_negative_examples
 mapping_knowledge_pack/*                   規則／別名／門檻
         │
@@ -405,7 +409,7 @@ mapping_knowledge_pack/*                   規則／別名／門檻
 generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 ```
 
-若 KB 在**另一個檔**（隔離種子），不要把表合併進 live。正確做法是評估／建議行程用 `--db-path` 指向「附有 kb_mappings 複本的隔離工作檔」，或唯讀 ATTACH。**Attach 進 live 也不行。**
+若 KB 在**另一個檔**，不要把表合併進 live。正確做法是建構子／環境／CLI 指向隔離檔，用**獨立唯讀連線**讀。**Attach 進 live 也不行。** `kb_name_positives` 不得假裝成已核准 sku mapping。
 
 ### 8.2 分數與分級（不要改）
 
@@ -464,7 +468,9 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 
 ### 階段 2 — 候選／AI／規則／信心（更後面）
 
-只有階段 1 的隔離 KB 能被 `historical_support`／評估穩定讀到之後才做：
+**2.1（本刀）：** 階段 1 的隔離 KB 能被 `historical_support` 穩定唯讀（`--kb-db`／`MAPPING_KB_DB`；缺檔不中斷）。見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。
+
+其後才做：
 
 1. 第 1 層建議：種子 offer → 兄弟檔 offer →（仍不做站內搜）。
 2. 第 2 層沿用 Know-how；評估看 Top-1、Green Precision、FN、反事實 `n_would_pass`。
