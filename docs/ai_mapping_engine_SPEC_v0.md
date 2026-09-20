@@ -1,8 +1,8 @@
 # 蝦皮 × 1688 AI Mapping Engine SPEC v0
 
-**狀態：** 唯讀盤點＋規格（階段 0 已合 main）。階段 1 隔離 schema／唯讀匯入見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.2 第 1 層 offer 建議見 [`offer_discovery.md`](offer_discovery.md)。**2.3（本刀）** 離線評估信心分層＋對帳報表見 [`mapping_eval.md`](mapping_eval.md)。本文件仍是契約；**不得**據此寫 Golden 或 live `procurement.db`。  
+**狀態：** 唯讀盤點＋規格（階段 0–2.3 已合 main）。階段 1 隔離 schema／唯讀匯入見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。階段 2.2 第 1 層 offer 建議見 [`offer_discovery.md`](offer_discovery.md)。階段 2.3 離線評估信心分層＋對帳報表見 [`mapping_eval.md`](mapping_eval.md)。本文件仍是契約；**不得**據此寫 Golden 或 live `procurement.db`。  
 **日期：** 2026-09-20  
-**基準：** `main` @ `5b231bd`（#113 2.2 on main；2.3 在此之上）  
+**基準：** `main` @ `58ce01b`（#114 2.3 已合 main）  
 **產品頁：** Notion 已有（協調者持有連結；本 SPEC 對齊週五最終目標 B）  
 **前一版脈絡：** Know-how Engine v1（TASK 1–9 已合 main：#51＋#60）；交接摘要見 uploads 的 `sku-mapping-knowhow-engine-SPEC-v1`；完整 Know-how 規格預期在 `/workspace/_handoff/sku-mapping-knowhow-engine-SPEC-v1-FULL-20260912.md`（本 VM 未掛上）。
 
@@ -167,7 +167,7 @@ _save_suggestion() → sku_mapping_* + evidence_json
 | 6 | **特徵 Features** | 執行期：`source_parts`、`parts_json`、`deterministic_score`、`complete`／`exact`／`strict_exact`；複合分的 `feature` 分量＝`deterministic_score/100` | **沒有**獨立特徵庫。顏色／尺寸／手機代數是函式內啟發式，不是可匯入列 |
 | 7 | **人工審核 Human review** | `sku_mapping_reviews`；Golden 的 `1688_mapping_source`（`manual`／`ai_reviewed`）＋`1688_verified_at`；`/sku-mapping.html` | 審核結果沒有正規化回 KB（只有寫 Golden）。`explain` UI 未接。暫停期間核准路徑也不准重開全表寫入 |
 | 8 | **AI 結果** | `suggestions.evidence_json.ai`（provider／model／effort／decision／selected_*）；`PROMPT_VERSION=2026-09-v2`；payload 已含 historical／negative／applied_rules | AI 列不是 KB。沒有「模型建議 vs 人最終選擇」的長期對照表（只有當次 `chose_other_candidate` 負例） |
-| 9 | **信心 Confidence** | `suggestions.confidence`（AI）；`final_score`＋`score_breakdown_json`；綠燈門檻 0.95／0.90 | 信心是建議欄，不是 KB 物件。`final_score` **不**決定綠色。沒有「KB 信心」與「建議信心」的分層 |
+| 9 | **信心 Confidence** | `suggestions.confidence`（AI）；`final_score`＋`score_breakdown_json`；綠燈門檻 0.95／0.90；2.3 `mapping_eval` 四層對帳（§11） | 信心仍是建議欄／報告欄，不是獨立 KB 物件。`final_score` **不**決定綠色。四層已拆開（KB 來源可靠度 ≠ `final_score` ≠ `review_tier` ≠ 可自動寫 Golden），見 §11 與 [`mapping_eval.md`](mapping_eval.md)；**不**混用、**不**開 auto-approve |
 | 10 | **原因 Reason** | 負例 `reason_code`／`reason_text`；`review_reason`；explain 的 `why[]`（rule／alias／historical／negative／feature／llm） | 原因代碼只服務負例。正例沒有「為何核准」結構化原因。`OTHER` 必須填文字——這點要保留 |
 
 **結論：** 十種物件在系統裡**幾乎都有碎片**，但分散在 JSON 檔、知識包、執行期 SQLite、以及本機才有的隔離種子。Mapping Engine 第一步要做的是：**在隔離 DB 把 1–3（商品／正例／負例）收成可讀的 KB 表，其餘先唯讀參照既有檔／欄，不准發明第二套 matcher。**
@@ -345,7 +345,7 @@ PHASE3_HISTORY_IMPORT_ENABLED  維持 False
 
 既有函式：`PurchaseHistoryStore.copy_golden_approved_snapshots()`。
 
-v0 實作時（**另開任務，本 PR 不做**）必須：
+階段 1 harvest（#111）已在 main：`python -m mapping_kb_import`（預設 dry-run；寫入須 `--i-approve-kb-import` + 隔離 `--db-path`）。見 [`mapping_kb_isolated_import.md`](mapping_kb_isolated_import.md)。契約維持：
 
 1. `--db-path` 指向新檔或明確隔離檔，預設 dry-run。
 2. 統計三桶：已抄（有 offer＋sku_id）、名稱正例保留（核准但無 sku_id）、略過（非 approved）。
@@ -376,7 +376,9 @@ python -m purchase_history_import crawl     # 永遠拒絕
 `mapping_negative_examples` 與 `sku_mapping_reviews` 日後應能匯出到隔離 KB，讓歷史否決在新環境還在。  
 v0 **不實作**這條寫入。沒有 live DB 也無從匯出。文件先訂：匯出是複本，Source of Truth 仍是執行期表＋Golden。
 
-### 7.4 匯入成功長什麼樣子（驗收，尚未做）
+### 7.4 匯入成功長什麼樣子（驗收；階段 1 harvest #111 已合 main）
+
+`python -m mapping_kb_import` 的通過條件如下（fixture：`tests/test_mapping_kb_import.py`）。2.3 離線評估分層（#114）已另合 main，見 [`mapping_eval.md`](mapping_eval.md)；**不是**匯入步驟。
 
 | 檢查 | 通過條件 |
 |---|---|
@@ -449,13 +451,13 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 
 ## 9. 階段
 
-### 階段 0 — 本文件（進行中）
+### 階段 0 — 本文件（#110 已合 main）
 
 - 唯讀盤點十種物件。
 - 凍結禁令與路徑。
 - 開 docs-only PR，**不合併也不碰資料**。
 
-### 階段 1 — KB schema ＋ 唯讀匯入（本實作）
+### 階段 1 — KB schema ＋ 唯讀匯入（#111 已合 main）
 
 範圍小、可測、可刪。CLI：`python -m mapping_kb_import`（預設 dry-run；寫入須 `--i-approve-kb-import` + 隔離 `--db-path`）。
 
@@ -473,7 +475,7 @@ generate_candidates → classify_review_tier → 可選 AI → _save_suggestion
 
 **2.2：** 第 1 層 offer 建議，只讀隔離種子＋Golden 兄弟檔，不做站內搜。見 [`offer_discovery.md`](offer_discovery.md)。
 
-**2.3（本刀）：** 離線評估信心分層＋對帳報表。第 2 層沿用既有 Know-how／`mapping_eval`（不另做 matcher）：輸出 Top-1、Top-3、Green Precision、FN、反事實 `n_would_pass`（仍標「不可寫」）。四層信心拆開，禁止混用：KB 來源可靠度 ≠ 建議 `final_score` ≠ `review_tier` ≠ 可自動寫 Golden（永遠 false／未開；本刀只標註）。可選第 1 層缺 URL 切片（`offer_discovery`；缺 kb-db 跳過種子層）。見 [`mapping_eval.md`](mapping_eval.md)。
+**2.3（#114 已合 main）：** 離線評估信心分層＋對帳報表。第 2 層沿用既有 Know-how／`mapping_eval`（不另做 matcher）：輸出 Top-1、Top-3、Green Precision、FN、反事實 `n_would_pass`（仍標「不可寫」）。四層信心拆開，禁止混用：KB 來源可靠度 ≠ 建議 `final_score` ≠ `review_tier` ≠ 可自動寫 Golden（永遠 false／未開；只標註）。可選第 1 層缺 URL 切片（`offer_discovery`；缺 kb-db 跳過種子層）。見 [`mapping_eval.md`](mapping_eval.md)。
 
 其後才做：
 

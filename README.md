@@ -428,10 +428,10 @@ InventoryCalculator/
 - 批次核准 API 必須帶 `batch=true`；使用者勾選的項目才會送出，未手動點候選的項目會在確認提示後使用第 1 個候選，沒有候選的項目則整批拒絕。
 - 工作台會顯示既有 SKU mapping。人工從完整 SKU 清單選擇並核准時，該選擇就是最高優先，會直接寫入並覆蓋既有 mapping；不再另外提供容易混淆的「取代既有 mapping」按鈕。
 
-- 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。Know-how Engine 總覽、TASK 1 vs 現況數字與 auto-approve 反事實精度見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。第 1 層 offer 來源（設計 spike，不寫爬蟲）見 [`docs/offer_discovery_spike.md`](docs/offer_discovery_spike.md)。全表 AI 補完 vs 2026-09-09 暫停（PRs #41–#46 勿合）見 [`docs/golden_ai_automation_review.md`](docs/golden_ai_automation_review.md)。
+- 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。Know-how Engine 總覽、TASK 1 vs 現況數字與 auto-approve 反事實精度見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。第 1 層 offer 建議（#113 唯讀，不搜站、不寫 Golden）見 [`docs/offer_discovery.md`](docs/offer_discovery.md)；設計依據 [`docs/offer_discovery_spike.md`](docs/offer_discovery_spike.md)。全表 AI 補完 vs 2026-09-09 暫停（PRs #41–#46 勿合）見 [`docs/golden_ai_automation_review.md`](docs/golden_ai_automation_review.md)。
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
 - 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。若要使用 Gemini、Grok 或 DeepSeek，可執行對應的 `python3 setup_gemini_key.py`、`python3 setup_xai_key.py` 或 `python3 setup_deepseek_key.py`，或直接編輯 `.env.local` 設定 `SKU_MAPPING_AI_PROVIDER` 與對應的 API Key／模型。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
-- 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`。
+- 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`、唯讀 `GET /api/sku-mapping/offer-suggestions`（第 1 層建議；UI 可能尚未呼叫，API 已公開唯讀）。
 - 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 
 ## 常見問題
