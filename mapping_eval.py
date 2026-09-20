@@ -89,11 +89,15 @@ def _json_load(value: Any, fallback: Any) -> Any:
 
 
 @contextmanager
-def isolated_mapping_service() -> Iterator[SkuMappingService]:
-    """Build a throwaway service so eval never writes the real golden table."""
+def isolated_mapping_service(kb_db_path: Optional[str] = "") -> Iterator[SkuMappingService]:
+    """Build a throwaway service so eval never writes the real golden table.
+
+    Default ``kb_db_path=""`` disables ``MAPPING_KB_DB`` so official fixture
+    numbers stay stable. Pass a path (or ``--kb-db``) to read an isolated KB.
+    """
     with tempfile.TemporaryDirectory(prefix="mapping_eval_") as tmp:
         Path(tmp, "golden_table.json").write_text("{}", encoding="utf-8")
-        yield SkuMappingService(base_dir=tmp)
+        yield SkuMappingService(base_dir=tmp, kb_db_path=kb_db_path)
 
 
 def infer_category(product_name: str, categories_path: Optional[Path] = None) -> str:
@@ -994,6 +998,7 @@ def run_evaluation(
     categories_path: Optional[Path] = None,
     mode: str = "fixture",
     extra_meta: Optional[Dict[str, Any]] = None,
+    kb_db_path: Optional[str] = "",
 ) -> Dict[str, Any]:
     selected = sample_cases(cases, sample, seed)
     category_mode = (
@@ -1007,7 +1012,7 @@ def run_evaluation(
     started = time.time()
     records: List[Dict[str, Any]] = []
     dry_payloads: List[Dict[str, Any]] = []
-    with isolated_mapping_service() as service:
+    with isolated_mapping_service(kb_db_path=kb_db_path) as service:
         for index, case in enumerate(selected):
             ai_result = None
             model = {
@@ -1171,6 +1176,16 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_CATEGORIES_PATH,
         help="Optional mapping_knowledge_pack/categories.json; heuristics if missing",
     )
+    run_p.add_argument(
+        "--kb-db",
+        default="",
+        help=(
+            "Optional isolated Mapping KB SQLite (read-only historical_support). "
+            "Empty / missing file = today's behavior. Env: MAPPING_KB_DB "
+            "(HTTP / SkuMappingService constructor). "
+            "Default empty so fixture numbers do not inherit the env."
+        ),
+    )
 
     compare_p = sub.add_parser("compare", help="Diff two evaluation run directories")
     compare_p.add_argument("--baseline", required=True, help="Baseline run directory (has metrics.json)")
@@ -1211,6 +1226,10 @@ def cmd_run(args: argparse.Namespace) -> int:
                 "No approved Golden rows with an ok alibaba_offer_snapshots snapshot.",
                 file=sys.stderr,
             )
+    kb_db = getattr(args, "kb_db", "") or ""
+    if kb_db:
+        extra = dict(extra)
+        extra["kb_db"] = kb_db
     out_dir = Path(args.out) if args.out else default_out_dir()
     result = run_evaluation(
         cases=cases,
@@ -1224,6 +1243,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         categories_path=categories_path,
         mode=mode,
         extra_meta=extra,
+        kb_db_path=kb_db,
     )
     print(f"Wrote mapping_eval report to {out_dir}")
     print(render_summary_markdown(result["metrics"], result["meta"]))

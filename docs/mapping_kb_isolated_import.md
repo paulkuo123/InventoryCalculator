@@ -5,6 +5,8 @@ Mapping Engine 第一步：把 Golden 核准正例（與可選隔離種子）**�
 
 契約見 [`ai_mapping_engine_SPEC_v0.md`](ai_mapping_engine_SPEC_v0.md)。既有 `kb_*` 見 [`1688_purchase_history_kb.md`](1688_purchase_history_kb.md)。
 
+**階段 2.1（本文件後半）：** 既有 `SkuMappingService.historical_support` **可選唯讀**隔離 Mapping KB。不重建 matcher、不寫 Golden、不把名稱正例升成核准 sku mapping。
+
 ## 做／不做
 
 | 做 | 不做 |
@@ -96,3 +98,52 @@ python -m unittest tests.test_mapping_kb_import tests.test_purchase_history_stor
 ```
 
 離線、不需營運種子。Golden SHA 與 `auto_approve.enabled` 在測試前後必須不變。
+
+## 階段 2.1：接到 `historical_support`
+
+隔離 KB 是**另一個檔**，不要合併進 live `procurement.db`，也不要把表 ATTACH 進 live。`SkuMappingService` 用獨立唯讀連線讀它。
+
+| 指向方式 | 說明 |
+|---|---|
+| 建構子 `kb_db_path=` | 單元測試／程式呼叫 |
+| 環境變數 `MAPPING_KB_DB` | HTTP／`SkuMappingService()` 預設會讀；空／`off`／缺檔＝今天的行為 |
+| `--kb-db` | `python -m mapping_eval run --kb-db …`；`python -m sku_mapping_service historical-contrast --kb-db …` |
+
+營運機常見路徑（不進 git；雲端 VM 可缺）：
+
+```text
+/workspace/_handoff/mapping_kb_isolated_20260920.db
+```
+
+```bash
+export MAPPING_KB_DB=/workspace/_handoff/mapping_kb_isolated_20260920.db
+# 或單次：
+python -m mapping_eval run --fixture tests/fixtures/mapping_eval \
+  --kb-db /workspace/_handoff/mapping_kb_isolated_20260920.db
+python -m sku_mapping_service historical-contrast \
+  --kb-db /workspace/_handoff/mapping_kb_isolated_20260920.db
+```
+
+缺檔或未設定時 **不中斷**：`historical_support` 仍只吃 Golden（＋同工作 DB 的 `kb_mappings`，缺表就忽略）。
+
+讀什麼：
+
+| 表 | 進 judging 的角色 |
+|---|---|
+| `kb_mappings`（`source=golden_approved`） | SKU 正例，與既有同 DB `kb_mappings` 相同（`model_name ↔ 1688_sku_name`） |
+| `kb_name_positives` | **只當名稱組合支持訊號**。不發明 `sku_id`，不自動升成核准 sku mapping |
+
+### Fixture 對照（空 Golden，有／無 `--kb-db`）
+
+CI 用 `tests/fixtures/mapping_kb/golden_harvest.json` 收成的小型隔離檔（不需營運 66MB DB）：
+
+| 探針 | 無 KB | 有 KB | 多出來的來源 |
+|---|---|---|---|
+| offer `111111111111`／候選 `石墨黑;17` | 0 | ≥1 | `kb_mappings`（`m-copied`） |
+| offer `333333333333`／候選 `卡其;M`（`sku_id` 空） | 0 | ≥1 | `kb_name_positives`（`name_combo_only`）；`sku_id` 仍空 |
+
+```bash
+python -m sku_mapping_service historical-contrast
+# 未給 --kb-db 時用 fixture 收成暫存檔；不寫 repo Golden／live DB
+python -m unittest tests.test_mapping_kb_historical_support tests.test_mapping_kb_import
+```

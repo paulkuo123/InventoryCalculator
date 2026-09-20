@@ -21,6 +21,7 @@ import re
 from sku_spec import split_spec_dimensions
 import shutil
 import sqlite3
+import tempfile
 import threading
 import time
 import unicodedata
@@ -59,6 +60,10 @@ from mapping_knowledge import (
 GOLDEN_TABLE_FILE = "golden_table.json"
 MAPPING_DB_FILE = "procurement.db"
 GOLDEN_REPAIR_ENV = "SKU_MAPPING_REPAIR_GOLDEN"
+MAPPING_KB_DB_ENV = "MAPPING_KB_DB"
+# Operator isolated harvest (may be absent on cloud VMs). Never auto-opened.
+DEFAULT_OPERATOR_MAPPING_KB = "/workspace/_handoff/mapping_kb_isolated_20260920.db"
+KB_DB_DISABLED_VALUES = frozenset({"", "0", "false", "off", "none", "disabled", "disable"})
 SCAN_CACHE_SECONDS = 7 * 24 * 60 * 60
 URL_HEALTH_TTL_SECONDS = 7 * 24 * 60 * 60
 JOB_ACTIVE_STATUSES = {"queued", "running"}
@@ -109,6 +114,37 @@ def golden_repair_requested(value: Optional[str] = None) -> bool:
     """True when an explicit env/CLI flag asked to rewrite Golden repairs."""
     text = os.environ.get(GOLDEN_REPAIR_ENV, "") if value is None else value
     return str(text or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def resolve_mapping_kb_db_path(explicit: Optional[str] = None) -> Optional[Path]:
+    """Resolve the optional isolated Mapping KB path.
+
+    ``explicit is None`` falls through to ``MAPPING_KB_DB``. Empty / false-y
+    values disable the extra file. A configured path that does not exist is
+    still returned so callers can inspect it; readers treat a missing file as
+    "no KB" and never crash.
+    """
+    raw = os.environ.get(MAPPING_KB_DB_ENV, "") if explicit is None else explicit
+    text = str(raw or "").strip()
+    if not text or text.lower() in KB_DB_DISABLED_VALUES:
+        return None
+    return Path(text)
+
+
+def connect_mapping_kb_readonly(path: Optional[Path]) -> Optional[sqlite3.Connection]:
+    """Open an isolated Mapping KB read-only. Missing/unreadable → None."""
+    if path is None:
+        return None
+    kb_path = Path(path)
+    if not kb_path.is_file():
+        return None
+    try:
+        uri = kb_path.resolve().as_uri() + "?mode=ro"
+        conn = sqlite3.connect(uri, uri=True, timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except Exception:
+        return None
 
 
 def prune_golden_table_backups(backup_path: Path, keep: int = GOLDEN_BACKUP_KEEP) -> None:
@@ -722,11 +758,13 @@ class SkuMappingService:
         base_dir: Optional[str] = None,
         db_path: Optional[str] = None,
         run_startup_repairs: bool = False,
+        kb_db_path: Optional[str] = None,
     ):
         self.base_dir = Path(base_dir or Path(__file__).resolve().parent)
         self.golden_path = self.base_dir / GOLDEN_TABLE_FILE
         self.shopee_path = self.base_dir / "shopee_products.json"
         self.db_path = Path(db_path or self.base_dir / MAPPING_DB_FILE)
+        self.kb_db_path = resolve_mapping_kb_db_path(kb_db_path)
         self._job_lock = threading.Lock()
         self._url_change_lock = threading.Lock()
         self._jobs: Dict[str, Dict[str, Any]] = {}
@@ -4076,7 +4114,7 @@ class SkuMappingService:
         )
 
     def _historical_example_summary(self, row: Dict[str, Any]) -> Dict[str, Any]:
-        return {
+        summary = {
             "scope": str(row.get("scope") or ""),
             "source": str(row.get("source") or "golden_approved"),
             "product_id": str(row.get("product_id") or ""),
@@ -4086,6 +4124,10 @@ class SkuMappingService:
             "1688_sku_second_name": str(row.get("1688_sku_second_name") or ""),
             "offer_id": str(row.get("offer_id") or ""),
         }
+        # Name-combo positives never carry a sku_id; do not invent one here.
+        if row.get("name_combo_only"):
+            summary["name_combo_only"] = True
+        return summary
 
     def _iter_golden_approved_rows(self) -> List[Dict[str, Any]]:
         rows: List[Dict[str, Any]] = []
@@ -4195,6 +4237,177 @@ class SkuMappingService:
             })
         return out
 
+    def _scoped_historical_row(
+        self,
+        model: Dict[str, Any],
+        offer_id: str,
+        *,
+        product_id: str,
+        model_id: str,
+        row_offer: str,
+        model_name: str,
+        product_name: str,
+        sku_name: str,
+        second_name: str,
+        source: str,
+        name_combo_only: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        if self._is_current_historical_row(model, product_id, model_id, row_offer, model_name, offer_id):
+            return None
+        if not sku_name:
+            return None
+        current_name = normalize_text((model or {}).get("model_name"))
+        if offer_id and row_offer == offer_id:
+            scope = "same_offer"
+        elif current_name and model_name and normalize_text(model_name) == current_name:
+            scope = "cross_offer"
+        else:
+            return None
+        row = {
+            "product_id": product_id,
+            "model_id": model_id,
+            "product_name": product_name,
+            "model_name": model_name,
+            "offer_id": row_offer,
+            "1688_sku_name": sku_name,
+            "1688_sku_second_name": second_name,
+            "source": source,
+            "scope": scope,
+        }
+        if name_combo_only:
+            row["name_combo_only"] = True
+        return row
+
+    def _isolated_kb_table_names(self, conn: sqlite3.Connection) -> set:
+        return {
+            row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+
+    def _isolated_kb_mapping_sql(self, tables: set) -> Optional[str]:
+        if "kb_mappings" not in tables:
+            return None
+        sku_join = ""
+        sku_cols = "'' AS raw_specs, '' AS title"
+        if "kb_skus" in tables:
+            sku_join = (
+                "LEFT JOIN kb_skus s ON s.offer_id = m.offer_id AND s.sku_key = m.sku_key"
+            )
+            sku_cols = (
+                "COALESCE(s.raw_specs, '') AS raw_specs, "
+                "COALESCE(s.title, '') AS title"
+            )
+        model_join = ""
+        model_cols = "'' AS model_name, '' AS product_name"
+        if "kb_shopee_models" in tables:
+            model_join = (
+                "LEFT JOIN kb_shopee_models sm "
+                "ON sm.shopee_product_id = m.shopee_product_id "
+                "AND sm.shopee_model_id = m.shopee_model_id"
+            )
+            model_cols = "COALESCE(sm.model_name, '') AS model_name"
+            if "kb_shopee_products" in tables:
+                model_join += (
+                    " LEFT JOIN kb_shopee_products sp "
+                    "ON sp.shopee_product_id = m.shopee_product_id"
+                )
+                model_cols += ", COALESCE(sp.product_name, '') AS product_name"
+            else:
+                model_cols += ", '' AS product_name"
+        return (
+            f"SELECT m.offer_id, m.sku_key, m.shopee_product_id, m.shopee_model_id, "
+            f"m.source, {sku_cols}, {model_cols} "
+            f"FROM kb_mappings m {sku_join} {model_join} "
+            f"WHERE m.source = 'golden_approved'"
+        )
+
+    def _isolated_kb_historical_rows(self, model: Dict[str, Any], offer_id: str) -> List[Dict[str, Any]]:
+        """Read-only positives from a separate Mapping KB file.
+
+        ``kb_mappings`` are sku positives. ``kb_name_positives`` are name-combo
+        support only — they never invent a sku_id or become an approved mapping.
+        Missing / disabled / unreadable files return [] (today's behavior).
+        """
+        conn = connect_mapping_kb_readonly(getattr(self, "kb_db_path", None))
+        if conn is None:
+            return []
+        try:
+            tables = self._isolated_kb_table_names(conn)
+            golden_lookup = {
+                (str(row["product_id"]), str(row["model_id"])): row
+                for row in self._iter_golden_approved_rows()
+            }
+            out: List[Dict[str, Any]] = []
+            mapping_sql = self._isolated_kb_mapping_sql(tables)
+            if mapping_sql:
+                for row in conn.execute(mapping_sql).fetchall():
+                    product_id = str(row["shopee_product_id"] or "")
+                    model_id = str(row["shopee_model_id"] or "")
+                    golden = golden_lookup.get((product_id, model_id), {})
+                    sku_name, second_name = self._split_kb_spec(row["raw_specs"] or row["title"])
+                    if not sku_name:
+                        sku_name = display_text(row["title"])
+                    scoped = self._scoped_historical_row(
+                        model,
+                        offer_id,
+                        product_id=product_id,
+                        model_id=model_id,
+                        row_offer=normalize_id(row["offer_id"]),
+                        model_name=str(row["model_name"] or golden.get("model_name") or ""),
+                        product_name=str(row["product_name"] or golden.get("product_name") or ""),
+                        sku_name=sku_name,
+                        second_name=second_name,
+                        source="kb_mappings",
+                    )
+                    if scoped:
+                        out.append(scoped)
+            if "kb_name_positives" in tables:
+                name_rows = conn.execute(
+                    """
+                    SELECT n.shopee_product_id, n.shopee_model_id, n.offer_id,
+                           n.model_name, n.sku_name, n.sku_second_name, n.spec_text,
+                           n.source,
+                           COALESCE(sp.product_name, '') AS product_name
+                      FROM kb_name_positives n
+                      LEFT JOIN kb_shopee_products sp
+                        ON sp.shopee_product_id = n.shopee_product_id
+                     WHERE n.source = 'golden_approved'
+                    """
+                    if "kb_shopee_products" in tables else
+                    """
+                    SELECT shopee_product_id, shopee_model_id, offer_id,
+                           model_name, sku_name, sku_second_name, spec_text,
+                           source, '' AS product_name
+                      FROM kb_name_positives
+                     WHERE source = 'golden_approved'
+                    """
+                ).fetchall()
+                for row in name_rows:
+                    sku_name = display_text(row["sku_name"])
+                    if not sku_name:
+                        sku_name, _ = self._split_kb_spec(row["spec_text"])
+                    scoped = self._scoped_historical_row(
+                        model,
+                        offer_id,
+                        product_id=str(row["shopee_product_id"] or ""),
+                        model_id=str(row["shopee_model_id"] or ""),
+                        row_offer=normalize_id(row["offer_id"]),
+                        model_name=str(row["model_name"] or ""),
+                        product_name=str(row["product_name"] or ""),
+                        sku_name=sku_name,
+                        second_name=display_text(row["sku_second_name"]),
+                        source="kb_name_positives",
+                        name_combo_only=True,
+                    )
+                    if scoped:
+                        out.append(scoped)
+            return out
+        except Exception:
+            return []
+        finally:
+            conn.close()
+
     def _collect_historical_rows(self, model: Dict[str, Any], offer_id: str) -> List[Dict[str, Any]]:
         offer_id = normalize_id(offer_id or (model or {}).get("offer_id"))
         current_name = normalize_text((model or {}).get("model_name"))
@@ -4235,6 +4448,15 @@ class SkuMappingService:
                 continue
             seen.add(key)
             rows.append(raw)
+        for raw in self._isolated_kb_historical_rows(model or {}, offer_id):
+            key = (
+                raw.get("scope"), raw.get("product_id"), raw.get("model_id"), raw.get("offer_id"),
+                normalize_text(raw.get("1688_sku_name")), normalize_text(raw.get("1688_sku_second_name")),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(raw)
         return rows
 
     def historical_support(
@@ -4243,12 +4465,15 @@ class SkuMappingService:
         offer_id: str,
         candidates: Sequence[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
-        """Per-candidate historical positives from golden approved (and kb_mappings).
+        """Per-candidate historical positives from Golden, same-DB kb_mappings,
+        and an optional isolated Mapping KB (``--kb-db`` / ``MAPPING_KB_DB``).
 
         Same-offer: other approved models on this offer, using
         ``model_name ↔ 1688_sku_name`` as naming-convention evidence.
         Cross-offer: past approved ``1688_sku_name`` for the same
         ``normalize_text(model_name)``.  The current model is never included.
+        Isolated ``kb_name_positives`` are a name-combo support signal only:
+        they never invent ``sku_id`` and never auto-promote an approved mapping.
         """
         rows = self._collect_historical_rows(model or {}, offer_id)
         out: List[Dict[str, Any]] = []
@@ -6364,18 +6589,153 @@ class SkuMappingService:
         return str(row["fingerprint"] or "") if row else ""
 
 
+def default_historical_contrast_cases() -> List[Dict[str, Any]]:
+    """Probes aligned with ``tests/fixtures/mapping_kb/golden_harvest.json``."""
+    graphite = {
+        "sku_id": "snapshot-graphite",
+        "sku_name": "石墨黑",
+        "second_name": "17",
+        "spec_text": "石墨黑;17",
+        "parts": ["石墨黑", "17"],
+    }
+    graphite["candidate_key"] = mapping_candidate_key("111111111111", graphite["sku_name"], graphite["second_name"])
+    khaki = {
+        "sku_id": "",
+        "sku_name": "卡其",
+        "second_name": "M",
+        "spec_text": "卡其/M",
+        "parts": ["卡其", "M"],
+    }
+    khaki["candidate_key"] = mapping_candidate_key("333333333333", khaki["sku_name"], khaki["second_name"])
+    return [
+        {
+            "id": "kb_mappings_graphite",
+            "model": {
+                "product_id": "probe-graphite",
+                "model_id": "probe-graphite",
+                "product_name": "石墨黑手機殼 Graphite",
+                "model_name": "Graphite 17",
+                "offer_id": "111111111111",
+            },
+            "offer_id": "111111111111",
+            "candidates": [graphite],
+            "expected_source": "kb_mappings",
+        },
+        {
+            "id": "kb_name_positives_khaki",
+            "model": {
+                "product_id": "probe-khaki",
+                "model_id": "probe-khaki",
+                "product_name": "中筒襪卡其",
+                "model_name": "卡其 M",
+                "offer_id": "333333333333",
+            },
+            "offer_id": "333333333333",
+            "candidates": [khaki],
+            "expected_source": "kb_name_positives",
+        },
+    ]
+
+
+def historical_support_contrast(
+    *,
+    kb_db_path: Optional[str],
+    cases: Optional[Sequence[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    """Compare historical_support counts with/without isolated KB.
+
+    Uses an empty Golden in a throwaway directory so the delta is the KB
+    signal itself. Never writes ``golden_table.json`` or live ``procurement.db``.
+    """
+    probes = list(cases or default_historical_contrast_cases())
+    configured = resolve_mapping_kb_db_path("" if kb_db_path is None else kb_db_path)
+    kb_present = bool(configured and configured.is_file())
+    with tempfile.TemporaryDirectory(prefix="mapping_kb_hist_") as tmp:
+        Path(tmp, "golden_table.json").write_text("{}", encoding="utf-8")
+        without = SkuMappingService(base_dir=tmp, kb_db_path="")
+        with_kb = SkuMappingService(
+            base_dir=tmp,
+            kb_db_path=str(configured) if configured is not None else "",
+        )
+        rows: List[Dict[str, Any]] = []
+        for probe in probes:
+            model = dict(probe.get("model") or {})
+            offer_id = str(probe.get("offer_id") or model.get("offer_id") or "")
+            candidates = [dict(item) for item in (probe.get("candidates") or [])]
+            before = {
+                item["candidate_key"]: item
+                for item in without.historical_support(model, offer_id, candidates)
+            }
+            after_rows = with_kb.historical_support(model, offer_id, [dict(item) for item in candidates])
+            after = {item["candidate_key"]: item for item in after_rows}
+            candidate_rows = []
+            for candidate in candidates:
+                key = str(candidate.get("candidate_key") or "")
+                before_count = int((before.get(key) or {}).get("historical_support_count") or 0)
+                after_item = after.get(key) or {}
+                after_count = int(after_item.get("historical_support_count") or 0)
+                examples = list(after_item.get("historical_examples") or [])
+                sources = sorted({str(example.get("source") or "") for example in examples if example.get("source")})
+                invented = [
+                    example for example in examples
+                    if example.get("sku_id") or example.get("1688_sku_id")
+                ]
+                candidate_rows.append({
+                    "candidate_key": key,
+                    "sku_id": candidate.get("sku_id"),
+                    "sku_id_after": candidate.get("sku_id"),
+                    "before": before_count,
+                    "after": after_count,
+                    "delta": after_count - before_count,
+                    "sources": sources,
+                    "name_combo_only": any(example.get("name_combo_only") for example in examples),
+                    "invented_sku_id": bool(invented),
+                })
+            rows.append({
+                "id": probe.get("id"),
+                "offer_id": offer_id,
+                "candidates": candidate_rows,
+            })
+        without_db = Path(without.db_path)
+        kb_fingerprint = None
+        if kb_present and configured is not None:
+            kb_fingerprint = {
+                "path": str(configured),
+                "size": configured.stat().st_size,
+                "mtime_ns": configured.stat().st_mtime_ns,
+            }
+        return {
+            "kbDbPath": str(configured) if configured is not None else None,
+            "kbPresent": kb_present,
+            "emptyGolden": True,
+            "workDb": str(without_db),
+            "cases": rows,
+            "kbFingerprint": kb_fingerprint,
+            "bans": {
+                "writeGolden": False,
+                "writeLiveProcurementDb": False,
+                "inventSkuId": False,
+                "autoApprove": False,
+            },
+        }
+
+
 __all__ = [
     "GOLDEN_REPAIR_ENV",
+    "MAPPING_KB_DB_ENV",
+    "DEFAULT_OPERATOR_MAPPING_KB",
     "MappingConflict",
     "SkuMappingService",
     "canonical_url",
     "display_text",
     "golden_repair_requested",
+    "historical_support_contrast",
     "mapping_candidate_key",
     "normalize_id",
     "normalize_text",
     "offer_fingerprint",
     "parse_offer_id",
+    "resolve_mapping_kb_db_path",
 ]
 
 
@@ -6386,6 +6746,7 @@ def build_parser() -> argparse.ArgumentParser:
             "SKU mapping 維護指令。"
             "HTTP 讀取路徑（summary／queue／url-groups／catalog／explain）"
             "建構服務時不會改寫 golden_table.json。"
+            "可選隔離 Mapping KB：--kb-db 或環境變數 MAPPING_KB_DB（唯讀；缺檔不中斷）。"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -6404,22 +6765,68 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="資料根目錄（預設為此檔所在 repo root）",
     )
+    contrast = sub.add_parser(
+        "historical-contrast",
+        help="離線比較有／無隔離 Mapping KB 的 historical_support（不寫 Golden）",
+        description=(
+            "用空 Golden 對同一組 fixture 探針計算 historical_support 前後差。"
+            "只讀 --kb-db／MAPPING_KB_DB；缺檔當停用。不寫 golden_table.json、"
+            "不寫 live procurement.db、不發明 sku_id。"
+        ),
+    )
+    contrast.add_argument(
+        "--kb-db",
+        default=None,
+        help=(
+            "隔離 Mapping KB SQLite（唯讀）。省略時讀 MAPPING_KB_DB；"
+            f"仍空則用 tests/fixtures/mapping_kb 收成暫存檔。營運機常見路徑："
+            f"{DEFAULT_OPERATOR_MAPPING_KB}"
+        ),
+    )
     return parser
+
+
+def _harvest_fixture_kb(dest: str) -> str:
+    from mapping_kb_import import run_gated_import
+
+    golden = Path(__file__).resolve().parent / "tests" / "fixtures" / "mapping_kb" / "golden_harvest.json"
+    run_gated_import(
+        golden_path=str(golden),
+        db_path=dest,
+        approved=True,
+        base_dir=str(Path(dest).resolve().parent),
+    )
+    return dest
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_parser().parse_args(list(argv) if argv is not None else None)
-    if args.command != "repair":
-        build_parser().error(f"未知指令：{args.command}")
-    service = SkuMappingService(args.base_dir, run_startup_repairs=True)
-    result = {
-        "status": "success",
-        "wroteGolden": True,
-        "baseDir": str(service.base_dir),
-        "goldenPath": str(service.golden_path),
-    }
-    print(json.dumps(result, ensure_ascii=False, indent=2))
-    return 0
+    if args.command == "repair":
+        service = SkuMappingService(args.base_dir, run_startup_repairs=True)
+        result = {
+            "status": "success",
+            "wroteGolden": True,
+            "baseDir": str(service.base_dir),
+            "goldenPath": str(service.golden_path),
+        }
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    if args.command == "historical-contrast":
+        kb_db = args.kb_db
+        cleanup = None
+        if not resolve_mapping_kb_db_path(kb_db):
+            cleanup = tempfile.TemporaryDirectory(prefix="mapping_kb_fixture_")
+            kb_db = os.path.join(cleanup.name, "mapping_kb_isolated_fixture.db")
+            _harvest_fixture_kb(kb_db)
+        try:
+            report = historical_support_contrast(kb_db_path=kb_db)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
+        finally:
+            if cleanup is not None:
+                cleanup.cleanup()
+    build_parser().error(f"未知指令：{args.command}")
+    return 2
 
 
 if __name__ == "__main__":

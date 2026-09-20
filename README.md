@@ -56,7 +56,7 @@
 - SoT：`procurement.db` 的 `kb_*` 表（與採購／入庫同一檔、加表不改舊表）。歷史訂單**不**進 `inbound_orders`。
 - 模組：`purchase_history_store.py`、`purchase_history_import.py`。預設 dry-run；寫入須 `--i-approve-kb-import` + `--allow-order-ids` + 隔離 `--db-path`。
 - **不做** live crawl／開 Chrome／寫 `golden_table.json`。說明：[`docs/1688_purchase_history_kb.md`](docs/1688_purchase_history_kb.md)。
-- Mapping Engine 階段 1：`python -m mapping_kb_import dry-run` 把 Golden 核准列（＋可選 `--source-kb`）收成**另一個隔離檔**。寫入須 `--i-approve-kb-import` 與隔離 `--db-path`。營運機種子預期 `/workspace/_handoff/kb_excel_success_isolated_20260912.db`（雲端可缺）。說明：[`docs/mapping_kb_isolated_import.md`](docs/mapping_kb_isolated_import.md)。
+- Mapping Engine 階段 1：`python -m mapping_kb_import dry-run` 把 Golden 核准列（＋可選 `--source-kb`）收成**另一個隔離檔**。寫入須 `--i-approve-kb-import` 與隔離 `--db-path`。營運機種子預期 `/workspace/_handoff/kb_excel_success_isolated_20260912.db`（雲端可缺）。階段 2.1：`SkuMappingService.historical_support` 可選唯讀隔離 KB（`--kb-db` 或 `MAPPING_KB_DB=/workspace/_handoff/mapping_kb_isolated_20260920.db`；缺檔不中斷）。說明：[`docs/mapping_kb_isolated_import.md`](docs/mapping_kb_isolated_import.md)。
 
 ### 廣告
 
