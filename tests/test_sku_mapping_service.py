@@ -318,9 +318,29 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertEqual([item["sku_id"] for item in candidates], ["heart-16"])
 
         pro_model = {"product_name": "iPhone 手機殼", "model_name": "鏡面愛心,16 Pro"}
+        self.assertEqual([item["sku_id"] for item in self.service.generate_candidates(pro_model, skus)], ["heart-16-pro"])
+
+        plus_model = {"product_name": "iPhone 手機殼", "model_name": "鏡面愛心,16 Plus"}
         self.assertEqual(
-            [item["sku_id"] for item in self.service.generate_candidates(pro_model, skus)],
-            ["heart-16-pro"],
+            [item["sku_id"] for item in self.service.generate_candidates(plus_model, skus)],
+            ["heart-16-plus"],
+        )
+
+    def test_plus_tier_is_not_interchangeable_with_base(self):
+        model = {"product_name": "iPhone 手機殼", "model_name": "粉边,14 Plus"}
+        skus = [
+            {"sku_id": "pink-14", "sku_name": "粉边", "second_name": "14", "spec_text": "粉边,14", "parts": ["粉边", "14"]},
+            {"sku_id": "pink-14-plus", "sku_name": "粉边", "second_name": "14plus", "spec_text": "粉边,14plus", "parts": ["粉边", "14plus"]},
+            {"sku_id": "pink-14-pro", "sku_name": "粉边", "second_name": "14pro", "spec_text": "粉边,14pro", "parts": ["粉边", "14pro"]},
+        ]
+        self.assertEqual(
+            [item["sku_id"] for item in self.service.generate_candidates(model, skus)],
+            ["pink-14-plus"],
+        )
+        base_model = {"product_name": "iPhone 手機殼", "model_name": "粉边,14"}
+        self.assertEqual(
+            [item["sku_id"] for item in self.service.generate_candidates(base_model, skus)],
+            ["pink-14"],
         )
 
     def test_base_model_does_not_force_only_pro_sibling(self):
