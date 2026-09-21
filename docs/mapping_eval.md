@@ -39,7 +39,7 @@ python -m mapping_eval compare \
   --candidate data/mapping_eval/B
 ```
 
-資料來源：`golden_table.json` 中 `1688_mapping_status == "approved"`，且該 `1688_offer_id` 在 `alibaba_offer_snapshots` 有 `status='ok'` 的列。Ground truth 是 `1688_sku_name` + `1688_sku_second_name`（或以 `1688_sku_id` 對上候選）。評估時會隱藏答案，只給 `product_name`、`model_name` 與該 offer 的 SKU 清單。名稱比對走共用 `normalize_text`：結尾的 `>`／`&gt`／全形 `＞` 會先轉成逗號再剝掉，避免快照 `奶白綠野千鸟格>` 對不上 Golden `奶白 绿野千鸟格`；中間的 `>` 仍當欄位分隔。裝飾用括號（【】等）、表情符號與結尾句點會去掉；包住的「單殼／裸殼」註記也去掉，但 `45mm裸殼` 這種尺寸保留。顏色／款式另做結構對齊（同一字的簡繁，含髮帶折成发帶、麵包折成面包，以免動到鏡面；邊色色相、刺繡貼前的色名、一字縮寫如海棠粉／棠粉、連字號詞序），掛繩／組合後綴相對單殼降權。這不改 iPhone base／Pro／Pro Max 層級，也不把別名寫成單一商品色名，也不把白邊與黑邊、奶酪白與豆粉色併成同色。
+資料來源：`golden_table.json` 中 `1688_mapping_status == "approved"`，且該 `1688_offer_id` 在 `alibaba_offer_snapshots` 有 `status='ok'` 的列。Ground truth 是 `1688_sku_name` + `1688_sku_second_name`（或以 `1688_sku_id` 對上候選）。評估時會隱藏答案，只給 `product_name`、`model_name` 與該 offer 的 SKU 清單。名稱比對走共用 `normalize_text`：結尾的 `>`／`&gt`／全形 `＞` 會先轉成逗號再剝掉，避免快照 `奶白綠野千鸟格>` 對不上 Golden `奶白 绿野千鸟格`；中間的 `>` 仍當欄位分隔。裝飾用括號（【】等）、表情符號與結尾句點會去掉；包住的「單殼／裸殼」註記也去掉，但 `45mm裸殼` 這種尺寸保留。顏色／款式另做結構對齊（同一字的簡繁，含髮帶折成发帶、麵包折成面包，以免動到鏡面；邊色色相、刺繡貼前的色名、一字縮寫如海棠粉／棠粉、連字號詞序）。掛繩／組合後綴（含寫在型號欄的 `苹果16+掛繩`，以及款式欄的 `單殼` vs `殼+掛繩`）只在**同一機型 token** 有裸殼兄弟時降權；型號沒點名掛繩才降組合款，點名掛繩則保留組合款。沒有裸殼兄弟的唯一組合不降分，避免唯一候選掉出綠燈。這不改 iPhone base／Pro／Pro Max 層級，也不把 exact `16+掛繩` 降到斜線 `16/16plus` 之下，也不把別名寫成單一商品色名，也不把白邊與黑邊、奶酪白與豆粉色併成同色。
 
 合後兩段驗證（**不寫 Golden、不開 auto_approve**；分母以產出 `run_meta.n_input`／`n_scorable` 為準）：
 
@@ -56,6 +56,31 @@ python3 -m mapping_eval run \
 ```
 
 缺少 `procurement.db` 時結束碼為 **2**。
+
+#118 之後「單殼 vs 掛繩／組合」這一簇大約 near 72 + FN 35（約 107 筆；分堆報告不在 repo）。合進 main 之後用同一 seed 重跑（**不寫 Golden、不開 auto_approve**）。`--baseline` 指到 `1540d45` 那次 sample500 與全表目錄；目錄名不同就改路徑。沒有 baseline 就不要宣稱 Top-1／FN／綠燈變好。看這一簇是否減少；若只救 1–2 筆或綠燈變差，縮回兄弟規則。
+
+```bash
+python3 -m mapping_eval run \
+  --db-path procurement.db \
+  --golden-path golden_table.json \
+  --sample 500 \
+  --seed 42 \
+  --out data/mapping_eval/after-bare-shell-sample500/
+
+python3 -m mapping_eval compare \
+  --baseline data/mapping_eval/after-118-sample500/ \
+  --candidate data/mapping_eval/after-bare-shell-sample500/
+
+python3 -m mapping_eval run \
+  --db-path procurement.db \
+  --golden-path golden_table.json \
+  --seed 42 \
+  --out data/mapping_eval/after-bare-shell-full/
+
+python3 -m mapping_eval compare \
+  --baseline data/mapping_eval/after-118-full/ \
+  --candidate data/mapping_eval/after-bare-shell-full/
+```
 
 ## CI／無本機 DB（fixture）
 

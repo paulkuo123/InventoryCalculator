@@ -9,7 +9,13 @@ import os
 import tempfile
 import unittest
 
-from sku_mapping_service import SkuMappingService, normalize_text, _synonym_equal
+from sku_mapping_service import (
+    SkuMappingService,
+    normalize_text,
+    _sku_is_combo,
+    _synonym_equal,
+    _text_asks_for_combo,
+)
 
 
 def _sku(sku_id, name, second):
@@ -230,3 +236,99 @@ class ColorTokenAlignTests(unittest.TestCase):
         ]
         ids, _ranked = self._top("黑邊,14 Pro", skus)
         self.assertEqual(ids, ["pro"])
+
+    def test_strap_markers_ignore_negative_and_hole_only_labels(self):
+        self.assertTrue(_sku_is_combo("苹果16+挂绳"))
+        self.assertTrue(_sku_is_combo("殼+掛繩"))
+        self.assertTrue(_sku_is_combo("透明+吊繩"))
+        self.assertTrue(_sku_is_combo("黑色+手機繩"))
+        self.assertFalse(_sku_is_combo("不含掛件"))
+        self.assertFalse(_sku_is_combo("透明可掛繩"))
+        self.assertFalse(_sku_is_combo("單殼"))
+        self.assertTrue(_text_asks_for_combo("奶油白掛繩"))
+        self.assertFalse(_text_asks_for_combo("奶油白"))
+        self.assertFalse(_text_asks_for_combo("不含掛繩,16"))
+        self.assertFalse(_text_asks_for_combo("無掛繩"))
+        self.assertFalse(_text_asks_for_combo("可掛繩"))
+        self.assertFalse(_sku_is_combo("斜背包"))
+
+    def test_second_name_strap_loses_to_same_device_bare_shell(self):
+        # Strap lives on the device axis, so sku_name style alignment cannot see it.
+        # Ids sort the strap row first when scores tie.
+        skus = [
+            _sku("a-strap", "黑色", "苹果16+挂绳"),
+            _sku("b-bare", "黑色", "苹果16"),
+            _sku("c-pro", "黑色", "苹果16pro"),
+        ]
+        ids, ranked = self._top("黑色,16", skus)
+        self.assertEqual(ids[0], "b-bare")
+        self.assertNotIn("c-pro", ids)
+        strap = next(row for row in ranked if row["sku_id"] == "a-strap")
+        self.assertTrue(strap["evidence"]["combo_demoted"])
+        self.assertFalse(ranked[0]["evidence"]["combo_demoted"])
+        self.assertGreater(ranked[0]["deterministic_score"], strap["deterministic_score"])
+
+    def test_shell_axis_combo_loses_when_model_does_not_ask_for_strap(self):
+        # 單殼 vs 殼+掛繩; colour sits on the other axis and does not align to the shell label.
+        skus = [
+            _sku("a-combo", "殼+掛繩", "奶油白苹果16"),
+            _sku("b-bare", "單殼", "奶油白苹果16"),
+            _sku("c-charm", "掛繩", "奶油白苹果16"),
+        ]
+        ids, ranked = self._top("奶油白,16", skus, product_name="iPhone 手機殼 附掛繩")
+        self.assertEqual(ids[0], "b-bare")
+        self.assertTrue(all(row["evidence"]["combo_demoted"] for row in ranked if row["sku_id"] != "b-bare"))
+
+    def test_model_without_strap_bare_shell_wins_and_stays_in_review_window(self):
+        # Same score, combo sku ids sort first. The review window is 4, so an
+        # undemoted tie eliminates the bare shell (FN) instead of ranking it
+        # second (near). Product-title 掛繩 must not count as a request.
+        skus = [
+            _sku("a-combo", "黑色+掛繩", "苹果16"),
+            _sku("b-combo", "黑色+掛鏈", "苹果16"),
+            _sku("c-combo", "黑色+手機繩", "苹果16"),
+            _sku("d-combo", "黑色掛繩", "苹果16"),
+            _sku("z-bare", "黑色", "苹果16"),
+        ]
+        ids, ranked = self._top("黑色,16", skus, product_name="iPhone 手機殼 附掛繩")
+        self.assertEqual(ids[0], "z-bare")
+        self.assertIn("z-bare", ids)
+        self.assertLessEqual(len(ids), 4)
+        bare = ranked[0]
+        self.assertFalse(bare["evidence"]["combo_demoted"])
+        self.assertTrue(all(row["evidence"]["combo_demoted"] for row in ranked if row["sku_id"] != "z-bare"))
+        self.assertGreater(bare["deterministic_score"], ranked[1]["deterministic_score"])
+
+    def test_explicit_strap_request_keeps_shell_axis_combo(self):
+        skus = [
+            _sku("a-bare", "單殼", "奶油白苹果16"),
+            _sku("b-combo", "殼+掛繩", "奶油白苹果16"),
+        ]
+        ids, ranked = self._top("奶油白掛繩,16", skus)
+        self.assertEqual(ids[0], "b-combo")
+        bare = next(row for row in ranked if row["sku_id"] == "a-bare")
+        self.assertGreater(ranked[0]["deterministic_score"], bare["deterministic_score"])
+        self.assertFalse(ranked[0]["evidence"]["combo_demoted"])
+
+    def test_unique_combo_is_not_demoted_under_green(self):
+        skus = [_sku("only-combo", "奶油白+掛繩", "苹果16")]
+        ids, ranked = self._top("奶油白,16", skus)
+        self.assertEqual(ids, ["only-combo"])
+        self.assertFalse(ranked[0]["evidence"]["combo_demoted"])
+        self.assertTrue(ranked[0]["evidence"]["is_combo"])
+        self.assertGreaterEqual(ranked[0]["deterministic_score"], 110)
+        tier, reason = SkuMappingService.classify_review_tier("pending", ranked, "ok")
+        self.assertEqual(tier, "green")
+        self.assertIn("唯一候選", reason)
+
+    def test_exact_strapped_tier_stays_above_slash_bare(self):
+        # #117: exact 16 beats slash 16/16plus. A strap on the exact row must
+        # not be demoted by a different device-token bare sibling.
+        skus = [
+            _sku("a-slash", "黑色", "iphone16/16plus"),
+            _sku("b-strap", "黑色", "苹果16+挂绳"),
+        ]
+        ids, ranked = self._top("黑色,16", skus)
+        self.assertEqual(ids[0], "b-strap")
+        self.assertFalse(ranked[0]["evidence"]["combo_demoted"])
+        self.assertGreater(ranked[0]["evidence"]["phone_tier_bonus"], ranked[1]["evidence"]["phone_tier_bonus"])
