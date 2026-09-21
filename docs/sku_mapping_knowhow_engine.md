@@ -113,7 +113,7 @@ _save_suggestion()          evidence_json 必填欄（TASK 7）
 | RULE-0001 | hard | size | `explicit_size_compatible` | 明確 mm 尺寸不同 → 剔除 |
 | RULE-0002 | hard | phone_model | `phone_mismatch` | 代數與精確機型層級（base／Pro／Plus／Pro Max／Air）衝突 → 剔除；斜線列舉替代型號仍可對應 |
 | RULE-0003 | hard | product_code | `alphanumeric_code_mismatch` | 非手機英數代碼衝突 → 剔除 |
-| RULE-0004 | soft | name | `ignore_parenthetical_noise` | 括號噪音 → penalty，不剔除 |
+| RULE-0004 | soft | name | `ignore_parenthetical_noise` | 括號或色名後的單顆／一顆／單個 → 比較時剝掉並記 penalty，不剔除 |
 
 命中寫入候選 `evidence.applied_rules` 與 `mapping_rule_hits`。
 
