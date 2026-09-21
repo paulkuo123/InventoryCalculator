@@ -467,9 +467,12 @@ class SkuMappingServiceTest(unittest.TestCase):
             "spec_text": "奶白綠野千鸟格>",
             "parts": ["奶白綠野千鸟格>", "12mini(5.4)"],
         }]
+        self.assertEqual(normalize_text(skus[0]["sku_name"]), normalize_text(model["model_name"]))
         candidates = self.service.generate_candidates(model, skus)
         self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sku-plaid"])
         self.assertTrue(candidates[0]["evidence"]["complete"])
+        self.assertGreaterEqual(int(candidates[0]["evidence"].get("strict_exact") or 0), 1)
+        self.assertEqual(int(candidates[0]["evidence"].get("loose") or 0), 0)
 
     def test_guard_corrects_white_l_to_camel_l(self):
         model = {"product_name": "純棉短T", "model_name": "淺駝,L"}
