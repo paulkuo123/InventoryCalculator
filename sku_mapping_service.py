@@ -630,7 +630,12 @@ _EDGE_SEARCH_RE = re.compile(
 _EMBROIDERY_SUFFIX = "刺繡貼"
 _MOTIF_ANIMALS = frozenset("狗熊貓兔")
 _DISCLAIMER_MARKERS = ("實品", "偏皮", "偏色", "適用", "備註", "說明", "單殼", "裸殼", "不含", "單顆", "單個", "單只", "注意")
-_COMBO_RE = re.compile(r"(掛繩|掛鏈|手機繩|斜挎|斜跨|掛件|套裝|含繩|配繩|送繩|殼\+|殼＋|\+繩|\+鏈|＋繩)")
+# Strap / bundle suffixes. 可掛繩 (a hole, not a bundled cord) is excluded in
+# ``_sku_is_combo``. 帶繩／吊繩／掛飾 are the same add-on type as 掛繩.
+_COMBO_RE = re.compile(
+    r"(掛繩|掛鏈|掛飾|手機繩|吊繩|腕繩|斜挎|斜跨|掛件|套裝|含繩|配繩|送繩|帶繩|附繩|加繩|殼\+|殼＋|\+繩|\+鏈|＋繩)"
+)
+_COMBO_NEGATIVE_RE = re.compile(r"(不含|不配|不帶|沒有|無)(掛|繩|鏈)")
 _STYLE_SPLIT_RE = re.compile(r"[-－—_+＋/／|｜]+")
 
 
@@ -817,37 +822,92 @@ def _style_rank_bonus(source: Any, candidate: Any) -> int:
 
 
 def _text_asks_for_combo(value: Any) -> bool:
+    """True when the model itself asks for a strap bundle.
+
+    ``單殼`` / ``裸殼`` / ``不含掛`` / ``無掛繩`` keep the bare shell.
+    ``可掛繩`` is a hole, not a request for 殼+掛繩. Product-title marketing
+    is ignored; only the model label is passed in.
+    """
     text = normalize_text(value)
-    if "單殼" in text or "裸殼" in text or "不含掛" in text:
+    if "單殼" in text or "裸殼" in text or _COMBO_NEGATIVE_RE.search(text):
+        return False
+    if re.search(r"可掛(繩|鏈|飾|件)", text) and not re.search(r"[+＋]|配繩|送繩|含繩|帶繩|附繩|加繩", text):
         return False
     return bool(_COMBO_RE.search(text))
 
 
 def _sku_is_combo(value: Any) -> bool:
-    return bool(_COMBO_RE.search(normalize_text(value)))
+    """True when a label bundles a strap/charm rather than naming a bare shell.
+
+    ``不含掛件`` and ``可掛繩`` (strap hole only) are not bundles. A real
+    ``殼+掛繩`` still matches.
+    """
+    text = normalize_text(value)
+    if not text or _COMBO_NEGATIVE_RE.search(text):
+        return False
+    if re.search(r"可掛(繩|鏈|飾|件)", text) and not re.search(r"[+＋]|配繩|送繩|含繩|帶繩|附繩|加繩", text):
+        return False
+    return bool(_COMBO_RE.search(text))
+
+
+def _candidate_is_combo(*labels: Any) -> bool:
+    """Strap suffix on either option axis (款式 or 型號)."""
+    return any(_sku_is_combo(label) for label in labels)
+
+
+def _dimension_residue(value: Any) -> Tuple[str, ...]:
+    """Style tokens left after stripping a strap suffix and the device tier."""
+    text = _COMBO_RE.sub("", normalize_text(value))
+    text = re.sub(r"[+＋]+", "", text)
+    text = _phone_normalize_for_tokens(text)
+    for token in sorted(set(_phone_tokens(text)), key=len, reverse=True):
+        text = text.replace(token, "")
+    return tuple(_distinctive_style_tokens(text))
+
+
+def _strap_sibling_key(row: Dict[str, Any]) -> Optional[Tuple[Any, ...]]:
+    """Group a bare shell with the same print and the same device tier.
+
+    Phone-token sets must be equal, so an exact ``16+掛繩`` is not paired
+    with a slash ``16/16plus`` bare row. Rows with no device tier (socks,
+    charms) stay out of this ranking.
+    """
+    sku = str(row.get("sku_name") or "")
+    second = str(row.get("second_name") or "")
+    phones = tuple(sorted(set(_phone_tokens(f"{sku},{second}"))))
+    if not phones:
+        return None
+    return (phones, _dimension_residue(sku), _dimension_residue(second))
 
 
 def _demote_combo_suffixes(scored: List[Dict[str, Any]], wants_combo: bool) -> None:
-    """Lower 殼+掛繩 only when a style-aligned bare shell is also present.
+    """Lower 殼+掛繩 only beside a same-device bare shell.
 
-    A unique bundle stays at its original score so a correct one-candidate
-    green is not pushed under the review threshold. When the model itself
-    asks for a strap, the bare shell is the row that loses the tie.
+    The pair can sit on either axis: ``鏡面貓咪`` vs ``鏡面貓咪+掛繩``, or
+    ``單殼`` vs ``殼+掛繩`` with the colour on the other dimension, or
+    ``苹果16`` vs ``苹果16+掛繩``. A unique bundle has no bare sibling, so
+    its score stays put and a one-candidate green is not pushed under the
+    review threshold. When the model itself asks for a strap, the bare
+    shell is the row that loses the tie. Different device tiers are not
+    siblings, so base / Pro / Pro Max and exact-vs-slash bonuses stay put.
     """
-    if wants_combo:
-        anchor = any(row["evidence"].get("is_combo") and row["evidence"].get("style_aligned") for row in scored)
-        demote_combo = False
-    else:
-        anchor = any((not row["evidence"].get("is_combo")) and row["evidence"].get("style_aligned") for row in scored)
-        demote_combo = True
-    if not anchor:
-        return
+    groups: Dict[Tuple[Any, ...], List[Dict[str, Any]]] = defaultdict(list)
     for row in scored:
-        is_combo = bool(row["evidence"].get("is_combo"))
-        if is_combo != demote_combo:
+        key = _strap_sibling_key(row)
+        if key is None:
             continue
-        row["deterministic_score"] = max(1, float(row.get("deterministic_score") or 0) - COMBO_SUFFIX_PENALTY)
-        row["evidence"]["combo_demoted"] = is_combo
+        groups[key].append(row)
+    for rows in groups.values():
+        has_combo = any(row["evidence"].get("is_combo") for row in rows)
+        has_bare = any(not row["evidence"].get("is_combo") for row in rows)
+        if not (has_combo and has_bare):
+            continue
+        for row in rows:
+            is_combo = bool(row["evidence"].get("is_combo"))
+            if wants_combo == is_combo:
+                continue
+            row["deterministic_score"] = max(1, float(row.get("deterministic_score") or 0) - COMBO_SUFFIX_PENALTY)
+            row["evidence"]["combo_demoted"] = is_combo
 
 
 def _color_synonym_groups(category: Optional[str] = None) -> List[Tuple[str, set]]:
@@ -5544,7 +5604,10 @@ class SkuMappingService:
             style_text = ",".join(style_sources)
             style_bonus = _style_rank_bonus(style_text, candidate_style) if style_sources else 0
             style_aligned = bool(style_sources) and _core_style_tokens_align(style_text, candidate_style)
-            is_combo = _sku_is_combo(candidate_style)
+            is_combo = _candidate_is_combo(
+                candidate_style,
+                sku.get("second_name") or (candidate_parts[1] if len(candidate_parts) > 1 else ""),
+            )
             score = exact * 30 + loose * 10 + (40 if complete else 0) + phone_tier + style_bonus
             if score <= 0:
                 continue
