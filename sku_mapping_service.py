@@ -724,6 +724,17 @@ def _tokens_equal(left: str, right: str) -> bool:
 
 _SOCK_LEXICON = ("自然膚", "比基尼", "波點", "經典", "升級", "黑色")
 _CHARM_FILLERS = ("仿毛", "毛絨", "掛件")
+# Catalogue wrappers on clip/strap rows. Longer phrases go first so ``一體注塑``
+# does not leave a stray ``一體``. ``调`` has no 簡繁 fold, so both scripts stay.
+_CHARM_CLIP_PHRASES = ("一體注塑", "一體成型", "注塑")
+_CHARM_STRAP_PHRASES = ("可調掛繩", "可调掛繩")
+_CLIP_FILLERS = ("夾片", "夹片")
+_CHARM_THICKNESS_RE = re.compile(r"薄至\d+(?:\.\d+)?(?:mm|毫米)")
+_CHARM_BUCKLE_RE = re.compile(r"d扣[·・•．.]*")
+# ``7#motif`` (plush index) and ``#10深灰`` (leading bracket index after 【】 drop).
+_CHARM_INDEX_RE = re.compile(r"^(?:#\d+|\d+#|#)")
+# Whole-token apparel sizes only. ``S29`` / ``sl061`` are not rewritten.
+_SIZE_LETTER_ALIASES = {"s": "小號", "m": "中號", "l": "大號"}
 _GLUED_COLOR_TAIL_RE = re.compile(r"^([\u3400-\u9fff]{2,}?)([\u3400-\u9fff]{1,3}色)$")
 _DENIER_RE = re.compile(r"(?<![a-z0-9])(\d+d)(?![a-z0-9])")
 
@@ -753,14 +764,53 @@ def _split_glued_color_tail(piece: str) -> str:
     return f"{match.group(1)},{match.group(2)}"
 
 
+def _charm_color_remains(text: str) -> bool:
+    """True when a hue or a ``色`` name is still present after filler removal."""
+    compact = re.sub(r"[^0-9a-z\u3400-\u9fff]", "", str(text or ""))
+    if not compact:
+        return False
+    if "色" in compact:
+        return True
+    return any(ch in _HUE_CHARS for ch in compact)
+
+
+def _strip_charm_catalog_fillers(text: str) -> str:
+    """Drop clip/strap catalogue copy. Colour names stay.
+
+    ``薄至0.6mm`` / ``注塑`` / ``一體成型`` / ``d扣·`` and a leading ``#10``
+    or ``7#`` index are not the colour. ``可調掛繩`` keeps ``掛繩``. ``夾片``
+    drops only when a hue remains, so a bare clip row is not emptied.
+    ``丁香紫`` is not rewritten to ``紫色``, and ``象牙白`` is not rewritten
+    to ``白色``.
+    """
+    text = _CHARM_INDEX_RE.sub("", text)
+    text = _CHARM_THICKNESS_RE.sub("", text)
+    text = _CHARM_BUCKLE_RE.sub("", text)
+    # Keep the strap token. ``可調`` is catalogue copy; ``掛繩`` is the request.
+    for phrase in _CHARM_STRAP_PHRASES:
+        text = text.replace(phrase, "掛繩")
+    for phrase in _CHARM_CLIP_PHRASES:
+        text = text.replace(phrase, "")
+    for filler in _CHARM_FILLERS:
+        text = text.replace(filler, "")
+    if any(token in text for token in _CLIP_FILLERS):
+        remainder = text
+        for token in _CLIP_FILLERS:
+            remainder = remainder.replace(token, "")
+        if _charm_color_remains(remainder):
+            text = remainder
+    return text
+
+
 def _prepare_category_style(text: str) -> str:
     """Category fillers that are not the motif. Phone tiers are untouched.
 
     Socks: ``黑絲襪經典款15D`` and ``经典性感黑/15d`` share 黑色 + 經典 + 15d.
     ``升級`` / ``波點`` / ``自然膚`` stay required, so a shared denier alone
-    cannot cross those lines. Charms: ``毛絨`` / ``仿毛`` / ``掛件`` and a
-    leading ``7#`` index are the catalogue wrapper, not the motif. ``獺兔毛球``
-    is not rewritten onto ``煤球大白眼``.
+    cannot cross those lines. Charms: plush wrappers plus clip/strap catalogue
+    copy (``薄至…mm``, ``注塑``, ``d扣``, ``可調掛繩``, ``夾片``) come off
+    before the colour is compared. ``獺兔毛球`` is not rewritten onto
+    ``煤球大白眼``. Missing denier is not filled in as ``0d``.
     """
     category = get_match_category()
     if category == "socks":
@@ -769,9 +819,7 @@ def _prepare_category_style(text: str) -> str:
         text = re.sub(r"黑(?!色)", "黑色", text)
         return _DENIER_RE.sub(r",\1,", text)
     if category == "charm":
-        text = re.sub(r"^(?:\d+)?#", "", text)
-        for filler in _CHARM_FILLERS:
-            text = text.replace(filler, "")
+        text = _strip_charm_catalog_fillers(text)
         pieces = []
         for piece in re.split(r"([,，\-－—_+＋/／|｜]+)", text):
             if piece and not re.fullmatch(r"[,，\-－—_+＋/／|｜]+", piece):
@@ -848,17 +896,55 @@ def _style_tokens(value: Any) -> List[str]:
     text = _prepare_category_style(_strip_non_color_notes(_strip_sku_code(value)))
     tokens: List[str] = []
     for piece in re.split(r"[,，]+", text):
+        piece = piece.strip()
+        if not piece:
+            continue
+        # ``S`` / ``M`` / ``L`` alias only as a whole comma-separated dimension.
+        # A hyphenated code such as ``s-29`` stays split and is not a size.
+        size_alias = _SIZE_LETTER_ALIASES.get(piece)
+        if size_alias:
+            tokens.append(size_alias)
+            continue
         for sub in _STYLE_SPLIT_RE.split(piece):
             sub = sub.strip()
             if sub:
                 tokens.extend(_segment_piece(sub))
-    return tokens
+    return [_drop_charm_trailing_color_mark(token) for token in tokens]
+
+
+def _drop_charm_trailing_color_mark(token: str) -> str:
+    """``深灰色`` / ``酒紅色`` share a stem with ``深灰`` / ``酒紅`` on charms.
+
+    Only a token of at least three characters loses a final ``色``. ``灰色``,
+    ``藍色``, ``白色``, ``紫色`` stay intact, so they do not collapse into
+    ``灰`` / ``丁香紫`` / ``象牙白``. Other categories keep ``奶茶`` distinct
+    from ``奶茶色``.
+    """
+    if get_match_category() != "charm":
+        return token
+    if len(token) >= 3 and token.endswith("色"):
+        return token[:-1]
+    return token
+
+
+def _charm_strap_token(token: str) -> bool:
+    """On a charm, ``掛繩`` is the shopper's choice, not shell filler.
+
+    Phone-case bare-shell demotion still treats ``掛繩`` as a suffix. This
+    only affects charm style coverage, so a strap row is not interchangeable
+    with a same-colour clip that never names a strap.
+    """
+    return get_match_category() == "charm" and token == "掛繩"
+
+
+def _is_style_filler(token: str) -> bool:
+    return token in _SHELL_FILLERS and not _charm_strap_token(token)
 
 
 def _is_distinctive_style_token(token: str) -> bool:
     if get_match_category() == "socks" and _DENIER_RE.fullmatch(token):
         return True
-    if len(token) < 2 or token in _SHELL_FILLERS:
+    if len(token) < 2 or _is_style_filler(token):
         return False
     return bool(re.search(r"[\u3400-\u9fff]", token))
 
@@ -897,7 +983,7 @@ def _style_rank_bonus(source: Any, candidate: Any) -> int:
         return 0
     extras = []
     for token in _style_tokens(candidate):
-        if len(token) < 2 or token in _SHELL_FILLERS or token.isdigit():
+        if len(token) < 2 or token.isdigit() or _is_style_filler(token):
             continue
         if any(_tokens_equal(src, token) for src in source_tokens):
             continue

@@ -9,6 +9,7 @@ import os
 import tempfile
 import unittest
 
+from mapping_knowledge import reset_match_category, set_match_category
 from sku_mapping_service import (
     SkuMappingService,
     normalize_text,
@@ -425,3 +426,86 @@ class ColorTokenAlignTests(unittest.TestCase):
         )
         self.assertNotIn("bunny", ids)
         self.assertNotIn("khaki", ids)
+
+    def test_charm_clip_fillers_align_remaining_color(self):
+        # Strap index ``#10深灰`` and clip catalogue copy must not hide the hue.
+        # 丁香紫 / 象牙白 / 寶藍 / 暖陽黃 stay different colours.
+        product = "手機掛繩 手機吊繩 夾片掛片 掛飾"
+        skus = [
+            _sku("grey", "【#10深灰】可调掛繩+一体注塑夹片", "吊飾"),
+            _sku("wine-strap", "【#11酒紅】可调掛繩+一体注塑夹片", "吊飾"),
+            _sku("wine-clip", "薄至0.6mm【d扣·酒紅色】注塑一体成型", "吊飾"),
+            _sku("lilac", "薄至0.6mm【d扣·丁香紫】注塑一体成型", "吊飾"),
+            _sku("ivory", "薄至0.6mm【d扣·象牙白】注塑一体成型", "吊飾"),
+            _sku("gem", "薄至0.6mm【d扣·宝石蓝】注塑一体成型", "吊飾"),
+            _sku("warm", "薄至0.6mm【d扣·暖阳黃】注塑一体成型", "吊飾"),
+        ]
+        ids, ranked = self._top("深灰色掛繩+透明夾片", skus, product_name=product)
+        self.assertEqual(ids, ["grey"])
+        self.assertTrue(ranked[0]["evidence"]["complete"])
+        ids, ranked = self._top("酒紅夾片", skus, product_name=product)
+        self.assertEqual(ids[0], "wine-clip")
+        self.assertIn("wine-strap", ids)
+        self.assertLess(ids.index("wine-clip"), ids.index("wine-strap"))
+        self.assertTrue(ranked[0]["evidence"]["complete"])
+        ids, _ranked = self._top("紫色夾片", skus, product_name=product)
+        self.assertNotIn("lilac", ids)
+        ids, _ranked = self._top("白色夾片", skus, product_name=product)
+        self.assertNotIn("ivory", ids)
+        ids, _ranked = self._top("藍色夾片", skus, product_name=product)
+        self.assertNotIn("gem", ids)
+        ids, _ranked = self._top("暖黃夾片", skus, product_name=product)
+        self.assertNotIn("warm", ids)
+        token = set_match_category("charm")
+        try:
+            self.assertTrue(_synonym_equal(
+                "深灰色掛繩+透明夾片", "【#10深灰】可调掛繩+一体注塑夹片",
+            ))
+            self.assertTrue(_synonym_equal(
+                "酒紅夾片", "薄至0.6mm【d扣·酒紅色】注塑一体成型",
+            ))
+            self.assertFalse(_synonym_equal("紫色", "丁香紫"))
+            self.assertFalse(_synonym_equal(
+                "紫色夾片", "薄至0.6mm【d扣·丁香紫】注塑一体成型",
+            ))
+            self.assertFalse(_synonym_equal("白色", "象牙白"))
+            self.assertFalse(_synonym_equal(
+                "白色夾片", "薄至0.6mm【d扣·象牙白】注塑一体成型",
+            ))
+            self.assertFalse(_synonym_equal("藍色", "海藍色"))
+            self.assertFalse(_synonym_equal("暖黃", "暖陽黃"))
+        finally:
+            reset_match_category(token)
+
+    def test_standalone_size_letters_alias_chinese_sizes(self):
+        skus = [
+            _sku("s", "小號", "均碼"),
+            _sku("m", "中號", "均碼"),
+            _sku("l", "大號", "均碼"),
+            _sku("code", "S29", "均碼"),
+        ]
+        product = "旅行收納包"
+        ids, ranked = self._top("S", skus, product_name=product)
+        self.assertEqual(ids[0], "s")
+        self.assertTrue(ranked[0]["evidence"]["complete"])
+        self.assertNotIn("m", ids)
+        self.assertNotIn("l", ids)
+        ids, _ranked = self._top("M", skus, product_name=product)
+        self.assertEqual(ids[0], "m")
+        ids, _ranked = self._top("L", skus, product_name=product)
+        self.assertEqual(ids[0], "l")
+        ids, _ranked = self._top("小號", [
+            _sku("s", "S", "均碼"),
+            _sku("m", "M", "均碼"),
+            _sku("l", "L", "均碼"),
+        ], product_name=product)
+        self.assertEqual(ids, ["s"])
+        ids, _ranked = self._top("S29", skus, product_name=product)
+        self.assertEqual(ids, ["code"])
+        self.assertTrue(_synonym_equal("S", "小號"))
+        self.assertTrue(_synonym_equal("M", "中號"))
+        self.assertTrue(_synonym_equal("L", "大號"))
+        self.assertFalse(_synonym_equal("S", "中號"))
+        self.assertFalse(_synonym_equal("S", "大號"))
+        self.assertFalse(_synonym_equal("S29", "小號"))
+        self.assertFalse(_synonym_equal("sl061", "小號"))
