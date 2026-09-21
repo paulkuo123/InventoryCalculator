@@ -12,6 +12,7 @@ import unittest
 from sku_mapping_service import (
     SkuMappingService,
     normalize_text,
+    _abbreviated_color_equal,
     _sku_is_combo,
     _synonym_equal,
     _text_asks_for_combo,
@@ -332,3 +333,95 @@ class ColorTokenAlignTests(unittest.TestCase):
         self.assertEqual(ids[0], "b-strap")
         self.assertFalse(ranked[0]["evidence"]["combo_demoted"])
         self.assertGreater(ranked[0]["evidence"]["phone_tier_bonus"], ranked[1]["evidence"]["phone_tier_bonus"])
+
+    def test_glitter_color_ignores_glued_pack_count(self):
+        # 鏡頭貼：遠峰藍閃粉(一顆) must not tie 黑色闪粉单个 on the phone token.
+        skus = [
+            _sku("black", "黑色闪粉单个", "14pro/14promax/16pro/16promax"),
+            _sku("silver", "银色闪粉单个", "14pro/14promax/16pro/16promax"),
+            _sku("alpine", "远峰蓝闪粉单个", "14pro/14promax/16pro/16promax"),
+            _sku("rainbow", "炫彩闪粉单个", "14pro/14promax/16pro/16promax"),
+            _sku("alpine-11", "远峰蓝闪粉单个", "11系列/12mini/12/12pro"),
+        ]
+        ids, ranked = self._top(
+            "遠峰藍閃粉(一顆),16pro/16proMax",
+            skus,
+            product_name="閃粉鏡頭貼 iPhone 16 15 14",
+        )
+        self.assertEqual(ids, ["alpine"])
+        self.assertTrue(ranked[0]["evidence"]["complete"])
+        self.assertFalse(_synonym_equal("遠峰藍閃粉(一顆)", "黑色闪粉单个"))
+        self.assertTrue(_synonym_equal("遠峰藍閃粉(一顆)", "远峰蓝闪粉单个"))
+        self.assertFalse(_abbreviated_color_equal("混彩色", "彩色"))
+
+    def test_sock_denier_line_beats_same_denier_siblings(self):
+        skus = [
+            _sku("classic-15", "经典性感黑/15d", "均码"),
+            _sku("upgrade-15", "升级款性感黑/15d", "均码"),
+            _sku("dot-15", "波點黑丝/15d", "均码"),
+            _sku("heart-15", "愛心黑丝/15d", "均码"),
+            _sku("skin-15", "经典自然膚/15d", "均码"),
+            _sku("classic-200", "经典性感黑/200d", "均码"),
+            _sku("bikini-15", "比基尼性感黑/15d", "均码"),
+        ]
+        ids, ranked = self._top(
+            "DS1112-黑絲襪經典款 15D",
+            skus,
+            product_name="黑絲襪 連褲襪 15D",
+        )
+        self.assertEqual(ids, ["classic-15"])
+        self.assertTrue(ranked[0]["evidence"]["complete"])
+        ids, _ranked = self._top(
+            "DS2104-黑絲襪經典款 200D",
+            skus,
+            product_name="黑絲襪 連褲襪 200D",
+        )
+        self.assertEqual(ids, ["classic-200"])
+        ids, _ranked = self._top(
+            "DS1046-黑絲襪升級款 15D",
+            skus,
+            product_name="黑絲襪 連褲襪 15D",
+        )
+        self.assertEqual(ids, ["upgrade-15"])
+        ids, _ranked = self._top(
+            "DS1151-波點黑絲 15D",
+            skus,
+            product_name="黑絲襪 連褲襪 15D",
+        )
+        self.assertEqual(ids, ["dot-15"])
+        ids, ranked = self._top(
+            "DS1112-經典自然膚 15D",
+            skus,
+            product_name="黑絲襪 連褲襪 15D",
+        )
+        self.assertEqual(ids, ["skin-15"])
+        self.assertNotIn("classic-15", ids)
+
+    def test_charm_plush_filler_keeps_motif_and_color(self):
+        skus = [
+            _sku("khaki", "毛绒掛件-仿毛煤球【卡其色】", "吊飾"),
+            _sku("black", "26#毛绒掛件-仿毛煤球黑色", "吊飾"),
+            _sku("duck", "7#毛绒加油鸭-藍白", "吊飾"),
+            _sku("duck-grey", "9#毛绒加油鸭-藍灰", "吊飾"),
+            _sku("bunny", "毛绒煤球大白眼-焦糖咖", "吊飾"),
+        ]
+        ids, ranked = self._top(
+            "毛絨煤球 - 卡其色",
+            skus,
+            product_name="ins韓風 吊飾 掛飾 手機掛件",
+        )
+        self.assertEqual(ids, ["khaki"])
+        self.assertTrue(ranked[0]["evidence"]["complete"])
+        ids, _ranked = self._top(
+            "毛絨加油鴨 - 藍白",
+            skus,
+            product_name="ins韓風 吊飾 掛飾",
+        )
+        self.assertEqual(ids, ["duck"])
+        ids, ranked = self._top(
+            "可愛獺兔毛球 - 焦糖咖",
+            skus,
+            product_name="ins韓風 吊飾 掛飾",
+        )
+        self.assertNotIn("bunny", ids)
+        self.assertNotIn("khaki", ids)

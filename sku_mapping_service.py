@@ -50,6 +50,7 @@ from mapping_knowledge import (
     max_review_candidates,
     normalize_reason_code,
     reason_code_catalog,
+    get_match_category,
     reset_match_category,
     rule_is_active,
     score_weights,
@@ -591,13 +592,28 @@ def _model_identity_mismatch(model: Dict[str, Any], candidate: Any) -> bool:
     return _alphanumeric_code_mismatch(model_name, candidate)
 
 
+# Quantity notes are not a colour. ``(單顆)`` was already ignored; shoppers also
+# write ``(一顆)`` / ``(一粒)``, and 1688 glues the same note on the colour
+# (``远峰蓝闪粉单个``). Strip those only when a real label remains.
 PARENTHETICAL_NOISE_RE = re.compile(
-    r"\((?:單顆|单颗|單個|单个|單只|单只|\d+(?:顆|颗|個|个))\)"
+    r"\((?:單顆|单颗|單個|单个|單只|单只|一顆|一粒|\d+(?:顆|颗|個|个))\)"
 )
+_TRAILING_QTY_RE = re.compile(r"(?:單個|單顆|單只|一顆|一粒)$")
 
 
 def _has_parenthetical_noise(value: Any) -> bool:
     return bool(PARENTHETICAL_NOISE_RE.search(normalize_text(value)))
+
+
+def _strip_trailing_qty(text: str) -> str:
+    """Drop a glued pack-count suffix (``閃粉單個``) when the colour remains."""
+    match = _TRAILING_QTY_RE.search(text)
+    if not match:
+        return text
+    head = text[:match.start()].rstrip("/／")
+    if len(head) < 2:
+        return text
+    return head
 
 
 def _strip_sku_code(value: Any) -> str:
@@ -606,9 +622,11 @@ def _strip_sku_code(value: Any) -> str:
     # Quantity/packaging notes attached to a colour are not part of the colour
     # identity.  Without stripping them, ``藍色(單顆)`` only matches the phone
     # dimension and the exact blue SKU can be crowded out by other colours.
+    # ``遠峰藍閃粉(一顆)`` must still equal ``远峰蓝闪粉单个``, not ``黑色闪粉单个``.
     # RULE-0004 (soft): disabled rules must not strip this noise.
     if rule_is_active("RULE-0004"):
         text = PARENTHETICAL_NOISE_RE.sub("", text)
+        text = _strip_trailing_qty(text)
     return re.sub(r"^[a-z0-9._-]+(?=[\u3400-\u9fff])", "", text)
 
 
@@ -673,6 +691,10 @@ def _abbreviated_color_equal(left: str, right: str) -> bool:
         return False
     if len(short) < 2 or short[0] in _HUE_CHARS:
         return False
+    # ``彩色`` is a generic finish, not a truncated hue name. ``混彩色`` must
+    # stay distinct; ``海棠粉`` / ``棠粉`` still matches.
+    if short.endswith("彩色"):
+        return False
     return short[-1] in _HUE_CHARS or short.endswith("色")
 
 
@@ -700,13 +722,73 @@ def _tokens_equal(left: str, right: str) -> bool:
     return _color_prefixed_equal(left, right)
 
 
+_SOCK_LEXICON = ("自然膚", "比基尼", "波點", "經典", "升級", "黑色")
+_CHARM_FILLERS = ("仿毛", "毛絨", "掛件")
+_GLUED_COLOR_TAIL_RE = re.compile(r"^([\u3400-\u9fff]{2,}?)([\u3400-\u9fff]{1,3}色)$")
+_DENIER_RE = re.compile(r"(?<![a-z0-9])(\d+d)(?![a-z0-9])")
+
+
+def _active_style_lexicon() -> Tuple[str, ...]:
+    if get_match_category() != "socks":
+        return _STYLE_LEXICON
+    return tuple(sorted(set(_STYLE_LEXICON) | set(_SOCK_LEXICON), key=len, reverse=True))
+
+
+_GLUED_HUE_TAIL_RE = re.compile(
+    r"^([\u3400-\u9fff]{2,}?)([\u3400-\u9fff]{1,3}[粉白黑綠紫藍紅黃灰棕咖金銀])$"
+)
+
+
+def _split_glued_color_tail(piece: str) -> str:
+    """``煤球卡其色`` / ``煤球清新綠`` → motif plus colour.
+
+    A whole colour such as ``奶茶色`` or ``清新綠`` is too short to split.
+    ``亮紅色`` is not rewritten to ``玫紅色``.
+    """
+    match = _GLUED_COLOR_TAIL_RE.fullmatch(piece)
+    if not match:
+        match = _GLUED_HUE_TAIL_RE.fullmatch(piece)
+    if not match or len(match.group(2)) < 2:
+        return piece
+    return f"{match.group(1)},{match.group(2)}"
+
+
+def _prepare_category_style(text: str) -> str:
+    """Category fillers that are not the motif. Phone tiers are untouched.
+
+    Socks: ``黑絲襪經典款15D`` and ``经典性感黑/15d`` share 黑色 + 經典 + 15d.
+    ``升級`` / ``波點`` / ``自然膚`` stay required, so a shared denier alone
+    cannot cross those lines. Charms: ``毛絨`` / ``仿毛`` / ``掛件`` and a
+    leading ``7#`` index are the catalogue wrapper, not the motif. ``獺兔毛球``
+    is not rewritten onto ``煤球大白眼``.
+    """
+    category = get_match_category()
+    if category == "socks":
+        text = text.replace("黑絲", "黑色")
+        text = re.sub(r"襪|款|性感", "", text)
+        text = re.sub(r"黑(?!色)", "黑色", text)
+        return _DENIER_RE.sub(r",\1,", text)
+    if category == "charm":
+        text = re.sub(r"^(?:\d+)?#", "", text)
+        for filler in _CHARM_FILLERS:
+            text = text.replace(filler, "")
+        pieces = []
+        for piece in re.split(r"([,，\-－—_+＋/／|｜]+)", text):
+            if piece and not re.fullmatch(r"[,，\-－—_+＋/／|｜]+", piece):
+                piece = _split_glued_color_tail(piece)
+            pieces.append(piece)
+        return "".join(pieces)
+    return text
+
+
 def _lexicon_segment(piece: str) -> List[str]:
+    lexicon = _active_style_lexicon()
     tokens: List[str] = []
     index = 0
     length = len(piece)
     while index < length:
         match = ""
-        for word in _STYLE_LEXICON:
+        for word in lexicon:
             if piece.startswith(word, index):
                 match = word
                 break
@@ -715,7 +797,7 @@ def _lexicon_segment(piece: str) -> List[str]:
             index += len(match)
             continue
         end = index + 1
-        while end < length and not any(piece.startswith(word, end) for word in _STYLE_LEXICON):
+        while end < length and not any(piece.startswith(word, end) for word in lexicon):
             end += 1
         chunk = piece[index:end]
         if chunk:
@@ -763,7 +845,7 @@ def _segment_piece(piece: str) -> List[str]:
 
 def _style_tokens(value: Any) -> List[str]:
     """Colour / print tokens after 簡繁, separators, and disclaimer notes."""
-    text = _strip_non_color_notes(_strip_sku_code(value))
+    text = _prepare_category_style(_strip_non_color_notes(_strip_sku_code(value)))
     tokens: List[str] = []
     for piece in re.split(r"[,，]+", text):
         for sub in _STYLE_SPLIT_RE.split(piece):
@@ -774,6 +856,8 @@ def _style_tokens(value: Any) -> List[str]:
 
 
 def _is_distinctive_style_token(token: str) -> bool:
+    if get_match_category() == "socks" and _DENIER_RE.fullmatch(token):
+        return True
     if len(token) < 2 or token in _SHELL_FILLERS:
         return False
     return bool(re.search(r"[\u3400-\u9fff]", token))

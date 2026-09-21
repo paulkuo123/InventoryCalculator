@@ -70,7 +70,7 @@ DEFAULT_RULES: List[Dict[str, Any]] = [
         "rule_id": "RULE-0004",
         "type": "soft",
         "field": "name",
-        "description": "括號內單顆/數量/包裝文字視為噪音",
+        "description": "括號內或黏在色名後的單顆／一顆／單個等包裝數量視為噪音",
         "impl": "ignore_parenthetical_noise",
         "status": "active",
     },
