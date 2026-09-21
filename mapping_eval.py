@@ -169,13 +169,8 @@ def truth_fields(row: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-# Extra simplified/traditional pairs that appear in Golden labels but are not
-# in SkuMappingService.CHAR_TRANSLATION.  Used only to key truth ↔ candidate.
-_TRUTH_CHAR_EXTRA = str.maketrans({"码": "碼"})
-
-
 def _eval_text(value: Any) -> str:
-    return normalize_text(value).translate(_TRUTH_CHAR_EXTRA)
+    return normalize_text(value)
 
 
 def names_match(left_name: Any, left_second: Any, right_name: Any, right_second: Any) -> bool:

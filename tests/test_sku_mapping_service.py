@@ -1953,8 +1953,8 @@ class SkuMappingServiceTest(unittest.TestCase):
             "specAttrs": "黑色&gt;均码",
         })
         self.assertEqual(normalized["sku_name"], "黑色")
-        self.assertEqual(normalized["second_name"], "均码")
-        self.assertEqual(normalized["parts"], ["黑色", "均码"])
+        self.assertEqual(normalized["second_name"], "均碼")
+        self.assertEqual(normalized["parts"], ["黑色", "均碼"])
 
     def test_legacy_html_entity_suffix_is_repaired_from_spec_text(self):
         self.assertEqual(clean_mapping_name("黑色&gt", "黑色,均码", 0), "黑色")
@@ -2399,7 +2399,7 @@ class NormalizeTextTrailingSeparatorTests(unittest.TestCase):
 
     GOLDEN = "奶白 绿野千鸟格"
     SNAPSHOT = "奶白綠野千鸟格>"
-    EXPECTED = "奶白綠野千鸟格"
+    EXPECTED = "奶白綠野千鳥格"
 
     def test_trailing_gt_matches_golden_name(self):
         self.assertEqual(normalize_text(self.SNAPSHOT), self.EXPECTED)

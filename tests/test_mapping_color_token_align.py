@@ -53,6 +53,55 @@ class ColorTokenAlignTests(unittest.TestCase):
         for simplified, traditional in pairs:
             self.assertEqual(normalize_text(simplified), normalize_text(traditional), simplified)
 
+    def test_remaining_script_and_decoration_pairs_unify(self):
+        pairs = (
+            ("贝壳纹", "貝殼紋"),
+            ("蝴蝶结", "蝴蝶結"),
+            ("电镀", "電鍍"),
+            ("发带", "髮帶"),
+            ("面包头", "麵包頭"),
+            ("韩粉", "韓粉"),
+            ("千鸟格", "千鳥格"),
+            ("饼干", "餅乾"),
+            ("手链", "手鍊"),
+            ("椭圆", "橢圓"),
+            ("雾蓝", "霧藍"),
+            ("少女粉.", "少女粉"),
+            ("珍珠白。", "珍珠白"),
+            ("圓形【鏡子】", "圓形鏡子"),
+            ("白色熊猫🐼", "白色熊貓"),
+            ("黑色爪印🐾", "黑色爪印"),
+            ("綠色㉿", "綠色"),
+            ("蓝白小花【单壳】", "藍白小花(單殼)"),
+        )
+        for left, right in pairs:
+            self.assertEqual(normalize_text(left), normalize_text(right), left)
+
+    def test_distinct_hues_and_sizes_stay_distinct(self):
+        distinct = (
+            ("白邊", "黑邊"),
+            ("白邊", "粉邊"),
+            ("黑邊", "綠邊"),
+            ("奶酪白", "豆粉色"),
+            ("豆粉色", "豆紫色"),
+            ("薔薇粉", "奶油黃"),
+            ("煙灰藍", "奶酪白"),
+            ("海棠粉", "古董白"),
+            ("塗鴉愛心", "lucky彩色愛心"),
+            ("托腮奶茶熊", "吐司熊"),
+            ("藍色", "海藍色"),
+            ("11.深棕小熊", "咖色"),
+            ("3.淺灰小熊", "淺灰"),
+            ("45mm裸殼", "45mm"),
+            ("鏡面貓咪+掛繩", "鏡面貓咪"),
+        )
+        for left, right in distinct:
+            self.assertNotEqual(normalize_text(left), normalize_text(right), left)
+        self.assertEqual(normalize_text("鏡面"), normalize_text("鏡麵"))
+        self.assertNotIn("麵", normalize_text("鏡面愛心"))
+        self.assertIn(",", normalize_text("白色>L"))
+        self.assertIn("+", normalize_text("殼+掛繩"))
+
     def test_alias_still_matches_graphite_but_not_a_different_hue(self):
         self.assertTrue(_synonym_equal("黑色", "石墨黑"))
         self.assertFalse(_synonym_equal("藍色", "海藍色"))

@@ -204,6 +204,25 @@ CHAR_TRANSLATION = str.maketrans({
     "组": "組", "丝": "絲", "贝": "貝", "亚": "亞", "华": "華",
     "东": "東", "车": "車", "门": "門", "风": "風", "云": "雲",
     "电": "電", "卫": "衛", "护": "護", "国": "國",
+    # Further generic 簡繁. Simplified → traditional when both scripts occur.
+    # 頭→头, 機→机, 雙→双 stay simplified: that is already the canonical side.
+    # 麵/髮/鬍/乾 fold onto 面/发/胡/干 so 鏡面, 發芽, and 饼干/餅乾 meet
+    # without turning 面 into 麵 or 发 into 髮/發.
+    "纹": "紋", "结": "結", "镀": "鍍", "闪": "閃", "满": "滿", "皱": "皺",
+    "韩": "韓", "袜": "襪", "脸": "臉", "莱": "萊", "爷": "爺", "樱": "櫻",
+    "过": "過", "雾": "霧", "鸟": "鳥", "块": "塊", "柠": "檸", "葱": "蔥",
+    "飞": "飛", "乌": "烏", "龟": "龜", "树": "樹", "懒": "懶", "狮": "獅",
+    "猪": "豬", "椭": "橢", "麦": "麥", "叶": "葉", "开": "開", "运": "運",
+    "达": "達", "鸭": "鴨", "饼": "餅", "裤": "褲", "拥": "擁", "码": "碼",
+    "个": "個", "体": "體", "画": "畫", "装": "裝", "罗": "羅", "软": "軟",
+    "绒": "絨", "礼": "禮", "盘": "盤", "编": "編", "织": "織", "远": "遠",
+    "兽": "獸", "签": "籤", "标": "標", "对": "對", "无": "無", "枪": "槍",
+    "晕": "暈", "键": "鍵", "笔": "筆", "后": "後", "经": "經", "夹": "夾",
+    "级": "級", "灵": "靈", "钩": "鉤", "鱼": "魚", "马": "馬", "洁": "潔",
+    "适": "適", "龙": "龍", "阳": "陽", "质": "質", "鸡": "雞", "鲸": "鯨",
+    "鲨": "鯊", "领": "領", "钱": "錢", "简": "簡", "柜": "櫃", "弯": "彎",
+    "鹅": "鵝",
+    "麵": "面", "髮": "发", "鬍": "胡", "乾": "干", "隻": "只", "鍊": "鏈",
 })
 
 COLOR_SYNONYMS = {
@@ -346,6 +365,22 @@ def normalize_id(value: Any) -> str:
     return text
 
 
+# Decorative wrappers only. ASCII () and ``+`` stay: they carry combo and
+# disclaimer structure. 45mm裸殼 stays intact; only a wrapped 單殼/裸殼 note drops.
+_DECORATIVE_BRACKET_RE = re.compile(r"[【】「」『』［］\[\]]")
+_WRAPPED_SHELL_NOTE_RE = re.compile(r"【單殼】|【裸殼】|\(單殼\)|\(裸殼\)")
+
+
+def _is_decorative_symbol(ch: str) -> bool:
+    """Emoji, enclosed marks such as ㉿, and leftover emoji joiners."""
+    code = ord(ch)
+    if unicodedata.category(ch) == "So":
+        return True
+    if 0x2460 <= code <= 0x24FF or 0x3200 <= code <= 0x32FF:
+        return True
+    return ch in "\u200d\ufe0e\ufe0f"
+
+
 def normalize_text(value: Any) -> str:
     """Compact SKU labels for equality (whitespace, 簡繁, field separators).
 
@@ -353,11 +388,16 @@ def normalize_text(value: Any) -> str:
     separator.  After those become commas, a trailing separator with no following
     field is junk: snapshot ``奶白綠野千鸟格>`` must equal Golden
     ``奶白 绿野千鸟格``.  Mid-string ``>`` stays a comma so ``白色>L`` still
-    tokenizes as two parts.
+    tokenizes as two parts.  Bracket wrappers, emoji, and a trailing dot are
+    decoration (``圓形【鏡子】``, ``少女粉.``).  A wrapped ``(單殼)`` / ``【裸殼】``
+    note is not a colour; a size such as ``45mm裸殼`` is kept.
     """
     text = html.unescape(unicodedata.normalize("NFKC", str(value or ""))).translate(CHAR_TRANSLATION)
     text = re.sub(r"\s+", "", text).replace("，", ",").replace("、", ",").replace("＞", ",").replace(">", ",")
-    return text.lower().strip().rstrip(",")
+    text = _WRAPPED_SHELL_NOTE_RE.sub("", text)
+    text = _DECORATIVE_BRACKET_RE.sub("", text)
+    text = "".join(ch for ch in text if not _is_decorative_symbol(ch))
+    return text.lower().strip().rstrip(",.。")
 
 
 def display_text(value: Any) -> str:
