@@ -11,6 +11,7 @@ from sku_mapping_service import (
     MappingConflict,
     SkuMappingService,
     clean_mapping_name,
+    display_text,
     main as sku_mapping_main,
     normalize_text,
     offer_fingerprint,
@@ -456,6 +457,22 @@ class SkuMappingServiceTest(unittest.TestCase):
         candidates = self.service.generate_candidates(model, skus)
         self.assertEqual([candidate["sku_id"] for candidate in candidates], ["camel-l"])
         self.assertTrue(candidates[0]["evidence"]["complete"])
+
+    def test_trailing_gt_on_snapshot_sku_matches_golden_style_name(self):
+        model = {"product_name": "iPhone 手機殼", "model_name": "奶白 绿野千鸟格"}
+        skus = [{
+            "sku_id": "sku-plaid",
+            "sku_name": "奶白綠野千鸟格>",
+            "second_name": "12mini(5.4)",
+            "spec_text": "奶白綠野千鸟格>",
+            "parts": ["奶白綠野千鸟格>", "12mini(5.4)"],
+        }]
+        self.assertEqual(normalize_text(skus[0]["sku_name"]), normalize_text(model["model_name"]))
+        candidates = self.service.generate_candidates(model, skus)
+        self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sku-plaid"])
+        self.assertTrue(candidates[0]["evidence"]["complete"])
+        self.assertGreaterEqual(int(candidates[0]["evidence"].get("strict_exact") or 0), 1)
+        self.assertEqual(int(candidates[0]["evidence"].get("loose") or 0), 0)
 
     def test_guard_corrects_white_l_to_camel_l(self):
         model = {"product_name": "純棉短T", "model_name": "淺駝,L"}
@@ -2243,6 +2260,36 @@ class SkuMappingServiceTest(unittest.TestCase):
                 product_id="p-socks", model_id="sock-white", source_version=preview["sourceVersion"],
                 mode="clear", models=[{"modelId": "sock-white", "selected": True}],
             )
+
+
+class NormalizeTextTrailingSeparatorTests(unittest.TestCase):
+    """Snapshot SKU names often end with leftover ``>`` / ``&gt`` junk."""
+
+    GOLDEN = "奶白 绿野千鸟格"
+    SNAPSHOT = "奶白綠野千鸟格>"
+    EXPECTED = "奶白綠野千鸟格"
+
+    def test_trailing_gt_matches_golden_name(self):
+        self.assertEqual(normalize_text(self.SNAPSHOT), self.EXPECTED)
+        self.assertEqual(normalize_text(self.GOLDEN), self.EXPECTED)
+        self.assertEqual(normalize_text(self.SNAPSHOT), normalize_text(self.GOLDEN))
+
+    def test_trailing_html_gt_entity_matches_golden_name(self):
+        encoded = "奶白綠野千鸟格&gt"
+        encoded_semi = "奶白綠野千鸟格&gt;"
+        self.assertEqual(display_text(encoded), self.SNAPSHOT)
+        self.assertEqual(normalize_text(encoded), normalize_text(self.GOLDEN))
+        self.assertEqual(normalize_text(encoded_semi), normalize_text(self.GOLDEN))
+        self.assertEqual(normalize_text(display_text(encoded)), normalize_text(self.GOLDEN))
+
+    def test_fullwidth_trailing_separator_is_stripped(self):
+        self.assertEqual(normalize_text("奶白綠野千鸟格＞"), normalize_text(self.GOLDEN))
+
+    def test_mid_string_gt_stays_comma_separator(self):
+        self.assertEqual(normalize_text("白色>L"), "白色,l")
+        self.assertEqual(normalize_text("浅驼＞L"), "淺駝,l")
+        self.assertNotEqual(normalize_text("白色>L"), normalize_text("白色L"))
+        self.assertNotEqual(normalize_text("白色>L"), normalize_text("白色"))
 
 
 if __name__ == "__main__":

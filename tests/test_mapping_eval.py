@@ -29,6 +29,7 @@ from mapping_eval import (  # noqa: E402
     run_evaluation,
     sku_matches_truth,
     truth_fields,
+    truth_in_skus,
 )
 
 
@@ -57,6 +58,27 @@ class MatchingTests(unittest.TestCase):
         self.assertTrue(sku_matches_truth({"sku_id": "other", "sku_name": "白色", "second_name": "均碼"}, truth))
         self.assertTrue(names_match("白色", "均码", "白色", "均碼"))
         self.assertFalse(names_match("白色", "均碼", "黑色", "均碼"))
+
+    def test_trailing_gt_on_snapshot_is_not_truth_absent(self):
+        truth = truth_fields({
+            "1688_sku_id": "",
+            "1688_sku_name": "奶白 绿野千鸟格",
+            "1688_sku_second_name": "12mini(5.4)",
+        })
+        snapshot = [{
+            "sku_id": "",
+            "sku_name": "奶白綠野千鸟格>",
+            "second_name": "12mini(5.4)",
+        }]
+        encoded = [{
+            "sku_id": "",
+            "sku_name": "奶白綠野千鸟格&gt",
+            "second_name": "12mini(5.4)",
+        }]
+        self.assertTrue(sku_matches_truth(snapshot[0], truth))
+        self.assertTrue(truth_in_skus(snapshot, truth))
+        self.assertTrue(truth_in_skus(encoded, truth))
+        self.assertTrue(names_match("奶白綠野千鸟格>", "12mini(5.4)", "奶白 绿野千鸟格", "12mini(5.4)"))
 
 
 class HeuristicCategoryTests(unittest.TestCase):
