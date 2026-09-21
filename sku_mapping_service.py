@@ -630,10 +630,11 @@ _EDGE_SEARCH_RE = re.compile(
 _EMBROIDERY_SUFFIX = "刺繡貼"
 _MOTIF_ANIMALS = frozenset("狗熊貓兔")
 _DISCLAIMER_MARKERS = ("實品", "偏皮", "偏色", "適用", "備註", "說明", "單殼", "裸殼", "不含", "單顆", "單個", "單只", "注意")
-# Strap / bundle suffixes. 可掛繩 (a hole, not a bundled cord) is excluded in
+# Strap / bundle suffixes, matched after ``normalize_text`` (機→机, so 手機繩
+# is written 手机繩). 可掛繩 (a hole, not a bundled cord) is excluded in
 # ``_sku_is_combo``. 帶繩／吊繩／掛飾 are the same add-on type as 掛繩.
 _COMBO_RE = re.compile(
-    r"(掛繩|掛鏈|掛飾|手機繩|吊繩|腕繩|斜挎|斜跨|掛件|套裝|含繩|配繩|送繩|帶繩|附繩|加繩|殼\+|殼＋|\+繩|\+鏈|＋繩)"
+    r"(掛繩|掛鏈|掛飾|手机繩|吊繩|腕繩|斜挎|斜跨|掛件|套裝|含繩|配繩|送繩|帶繩|附繩|加繩|殼\+|殼＋|\+繩|\+鏈|＋繩)"
 )
 _COMBO_NEGATIVE_RE = re.compile(r"(不含|不配|不帶|沒有|無)(掛|繩|鏈)")
 _STYLE_SPLIT_RE = re.compile(r"[-－—_+＋/／|｜]+")

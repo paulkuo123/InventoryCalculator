@@ -241,6 +241,7 @@ class ColorTokenAlignTests(unittest.TestCase):
         self.assertTrue(_sku_is_combo("苹果16+挂绳"))
         self.assertTrue(_sku_is_combo("殼+掛繩"))
         self.assertTrue(_sku_is_combo("透明+吊繩"))
+        self.assertTrue(_sku_is_combo("黑色+手機繩"))
         self.assertFalse(_sku_is_combo("不含掛件"))
         self.assertFalse(_sku_is_combo("透明可掛繩"))
         self.assertFalse(_sku_is_combo("單殼"))
@@ -277,6 +278,26 @@ class ColorTokenAlignTests(unittest.TestCase):
         ids, ranked = self._top("奶油白,16", skus, product_name="iPhone 手機殼 附掛繩")
         self.assertEqual(ids[0], "b-bare")
         self.assertTrue(all(row["evidence"]["combo_demoted"] for row in ranked if row["sku_id"] != "b-bare"))
+
+    def test_model_without_strap_bare_shell_wins_and_stays_in_review_window(self):
+        # Same score, combo sku ids sort first. The review window is 4, so an
+        # undemoted tie eliminates the bare shell (FN) instead of ranking it
+        # second (near). Product-title 掛繩 must not count as a request.
+        skus = [
+            _sku("a-combo", "黑色+掛繩", "苹果16"),
+            _sku("b-combo", "黑色+掛鏈", "苹果16"),
+            _sku("c-combo", "黑色+手機繩", "苹果16"),
+            _sku("d-combo", "黑色掛繩", "苹果16"),
+            _sku("z-bare", "黑色", "苹果16"),
+        ]
+        ids, ranked = self._top("黑色,16", skus, product_name="iPhone 手機殼 附掛繩")
+        self.assertEqual(ids[0], "z-bare")
+        self.assertIn("z-bare", ids)
+        self.assertLessEqual(len(ids), 4)
+        bare = ranked[0]
+        self.assertFalse(bare["evidence"]["combo_demoted"])
+        self.assertTrue(all(row["evidence"]["combo_demoted"] for row in ranked if row["sku_id"] != "z-bare"))
+        self.assertGreater(bare["deterministic_score"], ranked[1]["deterministic_score"])
 
     def test_explicit_strap_request_keeps_shell_axis_combo(self):
         skus = [

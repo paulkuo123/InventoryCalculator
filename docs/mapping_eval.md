@@ -57,7 +57,7 @@ python3 -m mapping_eval run \
 
 缺少 `procurement.db` 時結束碼為 **2**。
 
-裸殼 vs 掛繩這刀合進 main 之後，用同一 seed 重跑（**不寫 Golden、不開 auto_approve**）。先對 `#118`（`1540d45`）留下的 sample500 與全表目錄做 `compare`，再看 Top-1／FN／綠燈，以及 near-miss 裡「單殼 vs 殼+掛繩」是否減少。沒有這兩個 baseline 目錄就不要宣稱數字變好。
+#118 之後「單殼 vs 掛繩／組合」這一簇大約 near 72 + FN 35（約 107 筆；分堆報告不在 repo）。合進 main 之後用同一 seed 重跑（**不寫 Golden、不開 auto_approve**）。`--baseline` 指到 `1540d45` 那次 sample500 與全表目錄；目錄名不同就改路徑。沒有 baseline 就不要宣稱 Top-1／FN／綠燈變好。看這一簇是否減少；若只救 1–2 筆或綠燈變差，縮回兄弟規則。
 
 ```bash
 python3 -m mapping_eval run \
