@@ -39,7 +39,7 @@ python -m mapping_eval compare \
   --candidate data/mapping_eval/B
 ```
 
-資料來源：`golden_table.json` 中 `1688_mapping_status == "approved"`，且該 `1688_offer_id` 在 `alibaba_offer_snapshots` 有 `status='ok'` 的列。Ground truth 是 `1688_sku_name` + `1688_sku_second_name`（或以 `1688_sku_id` 對上候選）。評估時會隱藏答案，只給 `product_name`、`model_name` 與該 offer 的 SKU 清單。名稱比對走共用 `normalize_text`：結尾的 `>`／`&gt`／全形 `＞` 會先轉成逗號再剝掉，避免快照 `奶白綠野千鸟格>` 對不上 Golden `奶白 绿野千鸟格`；中間的 `>` 仍當欄位分隔。
+資料來源：`golden_table.json` 中 `1688_mapping_status == "approved"`，且該 `1688_offer_id` 在 `alibaba_offer_snapshots` 有 `status='ok'` 的列。Ground truth 是 `1688_sku_name` + `1688_sku_second_name`（或以 `1688_sku_id` 對上候選）。評估時會隱藏答案，只給 `product_name`、`model_name` 與該 offer 的 SKU 清單。名稱比對走共用 `normalize_text`：結尾的 `>`／`&gt`／全形 `＞` 會先轉成逗號再剝掉，避免快照 `奶白綠野千鸟格>` 對不上 Golden `奶白 绿野千鸟格`；中間的 `>` 仍當欄位分隔。裝飾用括號（【】等）、表情符號與結尾句點會去掉；包住的「單殼／裸殼」註記也去掉，但 `45mm裸殼` 這種尺寸保留。顏色／款式另做結構對齊（同一字的簡繁，含髮帶折成发帶、麵包折成面包，以免動到鏡面；邊色色相、刺繡貼前的色名、一字縮寫如海棠粉／棠粉、連字號詞序），掛繩／組合後綴相對單殼降權。這不改 iPhone base／Pro／Pro Max 層級，也不把別名寫成單一商品色名，也不把白邊與黑邊、奶酪白與豆粉色併成同色。
 
 合後兩段驗證（**不寫 Golden、不開 auto_approve**；分母以產出 `run_meta.n_input`／`n_scorable` 為準）：
 

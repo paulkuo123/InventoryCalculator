@@ -90,6 +90,10 @@ HISTORICAL_SUPPORT_SATURATION = 3
 # the dedicated base/pro/promax row the shop owner clicked.
 PHONE_TIER_EXACT_BONUS = 20
 PHONE_TIER_SUPERSET_BONUS = 8
+# Smaller than the exact-vs-superset phone-tier gap (12) so colour ties break
+# without reordering base / Pro / Pro Max.
+STYLE_RANK_BONUS_CAP = 6
+COMBO_SUFFIX_PENALTY = 25
 _PHONE_BRAND_PREFIXES = ("iphone", "apple", "苹果", "蘋果")
 _PHONE_TOKEN_RE = re.compile(
     r"\d{1,2}(?:promax|pro|max|plus|mini|air|e)?|xr|xs|max|pro|plus|se\d*"
@@ -194,6 +198,31 @@ CHAR_TRANSLATION = str.maketrans({
     "挂": "掛", "线": "線", "带": "帶", "号": "號", "银": "銀",
     "钢": "鋼", "军": "軍", "规": "規", "壳": "殼", "贴": "貼",
     "镜": "鏡", "圆": "圓", "雙": "双", "機": "机", "頭": "头",
+    "边": "邊", "围": "圍", "绣": "繡", "蔷": "薔", "烟": "煙",
+    "气": "氣", "乱": "亂", "铃": "鈴", "铛": "鐺", "涂": "塗",
+    "鸦": "鴉", "压": "壓", "单": "單", "苹": "蘋", "实": "實",
+    "组": "組", "丝": "絲", "贝": "貝", "亚": "亞", "华": "華",
+    "东": "東", "车": "車", "门": "門", "风": "風", "云": "雲",
+    "电": "電", "卫": "衛", "护": "護", "国": "國",
+    # Further generic 簡繁. Simplified → traditional when both scripts occur.
+    # 頭→头, 機→机, 雙→双 stay simplified: that is already the canonical side.
+    # 麵/髮/鬍/乾 fold onto 面/发/胡/干 so 鏡面, 發芽, and 饼干/餅乾 meet
+    # without turning 面 into 麵 or 发 into 髮/發.
+    "纹": "紋", "结": "結", "镀": "鍍", "闪": "閃", "满": "滿", "皱": "皺",
+    "韩": "韓", "袜": "襪", "脸": "臉", "莱": "萊", "爷": "爺", "樱": "櫻",
+    "过": "過", "雾": "霧", "鸟": "鳥", "块": "塊", "柠": "檸", "葱": "蔥",
+    "飞": "飛", "乌": "烏", "龟": "龜", "树": "樹", "懒": "懶", "狮": "獅",
+    "猪": "豬", "椭": "橢", "麦": "麥", "叶": "葉", "开": "開", "运": "運",
+    "达": "達", "鸭": "鴨", "饼": "餅", "裤": "褲", "拥": "擁", "码": "碼",
+    "个": "個", "体": "體", "画": "畫", "装": "裝", "罗": "羅", "软": "軟",
+    "绒": "絨", "礼": "禮", "盘": "盤", "编": "編", "织": "織", "远": "遠",
+    "兽": "獸", "签": "籤", "标": "標", "对": "對", "无": "無", "枪": "槍",
+    "晕": "暈", "键": "鍵", "笔": "筆", "后": "後", "经": "經", "夹": "夾",
+    "级": "級", "灵": "靈", "钩": "鉤", "鱼": "魚", "马": "馬", "洁": "潔",
+    "适": "適", "龙": "龍", "阳": "陽", "质": "質", "鸡": "雞", "鲸": "鯨",
+    "鲨": "鯊", "领": "領", "钱": "錢", "简": "簡", "柜": "櫃", "弯": "彎",
+    "鹅": "鵝",
+    "麵": "面", "髮": "发", "鬍": "胡", "乾": "干", "隻": "只", "鍊": "鏈",
 })
 
 COLOR_SYNONYMS = {
@@ -336,6 +365,22 @@ def normalize_id(value: Any) -> str:
     return text
 
 
+# Decorative wrappers only. ASCII () and ``+`` stay: they carry combo and
+# disclaimer structure. 45mm裸殼 stays intact; only a wrapped 單殼/裸殼 note drops.
+_DECORATIVE_BRACKET_RE = re.compile(r"[【】「」『』［］\[\]]")
+_WRAPPED_SHELL_NOTE_RE = re.compile(r"【單殼】|【裸殼】|\(單殼\)|\(裸殼\)")
+
+
+def _is_decorative_symbol(ch: str) -> bool:
+    """Emoji, enclosed marks such as ㉿, and leftover emoji joiners."""
+    code = ord(ch)
+    if unicodedata.category(ch) == "So":
+        return True
+    if 0x2460 <= code <= 0x24FF or 0x3200 <= code <= 0x32FF:
+        return True
+    return ch in "\u200d\ufe0e\ufe0f"
+
+
 def normalize_text(value: Any) -> str:
     """Compact SKU labels for equality (whitespace, 簡繁, field separators).
 
@@ -343,11 +388,16 @@ def normalize_text(value: Any) -> str:
     separator.  After those become commas, a trailing separator with no following
     field is junk: snapshot ``奶白綠野千鸟格>`` must equal Golden
     ``奶白 绿野千鸟格``.  Mid-string ``>`` stays a comma so ``白色>L`` still
-    tokenizes as two parts.
+    tokenizes as two parts.  Bracket wrappers, emoji, and a trailing dot are
+    decoration (``圓形【鏡子】``, ``少女粉.``).  A wrapped ``(單殼)`` / ``【裸殼】``
+    note is not a colour; a size such as ``45mm裸殼`` is kept.
     """
     text = html.unescape(unicodedata.normalize("NFKC", str(value or ""))).translate(CHAR_TRANSLATION)
     text = re.sub(r"\s+", "", text).replace("，", ",").replace("、", ",").replace("＞", ",").replace(">", ",")
-    return text.lower().strip().rstrip(",")
+    text = _WRAPPED_SHELL_NOTE_RE.sub("", text)
+    text = _DECORATIVE_BRACKET_RE.sub("", text)
+    text = "".join(ch for ch in text if not _is_decorative_symbol(ch))
+    return text.lower().strip().rstrip(",.。")
 
 
 def display_text(value: Any) -> str:
@@ -562,6 +612,244 @@ def _strip_sku_code(value: Any) -> str:
     return re.sub(r"^[a-z0-9._-]+(?=[\u3400-\u9fff])", "", text)
 
 
+# Structural shell words. They describe the case body, not which print / edge
+# colour the shopper picked, so they must not decide a sibling colour.
+_SHELL_FILLERS = frozenset({
+    "磁吸", "壓克力", "亞克力", "直邊", "奶油殼", "透明", "手機殼", "保護殼",
+    "防摔殼", "軟殼", "硬殼", "全包", "單殼", "裸殼", "刺繡貼", "掛繩", "掛鏈",
+    "手機繩", "斜挎", "斜跨",
+})
+_STYLE_LEXICON = tuple(sorted(_SHELL_FILLERS | {"鏡面", "磨砂", "亮面", "愛心", "貓咪", "小熊"}, key=len, reverse=True))
+_HUE_CHARS = frozenset("粉白黑綠紫藍紅黃灰棕咖金銀")
+_EDGE_TOKEN_RE = re.compile(
+    r"^(?:淡|淺|深)?(?P<hue>[粉白黑綠紫藍紅黃灰棕咖金銀])膚?色?邊$"
+)
+_EDGE_SEARCH_RE = re.compile(
+    r"(?:淡|淺|深)?[粉白黑綠紫藍紅黃灰棕咖金銀]膚?色?邊"
+)
+_EMBROIDERY_SUFFIX = "刺繡貼"
+_MOTIF_ANIMALS = frozenset("狗熊貓兔")
+_DISCLAIMER_MARKERS = ("實品", "偏皮", "偏色", "適用", "備註", "說明", "單殼", "裸殼", "不含", "單顆", "單個", "單只", "注意")
+_COMBO_RE = re.compile(r"(掛繩|掛鏈|手機繩|斜挎|斜跨|掛件|套裝|含繩|配繩|送繩|殼\+|殼＋|\+繩|\+鏈|＋繩)")
+_STYLE_SPLIT_RE = re.compile(r"[-－—_+＋/／|｜]+")
+
+
+def _paren_is_disclaimer(inner: str) -> bool:
+    text = str(inner or "").strip()
+    if not text:
+        return True
+    return any(marker in text for marker in _DISCLAIMER_MARKERS)
+
+
+def _strip_non_color_notes(text: str) -> str:
+    """Drop parenthetical disclaimers such as ``(實品偏皮膚色)`` or ``(單殼)``."""
+    def repl(match: re.Match) -> str:
+        return "" if _paren_is_disclaimer(match.group(1)) else match.group(0)
+
+    return re.sub(r"\(([^()]*)\)", repl, str(text or ""))
+
+
+def _edge_hue(token: str) -> str:
+    match = _EDGE_TOKEN_RE.fullmatch(str(token or ""))
+    return match.group("hue") if match else ""
+
+
+def _abbreviated_color_equal(left: str, right: str) -> bool:
+    """One leading character may be dropped (海棠粉 / 棠粉) but not a hue prefix.
+
+    ``海藍色`` must stay distinct from ``藍色``, and ``豆粉色`` from ``粉色``.
+    """
+    if left.endswith(right) and len(left) == len(right) + 1:
+        short = right
+    elif right.endswith(left) and len(right) == len(left) + 1:
+        short = left
+    else:
+        return False
+    if len(short) < 2 or short[0] in _HUE_CHARS:
+        return False
+    return short[-1] in _HUE_CHARS or short.endswith("色")
+
+
+def _color_prefixed_equal(left: str, right: str) -> bool:
+    """``古董白`` + style name still matches the bare style token."""
+    pairs = ((left, right), (right, left))
+    for short, longer in pairs:
+        if len(short) < 2 or not longer.endswith(short) or len(longer) <= len(short):
+            continue
+        prefix = longer[: -len(short)]
+        if 2 <= len(prefix) <= 4 and (prefix[-1] in _HUE_CHARS or prefix.endswith("色")):
+            return True
+    return False
+
+
+def _tokens_equal(left: str, right: str) -> bool:
+    if left == right:
+        return True
+    left_hue = _edge_hue(left)
+    right_hue = _edge_hue(right)
+    if left_hue and right_hue:
+        return left_hue == right_hue
+    if _abbreviated_color_equal(left, right):
+        return True
+    return _color_prefixed_equal(left, right)
+
+
+def _lexicon_segment(piece: str) -> List[str]:
+    tokens: List[str] = []
+    index = 0
+    length = len(piece)
+    while index < length:
+        match = ""
+        for word in _STYLE_LEXICON:
+            if piece.startswith(word, index):
+                match = word
+                break
+        if match:
+            tokens.append(match)
+            index += len(match)
+            continue
+        end = index + 1
+        while end < length and not any(piece.startswith(word, end) for word in _STYLE_LEXICON):
+            end += 1
+        chunk = piece[index:end]
+        if chunk:
+            tokens.append(chunk)
+        index = end
+    return tokens
+
+
+def _split_embroidery(piece: str) -> Optional[Tuple[str, str]]:
+    if not piece.endswith(_EMBROIDERY_SUFFIX):
+        return None
+    body = piece[: -len(_EMBROIDERY_SUFFIX)]
+    for motif_len in (3, 2, 4):
+        if len(body) <= motif_len:
+            continue
+        motif = body[-motif_len:]
+        color = body[:-motif_len]
+        if motif[-1] not in _MOTIF_ANIMALS:
+            continue
+        if 2 <= len(color) <= 6 and (color[-1] in _HUE_CHARS or color.endswith("色")):
+            return color, motif
+    return None
+
+
+def _segment_piece(piece: str) -> List[str]:
+    if not piece:
+        return []
+    embroidery = _split_embroidery(piece)
+    if embroidery:
+        color, motif = embroidery
+        return _segment_piece(color) + [motif]
+    tokens: List[str] = []
+    cursor = 0
+    for match in _EDGE_SEARCH_RE.finditer(piece):
+        if match.start() > cursor:
+            tokens.extend(_lexicon_segment(piece[cursor:match.start()]))
+        tokens.append(match.group(0))
+        cursor = match.end()
+    if cursor < len(piece):
+        tokens.extend(_lexicon_segment(piece[cursor:]))
+    elif not tokens:
+        tokens.extend(_lexicon_segment(piece))
+    return [token for token in tokens if token]
+
+
+def _style_tokens(value: Any) -> List[str]:
+    """Colour / print tokens after 簡繁, separators, and disclaimer notes."""
+    text = _strip_non_color_notes(_strip_sku_code(value))
+    tokens: List[str] = []
+    for piece in re.split(r"[,，]+", text):
+        for sub in _STYLE_SPLIT_RE.split(piece):
+            sub = sub.strip()
+            if sub:
+                tokens.extend(_segment_piece(sub))
+    return tokens
+
+
+def _is_distinctive_style_token(token: str) -> bool:
+    if len(token) < 2 or token in _SHELL_FILLERS:
+        return False
+    return bool(re.search(r"[\u3400-\u9fff]", token))
+
+
+def _distinctive_style_tokens(value: Any) -> List[str]:
+    return [token for token in _style_tokens(value) if _is_distinctive_style_token(token)]
+
+
+def _core_style_tokens_align(source: Any, candidate: Any) -> bool:
+    """True when every distinctive source token is covered by the candidate.
+
+    Coverage is one-way: ``鏡面愛心`` fits inside ``鏡面奶油殼-透明-塗鴉愛心``,
+    while a different print such as ``磨砂愛心`` does not. Extra candidate
+    tokens do not have to appear in the source.
+    """
+    source_tokens = _distinctive_style_tokens(source)
+    if not source_tokens:
+        return False
+    candidate_tokens = _style_tokens(candidate)
+    if not candidate_tokens:
+        return False
+    return all(
+        any(_tokens_equal(src, cand) for cand in candidate_tokens)
+        for src in source_tokens
+    )
+
+
+def _style_rank_bonus(source: Any, candidate: Any) -> int:
+    """Prefer the sku_name whose unmatched print tail is shorter.
+
+    Used only to break ties among candidates that already cover the source
+    tokens (塗鴉愛心 vs lucky彩色愛心). Capped below the phone-tier gap.
+    """
+    source_tokens = _distinctive_style_tokens(source)
+    if not source_tokens or not _core_style_tokens_align(source, candidate):
+        return 0
+    extras = []
+    for token in _style_tokens(candidate):
+        if len(token) < 2 or token in _SHELL_FILLERS or token.isdigit():
+            continue
+        if any(_tokens_equal(src, token) for src in source_tokens):
+            continue
+        extras.append(token)
+    extra_len = sum(len(token) for token in extras)
+    return max(0, STYLE_RANK_BONUS_CAP - min(STYLE_RANK_BONUS_CAP, extra_len))
+
+
+def _text_asks_for_combo(value: Any) -> bool:
+    text = normalize_text(value)
+    if "單殼" in text or "裸殼" in text or "不含掛" in text:
+        return False
+    return bool(_COMBO_RE.search(text))
+
+
+def _sku_is_combo(value: Any) -> bool:
+    return bool(_COMBO_RE.search(normalize_text(value)))
+
+
+def _demote_combo_suffixes(scored: List[Dict[str, Any]], wants_combo: bool) -> None:
+    """Lower 殼+掛繩 only when a style-aligned bare shell is also present.
+
+    A unique bundle stays at its original score so a correct one-candidate
+    green is not pushed under the review threshold. When the model itself
+    asks for a strap, the bare shell is the row that loses the tie.
+    """
+    if wants_combo:
+        anchor = any(row["evidence"].get("is_combo") and row["evidence"].get("style_aligned") for row in scored)
+        demote_combo = False
+    else:
+        anchor = any((not row["evidence"].get("is_combo")) and row["evidence"].get("style_aligned") for row in scored)
+        demote_combo = True
+    if not anchor:
+        return
+    for row in scored:
+        is_combo = bool(row["evidence"].get("is_combo"))
+        if is_combo != demote_combo:
+            continue
+        row["deterministic_score"] = max(1, float(row.get("deterministic_score") or 0) - COMBO_SUFFIX_PENALTY)
+        row["evidence"]["combo_demoted"] = is_combo
+
+
 def _color_synonym_groups(category: Optional[str] = None) -> List[Tuple[str, set]]:
     """Alias groups for the current category, else ``COLOR_SYNONYMS`` fallback."""
     groups = color_alias_groups(category)
@@ -604,7 +892,7 @@ def _synonym_equal(left: str, right: str, category: Optional[str] = None) -> boo
         right_has_color = any(term in right for term in meaningful_values)
         if left_has_color and right_has_color:
             return True
-    return False
+    return _core_style_tokens_align(left, right)
 
 
 def _color_families(value: Any, category: Optional[str] = None) -> List[str]:
@@ -5249,7 +5537,15 @@ class SkuMappingService:
             required = max(1, len(source_parts))
             complete = exact >= required or (exact + loose >= required and required == 1)
             phone_tier = _phone_tier_bonus(model_name, candidate_text) if phone_product and source_phones else 0
-            score = exact * 30 + loose * 10 + (40 if complete else 0) + phone_tier
+            style_sources = [part for part in source_parts if part != "手機型號"]
+            candidate_style = display_text(
+                sku.get("sku_name") or (candidate_parts[0] if candidate_parts else candidate_text)
+            )
+            style_text = ",".join(style_sources)
+            style_bonus = _style_rank_bonus(style_text, candidate_style) if style_sources else 0
+            style_aligned = bool(style_sources) and _core_style_tokens_align(style_text, candidate_style)
+            is_combo = _sku_is_combo(candidate_style)
+            score = exact * 30 + loose * 10 + (40 if complete else 0) + phone_tier + style_bonus
             if score <= 0:
                 continue
             scored.append({
@@ -5275,8 +5571,13 @@ class SkuMappingService:
                     "candidate_parts": candidate_parts,
                     "applied_rules": applied_rules,
                     "phone_tier_bonus": phone_tier,
+                    "style_bonus": style_bonus,
+                    "style_aligned": style_aligned,
+                    "is_combo": is_combo,
+                    "combo_demoted": False,
                 },
             })
+        _demote_combo_suffixes(scored, _text_asks_for_combo(model_name))
         return scored
 
     def generate_candidates(self, model: Dict[str, Any], skus: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
