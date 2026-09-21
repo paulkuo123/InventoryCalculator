@@ -111,7 +111,7 @@ _save_suggestion()          evidence_json 必填欄（TASK 7）
 | `rule_id` | type | field | impl | 效果 |
 |---|---|---|---|---|
 | RULE-0001 | hard | size | `explicit_size_compatible` | 明確 mm 尺寸不同 → 剔除 |
-| RULE-0002 | hard | phone_model | `phone_mismatch` | 代數／Pro／Air 衝突 → 剔除 |
+| RULE-0002 | hard | phone_model | `phone_mismatch` | 代數與精確機型層級（base／Pro／Plus／Pro Max／Air）衝突 → 剔除；斜線列舉替代型號仍可對應 |
 | RULE-0003 | hard | product_code | `alphanumeric_code_mismatch` | 非手機英數代碼衝突 → 剔除 |
 | RULE-0004 | soft | name | `ignore_parenthetical_noise` | 括號噪音 → penalty，不剔除 |
 

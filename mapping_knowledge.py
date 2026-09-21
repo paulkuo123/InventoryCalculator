@@ -54,7 +54,7 @@ DEFAULT_RULES: List[Dict[str, Any]] = [
         "rule_id": "RULE-0002",
         "type": "hard",
         "field": "phone_model",
-        "description": "手機代數 / Pro 與 Pro Max / Air 與非 Air 不同者不可對應",
+        "description": "手機代數與精確機型層級（base／Pro／Plus／Pro Max／Air／Mini）不同者不可對應；斜線列舉的替代型號仍可對應",
         "impl": "phone_mismatch",
         "status": "active",
     },

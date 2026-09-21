@@ -10,6 +10,9 @@ from sku_mapping_service import (
     URL_HEALTH_TTL_SECONDS,
     MappingConflict,
     SkuMappingService,
+    _phone_mismatch,
+    _phone_tier_bonus,
+    _phone_tokens,
     clean_mapping_name,
     display_text,
     main as sku_mapping_main,
@@ -242,6 +245,115 @@ class SkuMappingServiceTest(unittest.TestCase):
         ]
         candidates = self.service.generate_candidates(model, skus)
         self.assertEqual([candidate["sku_id"] for candidate in candidates], ["sku-pro"])
+
+    def test_phone_tokens_treat_apple_prefix_and_screen_size_as_same_base_tier(self):
+        self.assertEqual(_phone_tokens("苹果16"), ["16"])
+        self.assertEqual(_phone_tokens("蘋果16pro"), ["16pro"])
+        self.assertEqual(_phone_tokens("iPhone 16 Pro Max"), ["16promax"])
+        self.assertEqual(_phone_tokens("12(6.1)"), ["12"])
+        self.assertEqual(_phone_tokens("12promax(6.7)"), ["12promax"])
+        self.assertFalse(_phone_mismatch("16", "苹果16"))
+        self.assertFalse(_phone_mismatch("苹果16", "iphone16"))
+        self.assertTrue(_phone_mismatch("16", "苹果16pro"))
+        self.assertTrue(_phone_mismatch("13", "13promax"))
+        self.assertTrue(_phone_mismatch("14", "14pro"))
+        self.assertFalse(_phone_mismatch("17/17pro/17proMax", "iPhone17Pro"))
+        self.assertTrue(_phone_mismatch("17/17pro/17proMax", "iPhone17Air"))
+        self.assertGreater(_phone_tier_bonus("16", "苹果16"), _phone_tier_bonus("16", "iphone16/16plus"))
+
+    def test_exact_phone_tier_preferred_over_pro_and_promax_siblings(self):
+        # Offer 738755883311 pattern: colour + 13 / 13pro / 13promax as separate SKUs.
+        model = {"product_name": "iPhone 手機殼", "model_name": "粉边,13"}
+        skus = [
+            {"sku_id": "pink-13-max", "sku_name": "粉边", "second_name": "13promax", "spec_text": "粉边,13promax", "parts": ["粉边", "13promax"]},
+            {"sku_id": "pink-13-pro", "sku_name": "粉边", "second_name": "13pro", "spec_text": "粉边,13pro", "parts": ["粉边", "13pro"]},
+            {"sku_id": "pink-13", "sku_name": "粉边", "second_name": "13", "spec_text": "粉边,13", "parts": ["粉边", "13"]},
+            {"sku_id": "green-13", "sku_name": "绿边", "second_name": "13", "spec_text": "绿边,13", "parts": ["绿边", "13"]},
+        ]
+        candidates = self.service.generate_candidates(model, skus)
+        ids = [item["sku_id"] for item in candidates]
+        self.assertEqual(ids[0], "pink-13")
+        self.assertNotIn("pink-13-pro", ids)
+        self.assertNotIn("pink-13-max", ids)
+
+        pro_model = {"product_name": "iPhone 手機殼", "model_name": "粉边,13 Pro"}
+        pro_ids = [item["sku_id"] for item in self.service.generate_candidates(pro_model, skus)]
+        self.assertEqual(pro_ids[0], "pink-13-pro")
+        self.assertNotIn("pink-13", pro_ids)
+        self.assertNotIn("pink-13-max", pro_ids)
+
+        max_model = {"product_name": "iPhone 手機殼", "model_name": "粉边,13 Pro Max"}
+        max_ids = [item["sku_id"] for item in self.service.generate_candidates(max_model, skus)]
+        self.assertEqual(max_ids[0], "pink-13-max")
+        self.assertNotIn("pink-13", max_ids)
+        self.assertNotIn("pink-13-pro", max_ids)
+
+    def test_apple_16_second_name_is_not_16pro(self):
+        # Offer 838528968671 pattern: 苹果16 vs 苹果16pro on the same colourway.
+        model = {"product_name": "iPhone 手機殼", "model_name": "鏡面愛心,16"}
+        skus = [
+            {
+                "sku_id": "heart-16-pro",
+                "sku_name": "鏡面奶油殼-透明-涂鸦愛心",
+                "second_name": "苹果16pro",
+                "spec_text": "鏡面奶油殼-透明-涂鸦愛心,苹果16pro",
+                "parts": ["鏡面奶油殼-透明-涂鸦愛心", "苹果16pro"],
+            },
+            {
+                "sku_id": "heart-16",
+                "sku_name": "鏡面奶油殼-透明-涂鸦愛心",
+                "second_name": "苹果16",
+                "spec_text": "鏡面奶油殼-透明-涂鸦愛心,苹果16",
+                "parts": ["鏡面奶油殼-透明-涂鸦愛心", "苹果16"],
+            },
+            {
+                "sku_id": "heart-16-plus",
+                "sku_name": "鏡面奶油殼-透明-涂鸦愛心",
+                "second_name": "苹果16Plus",
+                "spec_text": "鏡面奶油殼-透明-涂鸦愛心,苹果16Plus",
+                "parts": ["鏡面奶油殼-透明-涂鸦愛心", "苹果16Plus"],
+            },
+        ]
+        candidates = self.service.generate_candidates(model, skus)
+        self.assertEqual([item["sku_id"] for item in candidates], ["heart-16"])
+
+        pro_model = {"product_name": "iPhone 手機殼", "model_name": "鏡面愛心,16 Pro"}
+        self.assertEqual(
+            [item["sku_id"] for item in self.service.generate_candidates(pro_model, skus)],
+            ["heart-16-pro"],
+        )
+
+    def test_base_model_does_not_force_only_pro_sibling(self):
+        # If the snapshot only has Pro, a base Shopee SKU must not be mapped onto it.
+        model = {"product_name": "iPhone 手機殼", "model_name": "粉边,14"}
+        skus = [
+            {"sku_id": "pink-14-pro", "sku_name": "粉边", "second_name": "14pro", "spec_text": "粉边,14pro", "parts": ["粉边", "14pro"]},
+            {"sku_id": "pink-14-max", "sku_name": "粉边", "second_name": "14promax", "spec_text": "粉边,14promax", "parts": ["粉边", "14promax"]},
+        ]
+        self.assertEqual(self.service.generate_candidates(model, skus), [])
+        full = self.service._ai_catalog_candidates(skus, offer_id="offer")
+        self.assertEqual(self.service._compatible_ai_candidates(model, full), [])
+
+        guarded = self.service._guard_ai_selection(model, skus, {
+            "source": "deepseek", "decision": "match",
+            "selected_candidate_key": full[0]["candidate_key"], "selected_sku_id": "pink-14-pro",
+            "selected_sku_name": "粉边", "selected_sku_second_name": "14pro",
+            "confidence": 0.9, "warnings": [], "evidence": [],
+        }, full)
+        self.assertEqual(guarded["decision"], "abstain")
+        self.assertIsNone(guarded["selected_sku_id"])
+        self.assertEqual(guarded["safety_override"], "hard_identity_mismatch")
+
+    def test_bare_generation_prefers_base_row_with_screen_size_noise(self):
+        # Offer 626970345636 pattern: Shopee model_name is just "12".
+        model = {"product_name": "iPhone 手機殼", "model_name": "12"}
+        skus = [
+            {"sku_id": "bear-12-max", "sku_name": "古董白托腮奶茶熊", "second_name": "12promax(6.7)", "spec_text": "古董白托腮奶茶熊,12promax(6.7)", "parts": ["古董白托腮奶茶熊", "12promax(6.7)"]},
+            {"sku_id": "bear-12", "sku_name": "古董白托腮奶茶熊", "second_name": "12(6.1)", "spec_text": "古董白托腮奶茶熊,12(6.1)", "parts": ["古董白托腮奶茶熊", "12(6.1)"]},
+            {"sku_id": "bear-13-max", "sku_name": "古董白托腮奶茶熊", "second_name": "13promax", "spec_text": "古董白托腮奶茶熊,13promax", "parts": ["古董白托腮奶茶熊", "13promax"]},
+        ]
+        candidates = self.service.generate_candidates(model, skus)
+        self.assertEqual([item["sku_id"] for item in candidates], ["bear-12"])
 
     def test_watch_size_annotation_does_not_promote_s10_or_wrong_mm(self):
         model = {
