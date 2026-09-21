@@ -85,6 +85,16 @@ PROMPT_VERSION = "2026-09-v2"
 HISTORICAL_EXAMPLE_LIMIT = 5
 FEATURE_SCORE_NORMALIZER = 100.0
 HISTORICAL_SUPPORT_SATURATION = 3
+# Exact device-tier match (16 vs 16, 苹果16 vs iphone16).  Combo SKUs such as
+# iphone16/16plus still pass RULE-0002 via token intersection, but rank below
+# the dedicated base/pro/promax row the shop owner clicked.
+PHONE_TIER_EXACT_BONUS = 20
+PHONE_TIER_SUPERSET_BONUS = 8
+_PHONE_BRAND_PREFIXES = ("iphone", "apple", "苹果", "蘋果")
+_PHONE_TOKEN_RE = re.compile(
+    r"\d{1,2}(?:promax|pro|max|plus|mini|air|e)?|xr|xs|max|pro|plus|se\d*"
+)
+_PHONE_SIGNATURE_RE = re.compile(r"(?<!\d)(\d{1,2})(promax|pro|max|plus|mini|air|e)?")
 # every _save_suggestion() evidence_json must persist these keys.
 # ai.provider / ai.model / ai.effort are required too; null when AI did not run.
 SUGGESTION_EVIDENCE_REQUIRED_FIELDS = (
@@ -310,7 +320,7 @@ def _ai_source_hints(model: Dict[str, Any]) -> Dict[str, Any]:
         "phone_tokens": _phone_tokens(model_name),
         "slash_means_alternatives": True,
         "ignore_noise": ["括號中的單顆／数量／數量／包裝文字"],
-        "model_warnings": ["手機代數不符", "Pro 與 Pro Max 不符", "Air 與非 Air 不符", "商品代碼不符"],
+        "model_warnings": ["手機代數不符", "裸機與 Pro／Pro Max 不符", "Pro 與 Pro Max 不符", "Air 與非 Air 不符", "商品代碼不符"],
     }
 
 
@@ -392,9 +402,27 @@ def _tokens(value: Any) -> List[str]:
     return [part for part in re.split(r"[,|/;：:]", text) if part]
 
 
+def _phone_normalize_for_tokens(value: Any) -> str:
+    """Strip brand prefixes and parenthetical screen-size noise before tokenizing.
+
+    ``苹果16`` / ``iPhone16`` / ``16(6.1)`` are the same base device tier.
+    Parentheses stay field-local: mid-string ``>`` is already a comma via
+    ``normalize_text`` and is not touched here.
+    """
+    text = normalize_text(value)
+    text = re.sub(r"\([^)]*\)", "", text)
+    for prefix in _PHONE_BRAND_PREFIXES:
+        text = text.replace(prefix, "")
+    return text
+
+
 def _phone_tokens(value: Any) -> List[str]:
-    text = normalize_text(value).replace("iphone", "")
-    return re.findall(r"\d{1,2}(?:promax|pro|max|plus|mini|air|e)?|xr|xs|max|pro|plus|se\d*", text)
+    return _PHONE_TOKEN_RE.findall(_phone_normalize_for_tokens(value))
+
+
+def _phone_family(token: str) -> str:
+    match = re.match(r"(\d{1,2})", str(token or ""))
+    return match.group(1) if match else str(token or "")
 
 
 def _size_tokens(value: Any) -> List[str]:
@@ -448,11 +476,16 @@ def _alphanumeric_code_mismatch(source: Any, candidate: Any) -> bool:
 
 
 def _phone_signature(value: Any) -> Tuple[str, str]:
-    text = normalize_text(value).replace("iphone", "")
-    match = re.search(r"(?<!\d)(\d{1,2})(promax|pro|max|plus|mini|air|e)?", text)
-    if not match:
+    text = _phone_normalize_for_tokens(value)
+    match = _PHONE_SIGNATURE_RE.search(text)
+    if match:
+        return match.group(1), match.group(2) or ""
+    tokens = _phone_tokens(value)
+    if not tokens:
         return "", ""
-    return match.group(1), match.group(2) or ""
+    family = _phone_family(tokens[0])
+    variant = tokens[0][len(family):] if tokens[0].startswith(family) else ""
+    return family, variant
 
 
 def _is_phone_product(product_name: str, model_name: str) -> bool:
@@ -467,29 +500,36 @@ def _phone_mismatch(source: str, candidate: str) -> bool:
     if not source_tokens or not candidate_tokens:
         return False
     source_set, candidate_set = set(source_tokens), set(candidate_tokens)
-    # A slash-separated Shopee label such as 17/17pro/17proMax lists
-    # alternatives.  A bare family token (17) therefore permits any 17
-    # variant, while an explicit 11pro must not silently become 11promax.
-    def family(token: str) -> str:
-        match = re.match(r"(\d{1,2})", token)
-        return match.group(1) if match else token
-
-    source_families = {family(token) for token in source_set}
-    candidate_families = {family(token) for token in candidate_set}
+    # Shop owners pick an exact device tier (13 vs 13pro vs 13promax,
+    # 苹果16 vs 苹果16pro).  Slash-separated Shopee labels such as
+    # 17/17pro/17proMax list alternatives: any listed token is compatible.
+    # A bare generation such as only "16" is the base device, not a wildcard
+    # for 16pro / 16promax — do not force a sibling when only Pro exists.
+    source_families = {_phone_family(token) for token in source_set}
+    candidate_families = {_phone_family(token) for token in candidate_set}
     common_families = source_families & candidate_families
     if not common_families:
         return True
     for common in common_families:
-        source_family_tokens = {token for token in source_set if family(token) == common}
-        candidate_family_tokens = {token for token in candidate_set if family(token) == common}
-        # Prefer explicit variant intersection.  A bare source family such as
-        # only "17" remains a wildcard for that family; when the source lists
-        # 17/17pro/17promax, however, 17 Air is not one of the requested models.
+        source_family_tokens = {token for token in source_set if _phone_family(token) == common}
+        candidate_family_tokens = {token for token in candidate_set if _phone_family(token) == common}
         if source_family_tokens & candidate_family_tokens:
             return False
-        if len(source_family_tokens) == 1 and common in source_family_tokens:
-            return False
     return True
+
+
+def _phone_tier_bonus(source: Any, candidate: Any) -> int:
+    """Rank exact device-tier rows above slash-combo siblings that also contain it."""
+    source_tokens = set(_phone_tokens(source))
+    candidate_tokens = set(_phone_tokens(candidate))
+    if not source_tokens or not candidate_tokens:
+        return 0
+    if not (source_tokens & candidate_tokens):
+        return 0
+    extra = candidate_tokens - source_tokens
+    if not extra:
+        return PHONE_TIER_EXACT_BONUS
+    return PHONE_TIER_SUPERSET_BONUS
 
 
 def _model_identity_mismatch(model: Dict[str, Any], candidate: Any) -> bool:
@@ -2891,8 +2931,10 @@ class SkuMappingService:
             return (
                 int(bool(selected_second and second_name == selected_second)),
                 int(bool(source_phone_tokens and source_phone_tokens & phone_tokens)),
+                int(bool(source_phone_tokens) and bool(phone_tokens) and phone_tokens <= source_phone_tokens),
                 int(bool(source_code_tokens and source_code_tokens & code_tokens)),
                 len(selected_phone_tokens & phone_tokens),
+                -len(phone_tokens - source_phone_tokens) if source_phone_tokens else 0,
                 len(selected_code_tokens & code_tokens),
                 -index,
             )
@@ -5206,7 +5248,8 @@ class SkuMappingService:
             # A model with multiple explicit dimensions must match every part.
             required = max(1, len(source_parts))
             complete = exact >= required or (exact + loose >= required and required == 1)
-            score = exact * 30 + loose * 10 + (40 if complete else 0)
+            phone_tier = _phone_tier_bonus(model_name, candidate_text) if phone_product and source_phones else 0
+            score = exact * 30 + loose * 10 + (40 if complete else 0) + phone_tier
             if score <= 0:
                 continue
             scored.append({
@@ -5231,6 +5274,7 @@ class SkuMappingService:
                     "required": required,
                     "candidate_parts": candidate_parts,
                     "applied_rules": applied_rules,
+                    "phone_tier_bonus": phone_tier,
                 },
             })
         return scored

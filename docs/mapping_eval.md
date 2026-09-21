@@ -39,7 +39,21 @@ python -m mapping_eval compare \
   --candidate data/mapping_eval/B
 ```
 
-資料來源：`golden_table.json` 中 `1688_mapping_status == "approved"`，且該 `1688_offer_id` 在 `alibaba_offer_snapshots` 有 `status='ok'` 的列。Ground truth 是 `1688_sku_name` + `1688_sku_second_name`（或以 `1688_sku_id` 對上候選）。評估時會隱藏答案，只給 `product_name`、`model_name` 與該 offer 的 SKU 清單。名稱比對走共用 `normalize_text`：結尾的 `>`／`&gt`／全形 `＞` 會先轉成逗號再剝掉，避免快照 `奶白綠野千鸟格>` 對不上 Golden `奶白 绿野千鸟格`；中間的 `>` 仍當欄位分隔。合併後可用同一 `--sample 500 --seed 42` 重跑對帳（不寫 Golden）。
+資料來源：`golden_table.json` 中 `1688_mapping_status == "approved"`，且該 `1688_offer_id` 在 `alibaba_offer_snapshots` 有 `status='ok'` 的列。Ground truth 是 `1688_sku_name` + `1688_sku_second_name`（或以 `1688_sku_id` 對上候選）。評估時會隱藏答案，只給 `product_name`、`model_name` 與該 offer 的 SKU 清單。名稱比對走共用 `normalize_text`：結尾的 `>`／`&gt`／全形 `＞` 會先轉成逗號再剝掉，避免快照 `奶白綠野千鸟格>` 對不上 Golden `奶白 绿野千鸟格`；中間的 `>` 仍當欄位分隔。
+
+合後兩段驗證（**不寫 Golden、不開 auto_approve**；分母以產出 `run_meta.n_input`／`n_scorable` 為準）：
+
+1. 同一 `--sample 500 --seed 42` 對帳 #116 後基線。
+2. **省略 `--sample`**，跑全部核准且 snapshot `ok` 的可評集（Golden 核准且有 URL 約 3800 列；有 ok 快照的才進 `n_input`）。
+
+```bash
+python3 -m mapping_eval run \
+  --db-path procurement.db \
+  --golden-path golden_table.json \
+  --kb-db <isolated> \
+  --seed 42 \
+  --out data/mapping_eval/full-approved/
+```
 
 缺少 `procurement.db` 時結束碼為 **2**。
 
