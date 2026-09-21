@@ -327,9 +327,17 @@ def normalize_id(value: Any) -> str:
 
 
 def normalize_text(value: Any) -> str:
+    """Compact SKU labels for equality (whitespace, 簡繁, field separators).
+
+    1688 option text often uses ``>`` / ``＞`` / HTML ``&gt`` as a dimension
+    separator.  After those become commas, a trailing separator with no following
+    field is junk: snapshot ``奶白綠野千鸟格>`` must equal Golden
+    ``奶白 绿野千鸟格``.  Mid-string ``>`` stays a comma so ``白色>L`` still
+    tokenizes as two parts.
+    """
     text = html.unescape(unicodedata.normalize("NFKC", str(value or ""))).translate(CHAR_TRANSLATION)
     text = re.sub(r"\s+", "", text).replace("，", ",").replace("、", ",").replace("＞", ",").replace(">", ",")
-    return text.lower().strip()
+    return text.lower().strip().rstrip(",")
 
 
 def display_text(value: Any) -> str:
