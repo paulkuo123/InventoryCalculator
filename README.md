@@ -385,6 +385,7 @@ InventoryCalculator/
 │   ├── ads_cost_margin_design.md   # 廣告引用 1688 成本（設計 only）
 │   ├── ads_sop_review_fable5.md    # 現行廣告 SOP 審閱（2026-09-13）
 │   ├── mapping_eval.md        # 離線評估；2.3 信心分層＋對帳
+│   ├── ai_reviewed_layer2.md  # ai_reviewed 第 2 層弱區；#121 夾片／掛繩與獨立 S/M/L
 │   ├── sku_mapping_knowhow_engine.md
 │   ├── offer_discovery_spike.md  # TASK 9：第 1 層 offer 來源（設計）
 │   ├── offer_discovery.md        # Mapping Engine 2.2：第 1 層唯讀建議

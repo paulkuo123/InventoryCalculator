@@ -82,7 +82,7 @@ python3 -m mapping_eval compare \
   --candidate data/mapping_eval/after-bare-shell-full/
 ```
 
-#119 合進 main 之後，裸殼對掛繩的綠燈合成測通過，但全表 Top-1／FN 相對 #118 **沒有移動**。不要再加寬同一條兄弟降權。`ai_reviewed` 弱區的下一刀是包裝數量、襪子丹尼、吊飾材質詞，見 [`ai_reviewed_layer2.md`](ai_reviewed_layer2.md)。比較色名時會剝掉 `(一顆)`／`(一粒)` 以及黏在色名後的 `單個`（標籤還在才剝）；這不把 `遠峰藍閃粉` 併成 `黑色閃粉`，也不改機型層級。
+#119 合進 main 之後，裸殼對掛繩的綠燈合成測通過，但全表 Top-1／FN 相對 #118 **沒有移動**。不要再加寬同一條兄弟降權。#120 已落地（包裝數量／丹尼／毛絨）；現行說明是 #121 的夾片／掛繩套話與獨立尺碼字母，見 [`docs/ai_reviewed_layer2.md`](ai_reviewed_layer2.md)。比較色名時會剝掉 `(一顆)`／`(一粒)` 以及黏在色名後的 `單個`（標籤還在才剝）；這不把 `遠峰藍閃粉` 併成 `黑色閃粉`，也不改機型層級。
 
 ## CI／無本機 DB（fixture）
 
