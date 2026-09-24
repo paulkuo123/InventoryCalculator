@@ -571,21 +571,6 @@ def rule_is_active(rule_id: str, rules: Optional[Sequence[Dict[str, Any]]] = Non
     return True
 
 
-def iter_active_rules(
-    rule_type: Optional[str] = None,
-    rules: Optional[Sequence[Dict[str, Any]]] = None,
-) -> List[Dict[str, Any]]:
-    payload = list(rules) if rules is not None else load_rules()
-    out = []
-    for row in payload:
-        if not _status_is_active(row.get("status")):
-            continue
-        if rule_type and str(row.get("type") or "") != rule_type:
-            continue
-        out.append(row)
-    return out
-
-
 def _alias_applies_to_category(alias_category: str, product_category: str) -> bool:
     if alias_category in {"", "*"}:
         return True

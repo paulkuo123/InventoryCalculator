@@ -18,7 +18,7 @@ GOLDEN_REPO = ROOT / "golden_table.json"
 sys.path.insert(0, str(ROOT))
 
 from reverse_audit.dry_run import build_expected  # noqa: E402
-from reverse_audit.util import load_json, sha256_file  # noqa: E402
+from reverse_audit.util import sha256_file  # noqa: E402
 from restock_loop.cli import build_parser, main as cli_main  # noqa: E402
 from restock_loop.scan import (  # noqa: E402
     build_scan_report,

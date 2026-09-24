@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 import time
-from typing import Any, Dict, Iterable, List, Mapping, Sequence
+from typing import Any, Dict, List, Mapping, Sequence
 
 from procurement_store import parse_offer_id
 from sku_mapping_service import display_text, mapping_candidate_key, normalize_id
