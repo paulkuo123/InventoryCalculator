@@ -188,8 +188,14 @@ class HomeBootstrapTests(unittest.TestCase):
 
     def test_project_watchlist_bootstrap_drops_sock_product_names(self):
         root = Path(__file__).resolve().parents[1]
+        products_path = root / "shopee_products.json"
+        if not products_path.is_file():
+            # shopee_products.json is gitignored. Golden has the committed
+            # names for the same product ids, so a clean checkout can still
+            # check the watchlist post-condition.
+            products_path = root / "golden_table.json"
         result = load_home_bootstrap(
-            root / "shopee_products.json",
+            products_path,
             root / "watchlists" / "personal_watchlist.json",
             root / "golden_table.json",
             root / "watchlists" / "personal_watchlist_exclusions.json",

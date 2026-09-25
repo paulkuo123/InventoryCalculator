@@ -10,7 +10,12 @@ class CartAuditRegressionTests(unittest.TestCase):
         text = 'g-2086淡粉色--硅胶笔尖(一粒裸装,散装,无opp袋装),applepencil'
         expected = ['g-2086淡粉色--硅胶笔尖(一粒裸装,散装,无opp袋装)', 'applepencil']
         self.assertEqual(spec_parts(text), expected)
-        self.assertEqual(_spec_parts(text), expected)
+        # _spec_parts runs normalize_text, which folds 簡體 packaging words
+        # (笔/装/无) for comparison. The parenthetical stays one dimension.
+        self.assertEqual(
+            _spec_parts(text),
+            ['g-2086淡粉色--硅胶筆尖(一粒裸裝,散裝,無opp袋裝)', 'applepencil'],
+        )
         self.assertEqual(spec_parts('A（散装，单个）>B'), ['A（散装，单个）', 'B'])
 
     def test_existing_dimension_separators_and_labels(self):
