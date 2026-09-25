@@ -19,7 +19,6 @@ from mapping_kb_import import (
     SKIP_NOT_APPROVED,
     classify_golden_table,
     isolated_db_filename,
-    main as harvest_main,
     refuse_live_db_message,
     refuse_no_approve_message,
     run_dry_run,

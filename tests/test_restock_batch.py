@@ -21,7 +21,6 @@ from restock_batch import (
     build_report,
     classify_job_result,
     create_state,
-    extract_failure_records,
     find_current_batch,
     finalize_status,
     is_skippable_start_failure,

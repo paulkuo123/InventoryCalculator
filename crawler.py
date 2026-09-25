@@ -1336,9 +1336,6 @@ class ShopeeCrawler:
         self._capture_debug_html("ads_latest_reports_panel_not_found")
         return False
 
-    def _escape_js(self, text):
-        return json.dumps(text, ensure_ascii=False)
-
     def _collect_ads_report_entries(self):
         entries = []
         rows = self.page.locator('[data-testid="export-data-result-item"]')
@@ -2275,34 +2272,6 @@ class ShopeeCrawler:
             print(f"尋找展開圖標時發生錯誤: {e}")
             return []
 
-    def _is_expanded_svg(self, svg_element):
-        """
-        檢查 SVG 元素是否已經展開
-        
-        Args:
-            svg_element: SVG 元素
-            
-        Returns:
-            bool: 如果已展開則返回 True，否則返回 False
-        """
-        try:
-            # 檢查 SVG 是否旋轉 90 度（表示已展開）
-            transform = svg_element.get_attribute("style")
-            if transform and "rotate(90deg)" in transform:
-                return True
-
-            # 檢查父元素是否有展開標記
-            parent = self.driver.execute_script(
-                "return arguments[0].parentNode;", svg_element)
-            if parent:
-                parent_class = parent.get_attribute("class") or ""
-                if "expanded" in parent_class.lower():
-                    return True
-
-            return False
-        except:
-            return False
-
     def expand_datacenter_rows(self):
         """
         展開所有表格行，點擊找到的展開圖標。
@@ -2323,73 +2292,6 @@ class ShopeeCrawler:
 
         except Exception as e:
             print(f"展開表格行時發生錯誤: {e}")
-            return 0
-
-    def find_expand_buttons(self):
-        """
-        尋找頁面中標有「展開全部」的按鈕
-        Returns:
-            list: 包含「展開全部」文字的按鈕元素列表
-        """
-        try:
-            # 使用 XPath 查找按鈕
-            expand_buttons = self.driver.find_elements(
-                By.XPATH, "//button[.//span[contains(., '展開全部')]]")
-
-            # 過濾出可見的按鈕
-            visible_buttons = [
-                button for button in expand_buttons if button.is_displayed()
-            ]
-
-            print(f"總共找到 {len(visible_buttons)} 個標有「展開全部」的按鈕")
-            return visible_buttons
-        except Exception as e:
-            print(f"尋找「展開全部」按鈕時出錯: {e}")
-            return []
-
-    def expand_product_list_rows(self):
-        """
-        點擊所有標有「展開全部」的按鈕
-        Returns:
-            int: 成功點擊的按鈕數量
-        """
-        try:
-            total_expanded = 0
-            expand_buttons = self.find_expand_buttons()
-
-            if not expand_buttons:
-                print("未找到標有「展開全部」的按鈕")
-                return 0
-
-            # 批量處理按鈕，減少單獨滾動次數
-            for i, button in enumerate(expand_buttons, 1):
-                try:
-                    # 使用更高效的滾動方式，不使用平滑滾動以節省時間
-                    self.driver.execute_script(
-                        "arguments[0].scrollIntoView({block: 'center', behavior: 'auto'});",
-                        button)
-
-                    # 減少等待時間，使用更短的超時
-                    try:
-                        WebDriverWait(self.driver, 2).until(
-                            EC.element_to_be_clickable(button))
-                    except:
-                        # 如果等待超時，直接嘗試點擊
-                        pass
-
-                    # 使用JavaScript點擊，避免可能的元素遮擋問題
-                    self.driver.execute_script("arguments[0].click();", button)
-                    print(f"  - 已點擊第 {i} 個「展開全部」按鈕")
-                    total_expanded += 1
-
-                except Exception as e:
-                    print(f"  - 點擊第 {i} 個「展開全部」按鈕失敗: {e}")
-                    continue
-
-            print(f"總共成功點擊了 {total_expanded} 個「展開全部」按鈕")
-            return total_expanded
-        except Exception as e:
-            print(f"點擊「展開全部」按鈕時發生錯誤: {e}")
             return 0
 
     def get_product_info(self, product_row):
