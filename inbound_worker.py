@@ -3,10 +3,9 @@ import argparse
 import json
 import os
 import re
-import sys
 import time
 from collections import defaultdict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from urllib.parse import quote, urlparse, parse_qs
 
 from playwright.sync_api import sync_playwright

@@ -99,7 +99,6 @@ _PHONE_BRAND_PREFIXES = ("iphone", "apple", "苹果", "蘋果")
 _PHONE_TOKEN_RE = re.compile(
     r"\d{1,2}(?:promax|pro|max|plus|mini|air|e)?|xr|xs|max|pro|plus|se\d*"
 )
-_PHONE_SIGNATURE_RE = re.compile(r"(?<!\d)(\d{1,2})(promax|pro|max|plus|mini|air|e)?")
 # every _save_suggestion() evidence_json must persist these keys.
 # ai.provider / ai.model / ai.effort are required too; null when AI did not run.
 SUGGESTION_EVIDENCE_REQUIRED_FIELDS = (
@@ -524,19 +523,6 @@ def _alphanumeric_code_mismatch(source: Any, candidate: Any) -> bool:
             if min(len(source_code), len(candidate_code)) >= 2 and (source_code.startswith(candidate_code) or candidate_code.startswith(source_code)):
                 return True
     return False
-
-
-def _phone_signature(value: Any) -> Tuple[str, str]:
-    text = _phone_normalize_for_tokens(value)
-    match = _PHONE_SIGNATURE_RE.search(text)
-    if match:
-        return match.group(1), match.group(2) or ""
-    tokens = _phone_tokens(value)
-    if not tokens:
-        return "", ""
-    family = _phone_family(tokens[0])
-    variant = tokens[0][len(family):] if tokens[0].startswith(family) else ""
-    return family, variant
 
 
 def _is_phone_product(product_name: str, model_name: str) -> bool:

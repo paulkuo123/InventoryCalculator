@@ -29,11 +29,6 @@ def _cookie_host(domain: str) -> str:
     return str(domain or "").lstrip(".").lower()
 
 
-def _is_1688_cookie_domain(domain: str) -> bool:
-    host = _cookie_host(domain)
-    return host == "1688.com" or host.endswith(".1688.com")
-
-
 def _domain_preference(domain: str) -> int:
     """Higher wins when the same cookie name exists on multiple domains.
 

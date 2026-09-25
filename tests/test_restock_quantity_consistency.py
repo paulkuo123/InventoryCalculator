@@ -12,7 +12,6 @@ import json
 import subprocess
 import unittest
 import sys
-import os
 from pathlib import Path
 
 # 將父目錄加入路徑

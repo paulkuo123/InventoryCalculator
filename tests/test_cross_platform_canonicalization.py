@@ -3,7 +3,6 @@
 驗證 Linux/Windows 上的 opencc fallback 行為，以及對應的 catalog_mapping_check
 在繁簡混用情境下能正確匹配。同時確認 PR #18 的 pre-click 保護與缺貨跳過邏輯不受影響。
 """
-import sys
 import unittest
 from unittest.mock import patch
 
