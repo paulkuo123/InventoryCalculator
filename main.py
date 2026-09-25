@@ -2270,19 +2270,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             return 5
         return ((qty + 5) // 10) * 10
 
-    def _fallback_sku_selection(self, product_id, model_name):
-        sku_mapping = self._sku_mapping_for_product(product_id)
-        selection = sku_mapping.get(str(model_name or "").strip(), {})
-        if not isinstance(selection, dict):
-            return {"primary": str(selection or "").strip(), "secondary": ""}
-        return {
-            "primary": str(selection.get("primary") or "").strip(),
-            "secondary": str(selection.get("secondary") or "").strip(),
-        }
-
-    def _fallback_sku_name(self, product_id, model_name):
-        return self._fallback_sku_selection(product_id, model_name)["primary"]
-
     def _has_sku_mapping(self, product_id):
         return bool(self._sku_mapping_for_product(product_id))
 

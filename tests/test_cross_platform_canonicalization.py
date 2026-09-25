@@ -11,7 +11,6 @@ from alibaba_restocker import (
     canonicalize_chinese,
     catalog_mapping_check,
     ChineseCanonicalizationUnavailable,
-    _format_comparison_text,
 )
 
 
@@ -66,9 +65,9 @@ class TestCanonicalizeChinese(unittest.TestCase):
 
     @_with_opencc_only
     def test_matte_cream_bear_traditional_to_simplified(self):
-        """鏡梳案例：哑光款-奶黃小熊 → 哑光款-奶黄小熊（經 _format_comparison_text 後連字符被移除）。"""
+        """鏡梳案例：哑光款-奶黃小熊 → 哑光款-奶黄小熊（_format_comparison_text 做 NFKC／去空白，並將 | , ， ; ； > ＞ 折成 >；連字符保留）。"""
         result = canonicalize_chinese("哑光款-奶黃小熊")
-        # _format_comparison_text 不會轉換連字符，結果應包含「奶黄」
+        # _format_comparison_text：NFKC、去除空白，並將 | , ， ; ； > ＞ 折成 >；連字符保留，結果應包含「奶黄」
         self.assertIn("奶黄", result)
 
     @_with_opencc_only

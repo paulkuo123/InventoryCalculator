@@ -10,7 +10,7 @@ from pathlib import Path
 from cart_reconciliation import (
     approve, build_manifest, build_report, calculation, create_run, digest,
     final_audit, locked_run, note_cause, prepare_next, quantity_in, record_after,
-    render_report, replan_mapping, snapshot,
+    replan_mapping, snapshot,
 )
 from restock_rules import calculated_restock_details, round_calculated_restock_qty
 
