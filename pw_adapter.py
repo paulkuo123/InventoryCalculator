@@ -249,26 +249,3 @@ class EC:
                 pass
             return None
         return _check
-
-    @staticmethod
-    def element_to_be_clickable(element_or_locator):
-        if isinstance(element_or_locator, tuple):
-            by, value = element_or_locator
-            def _check(driver):
-                try:
-                    el = driver.find_element(by, value)
-                    if el.is_displayed():
-                        return el
-                except Exception:
-                    pass
-                return None
-            return _check
-        else:
-            def _check(driver):
-                try:
-                    if element_or_locator.is_displayed():
-                        return element_or_locator
-                except Exception:
-                    pass
-                return None
-            return _check
