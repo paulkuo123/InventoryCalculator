@@ -9,7 +9,7 @@ from config_loader import load_openai_config_value
 
 
 def inbound_write_enabled(value: str) -> bool:
-    """Same truthiness as main.InventoryHTTPRequestHandler._inbound_write_enabled."""
+    """Same truthiness as main.CustomHandler._inbound_write_enabled."""
     return str(value).strip().lower() in ("1", "true", "yes", "on")
 
 

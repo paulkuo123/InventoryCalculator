@@ -46,7 +46,7 @@
 | 元件 | 實際行為 |
 |---|---|
 | `python main.py` | 開 HTTP `8080`，**沒有排程**。兩支實例不能並存（埠被佔時拒絕啟動，不會殺掉佔用行程）。 |
-| `GET /search?keyword=…` → `InventoryHTTPRequestHandler.run_crawler` | 活的蝦皮爬蟲：`crawler.ShopeeCrawler.run` 先 `get_all_products_info()` 拉賣家中心商品列，再 `get_monthly_sales(keyword)` 用數據中心「搜尋商品」框。關鍵字「隔日到貨」是店內品名慣例，**不是**獨立 API。空關鍵字仍會爬。寫入 gitignore 的 `shopee_products.json`。 |
+| `GET /search?keyword=…` → `CustomHandler.run_crawler` | 活的蝦皮爬蟲：`crawler.ShopeeCrawler.run` 先 `get_all_products_info()` 拉賣家中心商品列，再 `get_monthly_sales(keyword)` 用數據中心「搜尋商品」框。關鍵字「隔日到貨」是店內品名慣例，**不是**獨立 API。空關鍵字仍會爬。寫入 gitignore 的 `shopee_products.json`。 |
 | 首頁 `#searchButton` | 同上，即時爬蟲。驗證技能列為禁點。 |
 | Grok Bot routines | 庫存／低水位提醒走 Grok Bot，**不是** Telegram、也**不是**應用內推播。搜「隔日到貨」仍用首頁／`GET /search` 活爬。 |
 | `scripts/run_watchlist_restock.py` | 若 8080 沒人就啟動 `main.py`，等 `GET /api/home/bootstrap` 有商品，開瀏覽器給人看。**預設不加車**。沒有 `--i-approve-watchlist-restock` 時只印任務 1 應補摘要＋「尚未加車」（舊的 `--restock --yes` 不能單獨 POST）。 |
