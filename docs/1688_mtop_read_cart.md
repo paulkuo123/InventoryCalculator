@@ -44,7 +44,7 @@ python -m reverse_audit.mtop_read_cart --cdp http://127.0.0.1:9227
 python -m reverse_audit.mtop_read_cart --cookie-jar /tmp/1688.cookie-jar
 ```
 
-CDP 與 freeze／recorder 相同：`--cdp` 或 `ALIBABA_RESTOCK_CDP`（例如 `http://127.0.0.1:9227`），未設時依序試 `9227`、`9223`。只 attach，不新開、不殺掉 Chrome。computerUse 常見是 `:9227`（`chrome-profile-5`），不是 `:9232`。
+read-cart 與 cart-network recorder 共用 `reverse_audit.cart_network_recon.iter_cdp_endpoints`：`--cdp` 或 `ALIBABA_RESTOCK_CDP`（例如 `http://127.0.0.1:9227`）優先，未設時依序試 `9227`、`9223`。只 attach，不新開、不殺掉 Chrome。computerUse 常見是 `:9227`（`chrome-profile-5`），不是 `:9232`。freeze 的內建順序是 9223／9227，見 [`docs/reverse_audit.md`](reverse_audit.md)（`--cdp` 連不上才退回內建 9223／9227）。
 
 可選：`--json` 印 identity-only JSON；`--out PATH` 寫同一份（仍不含 cookie／token）；`--no-asyncload` 只打 render；`--address-id` 見下方。
 

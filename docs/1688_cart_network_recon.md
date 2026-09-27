@@ -38,7 +38,7 @@ Live 錄製必須在 **Mac／操作者本機、已登入 1688、已開 remote de
 
 ## 怎麼跑
 
-CDP 與 freeze／mutate 相同：`ALIBABA_RESTOCK_CDP`（例如 `http://127.0.0.1:9227`），未設時依序試 `9227`、`9223`。只 attach，不新開 Chrome。
+recorder 的 CDP：`ALIBABA_RESTOCK_CDP`（例如 `http://127.0.0.1:9227`），未設時依序試 `9227`、`9223`（與上一節相同）。freeze 未設環境變數時依序試 `9223`、`9227`，見 [`docs/reverse_audit.md`](reverse_audit.md)。mutate helper `reverse_audit.cart_cdp_ops.cdp_endpoint` 用 `ALIBABA_RESTOCK_CDP`，未設時只連 `http://127.0.0.1:9227`。只 attach，不新開 Chrome。
 
 ```bash
 # CI／離線（不需瀏覽器、不需 1688）
