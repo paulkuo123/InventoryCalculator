@@ -115,6 +115,8 @@ python -m reverse_audit mutate --dir reports/reverse_audit_YYYYMMDD --i-approve-
 | `--sources-only` | freeze／refresh 只凍本地來源，不跑 CDP |
 | `--cdp URL` | 可選，設 `ALIBABA_RESTOCK_CDP`；freeze 會優先連此端點（連不上才退回內建 9223／9227），mutate 腳本直接使用 |
 
+未設 `--cdp` 或 `ALIBABA_RESTOCK_CDP` 時，freeze 的內建順序是 **9223 → 9227**。
+
 ## 水位與範圍
 
 - 範圍：watchlist（套用 exclusions）∩ `shopee_products.json` ∩ `golden_table.json`
