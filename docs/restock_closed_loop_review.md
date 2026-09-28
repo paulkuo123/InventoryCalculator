@@ -151,7 +151,7 @@
 - 蝦皮：cookies 失效 → 爬蟲退出碼 77。
 - 1688 掃描：`EgoBrowser1688._classify_page` 把驗證碼／滑塊／「請先登入」標成 `waiting_for_login`，**不自動過**。
 - 1688 加車：登入／滑塊時保留瀏覽器，`restock_batch` 進 `paused_attention`。
-- 反向 freeze／mutate：要本機已登入 Chrome CDP（預設 9223／9227）。Cloud Agent／CI **不能**當操作者 Chrome。
+- 反向 freeze／mutate：要本機已登入 Chrome CDP。freeze 內建 **9223→9227**；mutate CDP 腳本在 `ALIBABA_RESTOCK_CDP` 未設時只連 `http://127.0.0.1:9227`。Cloud Agent／CI **不能**當操作者 Chrome。
 - AI-4 暫停時 253 列有 **97** 筆卡驗證碼（見 Goal B）— 搜 offer 比開已知 URL 更容易撞 punish。
 
 ### 部分觀察清單
