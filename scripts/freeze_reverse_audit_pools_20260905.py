@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Playwright CDP freeze — read-only cart + order pools (retry 2026-09-05).
 
-CDP endpoint: ALIBABA_RESTOCK_CDP if set (e.g. via `--cdp`), else prefer
-9223 (shared chrome-profile) and fall back to 9227.
+CDP endpoint: ALIBABA_RESTOCK_CDP if set (e.g. via `--cdp`): override tried
+first; if it fails, fall back 9223 then 9227.
 No cart mutations, no deletes, do not kill Chrome.
 """
 from __future__ import annotations
