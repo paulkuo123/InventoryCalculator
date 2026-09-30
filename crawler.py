@@ -294,7 +294,7 @@ class ShopeeCrawler:
                 if not popup_closed_this_round:
                     break
                     
-            except Exception as e:
+            except Exception:
                 time.sleep(0.5)
                 pass
         
@@ -2106,7 +2106,6 @@ class ShopeeCrawler:
             WebDriverWait(self.driver, 2).until(EC.visibility_of(next_button))
 
             # 獲取當前頁面的某些特徵以便檢查是否成功跳轉
-            current_url = self.driver.current_url
             current_page_text = ""
             try:
                 # 嘗試獲取當前頁碼文本
@@ -2201,13 +2200,13 @@ class ShopeeCrawler:
                     # 檢查是否包含 SVG 元素
                     try:
                         # 先嘗試直接找 SVG
-                        svg = icon.find_element(By.TAG_NAME, "svg")
+                        icon.find_element(By.TAG_NAME, "svg")
                     except:
                         # 如果直接找不到，嘗試通過 i 元素找
                         try:
                             i_element = icon.find_element(
                                 By.CLASS_NAME, "el-icon")
-                            svg = i_element.find_element(By.TAG_NAME, "svg")
+                            i_element.find_element(By.TAG_NAME, "svg")
                         except:
                             # 如果還找不到，跳過此元素
                             print("此元素不包含 SVG")
@@ -2333,7 +2332,6 @@ class ShopeeCrawler:
             print("無法取得商品 ID，跳過此行")
             return None
 
-        import json
         golden_info = self.golden_table.get(item_id, {})
 
         # Extract product image URL from golden table
@@ -2602,7 +2600,6 @@ class ShopeeCrawler:
 def main():
     import sys
     import argparse
-    import os
 
     if len(sys.argv) > 1:
         # 使用 argparse 解析命令行參數
@@ -2712,7 +2709,7 @@ def main():
                                 output_path=output_path,
                                 search_keyword=user_input.strip(),
                                 headless=False)
-        products = crawler.run()
+        crawler.run()
 
         # 確保瀏覽器關閉
         try:

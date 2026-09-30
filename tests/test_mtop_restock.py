@@ -254,7 +254,7 @@ class PathBBatchTests(unittest.TestCase):
 
     def test_run_add_via_mtop_with_approve_posts(self):
         calls: List[Dict[str, Any]] = []
-        reader = FakeReader(
+        FakeReader(
             [CartLine(cartId="1", offerId=OFFER, skuId=SKU, qty=1)]
         )
         with tempfile.TemporaryDirectory() as td:
