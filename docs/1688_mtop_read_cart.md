@@ -104,7 +104,7 @@ python -m unittest tests.test_mtop_read_cart
 - 讀車 freeze 仍走 CDP Network：`scripts/freeze_reverse_audit_pools_20260905.py`。
 - Network 偵察／欄位表：`scripts/record_1688_cart_network.py` + [`docs/1688_cart_network_recon.md`](1688_cart_network_recon.md)。
 - 加車／改量／刪列的 **HTTP one-op** 在 Phase 2：`python -m reverse_audit.mtop_mutate`（預設 dry-run；見 [`docs/1688_mtop_mutate.md`](1688_mtop_mutate.md)）。本模組仍只證明「帶 cookie 的 HTTP 讀車」。
-- DOM／CDP 批次 mutate（`python -m reverse_audit mutate`）仍在；兩條路不要混。
+- 預設批次 mutate 是 CDP；只有 `--via-mtop`／`ALIBABA_RESTOCK_VIA_MTOP=1` 才改走 HTTP（見下方水位與 [`docs/1688_mtop_restock.md`](1688_mtop_restock.md) Phase 3）；不要對同一購物車同時跑這兩條路。
 
 ## 水位
 

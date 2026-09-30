@@ -37,6 +37,7 @@ class AdsExportTests(unittest.TestCase):
         trend_configs = self.crawler._build_ads_trend_range_configs()
         combined_order = ADS_EXPORT_RANGE_ORDER + list(trend_configs.keys())
 
+        self.assertEqual(set(summary_configs), {"past_month", "yesterday"})
         self.assertEqual(DEFAULT_TREND_EXPORT_WEEKS, 4)
         self.assertEqual(
             combined_order,

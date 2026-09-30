@@ -365,7 +365,7 @@ class JournalTests(unittest.TestCase):
         self.p["p2"] = {"商品名稱": "書包", "型號": [model("s2")]}
         self.g["p2"] = {"型號": [mapping("s2", "200", "2001")]}
         bag = row("200", "2001", line="bag")
-        state = self.init([row(quantity=30), bag])
+        self.init([row(quantity=30), bag])
         self.g["p2"]["商品名稱"] = "修改後名稱"
         self.gfile.write_text(json.dumps(self.g))
         replan_mapping(self.run, self.gfile, evidence="fixture mapping revision")
