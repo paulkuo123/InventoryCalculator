@@ -2732,7 +2732,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                         logger.error(f"終止子進程 {child.pid} 時出錯: {e}")
 
                 # 等待子進程終止
-                gone, alive = psutil.wait_procs(children, timeout=3)
+                _, alive = psutil.wait_procs(children, timeout=3)
 
                 # 強制終止仍然存活的子進程
                 for p in alive:
