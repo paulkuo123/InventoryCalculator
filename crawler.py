@@ -2598,7 +2598,6 @@ class ShopeeCrawler:
             return {}
 
 def main():
-    import sys
     import argparse
 
     if len(sys.argv) > 1:

@@ -941,7 +941,7 @@ def verify_post_save_stocks(
     observations: Dict[str, int] = {}
     last_error = ""
 
-    for attempt, delay_ms in enumerate(POST_SAVE_STOCK_VERIFY_DELAYS_MS, start=1):
+    for _attempt, delay_ms in enumerate(POST_SAVE_STOCK_VERIFY_DELAYS_MS, start=1):
         page.wait_for_timeout(delay_ms)
         try:
             live_models = read_exact_shopee_product_models(page, product_id, status_path)
