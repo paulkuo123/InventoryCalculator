@@ -2130,8 +2130,6 @@ class SkuMappingService:
             )
             if recomputed_exact:
                 exact = max(exact, recomputed_exact)
-            meaningful_candidate_parts = [part for part in candidate_parts if not _is_neutral_dimension(part)]
-            same_dimension_count = len(meaningful_candidate_parts) == required
             # A single candidate is safe to batch-review when every Shopee
             # source dimension is accounted for.  A substring/keyword match is
             # intentionally accepted here: names such as「木耳邊黑色」often
@@ -5801,7 +5799,6 @@ class SkuMappingService:
         return scored
 
     def generate_candidates(self, model: Dict[str, Any], skus: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        source = f"{model.get('model_name', '')},{model.get('product_name', '')}"
         # Commas separate actual SKU dimensions. Slashes inside one dimension
         # often describe compatible generations (40mm(4/5/SE/6代適用)) or
         # phone alternatives, and must not become standalone numeric tokens.
@@ -6895,13 +6892,12 @@ class SkuMappingService:
             raise ValueError("批次處理一次只能選擇同一種動作：核准、稍後處理、無匹配或停售")
         action = next(iter(actions))
         for item in items:
-            product_id, model_id, row, candidates = self._decision_context(item)
+            product_id, model_id, _row, candidates = self._decision_context(item)
             if action == "approve":
                 if not candidates:
                     raise ValueError(f"{product_id}/{model_id} 沒有候選 SKU，不能批次核准")
                 selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
                 selected_name = display_text(item.get("skuName") or item.get("sku_name"))
-                selected_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
                 selected_id = normalize_id(item.get("skuId") or item.get("sku_id"))
                 if not selected_key and not selected_name and not selected_id:
                     raise ValueError(f"{product_id}/{model_id} 沒有選定完整規格名稱")

@@ -67,7 +67,6 @@ class ShopeeCrawler:
         self.products_data = {}
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
-        self._owns_browser = True
         self._owns_page = True
         self._cdp_attached = False
         default_export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ads_exports")
@@ -156,7 +155,6 @@ class ShopeeCrawler:
         if not self.browser.contexts:
             raise RuntimeError("CDP_UNAVAILABLE: 遠端 Chrome 沒有可用的 browser context")
         self.context = self.browser.contexts[0]
-        self._owns_browser = False
         self._cdp_attached = True
         self.page, self._owns_page = self._pick_or_create_ads_page(self.context)
         self.driver = PlaywrightDriver(self.page)
@@ -1712,7 +1710,6 @@ class ShopeeCrawler:
         except RuntimeError as e:
             if is_blocker_error(e):
                 print(str(e))
-                import sys
                 sys.exit(77)
             raise
 
@@ -2035,7 +2032,6 @@ class ShopeeCrawler:
             if "COOKIES_EXPIRED" in str(e):
                 # 以特殊退出碼 77 表示 Cookies 已失效
                 print("COOKIES_EXPIRED: Cookies 已失效，請重新取得並更新 cookies.json")
-                import sys
                 sys.exit(77)
             print(f"爬蟲執行過程中出錯: {e}")
             import traceback
@@ -2555,7 +2551,7 @@ class ShopeeCrawler:
 
                 for row in all_rows:
                     try:
-                        # 確認透就 product-variation-item 識別商品行
+                        # 確認透過 product-variation-item 識別商品行
                         row.find_element(By.CLASS_NAME, 'product-variation-item')
                         product_rows.append(row)
                     except:

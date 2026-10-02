@@ -384,7 +384,7 @@ def extract_item_async_params(payload: Any) -> List[Dict[str, Any]]:
 
     _walk_unwrapped(unwrap_jsonish(payload), visit)
     rows: List[Dict[str, Any]] = []
-    for cid, row in found.items():
+    for _cid, row in found.items():
         if row.get("offerId") in (None, "") and row.get("quantity") is None:
             continue
         row.setdefault("placeOrderFlow", "general")
