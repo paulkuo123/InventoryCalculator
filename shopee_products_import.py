@@ -10,6 +10,8 @@ from typing import Any, Dict, List, Tuple
 
 
 MAX_SHOPEE_PRODUCTS_IMPORT_BYTES = 20 * 1024 * 1024
+# 爬蟲逐頁紀錄。不是商品，讀商品的人要略過這個鍵。
+CRAWL_PAGE_LOG_KEY = "_crawl_page_log"
 
 _ALIBABA_NAME_FIELDS = {"阿里巴巴商品名稱", "阿里巴巴商品URL"}
 _PRODUCT_IMAGE_FIELD = "商品圖片網址"
@@ -50,6 +52,17 @@ def _is_blank(value: Any) -> bool:
     return value is None or not str(value).strip()
 
 
+def without_crawl_metadata(payload: Any) -> Any:
+    """回傳不含爬蟲頁面紀錄的商品表。沒有該鍵時沿用原物件。"""
+    if not isinstance(payload, dict) or CRAWL_PAGE_LOG_KEY not in payload:
+        return payload
+    return {
+        key: value
+        for key, value in payload.items()
+        if key != CRAWL_PAGE_LOG_KEY
+    }
+
+
 def _copy_golden_mapping(source_model: Dict[str, Any], golden_model: Dict[str, Any]) -> None:
     """Keep only approved Golden mapping/order fields from the matched model."""
     for key in list(source_model):
@@ -64,7 +77,7 @@ def merge_shopee_products_with_golden(
     source_table: Dict[str, Any], golden_table: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], Dict[str, int]]:
     """Enrich crawler-shaped Shopee data without replacing live fields."""
-    merged = deepcopy(source_table)
+    merged = without_crawl_metadata(deepcopy(source_table))
     golden_by_id = {
         normalize_product_id(product_id): product
         for product_id, product in golden_table.items()
@@ -106,7 +119,7 @@ def merge_shopee_products_with_golden(
                 source_model[_MODEL_IMAGE_FIELD] = deepcopy(golden_model[_MODEL_IMAGE_FIELD])
 
     return merged, {
-        "sourceProductCount": len(source_table),
+        "sourceProductCount": len(merged),
         "sourceModelCount": source_model_count,
         "goldenMatchedProductCount": matched_products,
         "goldenMatchedModelCount": matched_models,
@@ -133,6 +146,8 @@ def validate_shopee_products(payload: Any) -> Dict[str, int]:
     seen_ids = set()
     model_count = 0
     for raw_product_id, product in payload.items():
+        if str(raw_product_id) == CRAWL_PAGE_LOG_KEY:
+            continue
         product_id = normalize_product_id(raw_product_id)
         if not product_id:
             raise ValueError("商品 ID 不可為空、null 或 nan")
@@ -157,8 +172,11 @@ def validate_shopee_products(payload: Any) -> Dict[str, int]:
                 raise ValueError(f"商品 {product_id} 的第 {index} 筆型號缺少規格 ID 或型號名稱")
             model_count += 1
 
+    if not seen_ids:
+        raise ValueError("shopee_products.json 沒有商品資料")
+
     return {
-        "sourceProductCount": len(payload),
+        "sourceProductCount": len(seen_ids),
         "sourceModelCount": model_count,
     }
 

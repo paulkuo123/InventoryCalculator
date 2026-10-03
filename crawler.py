@@ -27,6 +27,7 @@ from restock_rules import round_calculated_restock_qty
 from pw_adapter import (By, WebDriverWait, EC, Keys,
                         NoSuchElementException,
                         PlaywrightDriver)
+from shopee_products_import import CRAWL_PAGE_LOG_KEY
 
 if os.name == 'nt':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -41,6 +42,47 @@ USER_AGENTS = [
 
 ADS_EXPORT_RANGE_ORDER = ["past_month", "yesterday"]
 DEFAULT_TREND_EXPORT_WEEKS = 4
+PAGE_CHANGE_TIMEOUT_SECONDS = 15
+PAGE_CHANGE_POLL_SECONDS = 0.25
+
+
+class CrawlIntegrityError(RuntimeError):
+    """清單頁無法證明已經換頁，或抓到的商品數與頁面總數不一致。"""
+
+
+def parse_listed_product_total(text):
+    """讀頁面上的商品總數。
+
+    「架上商品(N)」是賣場分頁總數；「N 件商品」是目前這份清單。
+    兩者都有且不同時，用清單件數（關鍵字搜尋不該拿全店總數來比）。
+    """
+    if not text:
+        return None
+    tab_numbers = {
+        int(match)
+        for match in re.findall(r"架上商品\s*[（(]\s*(\d+)\s*[）)]", text)
+    }
+    list_numbers = {
+        int(match) for match in re.findall(r"(\d+)\s*件商品", text)
+    }
+    list_numbers.update(int(match) for match in re.findall(r"共\s*(\d+)\s*個商品", text))
+    if len(tab_numbers) > 1:
+        shown = "、".join(str(number) for number in sorted(tab_numbers))
+        raise CrawlIntegrityError(f"頁面上的「架上商品」總數不一致：{shown}")
+    if len(list_numbers) > 1:
+        shown = "、".join(str(number) for number in sorted(list_numbers))
+        raise CrawlIntegrityError(f"頁面上的商品件數不一致：{shown}")
+    tab_total = next(iter(tab_numbers)) if tab_numbers else None
+    list_total = next(iter(list_numbers)) if list_numbers else None
+    if tab_total is None and list_total is None:
+        return None
+    if tab_total is not None and list_total is not None and tab_total != list_total:
+        print(
+            f"頁面同時出現架上商品({tab_total})與 {list_total} 件商品，"
+            "以目前清單件數核對。"
+        )
+        return list_total
+    return tab_total if tab_total is not None else list_total
 
 class ShopeeCrawler:
 
@@ -65,6 +107,7 @@ class ShopeeCrawler:
         self.browser_source = normalize_browser_source(browser_source)
         self.cdp_endpoint = resolve_cdp_endpoint(cdp_endpoint)
         self.products_data = {}
+        self.crawl_page_logs = []
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
         self._owns_page = True
@@ -575,6 +618,8 @@ class ShopeeCrawler:
         # 計算每個商品的總月銷量並添加到商品數據中
         print("開始計算每個商品的總月銷量...")
         for product_id, product_info in data.items():
+            if str(product_id) == CRAWL_PAGE_LOG_KEY or not isinstance(product_info, dict):
+                continue
             total_monthly_sales = 0
             model_sales_details = []
 
@@ -667,10 +712,18 @@ class ShopeeCrawler:
                 return 0
 
         # 將字典轉換為列表，按總月銷量排序，然後轉回字典
-        sorted_items = sorted(data.items(),
-                              key=get_monthly_sales,
-                              reverse=True)
+        sorted_items = sorted(
+            (
+                (product_id, product_info)
+                for product_id, product_info in data.items()
+                if str(product_id) != CRAWL_PAGE_LOG_KEY and isinstance(product_info, dict)
+            ),
+            key=get_monthly_sales,
+            reverse=True)
         sorted_data = {k: v for k, v in sorted_items}
+        page_logs = list(getattr(self, "crawl_page_logs", None) or [])
+        if page_logs:
+            sorted_data[CRAWL_PAGE_LOG_KEY] = page_logs
 
         # 輸出排序結果的前幾項
         print("排序結果的前 5 項:")
@@ -1837,10 +1890,12 @@ class ShopeeCrawler:
                 print(f"正在處理數據中心第 {page} 頁")
                 self.expand_datacenter_rows()
                 self.extract_monthly_sales_data()
-                if not self.go_to_next_page():
+                if not self.go_to_next_page(confirm_change=False):
                     break
                 page += 1
             return self.products_data
+        except CrawlIntegrityError:
+            raise
         except Exception as e:
             print(f"爬取月銷量失敗: {e}")
             import traceback
@@ -2028,6 +2083,12 @@ class ShopeeCrawler:
 
             return self.products_data
 
+        except CrawlIntegrityError as e:
+            message = f"爬蟲完整性檢查失敗：{e}"
+            print(message)
+            print(message, file=sys.stderr)
+            return None
+
         except RuntimeError as e:
             if "COOKIES_EXPIRED" in str(e):
                 # 以特殊退出碼 77 表示 Cookies 已失效
@@ -2055,9 +2116,125 @@ class ShopeeCrawler:
                 self.cleanup()
                 print("瀏覽器已關閉")
 
-    def go_to_next_page(self):
+    def _page_change_timeout(self):
+        return float(getattr(self, "page_change_timeout_seconds", PAGE_CHANGE_TIMEOUT_SECONDS))
+
+    def _page_change_poll(self):
+        return float(getattr(self, "page_change_poll_seconds", PAGE_CHANGE_POLL_SECONDS))
+
+    def _read_page_indicator(self):
+        try:
+            indicators = self.driver.find_elements(
+                By.XPATH,
+                "//div[contains(@class, 'eds-pager__page-indicator')]")
+        except Exception:
+            return ""
+        parts = []
+        for indicator in indicators:
+            text = " ".join(str(getattr(indicator, "text", "") or "").split())
+            if text:
+                parts.append(text)
+        return " | ".join(parts)
+
+    def _read_row_fingerprint(self):
+        """商品 ID 集合。順序變動不算換頁；沒有商品 ID 時才退回列文字。"""
+        try:
+            rows = self.driver.find_elements(
+                By.CSS_SELECTOR, ".eds-table__row, .el-table__row")
+        except Exception:
+            rows = []
+        if not rows:
+            try:
+                rows = self.driver.find_elements(By.CLASS_NAME, "eds-table__row")
+            except Exception:
+                rows = []
+        product_ids = []
+        fallback = []
+        for row in rows:
+            product_id = self._row_product_id(row)
+            if product_id:
+                product_ids.append(product_id)
+                continue
+            text = " ".join(str(getattr(row, "text", "") or "").split())
+            if text:
+                fallback.append(text[:180])
+        if product_ids:
+            return tuple(sorted(set(product_ids)))
+        return tuple(fallback)
+
+    def _snapshot_listing_page(self):
+        return {
+            "indicator": self._read_page_indicator(),
+            "rows": self._read_row_fingerprint(),
+        }
+
+    def _listing_page_changed(self, before, after):
+        """有舊商品列時，必須看到商品 ID 換掉才算換頁。
+
+        頁碼先跳、商品列還是上一頁，仍視為沒換頁。
+        舊頁讀不到商品列時，頁碼改變或列內容改變都可以。
         """
-        嘗試點擊下一頁按鈕
+        old_indicator = (before or {}).get("indicator") or ""
+        new_indicator = (after or {}).get("indicator") or ""
+        old_rows = tuple((before or {}).get("rows") or ())
+        new_rows = tuple((after or {}).get("rows") or ())
+        rows_changed = bool(old_rows) and bool(new_rows) and old_rows != new_rows
+        if old_rows:
+            return rows_changed
+        indicator_changed = (
+            bool(old_indicator) and bool(new_indicator) and old_indicator != new_indicator
+        )
+        return indicator_changed or rows_changed
+
+    def _wait_for_listing_page_change(self, before):
+        timeout = self._page_change_timeout()
+        poll = self._page_change_poll()
+        deadline = time.monotonic() + max(timeout, 0)
+        while True:
+            after = self._snapshot_listing_page()
+            if self._listing_page_changed(before, after):
+                indicator = after.get("indicator") or "（沒有頁碼）"
+                print(f"已確認頁面更新，目前頁碼：{indicator}")
+                return after
+            if time.monotonic() >= deadline:
+                indicator = (before or {}).get("indicator") or "（沒有頁碼）"
+                raise CrawlIntegrityError(
+                    "翻頁後頁面沒有換成下一頁：頁碼與商品列都還是上一頁的內容"
+                    f"（頁碼「{indicator}」）。已等待 {timeout:g} 秒，停止抓取，避免把舊頁再讀一次。"
+                )
+            time.sleep(poll)
+
+    def _read_page_body_text(self):
+        try:
+            body = self.driver.find_element(By.TAG_NAME, "body")
+            return str(getattr(body, "text", "") or "")
+        except Exception:
+            return ""
+
+    def _ensure_collected_count_matches_page(self):
+        collected = len(getattr(self, "products_data", {}) or {})
+        total = parse_listed_product_total(self._read_page_body_text())
+        if total is None:
+            raise CrawlIntegrityError(
+                "抓取結束後在頁面上找不到商品總數（例如「架上商品(355)」），"
+                "無法確認有沒有漏抓，已停止。"
+            )
+        if collected != total:
+            difference = total - collected
+            direction = "少" if difference > 0 else "多"
+            raise CrawlIntegrityError(
+                "抓取數量與頁面總數不符："
+                f"頁面顯示 {total} 個商品，實際收集 {collected} 個，"
+                f"{direction} {abs(difference)} 個。"
+                "已停止，不會把這次結果當成完整資料。"
+            )
+        print(f"商品數量核對通過：頁面顯示 {total} 個，實際收集 {collected} 個。")
+        return total
+
+    def go_to_next_page(self, confirm_change=True):
+        """
+        嘗試點擊下一頁按鈕。
+        confirm_change 為真時，會等到頁碼或商品列真的換了才返回；逾時則失敗。
         :return: 如果成功點擊下一頁則返回 True，否則返回 False
         """
         try:
@@ -2101,18 +2278,9 @@ class ShopeeCrawler:
             # 確保按鈕可見
             WebDriverWait(self.driver, 2).until(EC.visibility_of(next_button))
 
-            # 獲取當前頁面的某些特徵以便檢查是否成功跳轉
-            current_page_text = ""
-            try:
-                # 嘗試獲取當前頁碼文本
-                page_indicators = self.driver.find_elements(
-                    By.XPATH,
-                    "//div[contains(@class, 'eds-pager__page-indicator')]")
-                if page_indicators:
-                    current_page_text = page_indicators[0].text
-                    print(f"當前頁碼: {current_page_text}")
-            except Exception:
-                pass  # 預期的例外：元素不存在或無法點擊
+            before = self._snapshot_listing_page()
+            if before.get("indicator"):
+                print(f"當前頁碼: {before['indicator']}")
 
             # 嘗試點擊
             try:
@@ -2124,11 +2292,17 @@ class ShopeeCrawler:
                 self.driver.execute_script("arguments[0].click();",
                                            next_button)
 
-            # 等待頁面加載
-            print("等待頁面加載...")
-            time.sleep(1.5)
+            if not confirm_change:
+                print("等待頁面加載...")
+                time.sleep(1.5)
+                return True
+
+            print("等待頁碼或商品列實際換頁...")
+            self._wait_for_listing_page_change(before)
             return True
 
+        except CrawlIntegrityError:
+            raise
         except Exception as e:
             print(f"嘗試跳轉到下一頁時出錯: {e}")
             import traceback
@@ -2289,40 +2463,43 @@ class ShopeeCrawler:
             print(f"展開表格行時發生錯誤: {e}")
             return 0
 
+    def _row_has_variation_item(self, row):
+        try:
+            row.find_element(By.CLASS_NAME, "product-variation-item")
+            return True
+        except Exception:
+            return False
+
+    def _row_product_id(self, product_row):
+        try:
+            item_id_container = product_row.find_element(By.CLASS_NAME, "item-id")
+            item_id_match = re.search(
+                r"商品\s*ID\s*[:：]\s*(\d+)", item_id_container.text or "")
+            if item_id_match:
+                return item_id_match.group(1)
+        except Exception:
+            pass
+        try:
+            link = product_row.find_element(By.CSS_SELECTOR, "a.product-name-wrap[href]")
+            href = link.get_attribute("href") or ""
+            id_match = re.search(r"/portal/product/(\d+)", href)
+            if id_match:
+                return id_match.group(1)
+        except Exception:
+            pass
+        try:
+            checkbox = product_row.find_element(
+                By.CSS_SELECTOR, "input.eds-checkbox__input[name]")
+            name_val = checkbox.get_attribute("name") or ""
+            if name_val.isdigit():
+                return name_val
+        except Exception:
+            pass
+        return ""
+
     def get_product_info(self, product_row):
         # Extract product ID (mandatory field) first to query golden_table
-        item_id = "未找到"
-        try:
-            # Method 1: From .item-id text (legacy products)
-            item_id_container = product_row.find_element(By.CLASS_NAME, 'item-id')
-            item_id_text = item_id_container.text
-            item_id_match = re.search(r'商品 ID: (\d+)', item_id_text)
-            if item_id_match:
-                item_id = item_id_match.group(1)
-        except Exception:
-            pass  # 預期的例外：元素不存在或無法點擊
-
-        if item_id == "未找到":
-            try:
-                # Method 2: From product link href  /portal/product/ID
-                link = product_row.find_element(By.CSS_SELECTOR, 'a.product-name-wrap[href]')
-                href = link.get_attribute('href') or ''
-                id_match = re.search(r'/portal/product/(\d+)', href)
-                if id_match:
-                    item_id = id_match.group(1)
-            except Exception:
-                pass  # 預期的例外：元素不存在或無法點擊
-
-        if item_id == "未找到":
-            try:
-                # Method 3: From checkbox input name attribute
-                checkbox = product_row.find_element(
-                    By.CSS_SELECTOR, 'input.eds-checkbox__input[name]')
-                name_val = checkbox.get_attribute('name') or ''
-                if name_val.isdigit():
-                    item_id = name_val
-            except Exception:
-                pass  # 預期的例外：元素不存在或無法點擊
+        item_id = self._row_product_id(product_row) or "未找到"
 
         if item_id == "未找到":
             print("無法取得商品 ID，跳過此行")
@@ -2464,6 +2641,16 @@ class ShopeeCrawler:
             '商品圖片網址': product_image_url,
             '型號': models
         }
+        if not models:
+            product_info["無規格"] = True
+            if (
+                not str(product_info.get("商品名稱") or "").strip()
+                or product_info.get("商品名稱") == "未找到"
+            ):
+                product_info["商品名稱"] = "無規格"
+            sales = str(product_info.get("已售出總數量") or "").strip()
+            if not sales or sales == "未找到":
+                product_info["已售出總數量"] = "0"
 
         return product_info
 
@@ -2505,12 +2692,71 @@ class ShopeeCrawler:
 
         print(f"捲動完成，共載入 {last_count} 個 eds-table__row")
 
+    def _collect_current_listing_page(self, page_number):
+        all_rows = self.driver.find_elements(By.CLASS_NAME, "eds-table__row")
+        dom_row_count = len(all_rows)
+        success_count = 0
+        skipped_count = 0
+        invalid_count = 0
+        print(f"找到 {dom_row_count} 個潛在商品行")
+
+        for index, product_row in enumerate(all_rows, 1):
+            product_id = self._row_product_id(product_row)
+            has_variation = self._row_has_variation_item(product_row)
+            if not product_id and not has_variation:
+                skipped_count += 1
+                continue
+            print(f"\n處理第 {index}/{dom_row_count} 個商品列")
+            if not product_id:
+                invalid_count += 1
+                print("無法取得商品 ID，跳過此行")
+                continue
+            try:
+                product_info = self.get_product_info(product_row)
+                if product_info and self.is_valid_product(product_info):
+                    stored_id = product_info.pop("商品ID")
+                    if stored_id in self.products_data:
+                        skipped_count += 1
+                        print(f"商品 ID {stored_id} 已收錄，跳過重複列")
+                    elif stored_id and stored_id != "未找到":
+                        self.products_data[stored_id] = product_info
+                        success_count += 1
+                        if product_info.get("無規格"):
+                            print(f"成功添加商品 ID: {stored_id}（無規格）")
+                        else:
+                            print(f"成功添加商品 ID: {stored_id}")
+                    else:
+                        invalid_count += 1
+                        print("商品 ID 無效，跳過")
+                else:
+                    invalid_count += 1
+                    print("商品資訊無效，跳過")
+            except Exception as error:
+                invalid_count += 1
+                print(f"處理商品時出錯: {error}")
+
+        entry = {
+            "頁碼": page_number,
+            "DOM列數": dom_row_count,
+            "成功": success_count,
+            "跳過": skipped_count,
+            "無效": invalid_count,
+        }
+        if not isinstance(getattr(self, "crawl_page_logs", None), list):
+            self.crawl_page_logs = []
+        self.crawl_page_logs.append(entry)
+        print(
+            f"第 {page_number} 頁：DOM 列數 {dom_row_count}，"
+            f"成功 {success_count}，跳過 {skipped_count}，無效 {invalid_count}"
+        )
+        return entry
+
     def get_all_products_info(self):
         try:
             page = 1
             has_next_page = True
-            total_products = 0
             self.products_data = {}  # Initialize storage for product info
+            self.crawl_page_logs = []
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
@@ -2543,39 +2789,7 @@ class ShopeeCrawler:
                 # ── 關鍵步驟 3：再次捲動以載入展開後才出現的子型號行 ──
                 self.scroll_to_load_all_rows()
 
-                # 收集有效商品行 — 使用 product-variation-item 識別主商品行
-                product_rows = []
-                all_rows = self.driver.find_elements(
-                    By.CLASS_NAME, 'eds-table__row')
-                print(f"找到 {len(all_rows)} 個潛在商品行")
-
-                for row in all_rows:
-                    try:
-                        # 確認透過 product-variation-item 識別商品行
-                        row.find_element(By.CLASS_NAME, 'product-variation-item')
-                        product_rows.append(row)
-                    except:
-                        continue  # 無此 div 的行（action 等輔助行）跳過
-
-                print(f"過濾後找到 {len(product_rows)} 個有效商品行")
-
-                # 處理每個商品
-                for i, product_row in enumerate(product_rows, 1):
-                    print(f"\n處理第 {i}/{len(product_rows)} 個商品")
-                    try:
-                        product_info = self.get_product_info(product_row)
-                        if product_info and self.is_valid_product(product_info):
-                            product_id = product_info.pop('商品ID')
-                            if product_id != "未找到":
-                                self.products_data[product_id] = product_info
-                                total_products += 1
-                                print(f"成功添加商品 ID: {product_id}")
-                            else:
-                                print("商品 ID 無效，跳過")
-                        else:
-                            print("商品資訊無效，跳過")
-                    except Exception as e:
-                        print(f"處理商品時出錯: {e}")
+                self._collect_current_listing_page(page)
 
                 # 檢查下一頁
                 has_next_page = self.go_to_next_page()
@@ -2585,10 +2799,13 @@ class ShopeeCrawler:
                 else:
                     print("已到達最後一頁")
 
+            self._ensure_collected_count_matches_page()
             print(f"\n===== 爬蟲完成 =====")
-            print(f"共處理了 {page} 頁，成功收集了 {total_products} 個商品資訊")
+            print(f"共處理了 {page} 頁，成功收集了 {len(self.products_data)} 個商品資訊")
             return self.products_data
 
+        except CrawlIntegrityError:
+            raise
         except Exception as e:
             print(f"獲取所有商品資訊時出錯: {e}")
             return {}

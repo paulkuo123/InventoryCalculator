@@ -219,6 +219,8 @@ def build_list_from_files(
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
     rows = []
     for product_id, product in products.items():
+        if not isinstance(product, dict):
+            continue
         if watch_ids and str(product_id) not in watch_ids:
             continue
         name = str(product.get("商品名稱") or "")
