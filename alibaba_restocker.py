@@ -3150,8 +3150,6 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 alibaba_sku_second_name = sku_fields["sku_second_name"]
                 mapping_status = sku_fields["status"]
                 spec_text = sku_fields["spec_text"]
-                expected_fingerprint = sku_fields["offer_fingerprint"]
-                offer_id = str(item.get("alibabaOfferId") or "").strip()
                 quantity = int(item.get("restockQty") or item.get("adjustedQty") or 0)
                 if mapping_status != "approved":
                     item_result = {
@@ -3198,7 +3196,6 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 live_selection = live_selection_labels(
                     check, alibaba_sku_name, alibaba_sku_second_name
                 )
-                live_row = check.get("current") or {}
                 alibaba_sku_id = live_selection["sku_id"] or alibaba_sku_id
                 alibaba_sku_name = live_selection["sku_name"]
                 alibaba_sku_second_name = live_selection["sku_second_name"]

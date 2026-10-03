@@ -61,7 +61,6 @@ class HoverButton(QPushButton):
     def __init__(self, text, parent=None):
         super().__init__(text, parent)
         self.setMouseTracking(True)
-        self.original_text = text
         self.original_geometry = None
 
         # 設置動畫效果
