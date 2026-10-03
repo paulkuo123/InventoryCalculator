@@ -573,7 +573,7 @@ class NameSpecMappingTests(unittest.TestCase):
         }
         resolved, _, amb_keys = resolve_certain_name_spec_sku_ids(certain, cart)
         agg = aggregate_certain(resolved)
-        covered, _missing, _sf, excess, paused = diff_expected(agg, cart, {})
+        _covered, _missing, _sf, excess, paused = diff_expected(agg, cart, {})
         self.assertFalse(paused)
         self.assertEqual(len(excess), 1)
         self.assertEqual(excess[0]["sku_id"], "5759315531121")
@@ -1401,7 +1401,7 @@ class HumanCsvOneRowPerModelTests(unittest.TestCase):
                 "specTexts": ["共享色"],
             }
         }
-        _, _, shortfall, excess, paused = diff_expected(agg, cart_sf, {})
+        _, _, shortfall, _excess, paused = diff_expected(agg, cart_sf, {})
         self.assertTrue(paused)
         self.assertEqual(len(shortfall), 1)
         self.assertEqual(as_int_ex(shortfall[0]["expected_qty"]), 17)

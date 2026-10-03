@@ -91,14 +91,6 @@ def new_run_id() -> str:
     return f"{stamp}-{uuid.uuid4().hex[:8]}"
 
 
-def batches_root(base_dir: Path) -> Path:
-    return Path(base_dir) / "debug_snapshots" / "restock_batches"
-
-
-def run_dir(base_dir: Path, run_id: str) -> Path:
-    return batches_root(base_dir) / str(run_id)
-
-
 def _now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
 

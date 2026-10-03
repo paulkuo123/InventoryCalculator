@@ -66,13 +66,6 @@ IDENTITY_KEYS = (
     "specText",
 )
 
-# Freeze page.on("response") filter in scripts/freeze_reverse_audit_pools_20260905.py
-# capture_cart: mtopPurchaseAstoreService OR (mtop ∧ buycenter ∧ cart).
-FREEZE_READ_HINTS = (
-    "mtoppurchaseastoreservice",
-    "buycenter",
-)
-
 # Host + path pattern freeze already dumps as cart_{render,asyncload,async}.json
 H5_HOST = "h5api.m.1688.com"
 

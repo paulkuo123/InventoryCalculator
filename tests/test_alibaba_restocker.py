@@ -1454,7 +1454,7 @@ class AlibabaRestockerTests(unittest.TestCase):
             {"modelName": "紫花蝴蝶", "alibabaSkuName": "紫花蝴蝶绳", "alibabaUrl": "https://detail.1688.com/offer/752797767076.html"},
             {"modelName": "愛心熊黑繩", "alibabaSkuName": "爱心熊黑绳", "alibabaUrl": "https://detail.1688.com/offer/676841046990.html"},
         ]
-        confirmed, unverified, mismatch, failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
+        confirmed, unverified, _mismatch, _failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
             submitted, [], [], [], None, []
         )
         self.assertEqual(confirmed, [])
@@ -1467,7 +1467,7 @@ class AlibabaRestockerTests(unittest.TestCase):
             "skuName": "采购车\n现货(131)\n粉色; iPhone15\n点击加载更多",
             "specText": "采购车\n现货(131)\n粉色; iPhone15\n点击加载更多",
         }]
-        confirmed, unverified, mismatch, failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
+        confirmed, unverified, _mismatch, _failed, verification = alibaba_restocker.apply_cart_verification_to_buckets(
             [], submitted, [], [], truncated, []
         )
         self.assertEqual(confirmed, [])
