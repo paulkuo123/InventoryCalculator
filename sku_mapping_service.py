@@ -5149,7 +5149,6 @@ class SkuMappingService:
     def _prompt_negative_examples(
         self,
         model: Dict[str, Any],
-        candidates: Sequence[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         offer_id = normalize_id((model or {}).get("offer_id"))
         product_id, model_id, _ = self._current_model_identity(model)
@@ -5241,7 +5240,7 @@ class SkuMappingService:
             "source_hints": _ai_source_hints(model),
             "candidates": candidates,
             "historical_examples": historical,
-            "negative_examples": self._prompt_negative_examples(model, candidates),
+            "negative_examples": self._prompt_negative_examples(model),
             "applied_rules": self._prompt_applied_rules(candidates),
         }
 
@@ -6287,7 +6286,6 @@ class SkuMappingService:
     def _suggestion_negative_hits(
         self,
         model: Dict[str, Any],
-        snapshot: Dict[str, Any],
         candidates: Sequence[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         hits: List[Dict[str, Any]] = []
@@ -6343,7 +6341,7 @@ class SkuMappingService:
                     "origin": negative.get("origin") or "",
                     "reason_code": negative.get("reason_code") or "",
                 })
-        for row in self._prompt_negative_examples(model or {}, candidates or []):
+        for row in self._prompt_negative_examples(model or {}):
             if not (row.get("gated") or row.get("same_model")):
                 continue
             add({
@@ -6382,7 +6380,7 @@ class SkuMappingService:
             "prompt_version": PROMPT_VERSION,
             "applied_rules": self._prompt_applied_rules(candidates or []),
             "historical_support": self._suggestion_historical_support(model or {}, snapshot, candidates or []),
-            "negative_hits": self._suggestion_negative_hits(model or {}, snapshot, candidates or []),
+            "negative_hits": self._suggestion_negative_hits(model or {}, candidates or []),
             "score_breakdown": breakdown,
             "snapshot_id": snapshot.get("id"),
             "fingerprint": str(snapshot.get("fingerprint") or ""),
@@ -6825,7 +6823,7 @@ class SkuMappingService:
             self._validate_safe_batch(items)
         updated = []
         for item in items:
-            updated.append(self._apply_decision(item, reviewer, batch=batch))
+            updated.append(self._apply_decision(item, reviewer))
         return {"status": "success", "updatedCount": len(updated), "updated": updated}
 
     def _decision_context(self, item: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any], List[Dict[str, Any]]]:
@@ -6904,7 +6902,7 @@ class SkuMappingService:
                 if selected_key and selected_key not in {str(candidate.get("candidate_key") or "") for candidate in candidates}:
                     raise ValueError(f"{product_id}/{model_id} 的名稱組合不在該 offer 清單")
 
-    def _apply_decision(self, item: Dict[str, Any], reviewer: str, batch: bool = False) -> Dict[str, Any]:
+    def _apply_decision(self, item: Dict[str, Any], reviewer: str) -> Dict[str, Any]:
         product_id, model_id, row, candidates = self._decision_context(item)
         action = str(item.get("action") or "approve").strip()
         selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
@@ -7060,7 +7058,7 @@ class SkuMappingService:
         os.replace(tmp_path, self.golden_path)
         self._remember_golden(golden)
         try:
-            self._sync_alibaba_binding(suggestion, target, candidate, now)
+            self._sync_alibaba_binding(suggestion, target, now)
             with self.connect() as conn:
                 conn.execute("UPDATE sku_mapping_suggestions SET status='approved', review_tier='approved', review_reason='已核准', snapshot_id=COALESCE(?, snapshot_id), suggested_candidate_key=?, suggested_sku_id=?, suggested_sku_name=?, suggested_second_name=?, version=version+1, updated_at=? WHERE id=?", (snapshot_id, candidate.get("candidate_key", ""), candidate.get("sku_id", ""), candidate.get("sku_name", ""), target.get("1688_sku_second_name", ""), now, suggestion["id"]))
                 after_payload = {key: target.get(key, "") for key in before_mapping}
@@ -7089,7 +7087,7 @@ class SkuMappingService:
             self._invalidate_golden_cache()
             raise
 
-    def _sync_alibaba_binding(self, suggestion: Dict[str, Any], target: Dict[str, Any], candidate: Dict[str, Any], now: int) -> None:
+    def _sync_alibaba_binding(self, suggestion: Dict[str, Any], target: Dict[str, Any], now: int) -> None:
         """Keep the legacy procurement binding in lockstep with approved JSON."""
         from procurement_store import ProcurementStore
 
