@@ -1,0 +1,13 @@
+{
+  "說明": "預設建議值，可調。改這個檔再重跑即可，不用改程式。",
+  "top_product_share": 0.5,
+  "low_cover_months": 1.5,
+  "early_restock_low_cover_share": 0.25,
+  "early_restock_oos_share": 0.1,
+  "high_low_cover_product_share": 0.25,
+  "high_share_min_selling_specs": 1,
+  "high_share_list_limit": 30,
+  "critical_oos_monthly_sales_min": 20,
+  "critical_cover_months_below": 0.5,
+  "top_seller_within_product_share": 0.5
+}
