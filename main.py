@@ -41,6 +41,7 @@ from shopee_products_import import (
     merge_shopee_products_with_golden,
     replace_shopee_products,
     validate_shopee_products,
+    without_crawl_metadata,
 )
 from sku_mapping_service import MappingConflict, SkuMappingService, golden_repair_requested, mapping_candidate_key, prune_golden_table_backups
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
@@ -247,7 +248,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 golden_path = self._golden_table_path()
                 source_path = golden_path.with_name("shopee_products.json")
                 golden_table = self._load_json_file(golden_path)
-                source_table = self._load_json_file(source_path) if source_path.exists() else {}
+                source_table = without_crawl_metadata(
+                    self._load_json_file(source_path) if source_path.exists() else {}
+                )
                 candidates = source_product_candidates(source_table, golden_table)
                 self._send_json_response(200, {
                     "status": "success",
@@ -2800,7 +2803,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         )
         if result.get("status") == "error":
             return {"error": result.get("message", "爬蟲執行失敗")}
-        return result
+        return without_crawl_metadata(result)
 
     def run_ads_export(self, show_browser=True):
         """執行蝦皮廣告匯出程序"""
