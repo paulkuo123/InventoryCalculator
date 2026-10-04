@@ -1220,20 +1220,33 @@ class SkuMappingServiceTest(unittest.TestCase):
             golden = json.load(handle)
         return next(row for row in golden[model["product_id"]]["型號"] if row["規格ID"] == model["model_id"])
 
-    def test_no_match_or_defer_after_approve_removes_golden_approval(self):
-        for index, action, expected in ((0, "no_match", "no_match"), (1, "defer", "pending")):
-            with self.subTest(action=action):
-                model = self._seed_single_candidate(index)
-                item = self._queue_item(model)
-                self.assertTrue(item["candidates"])
-                self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "approve", "candidateKey": item["candidates"][0]["candidate_key"], "version": item["version"]}])
-                self.assertEqual(self._golden_model(model)["1688_mapping_status"], "approved")
+    def _approve_first_candidate(self, model):
+        item = self._queue_item(model)
+        self.assertTrue(item["candidates"])
+        self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "approve", "candidateKey": item["candidates"][0]["candidate_key"], "version": item["version"]}])
+        self.assertEqual(self._golden_model(model)["1688_mapping_status"], "approved")
 
-                item = self._queue_item(model)
-                self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": action, "version": item["version"]}])
+    def test_no_match_after_approve_removes_golden_approval(self):
+        model = self._seed_single_candidate(0)
+        self._approve_first_candidate(model)
+        item = self._queue_item(model)
+        self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "no_match", "version": item["version"]}])
 
-                self.assertEqual(self._queue_item(model)["status"], expected)
-                self.assertEqual(self._golden_model(model)["1688_mapping_status"], expected)
+        self.assertEqual(self._queue_item(model)["status"], "no_match")
+        golden_model = self._golden_model(model)
+        self.assertEqual(golden_model["1688_mapping_status"], "no_match")
+        # The previous SKU stays on record so a later re-approval is easy.
+        self.assertEqual(golden_model["1688_sku_name"], "白色")
+
+    def test_defer_after_approve_keeps_golden_approval(self):
+        model = self._seed_single_candidate(0)
+        self._approve_first_candidate(model)
+        before = Path(self.golden_path).read_bytes()
+        item = self._queue_item(model)
+        self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "defer", "version": item["version"]}])
+
+        self.assertEqual(self._queue_item(model)["review_reason"], DEFERRED_REVIEW_REASON)
+        self.assertEqual(Path(self.golden_path).read_bytes(), before)
 
     def test_defer_unapproved_row_does_not_rewrite_golden(self):
         model = self._seed_single_candidate(0)

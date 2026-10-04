@@ -6984,11 +6984,12 @@ class SkuMappingService:
             if action == "no_match":
                 reason_code, reason_text = self._decision_reason(item, action)
                 after_payload["negative_example_ids"] = []
-            # The Golden Table is what procurement reads.  Taking an approved
-            # model out of approval must also take it out of Golden, otherwise
+            # The Golden Table is what procurement reads.  no_match takes an
+            # approved model out of approval, so Golden must follow, otherwise
             # the old SKU keeps being purchased while the queue says no_match.
+            # defer only means "look again later" and keeps a valid approval.
             golden_restore = None
-            if self._golden_model_status(row) == "approved":
+            if action == "no_match" and self._golden_model_status(row) == "approved":
                 _target, _before, golden_restore = self._write_golden_status(row, new_status)
                 after_payload["golden_mapping_status"] = new_status
             try:
