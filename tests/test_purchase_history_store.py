@@ -43,7 +43,7 @@ class PurchaseHistoryStoreTest(unittest.TestCase):
         self.assertEqual(file_sha256(GOLDEN_REPO_PATH), self._golden_hash_before)
         self.tmp.cleanup()
 
-    def _import_fixture(self, name: str, records_key: str = "orders"):
+    def _import_fixture(self, name: str):
         from purchase_history_import import normalize_records
 
         payload = load_fixture(name)

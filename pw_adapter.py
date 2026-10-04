@@ -184,14 +184,6 @@ class PlaywrightDriver:
         )
         return self._page.evaluate(fn_multi, pw_args)
 
-    # ── Cookie ──
-    def add_cookie(self, cookie_dict):
-        self._page.context.add_cookies([cookie_dict])
-
-    # ── Cleanup (no-op, 由 ShopeeCrawler.cleanup 處理) ──
-    def quit(self):
-        pass
-
 
 class WebDriverWait:
     def __init__(self, driver, timeout):
