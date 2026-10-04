@@ -7,7 +7,6 @@ must leave the model pending, drop stale reviewed fields such as
 """
 
 import json
-import os
 import subprocess
 import tempfile
 import threading

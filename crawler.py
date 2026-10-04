@@ -3017,7 +3017,7 @@ class ShopeeCrawler:
 
             self._raise_if_rows_are_incomplete()
             self._ensure_collected_count_matches_page()
-            print(f"\n===== 爬蟲完成 =====")
+            print("\n===== 爬蟲完成 =====")
             print(f"共處理了 {page} 頁，成功收集了 {len(self.products_data)} 個商品資訊")
             count_status = str((getattr(self, "crawl_count_check", None) or {}).get("count_check") or "")
             if count_status == "unverified_store_total_only":

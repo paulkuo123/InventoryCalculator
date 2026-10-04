@@ -2774,7 +2774,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                         )
                         os.kill(current_crawler_process.pid, signal.SIGKILL)
 
-                logger.info(f"爬蟲進程已成功中斷")
+                logger.info("爬蟲進程已成功中斷")
                 current_crawler_process = None
                 return True
 

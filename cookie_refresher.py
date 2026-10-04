@@ -230,11 +230,11 @@ class CookieRefresher:
                         pass
 
             seller_url = "https://seller.shopee.tw/portal/product/"
-            print(f"   訪問賣家中心以刷新 Cookies...")
+            print("   訪問賣家中心以刷新 Cookies...")
             self._page.goto(seller_url, wait_until="domcontentloaded", timeout=20000)
             time.sleep(2)
 
-            print(f"   檢查並關閉彈窗...")
+            print("   檢查並關閉彈窗...")
             self.close_all_shopee_popups()
 
             time.sleep(2)
@@ -243,9 +243,9 @@ class CookieRefresher:
             success = self._save_cookies(current_cookies)
 
             if success:
-                print(f"✅ Cookies 刷新成功")
+                print("✅ Cookies 刷新成功")
             else:
-                print(f"❌ Cookies 刷新失敗")
+                print("❌ Cookies 刷新失敗")
 
             return success
 

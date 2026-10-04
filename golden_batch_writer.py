@@ -105,15 +105,6 @@ DECISION_ROW_FIELDS = frozenset({"product_id", "spec_id", "decision", "chosen_va
 SIGN_OFF_FIELDS = frozenset({"reviewer", "signed_at"})
 DECISIONS = frozenset({"approve", "replace", "skip", "discontinued"})
 
-SNAPSHOT_TABLES = (
-    "sku_mapping_suggestions",
-    "sku_mapping_reviews",
-    "sku_mapping_candidates",
-    "mapping_negative_examples",
-    "alibaba_bindings",
-    "purchase_drafts",
-    "purchase_draft_lines",
-)
 CHILD_TABLES = (
     "mapping_negative_examples",
     "sku_mapping_candidates",
