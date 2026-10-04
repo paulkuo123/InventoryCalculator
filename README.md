@@ -118,6 +118,20 @@ cd InventoryCalculator
 
 舊有蝦皮爬蟲仍可使用 Playwright Chromium；這與 1688 SKU live scan 的瀏覽器路徑分開。
 
+### 蝦皮庫存爬蟲用哪個瀏覽器
+
+`crawler.py` 的 `--browser-source` **預設是 `mac`**：本機 Chromium，讀 `cookies.json`。本機直接跑不要改這個預設，其他人也是靠這個預設。
+
+遠端盒（已經登入賣家中心的 Chrome）做每月庫存時，請把來源寫在指令裡，不要靠預設：
+
+```bash
+python3 crawler.py --browser-source remote
+```
+
+啟動時會印一行 `瀏覽器來源：mac` 或 `瀏覽器來源：remote`，用來確認這次連的是哪一種。
+
+`--mode ads-export` 沒帶這個旗標時，仍是本機 Chromium + cookies。週報請用 `python3 ads_weekly.py`，它會自己帶 `--browser-source remote`。
+
 ### 設置 Cookies
 1. 至 Chrome 線上應用程式商店安裝 Cookie Editor (https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-TW&utm_source=ext_sidebar)
 2. 登入蝦皮賣家中心
@@ -305,7 +319,8 @@ python3 ads_analysis.py --include-ai true
 ### 補貨提醒（非 Telegram）
 庭安已確認不再使用 Telegram。庫存／低水位提醒改走 **Grok Bot routines**，本系統不另建應用內推播頻道。
 
-- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`）
+- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`，沒帶旗標時是預設 `mac`）
+- 遠端盒每月庫存：`python3 crawler.py --browser-source remote`
 - 唯讀應補摘要：`python -m restock_loop scan`
 - 廣告匯出／分析：`/ads.html` 或 `crawler.py --mode ads-export`／`ads_analysis.py`
 
