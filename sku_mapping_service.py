@@ -28,7 +28,7 @@ import unicodedata
 import uuid
 from collections import defaultdict
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 import requests
@@ -6849,34 +6849,80 @@ class SkuMappingService:
             # incomplete key from the UI caused safe batch approval to reject a
             # valid mapping as "not in offer".
             candidates = [self._candidate_public(dict(candidate), row.get("offer_id", "")) for candidate in candidate_rows]
-        # Manual selection is name-pair first.  Keep skuId as a compatibility
-        # fallback for older browser tabs and previously recorded decisions.
+        catalog = self._snapshot_catalog(offer_id=row.get("offer_id", ""))
+        candidates = self.candidates_for_decision(item, candidates, catalog)
+        return product_id, model_id, row, candidates
+
+    @staticmethod
+    def candidates_for_decision(item: Dict[str, Any], candidates: Sequence[Dict[str, Any]], catalog: Mapping[str, Any]) -> List[Dict[str, Any]]:
+        """Add a snapshot SKU when the requested spec is not already a stored candidate.
+
+        Selection stays name-pair first. ``skuId`` remains a compatibility
+        fallback for older clients. This is the same lookup ``_apply_decision``
+        uses, so a batch writer cannot approve a spec the review screen would reject.
+        """
+        chosen = [dict(candidate) for candidate in candidates or []]
+        catalog_skus = list((catalog or {}).get("skus") or [])
+        snapshot_id = (catalog or {}).get("snapshotId")
         requested_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
         requested_name = display_text(item.get("skuName") or item.get("sku_name"))
         requested_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
         requested_id = normalize_id(item.get("skuId") or item.get("sku_id"))
-        if requested_key and requested_key not in {str(candidate.get("candidate_key") or "") for candidate in candidates}:
-            catalog = self._snapshot_catalog(offer_id=row.get("offer_id", ""))
-            manual = next((sku for sku in catalog.get("skus", []) if str(sku.get("candidate_key") or "") == requested_key), None)
-            if manual:
-                manual = dict(manual)
-                manual["_snapshot_id"] = catalog.get("snapshotId")
-                candidates.append(manual)
-        if requested_name and not any(display_text(candidate.get("sku_name")) == requested_name and display_text(candidate.get("second_name")) == requested_second for candidate in candidates):
-            catalog = self._snapshot_catalog(offer_id=row.get("offer_id", ""))
-            manual = next((sku for sku in catalog.get("skus", []) if display_text(sku.get("sku_name")) == requested_name and display_text(sku.get("second_name")) == requested_second), None)
-            if manual:
-                manual = dict(manual)
-                manual["_snapshot_id"] = catalog.get("snapshotId")
-                candidates.append(manual)
-        if requested_id and requested_id not in {normalize_id(candidate.get("sku_id")) for candidate in candidates}:
-            catalog = self._snapshot_catalog(offer_id=row.get("offer_id", ""))
-            manual = next((sku for sku in catalog.get("skus", []) if normalize_id(sku.get("sku_id")) == requested_id), None)
-            if manual:
-                manual = dict(manual)
-                manual["_snapshot_id"] = catalog.get("snapshotId")
-                candidates.append(manual)
-        return product_id, model_id, row, candidates
+
+        def remember(manual: Optional[Dict[str, Any]]) -> None:
+            if not manual:
+                return
+            copied = dict(manual)
+            copied["_snapshot_id"] = snapshot_id
+            chosen.append(copied)
+
+        if requested_key and requested_key not in {str(candidate.get("candidate_key") or "") for candidate in chosen}:
+            remember(next((sku for sku in catalog_skus if str(sku.get("candidate_key") or "") == requested_key), None))
+        if requested_name and not any(
+            display_text(candidate.get("sku_name")) == requested_name
+            and display_text(candidate.get("second_name")) == requested_second
+            for candidate in chosen
+        ):
+            remember(next((
+                sku for sku in catalog_skus
+                if display_text(sku.get("sku_name")) == requested_name
+                and display_text(sku.get("second_name")) == requested_second
+            ), None))
+        if requested_id and requested_id not in {normalize_id(candidate.get("sku_id")) for candidate in chosen}:
+            remember(next((sku for sku in catalog_skus if normalize_id(sku.get("sku_id")) == requested_id), None))
+        return chosen
+
+    @staticmethod
+    def select_decision_candidate(item: Mapping[str, Any], candidates: Sequence[Mapping[str, Any]]) -> Optional[Dict[str, Any]]:
+        selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
+        selected_name = display_text(item.get("skuName") or item.get("sku_name"))
+        selected_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
+        selected_id = normalize_id(item.get("skuId") or item.get("sku_id"))
+        selected = next((candidate for candidate in candidates if selected_key and str(candidate.get("candidate_key") or "") == selected_key), None)
+        selected = selected or next((
+            candidate for candidate in candidates
+            if selected_name
+            and display_text(candidate.get("sku_name")) == selected_name
+            and display_text(candidate.get("second_name")) == selected_second
+        ), None)
+        selected = selected or next((
+            candidate for candidate in candidates
+            if selected_id and normalize_id(candidate.get("sku_id")) == selected_id
+        ), None)
+        return dict(selected) if selected else None
+
+    @staticmethod
+    def assert_mapping_approval(row: Mapping[str, Any], selected: Optional[Mapping[str, Any]]) -> None:
+        """Status and second-spec gate shared with the review screen."""
+        if str((row or {}).get("status") or "") in UNAPPROVABLE_SNAPSHOT_STATUSES:
+            raise ValueError("目前快照不可用，請先重新掃描並確認登入／商品狀態")
+        if not selected:
+            raise ValueError("核准的 1688 規格名稱組合不在候選清單")
+        if not display_text(selected.get("sku_name")):
+            raise ValueError("核准的 1688 第一規格名稱為空")
+        selected_parts = selected.get("parts") or SkuMappingService._json_load(selected.get("parts_json"), []) or _spec_parts(selected.get("spec_text"))
+        if max(int(selected.get("dimension_count") or 0), len(selected_parts), 1) >= 2 and not display_text(selected.get("second_name")):
+            raise ValueError("此商品有第二規格，但核准資料缺少 1688_sku_second_name")
 
     def _validate_safe_batch(self, items: Sequence[Dict[str, Any]]) -> None:
         """Validate a user-selected batch without silently dropping rows.
@@ -6914,26 +6960,13 @@ class SkuMappingService:
     def _apply_decision(self, item: Dict[str, Any], reviewer: str) -> Dict[str, Any]:
         product_id, model_id, row, candidates = self._decision_context(item)
         action = str(item.get("action") or "approve").strip()
-        selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
-        selected_name = display_text(item.get("skuName") or item.get("sku_name"))
-        selected_second = display_text(item.get("skuSecondName") or item.get("sku_second_name"))
         selected_id = normalize_id(item.get("skuId") or item.get("sku_id"))
-        selected = next((candidate for candidate in candidates if selected_key and str(candidate.get("candidate_key") or "") == selected_key), None)
-        selected = selected or next((candidate for candidate in candidates if selected_name and display_text(candidate.get("sku_name")) == selected_name and display_text(candidate.get("second_name")) == selected_second), None)
-        selected = selected or next((candidate for candidate in candidates if selected_id and normalize_id(candidate.get("sku_id")) == selected_id), None)
+        selected = self.select_decision_candidate(item, candidates)
         if action in {"approve", "replace"}:
             # A manually discontinued row can still have a valid, current SKU
             # snapshot.  Allow the explicit human selection to restore it to
             # approved; scanner-detected/unusable states remain blocked.
-            if str(row.get("status") or "") in UNAPPROVABLE_SNAPSHOT_STATUSES:
-                raise ValueError("目前快照不可用，請先重新掃描並確認登入／商品狀態")
-            if not selected:
-                raise ValueError("核准的 1688 規格名稱組合不在候選清單")
-            if not display_text(selected.get("sku_name")):
-                raise ValueError("核准的 1688 第一規格名稱為空")
-            selected_parts = selected.get("parts") or self._json_load(selected.get("parts_json"), []) or _spec_parts(selected.get("spec_text"))
-            if max(int(selected.get("dimension_count") or 0), len(selected_parts), 1) >= 2 and not display_text(selected.get("second_name")):
-                raise ValueError("此商品有第二規格，但核准資料缺少 1688_sku_second_name")
+            self.assert_mapping_approval(row, selected)
             ai_suggested = self._ai_suggested_candidate(row, candidates)
             rejected = None
             reason_code = reason_text = ""
