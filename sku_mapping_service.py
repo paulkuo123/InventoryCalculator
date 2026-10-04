@@ -14,6 +14,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import base64
+import contextlib
+import copy
 import html
 import json
 import os
@@ -1321,6 +1323,10 @@ class SkuMappingService:
         self.kb_db_path = resolve_mapping_kb_db_path(kb_db_path)
         self._job_lock = threading.Lock()
         self._url_change_lock = threading.Lock()
+        # Serializes review decisions so concurrent requests cannot interleave
+        # their Golden read-modify-write cycles.
+        self._decision_lock = threading.RLock()
+        self._golden_batch: Optional[Dict[str, Any]] = None
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._job_threads: Dict[str, threading.Thread] = {}
         self._gemini_blocked_until = 0.0
@@ -1670,6 +1676,8 @@ class SkuMappingService:
             pass
 
     def _golden(self) -> Dict[str, Any]:
+        if self._golden_batch is not None:
+            return self._golden_batch["golden"]
         if not self.golden_path.exists():
             empty: Dict[str, Any] = {}
             self._golden_cache = empty
@@ -3056,7 +3064,7 @@ class SkuMappingService:
         model_lookup = self._model_lookup(golden, live_lookup)
         with self.connect() as conn:
             rows = conn.execute(
-                f"SELECT s.*, o.product_url, o.product_name AS snapshot_product_name, o.status AS snapshot_status, o.fingerprint, o.skus_json AS snapshot_skus_json "
+                f"SELECT s.*, o.product_url, o.product_name AS snapshot_product_name, o.status AS snapshot_status, o.fingerprint "
                 f"FROM sku_mapping_suggestions s LEFT JOIN alibaba_offer_snapshots o ON o.id=s.snapshot_id "
                 f"WHERE {where} ORDER BY s.updated_at DESC, s.id DESC",
                 params,
@@ -3084,22 +3092,10 @@ class SkuMappingService:
                     continue
                 if restock_only and float(metadata.get("restockQty") or 0) <= 0:
                     continue
-                item["evidence"] = self._json_load(item.pop("evidence_json", "{}"), {})
-                # Persist null ai.provider/model/effort for audit, but keep the
-                # historical empty-ai queue shape when no provider ran.
-                if isinstance(item["evidence"], dict) and not ai_evidence_ran(item["evidence"].get("ai")):
-                    item["evidence"]["ai"] = {}
-                item["score_breakdown"] = self._json_load(item.pop("score_breakdown_json", "{}"), {})
                 try:
                     item["final_score"] = float(item.get("final_score") or 0)
                 except (TypeError, ValueError):
                     item["final_score"] = 0.0
-                snapshot_skus = self._json_load(item.pop("snapshot_skus_json", "[]"), [])
-                candidates = conn.execute(
-                    "SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank",
-                    (item["id"],),
-                ).fetchall()
-                item["candidates"] = [self._candidate_public(dict(candidate), item.get("offer_id", "")) for candidate in candidates]
                 item["restockQty"] = int(metadata.get("restockQty") or 0)
                 item["monthlySales"] = metadata.get("monthlySales", 0)
                 item["productMonthlySales"] = metadata.get("productMonthlySales", 0)
@@ -3115,60 +3111,11 @@ class SkuMappingService:
                 item["existing_spec_text"] = str(metadata.get("existingSpecText") or "")
                 item["mapping_status"] = str(metadata.get("mappingStatus") or "missing")
                 item["has_url"] = True
-                # A legacy approved row may predate candidate persistence, so
-                # it has no rows in sku_mapping_candidates.  Show its current
-                # approved name pair as a read-only display fallback; approval
-                # still re-validates against the live/snapshot catalog in the
-                # decision service and cannot rely on this synthetic card.
-                if not item["candidates"] and item["mapping_status"] == "approved" and item["existing_sku_name"]:
-                    fallback_name = clean_mapping_name(item["existing_sku_name"], item["existing_spec_text"], 0)
-                    fallback_second = clean_mapping_name(item["existing_second_name"], item["existing_spec_text"], 1)
-                    fallback_parts = [part for part in (fallback_name, fallback_second) if part]
-                    item["candidates"] = [{
-                        "candidate_key": mapping_candidate_key(item.get("offer_id"), fallback_name, fallback_second),
-                        "sku_id": item["existing_sku_id"],
-                        "sku_name": fallback_name,
-                        "second_name": fallback_second,
-                        "spec_text": item["existing_spec_text"] or " / ".join(fallback_parts),
-                        "dimension_count": len(fallback_parts) or 1,
-                        "parts": fallback_parts,
-                        "image_url": "",
-                        "price": None,
-                        "stock": None,
-                        "deterministic_score": 0,
-                        "evidence": {"approved_mapping": True},
-                    }]
-                    item["approved_mapping_fallback"] = True
-                # Older AI reruns may have persisted the entire catalog before
-                # the four-card limit was added.  Cap and reorder at read time
-                # as a backwards-compatible safety net, with the AI suggestion
-                # kept first when one exists.
-                ai_evidence = item["evidence"].get("ai") if isinstance(item["evidence"], dict) else {}
-                if not isinstance(ai_evidence, dict):
-                    ai_evidence = {}
-                ai_display = {
-                    **ai_evidence,
-                    "selected_candidate_key": ai_evidence.get("selected_candidate_key") or item.get("suggested_candidate_key", ""),
-                    "selected_sku_id": ai_evidence.get("selected_sku_id") or item.get("suggested_sku_id", ""),
-                }
-                display_model = {
-                    "model_name": item.get("model_name", ""),
-                    "product_name": item.get("product_name", ""),
-                    "offer_id": item.get("offer_id", ""),
-                }
-                if snapshot_skus and str(ai_display.get("source") or "").strip().lower() in AI_SUCCESS_SOURCES:
-                    full_catalog = self._ai_catalog_candidates(snapshot_skus, offer_id=item.get("offer_id", ""))
-                    guarded_display_ai = self._guard_ai_selection(display_model, snapshot_skus, ai_display, full_catalog)
-                    if isinstance(guarded_display_ai, dict):
-                        ai_display = guarded_display_ai
-                        item["evidence"]["ai"] = guarded_display_ai
-                item["candidates"] = self._display_ai_candidates(
-                    display_model,
-                    snapshot_skus,
-                    item["candidates"],
-                    ai_display,
-                    offer_id=item.get("offer_id", ""),
-                )
+                # Candidates, snapshot SKUs and the AI display pass are the
+                # expensive part; they run in _hydrate_queue_item only for
+                # rows that are sorted by score or land on the requested page.
+                item["_needs_hydration"] = True
+                item["_score_pending"] = True
                 result.append(item)
         # Models without a URL have no scan suggestion row by design.  Build a
         # read-only queue row from Golden Table so the URL filter can still
@@ -3223,15 +3170,14 @@ class SkuMappingService:
                     "productImageUrl": str(metadata.get("productImageUrl") or ""),
                     "modelImageUrl": str(metadata.get("modelImageUrl") or ""),
                     "updated_at": 0,
+                    "_score_pending": True,
                 })
-        for item in result:
-            if float(item.get("final_score") or 0) <= 0:
-                ai_payload = item.get("evidence", {}).get("ai") if isinstance(item.get("evidence"), dict) else {}
-                self._apply_composite_scores(
-                    item.get("candidates") or [],
-                    ai=ai_payload if isinstance(ai_payload, dict) else None,
-                )
-                item["final_score"] = self._item_final_score(item)
+        # Yellow rows are ordered by composite score, so a yellow row without a
+        # stored score must be hydrated before sorting to get its fallback.
+        self._hydrate_queue_items([
+            item for item in result
+            if str(item.get("review_tier") or "") == "yellow" and float(item.get("final_score") or 0) <= 0
+        ])
         tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
         # Keep each product together.  Products are ordered by total monthly
         # sales (falling back to the sum of their model sales); variants inside
@@ -3248,6 +3194,7 @@ class SkuMappingService:
         ))
         total = len(result)
         result = result[(page - 1) * page_size: page * page_size]
+        self._hydrate_queue_items(result)
         self._attach_negative_examples(result)
         self._decorate_score_explanations(result)
         return {
@@ -3258,6 +3205,109 @@ class SkuMappingService:
             "pageSize": page_size,
             "inventorySource": inventory_source,
         }
+
+    def _hydrate_queue_items(self, items: Sequence[Dict[str, Any]]) -> None:
+        """Attach candidates, AI display data and score fallback to queue rows.
+
+        Done only for rows that need it (page rows and score-sorted rows), with
+        one candidate query and one snapshot query for the whole set.
+        """
+        pending = [item for item in items if item.pop("_needs_hydration", False)]
+        if pending:
+            suggestion_ids = [item["id"] for item in pending]
+            snapshot_ids = sorted({item.get("snapshot_id") for item in pending if item.get("snapshot_id")})
+            candidates_by_suggestion: Dict[Any, List[Dict[str, Any]]] = defaultdict(list)
+            snapshot_skus_json: Dict[Any, Any] = {}
+            with self.connect() as conn:
+                for chunk_start in range(0, len(suggestion_ids), 500):
+                    chunk = suggestion_ids[chunk_start:chunk_start + 500]
+                    marks = ",".join("?" * len(chunk))
+                    for candidate in conn.execute(
+                        f"SELECT * FROM sku_mapping_candidates WHERE suggestion_id IN ({marks}) ORDER BY suggestion_id, rank",
+                        chunk,
+                    ).fetchall():
+                        candidates_by_suggestion[candidate["suggestion_id"]].append(candidate)
+                for chunk_start in range(0, len(snapshot_ids), 500):
+                    chunk = snapshot_ids[chunk_start:chunk_start + 500]
+                    marks = ",".join("?" * len(chunk))
+                    for snapshot in conn.execute(
+                        f"SELECT id, skus_json FROM alibaba_offer_snapshots WHERE id IN ({marks})",
+                        chunk,
+                    ).fetchall():
+                        snapshot_skus_json[snapshot["id"]] = snapshot["skus_json"]
+            for item in pending:
+                item["evidence"] = self._json_load(item.pop("evidence_json", "{}"), {})
+                # Persist null ai.provider/model/effort for audit, but keep the
+                # historical empty-ai queue shape when no provider ran.
+                if isinstance(item["evidence"], dict) and not ai_evidence_ran(item["evidence"].get("ai")):
+                    item["evidence"]["ai"] = {}
+                item["score_breakdown"] = self._json_load(item.pop("score_breakdown_json", "{}"), {})
+                snapshot_skus = self._json_load(snapshot_skus_json.get(item.get("snapshot_id")), [])
+                item["candidates"] = [self._candidate_public(dict(candidate), item.get("offer_id", "")) for candidate in candidates_by_suggestion.get(item["id"], [])]
+                # A legacy approved row may predate candidate persistence, so
+                # it has no rows in sku_mapping_candidates.  Show its current
+                # approved name pair as a read-only display fallback; approval
+                # still re-validates against the live/snapshot catalog in the
+                # decision service and cannot rely on this synthetic card.
+                if not item["candidates"] and item["mapping_status"] == "approved" and item["existing_sku_name"]:
+                    fallback_name = clean_mapping_name(item["existing_sku_name"], item["existing_spec_text"], 0)
+                    fallback_second = clean_mapping_name(item["existing_second_name"], item["existing_spec_text"], 1)
+                    fallback_parts = [part for part in (fallback_name, fallback_second) if part]
+                    item["candidates"] = [{
+                        "candidate_key": mapping_candidate_key(item.get("offer_id"), fallback_name, fallback_second),
+                        "sku_id": item["existing_sku_id"],
+                        "sku_name": fallback_name,
+                        "second_name": fallback_second,
+                        "spec_text": item["existing_spec_text"] or " / ".join(fallback_parts),
+                        "dimension_count": len(fallback_parts) or 1,
+                        "parts": fallback_parts,
+                        "image_url": "",
+                        "price": None,
+                        "stock": None,
+                        "deterministic_score": 0,
+                        "evidence": {"approved_mapping": True},
+                    }]
+                    item["approved_mapping_fallback"] = True
+                # Older AI reruns may have persisted the entire catalog before
+                # the four-card limit was added.  Cap and reorder at read time
+                # as a backwards-compatible safety net, with the AI suggestion
+                # kept first when one exists.
+                ai_evidence = item["evidence"].get("ai") if isinstance(item["evidence"], dict) else {}
+                if not isinstance(ai_evidence, dict):
+                    ai_evidence = {}
+                ai_display = {
+                    **ai_evidence,
+                    "selected_candidate_key": ai_evidence.get("selected_candidate_key") or item.get("suggested_candidate_key", ""),
+                    "selected_sku_id": ai_evidence.get("selected_sku_id") or item.get("suggested_sku_id", ""),
+                }
+                display_model = {
+                    "model_name": item.get("model_name", ""),
+                    "product_name": item.get("product_name", ""),
+                    "offer_id": item.get("offer_id", ""),
+                }
+                if snapshot_skus and str(ai_display.get("source") or "").strip().lower() in AI_SUCCESS_SOURCES:
+                    full_catalog = self._ai_catalog_candidates(snapshot_skus, offer_id=item.get("offer_id", ""))
+                    guarded_display_ai = self._guard_ai_selection(display_model, snapshot_skus, ai_display, full_catalog)
+                    if isinstance(guarded_display_ai, dict):
+                        ai_display = guarded_display_ai
+                        item["evidence"]["ai"] = guarded_display_ai
+                item["candidates"] = self._display_ai_candidates(
+                    display_model,
+                    snapshot_skus,
+                    item["candidates"],
+                    ai_display,
+                    offer_id=item.get("offer_id", ""),
+                )
+        for item in items:
+            if not item.pop("_score_pending", False):
+                continue
+            if float(item.get("final_score") or 0) <= 0:
+                ai_payload = item.get("evidence", {}).get("ai") if isinstance(item.get("evidence"), dict) else {}
+                self._apply_composite_scores(
+                    item.get("candidates") or [],
+                    ai=ai_payload if isinstance(ai_payload, dict) else None,
+                )
+                item["final_score"] = self._item_final_score(item)
 
     @staticmethod
     def _model_lookup(
@@ -6820,12 +6870,73 @@ class SkuMappingService:
         items = list(items or [])
         if not items:
             raise ValueError("沒有要套用的 SKU mapping 決定")
-        if batch:
-            self._validate_safe_batch(items)
-        updated = []
-        for item in items:
-            updated.append(self._apply_decision(item, reviewer))
+        with self._decision_lock:
+            if batch:
+                self._validate_safe_batch(items)
+            updated = []
+            with self._batched_golden_writes():
+                for item in items:
+                    updated.append(self._apply_decision(item, reviewer))
         return {"status": "success", "updatedCount": len(updated), "updated": updated}
+
+    @contextlib.contextmanager
+    def _batched_golden_writes(self):
+        """Write Golden once for a whole list of decisions.
+
+        Golden is ~MBs of indented JSON; writing and backing it up per row made
+        a 200-row batch approval rewrite it 200 times.  Inside this block each
+        decision mutates the shared in-memory Golden and marks it dirty; the
+        file is written (and backed up) once at the end.  Rows that already
+        committed their SQLite side are flushed even when a later row fails, so
+        Golden and SQLite stay in step.
+        """
+        if self._golden_batch is not None:
+            yield
+            return
+        self._golden_batch = {"golden": self._golden(), "dirty": False}
+        try:
+            yield
+        finally:
+            batch, self._golden_batch = self._golden_batch, None
+            if batch["dirty"]:
+                self._write_golden_file(batch["golden"])
+
+    @staticmethod
+    def _golden_rollback_point(target: Dict[str, Any]) -> Dict[str, Any]:
+        return {"target": target, "before": copy.deepcopy(target), "bytes": None}
+
+    def _write_golden_file(self, golden: Dict[str, Any]) -> bytes:
+        now = int(time.time())
+        backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_sku_review_{now}")
+        original_bytes = self.golden_path.read_bytes()
+        shutil.copy2(self.golden_path, backup_path)
+        prune_golden_table_backups(backup_path)
+        tmp_path = self.golden_path.with_suffix(".json.tmp")
+        with tmp_path.open("w", encoding="utf-8") as handle:
+            json.dump(golden, handle, ensure_ascii=False, indent=4)
+            handle.write("\n")
+        os.replace(tmp_path, self.golden_path)
+        self._remember_golden(golden)
+        return original_bytes
+
+    def _persist_golden(self, golden: Dict[str, Any], rollback: Dict[str, Any]) -> None:
+        if self._golden_batch is not None:
+            self._golden_batch["dirty"] = True
+            return
+        rollback["bytes"] = self._write_golden_file(golden)
+
+    def _restore_golden(self, rollback: Dict[str, Any]) -> None:
+        if rollback.get("bytes") is not None:
+            restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
+            restore_tmp.write_bytes(rollback["bytes"])
+            os.replace(restore_tmp, self.golden_path)
+            self._invalidate_golden_cache()
+            return
+        # Batched: the file has not been written for this row yet; undo the
+        # in-memory change so the final flush does not include it.
+        target = rollback["target"]
+        target.clear()
+        target.update(rollback["before"])
 
     def _decision_context(self, item: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any], List[Dict[str, Any]]]:
         product_id = normalize_id(item.get("productId"))
@@ -7060,6 +7171,7 @@ class SkuMappingService:
                 break
         if target is None:
             raise FileNotFoundError("找不到 golden table 型號")
+        rollback = self._golden_rollback_point(target)
         before_mapping = {key: target.get(key, "") for key in ("1688_offer_id", "1688_sku_id", "1688_sku_name", "1688_sku_second_name", "1688_spec_text", "1688_dimension_count", "1688_mapping_status", "1688_mapping_fingerprint", "1688_offer_fingerprint")}
         now = int(time.time())
         target["1688_offer_id"] = str(suggestion.get("offer_id") or target.get("1688_offer_id") or parse_offer_id(target.get("阿里巴巴商品URL")))
@@ -7085,16 +7197,7 @@ class SkuMappingService:
                 target["1688_last_price_cny"] = float(candidate.get("price"))
             except (TypeError, ValueError):
                 pass
-        backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_sku_review_{now}")
-        original_bytes = self.golden_path.read_bytes()
-        shutil.copy2(self.golden_path, backup_path)
-        prune_golden_table_backups(backup_path)
-        tmp_path = self.golden_path.with_suffix(".json.tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(golden, handle, ensure_ascii=False, indent=4)
-            handle.write("\n")
-        os.replace(tmp_path, self.golden_path)
-        self._remember_golden(golden)
+        self._persist_golden(golden, rollback)
         try:
             self._sync_alibaba_binding(suggestion, target, now)
             with self.connect() as conn:
@@ -7119,10 +7222,7 @@ class SkuMappingService:
                         (json.dumps(after_payload, ensure_ascii=False), review_id),
                     )
         except Exception:
-            restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
-            restore_tmp.write_bytes(original_bytes)
-            os.replace(restore_tmp, self.golden_path)
-            self._invalidate_golden_cache()
+            self._restore_golden(rollback)
             raise
 
     def _sync_alibaba_binding(self, suggestion: Dict[str, Any], target: Dict[str, Any], now: int) -> None:
@@ -7158,39 +7258,29 @@ class SkuMappingService:
                 return str(model.get("1688_mapping_status") or "")
         return ""
 
-    def _write_golden_status(self, suggestion: Dict[str, Any], status: str) -> Tuple[Dict[str, Any], Dict[str, Any], bytes]:
+    def _write_golden_status(self, suggestion: Dict[str, Any], status: str) -> Tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
         """Write one model's Golden mapping status and procurement binding.
 
-        Returns the target model, its mapping fields before the change and the
-        original Golden bytes so the caller can roll back with
-        ``_restore_golden`` if its own SQLite update fails.
+        Returns the target model, its mapping fields before the change and a
+        rollback token so the caller can undo with ``_restore_golden`` if its
+        own SQLite update fails.
         """
         golden = self._golden()
         product = golden.get(str(suggestion["product_id"]), {})
         target = None
-        before_mapping = {}
         for model in product.get("型號", []) if isinstance(product, dict) else []:
             current_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
             if current_id == str(suggestion["model_id"]):
                 target = model
-                before_mapping = {key: model.get(key, "") for key in ("1688_sku_id", "1688_sku_name", "1688_sku_second_name", "1688_spec_text", "1688_mapping_status", "1688_offer_fingerprint")}
-                model["1688_mapping_status"] = status
-                model["1688_mapping_source"] = "manual"
-                model["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
                 break
         if target is None:
             raise FileNotFoundError("找不到 golden table 型號")
-        now = int(time.time())
-        backup_path = self.golden_path.with_name(f"golden_table.json.backup_before_sku_review_{now}")
-        original_bytes = self.golden_path.read_bytes()
-        shutil.copy2(self.golden_path, backup_path)
-        prune_golden_table_backups(backup_path)
-        tmp_path = self.golden_path.with_suffix(".json.tmp")
-        with tmp_path.open("w", encoding="utf-8") as handle:
-            json.dump(golden, handle, ensure_ascii=False, indent=4)
-            handle.write("\n")
-        os.replace(tmp_path, self.golden_path)
-        self._remember_golden(golden)
+        rollback = self._golden_rollback_point(target)
+        before_mapping = {key: target.get(key, "") for key in ("1688_sku_id", "1688_sku_name", "1688_sku_second_name", "1688_spec_text", "1688_mapping_status", "1688_offer_fingerprint")}
+        target["1688_mapping_status"] = status
+        target["1688_mapping_source"] = "manual"
+        target["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        self._persist_golden(golden, rollback)
         try:
             from procurement_store import ProcurementStore
             ProcurementStore(base_dir=str(self.base_dir)).upsert_binding({
@@ -7209,25 +7299,19 @@ class SkuMappingService:
                 "alibabaLastPriceCny": target.get("1688_last_price_cny"),
             })
         except Exception:
-            self._restore_golden(original_bytes)
+            self._restore_golden(rollback)
             raise
-        return target, before_mapping, original_bytes
-
-    def _restore_golden(self, original_bytes: bytes) -> None:
-        restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
-        restore_tmp.write_bytes(original_bytes)
-        os.replace(restore_tmp, self.golden_path)
-        self._invalidate_golden_cache()
+        return target, before_mapping, rollback
 
     def _write_status_mapping(self, suggestion: Dict[str, Any], status: str, reviewer: str) -> None:
-        target, before_mapping, original_bytes = self._write_golden_status(suggestion, status)
+        target, before_mapping, rollback = self._write_golden_status(suggestion, status)
         now = int(time.time())
         try:
             with self.connect() as conn:
                 conn.execute("UPDATE sku_mapping_suggestions SET status=?, review_tier='red', review_reason=?, version=version+1, updated_at=? WHERE id=?", (status, f"人工標記：{status}", now, suggestion["id"]))
                 conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (suggestion["id"], status, json.dumps(before_mapping, ensure_ascii=False), json.dumps({key: target.get(key, "") for key in before_mapping}, ensure_ascii=False), reviewer, now))
         except Exception:
-            self._restore_golden(original_bytes)
+            self._restore_golden(rollback)
             raise
 
     def _snapshot_fingerprint(self, snapshot_id: Any) -> str:

@@ -1284,6 +1284,45 @@ class SkuMappingServiceTest(unittest.TestCase):
             self.service.decisions(items, batch=True)
         self.assertNotEqual(self._queue_item(first)["status"], "no_match")
 
+    def test_batch_approve_writes_golden_once(self):
+        first = self._seed_single_candidate(0)
+        second = self._seed_single_candidate(1)
+        items = []
+        for model in (first, second):
+            item = self._queue_item(model)
+            items.append({"productId": model["product_id"], "modelId": model["model_id"], "action": "approve", "candidateKey": item["candidates"][0]["candidate_key"], "version": item["version"]})
+
+        with patch.object(self.service, "_write_golden_file", wraps=self.service._write_golden_file) as write:
+            self.service.decisions(items, batch=True)
+
+        self.assertEqual(write.call_count, 1)
+        self.assertEqual(self._golden_model(first)["1688_mapping_status"], "approved")
+        self.assertEqual(self._golden_model(second)["1688_mapping_status"], "approved")
+
+    def test_batch_failure_flushes_committed_rows_and_drops_failed_row(self):
+        first = self._seed_single_candidate(0)
+        second = self._seed_single_candidate(1)
+        items = []
+        for model in (first, second):
+            item = self._queue_item(model)
+            items.append({"productId": model["product_id"], "modelId": model["model_id"], "action": "approve", "candidateKey": item["candidates"][0]["candidate_key"], "version": item["version"]})
+        original_sync = self.service._sync_alibaba_binding
+
+        def fail_second(suggestion, target, now):
+            if suggestion["model_id"] == second["model_id"]:
+                raise RuntimeError("binding store down")
+            return original_sync(suggestion, target, now)
+
+        with patch.object(self.service, "_sync_alibaba_binding", side_effect=fail_second):
+            with self.assertRaisesRegex(RuntimeError, "binding store down"):
+                self.service.decisions(items, batch=True)
+
+        # Row 1 committed to SQLite, so Golden must carry it; row 2 must not.
+        self.assertEqual(self._queue_item(first)["status"], "approved")
+        self.assertEqual(self._golden_model(first)["1688_mapping_status"], "approved")
+        self.assertNotEqual(self._queue_item(second)["status"], "approved")
+        self.assertNotIn("1688_mapping_status", self._golden_model(second))
+
     def test_batch_status_actions_support_defer_no_match_and_discontinued(self):
         model = self.service._scope_models("all")[0]
         snapshot = self.service._save_snapshot(model["offer_id"], model["url"], model["product_name"], [

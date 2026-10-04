@@ -10,9 +10,10 @@
     { code: 'DISCONTINUED', label: '已停售／下架' },
     { code: 'OTHER', label: '其他' },
   ];
-  const state = { items: [], loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '', inventorySource: null, reasonCodes: NEGATIVE_REASON_CODES };
+  const state = { items: [], lastOptionalReasonCode: '', queueRequest: 0, lastQueueRefreshAt: 0, loading: false, activeJobId: '', batchBusy: false, selectedIds: new Set(), itemCache: new Map(), selections: new Map(), page: 1, pageSize: 200, total: 0, latestJobShown: '', inventorySource: null, reasonCodes: NEGATIVE_REASON_CODES };
   const urlState = { groups: [], activeGroup: null, preview: null, busy: false, healthBusy: false, healthJobId: '', loadRequest: 0 };
   const baseTitle = document.title;
+  const QUEUE_POLL_REFRESH_MS = 15000;
   let operationDismissTimer = null;
   let operationFadeTimer = null;
   const uiText = value => String(value ?? '').replace(/\bGemini\b/gi, 'AI');
@@ -49,7 +50,7 @@
     node.className = `operation-status ${type}`.trim();
     node.innerHTML = `<div class="operation-heading">${type === 'running' ? '<span class="operation-spinner" aria-hidden="true"></span>' : ''}<strong>${displayText(title)}</strong><span class="operation-badge">${badge}</span>${closeButton}</div>
       <div class="operation-message">${displayText(text)}</div>
-      ${type === 'running' ? `<div class="operation-progress-row"><div class="operation-progress" role="progressbar" aria-label="背景工作進度" aria-valuemin="0" aria-valuemax="${total || 0}" aria-valuenow="${completed}"><i style="width:${total ? percent : 8}%"></i></div><b>${total ? `${completed} / ${total}（${percent}%）` : '準備中…'}</b></div><small>本頁會每幾秒自動更新；即使重新整理，也會自動接回這項工作。</small>` : '<small>清單已重新讀取；你可以繼續審核。</small>'}`;
+      ${type === 'running' ? `<div class="operation-progress-row"><div class="operation-progress" role="progressbar" aria-label="背景工作進度" aria-valuemin="0" aria-valuemax="${total || 0}" aria-valuenow="${completed}"><i style="width:${total ? percent : 8}%"></i></div><b>${total ? `${completed} / ${total}（${percent}%）` : '準備中…'}</b></div><small>進度每幾秒更新；清單約每 15 秒更新一次，你正在勾選、展開或選規格時會暫停，以免打斷審核。即使重新整理，也會自動接回這項工作。</small>` : '<small>清單已重新讀取；你可以繼續審核。</small>'}`;
     document.title = type === 'running' ? `${total ? `${completed}/${total}` : '執行中'}｜${baseTitle}` : baseTitle;
     if (type !== 'running') {
       const delay = type === 'error' ? 8000 : 6000;
@@ -329,12 +330,25 @@
   }
 
   async function loadQueue() {
+    // Typing, polling and post-decision refreshes can overlap; only the newest
+    // request may render, otherwise a slow older response overwrites newer data.
+    const requestId = ++state.queueRequest;
     const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, urlPresence: $('urlPresence').value, restockOnly: String($('restockOnly').checked), query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), _: String(Date.now()) });
     const response = await fetch(`/api/sku-mapping/queue?${params}`, { cache: 'no-store' });
     const data = await response.json();
+    if (requestId !== state.queueRequest) return;
     if (!response.ok || data.status !== 'success') throw new Error(data.message || '待審核清單載入失敗');
+    const total = Number(data.total || 0);
+    const lastPage = Math.max(1, Math.ceil(total / state.pageSize));
+    if (total > 0 && state.page > lastPage) {
+      // Finishing the last page in 待處理 shrinks the total; step back
+      // instead of showing an empty page while earlier pages still have rows.
+      state.page = lastPage;
+      return loadQueue();
+    }
+    state.lastQueueRefreshAt = Date.now();
     state.items = data.items || [];
-    state.total = Number(data.total || 0);
+    state.total = total;
     state.inventorySource = data.inventorySource || null;
     state.items.forEach(item => state.itemCache.set(String(item.id), item));
     $('queue').innerHTML = state.items.map(card).join('');
@@ -617,15 +631,23 @@
       completed,
       total,
     });
-    // Suggestions are written one model at a time.  Refresh the visible page
-    // while the worker is running so rules/AI results appear incrementally
-    // instead of waiting for all thousands of models to finish.
+    // Suggestions are written one model at a time.  Refresh the summary every
+    // tick, but re-render the queue only occasionally and only while the
+    // reviewer is not working on it: a re-render wipes open panels, loaded
+    // catalog dropdowns and the card under the pointer.
     try {
-      await Promise.all([loadSummary(), loadQueue()]);
+      const refreshQueue = Date.now() - state.lastQueueRefreshAt >= QUEUE_POLL_REFRESH_MS && !reviewerIsBusy();
+      await Promise.all([loadSummary(), refreshQueue ? loadQueue() : Promise.resolve()]);
     } catch (_) {
       // Keep polling even if one intermediate refresh races with a DB write.
     }
     setTimeout(() => pollJob(jobId), 2500);
+  }
+
+  function reviewerIsBusy() {
+    if (state.selectedIds.size || state.selections.size || state.batchBusy) return true;
+    if (!$('reasonModal')?.hidden || !$('urlChangeModal')?.hidden) return true;
+    return Boolean(document.querySelector('#queue .card:hover, #queue details[open], #queue .catalog-select[data-loaded="true"], #queue .catalog-select[data-loading="true"]'));
   }
 
   async function loadCatalog(cardElement) {
@@ -725,8 +747,12 @@
     $('reasonHint').textContent = hint || (optional ? '可選原因；未選時會記為「其他」。選「其他」時必須填寫說明。' : '請選擇原因代碼；選「其他」時必須填寫原因說明。');
     $('reasonText').value = '';
     $('reasonError').hidden = true;
-    if (optional && [...$('reasonCode').options].some(option => option.value === 'OTHER')) {
-      $('reasonCode').value = 'OTHER';
+    if (optional) {
+      const options = [...$('reasonCode').options].map(option => option.value);
+      // Reuse the last reason picked for "chose another candidate" so repeated
+      // overrides of the same kind only need a confirm.
+      const preferred = options.includes(state.lastOptionalReasonCode) ? state.lastOptionalReasonCode : 'OTHER';
+      if (options.includes(preferred)) $('reasonCode').value = preferred;
     }
     $('reasonModal').hidden = false;
     $('reasonCode').focus();
@@ -788,6 +814,13 @@
       if (!response.ok || !['success'].includes(data.status)) throw new Error(data.message || '儲存 mapping 失敗');
       state.selectedIds.delete(String(cardElement.dataset.id));
       state.selections.delete(String(cardElement.dataset.id));
+      if ($('status').value === 'review' && ['approve', 'defer', 'no_match', 'discontinued'].includes(action)) {
+        // The row leaves 待處理; drop it now so the reviewer can keep going
+        // while the list refreshes in the background.
+        cardElement.remove();
+        state.items = state.items.filter(row => String(row.id) !== String(item.id));
+        updateSelectAllState();
+      }
       const refreshResult = await refreshLatestData(3);
       if (!refreshResult.ok) {
         operationDone(`資料已儲存，但畫面更新失敗：${refreshResult.error?.message || '請按「重新載入」'}。`, 'error', { title: '儲存完成，但畫面尚未更新' });
@@ -1457,6 +1490,7 @@
   $('reasonConfirm')?.addEventListener('click', () => {
     const reason = readReasonForm(Boolean(state.reasonOptional));
     if (!reason) return;
+    if (state.reasonOptional) state.lastOptionalReasonCode = reason.reasonCode;
     const resolve = state.reasonResolver;
     state.reasonResolver = null;
     $('reasonModal').hidden = true;
