@@ -16,6 +16,7 @@ import hashlib
 import base64
 import contextlib
 import copy
+import functools
 import html
 import json
 import os
@@ -44,6 +45,8 @@ from mapping_knowledge import (
     ai_green_confidence,
     ai_verified_green_confidence,
     color_alias_groups,
+    default_aliases_path,
+    knowledge_file_cache_key,
     config_version,
     detect_category,
     knowledge_version,
@@ -384,6 +387,16 @@ def _is_decorative_symbol(ch: str) -> bool:
     return ch in "\u200d\ufe0e\ufe0f"
 
 
+@functools.lru_cache(maxsize=65536)
+def _normalize_text_cached(raw: str) -> str:
+    text = html.unescape(unicodedata.normalize("NFKC", raw)).translate(CHAR_TRANSLATION)
+    text = re.sub(r"\s+", "", text).replace("，", ",").replace("、", ",").replace("＞", ",").replace(">", ",")
+    text = _WRAPPED_SHELL_NOTE_RE.sub("", text)
+    text = _DECORATIVE_BRACKET_RE.sub("", text)
+    text = "".join(ch for ch in text if not _is_decorative_symbol(ch))
+    return text.lower().strip().rstrip(",.。")
+
+
 def normalize_text(value: Any) -> str:
     """Compact SKU labels for equality (whitespace, 簡繁, field separators).
 
@@ -395,12 +408,9 @@ def normalize_text(value: Any) -> str:
     decoration (``圓形【鏡子】``, ``少女粉.``).  A wrapped ``(單殼)`` / ``【裸殼】``
     note is not a colour; a size such as ``45mm裸殼`` is kept.
     """
-    text = html.unescape(unicodedata.normalize("NFKC", str(value or ""))).translate(CHAR_TRANSLATION)
-    text = re.sub(r"\s+", "", text).replace("，", ",").replace("、", ",").replace("＞", ",").replace(">", ",")
-    text = _WRAPPED_SHELL_NOTE_RE.sub("", text)
-    text = _DECORATIVE_BRACKET_RE.sub("", text)
-    text = "".join(ch for ch in text if not _is_decorative_symbol(ch))
-    return text.lower().strip().rstrip(",.。")
+    # Pure string transform called hundreds of thousands of times per queue
+    # load (every candidate/alias comparison); memoize on the input text.
+    return _normalize_text_cached(str(value or ""))
 
 
 def display_text(value: Any) -> str:
@@ -1070,18 +1080,35 @@ def _demote_combo_suffixes(scored: List[Dict[str, Any]], wants_combo: bool) -> N
             row["evidence"]["combo_demoted"] = is_combo
 
 
-def _color_synonym_groups(category: Optional[str] = None) -> List[Tuple[str, set]]:
-    """Alias groups for the current category, else ``COLOR_SYNONYMS`` fallback."""
-    groups = color_alias_groups(category)
+_COLOR_GROUP_CACHE: Dict[Tuple[str, str], List[Tuple[str, frozenset]]] = {}
+
+
+def _color_synonym_groups(category: Optional[str] = None) -> List[Tuple[str, frozenset]]:
+    """Alias groups for the current category, else ``COLOR_SYNONYMS`` fallback.
+
+    Cached per category and aliases-file version: loading the aliases deep
+    copies the whole file, and this runs for every colour comparison.
+    """
+    product_category = str(category if category is not None else get_match_category() or "").strip()
+    cache_key = (product_category, knowledge_file_cache_key(default_aliases_path()))
+    cached = _COLOR_GROUP_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    groups = color_alias_groups(product_category)
     if groups:
-        return [
-            (key, {normalize_text(term) for term in terms if str(term).strip()})
+        result = [
+            (key, frozenset(normalize_text(term) for term in terms if str(term).strip()))
             for key, terms in groups
         ]
-    return [
-        (family, {normalize_text(value) for value in values})
-        for family, values in COLOR_SYNONYMS.items()
-    ]
+    else:
+        result = [
+            (family, frozenset(normalize_text(value) for value in values))
+            for family, values in COLOR_SYNONYMS.items()
+        ]
+    if len(_COLOR_GROUP_CACHE) > 64:
+        _COLOR_GROUP_CACHE.clear()
+    _COLOR_GROUP_CACHE[cache_key] = result
+    return result
 
 
 def _synonym_equal(left: str, right: str, category: Optional[str] = None) -> bool:
@@ -1360,11 +1387,13 @@ class SkuMappingService:
         return {"status": "success", "migrated": imported}
 
     def _invalidate_golden_cache(self) -> None:
+        self._golden_mutation_count = getattr(self, "_golden_mutation_count", 0) + 1
         self._golden_cache = None
         self._golden_cache_mtime_ns = None
         self._golden_cache_size = None
 
     def _remember_golden(self, golden: Dict[str, Any]) -> None:
+        self._golden_mutation_count = getattr(self, "_golden_mutation_count", 0) + 1
         self._golden_cache = golden
         if self.golden_path.exists():
             stat = self.golden_path.stat()
@@ -4753,8 +4782,24 @@ class SkuMappingService:
         return summary
 
     def _iter_golden_approved_rows(self) -> List[Dict[str, Any]]:
-        rows: List[Dict[str, Any]] = []
+        # Walking the whole Golden Table per candidate generation dominated the
+        # queue's AI display pass; reuse the rows until Golden changes.
         golden = self._safe_golden()
+        cache_key = (
+            id(golden),
+            getattr(self, "_golden_cache_mtime_ns", None),
+            getattr(self, "_golden_cache_size", None),
+            getattr(self, "_golden_mutation_count", 0),
+        )
+        cached = getattr(self, "_golden_approved_rows_cache", None)
+        if cached is not None and cached[0] == cache_key:
+            return [dict(row) for row in cached[1]]
+        rows = self._build_golden_approved_rows(golden)
+        self._golden_approved_rows_cache = (cache_key, rows)
+        return [dict(row) for row in rows]
+
+    def _build_golden_approved_rows(self, golden: Dict[str, Any]) -> List[Dict[str, Any]]:
+        rows: List[Dict[str, Any]] = []
         for product_id, product in golden.items():
             if not isinstance(product, dict):
                 continue
@@ -6920,6 +6965,7 @@ class SkuMappingService:
         return original_bytes
 
     def _persist_golden(self, golden: Dict[str, Any], rollback: Dict[str, Any]) -> None:
+        self._golden_mutation_count = getattr(self, "_golden_mutation_count", 0) + 1
         if self._golden_batch is not None:
             self._golden_batch["dirty"] = True
             return
@@ -6934,6 +6980,7 @@ class SkuMappingService:
             return
         # Batched: the file has not been written for this row yet; undo the
         # in-memory change so the final flush does not include it.
+        self._golden_mutation_count = getattr(self, "_golden_mutation_count", 0) + 1
         target = rollback["target"]
         target.clear()
         target.update(rollback["before"])

@@ -377,6 +377,11 @@ def _cache_key(path: Path) -> str:
     return f"{path}:{stat.st_mtime_ns}:{stat.st_size}"
 
 
+def knowledge_file_cache_key(path: Path) -> str:
+    """Public version token for a knowledge file (path, mtime, size)."""
+    return _cache_key(Path(path))
+
+
 def _read_json_object_or_list(path: Path, label: str) -> Any:
     try:
         with path.open(encoding="utf-8") as handle:
@@ -554,9 +559,16 @@ def _status_is_active(status: Any) -> bool:
     return token in _ACTIVE_STATUSES or not token
 
 
+def _rules_for_read() -> Sequence[Dict[str, Any]]:
+    """Cached rules for read-only lookups; skips load_rules' defensive deep copy."""
+    if _rules_cache and _rules_cache[0] == _cache_key(default_rules_path()):
+        return _rules_cache[1]
+    return load_rules()
+
+
 def rule_is_active(rule_id: str, rules: Optional[Sequence[Dict[str, Any]]] = None) -> bool:
     """Return whether ``rule_id`` should run.  Unknown ids default to active."""
-    payload = list(rules) if rules is not None else load_rules()
+    payload = rules if rules is not None else _rules_for_read()
     for row in payload:
         if str(row.get("rule_id") or "") == rule_id:
             return _status_is_active(row.get("status"))
