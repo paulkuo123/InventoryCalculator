@@ -43,7 +43,8 @@ from shopee_products_import import (
     validate_shopee_products,
     without_crawl_metadata,
 )
-from sku_mapping_service import MappingConflict, SkuMappingService, golden_repair_requested, mapping_candidate_key, prune_golden_table_backups
+from sku_mapping_service import MappingConflict, SkuMappingService, golden_repair_requested, prune_golden_table_backups
+from golden_table_io import GOLDEN_TABLE_LOCK, apply_unreviewed_mapping_edit, write_json_atomic
 from golden_import import apply_import_mapping, preview_models, source_product_candidates
 from housekeeping import remove_files, remove_stale_matching_files
 from restock_rules import resolve_restock_quantity, validate_restock_sku_count
@@ -220,6 +221,8 @@ restock_batch_runtime = {"runId": None, "thread": None, "stop": False}
 inbound_jobs = {}
 inbound_jobs_lock = threading.Lock()
 sku_mapping_service = None
+MAPPING_PENDING_NOTICE = "1688 SKU 變更需到 SKU Mapping 工作台核准後才會用於補貨"
+
 sku_mapping_service_lock = threading.Lock()
 
 removed_stale_temp_files = remove_stale_matching_files(
@@ -921,7 +924,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     "skus": catalog.get("skus") or [],
                 }
                 product = apply_import_mapping(source_product, snapshot, mappings)
-                backup_path = self._write_golden_table_import(golden_path, golden_table, product_id, product)
+                backup_path = self._write_golden_table_import(golden_path, product_id, product)
 
                 try:
                     service.migrate_legacy_mappings()
@@ -1723,36 +1726,30 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             for model in product.get("型號", []):
                 if not isinstance(model, dict):
                     continue
-                sku_name = str(model.get("1688_sku_name") or "").strip()
-                sku_second_name = str(model.get("1688_sku_second_name") or "").strip()
-                product_url = str(model.get("阿里巴巴商品URL") or "").strip()
-                offer_id = normalize_identifier(model.get("1688_offer_id")) or parse_offer_id(product_url)
-                sku_id = normalize_identifier(model.get("1688_sku_id"))
-                if not sku_name and not sku_second_name and not product_url and not offer_id and not sku_id:
-                    continue
                 model_id = normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱") or "").strip()
                 if not model_id:
                     continue
                 key = f"{product_id}|||{model_id}"
+                product_url = str(model.get("阿里巴巴商品URL") or "").strip()
                 binding = dict(bindings.get(key) or {})
+                if not binding and not any(model.get(field) for field in (
+                    "1688_sku_name", "1688_sku_second_name", "1688_sku_id", "1688_offer_id", "阿里巴巴商品URL",
+                )):
+                    continue
                 binding.setdefault("productId", str(product_id))
                 binding.setdefault("modelId", model_id)
                 binding.setdefault("productName", product_name)
                 binding.setdefault("modelName", str(model.get("型號名稱") or ""))
                 binding.setdefault("alibabaProductName", str(model.get("阿里巴巴商品名稱") or ""))
-                binding.setdefault("alibabaProductUrl", product_url)
-                # golden_table.json 是人工編輯與批次掃描共用的唯一 SKU 來源。
-                if sku_name:
-                    binding["alibabaSkuName"] = sku_name
-                if sku_second_name:
-                    binding["alibabaSkuSecondName"] = sku_second_name
-                if sku_id:
-                    binding["alibabaSkuId"] = sku_id
-                if offer_id:
-                    binding["alibabaOfferId"] = offer_id
-                if model.get("1688_spec_text"):
-                    binding["alibabaSpecText"] = str(model.get("1688_spec_text"))
-                binding["alibabaMappingStatus"] = str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing"))
+                # golden_table.json 是人工編輯與工作台共用的唯一 1688 對應來源；
+                # 空值也要覆蓋，否則已被工作台清除的舊 SKU 會從採購快取冒出來。
+                binding["alibabaProductUrl"] = product_url
+                binding["alibabaOfferId"] = normalize_identifier(model.get("1688_offer_id")) or parse_offer_id(product_url)
+                binding["alibabaSkuId"] = normalize_identifier(model.get("1688_sku_id"))
+                binding["alibabaSkuName"] = str(model.get("1688_sku_name") or "").strip()
+                binding["alibabaSkuSecondName"] = str(model.get("1688_sku_second_name") or "").strip()
+                binding["alibabaSpecText"] = str(model.get("1688_spec_text") or "")
+                binding["alibabaMappingStatus"] = self._golden_mapping_status(model)
                 binding["alibabaOfferFingerprint"] = str(model.get("1688_offer_fingerprint") or "")
                 bindings[key] = binding
         return bindings
@@ -1869,30 +1866,21 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         with open(path, "r", encoding="utf-8") as f:
             return json.load(f)
 
-    def _write_golden_table_import(self, golden_path, golden_table, product_id, product):
+    def _write_golden_table_import(self, golden_path, product_id, product):
         """Atomically add one new product and retain a recoverable backup."""
-        updated = dict(golden_table)
-        updated[str(product_id)] = product
-        backup_path = golden_path.with_name(
-            f"golden_table.json.backup_before_import_{int(time.time())}"
-        )
-        shutil.copy2(golden_path, backup_path)
-        prune_golden_table_backups(backup_path)
-        temp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                "w", encoding="utf-8", suffix=".json", delete=False,
-                dir=str(golden_path.parent)
-            ) as handle:
-                temp_path = handle.name
-                json.dump(updated, handle, ensure_ascii=False, indent=4)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_path, golden_path)
-        except Exception:
-            if temp_path and os.path.exists(temp_path):
-                os.unlink(temp_path)
-            raise
+        with GOLDEN_TABLE_LOCK:
+            # Re-read under the lock: the workbench may have written since the
+            # preview check, and its changes must not be lost.
+            updated = self._load_json_file(golden_path)
+            if str(product_id) in updated:
+                raise ValueError(f"商品 {product_id} 已存在於 golden table，未覆蓋既有資料")
+            updated[str(product_id)] = product
+            backup_path = golden_path.with_name(
+                f"golden_table.json.backup_before_import_{int(time.time())}"
+            )
+            shutil.copy2(golden_path, backup_path)
+            prune_golden_table_backups(backup_path)
+            write_json_atomic(golden_path, updated)
         return backup_path
 
     def start_alibaba_restock(self, payload):
@@ -2306,6 +2294,12 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         return sku_mapping
 
     def _update_golden_table_model_alibaba(self, payload):
+        """主頁／商品頁的阿里巴巴資料編輯。
+
+        這裡只寫採購欄位（商品名稱、URL、MOQ、包裝倍數、單價）。1688 SKU 只會套到
+        目標型號，且一律變成待工作台核准。換掉已綁定的 offer 時，舊 SKU 不再經過
+        驗證，該型號同樣退回待核准（主頁會先導向工作台的換網址流程）。
+        """
         product_id = normalize_identifier(payload.get("productId", ""))
         spec_id = normalize_identifier(payload.get("specId", ""))
         model_name = str(payload.get("modelName", "")).strip()
@@ -2315,13 +2309,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         alibaba_offer_id = parse_offer_id(alibaba_product_url) or normalize_identifier(
             payload.get("alibabaOfferId", "")
         )
-        alibaba_sku_id = normalize_identifier(payload.get("alibabaSkuId", ""))
-        alibaba_sku_name = str(payload.get("alibabaSkuName", "")).strip()
-        alibaba_sku_second_name = str(payload.get("alibabaSkuSecondName", "")).strip()
-        alibaba_min_order_qty = int(payload.get("alibabaMinOrderQty") or 1)
-        alibaba_package_multiple = int(payload.get("alibabaPackageMultiple") or 1)
-        alibaba_last_price_cny = payload.get("alibabaLastPriceCny")
-        mapping_approved = bool(payload.get("mappingApproved"))
+        alibaba_min_order_qty = self._positive_int_field(payload.get("alibabaMinOrderQty"))
+        alibaba_package_multiple = self._positive_int_field(payload.get("alibabaPackageMultiple"))
+        alibaba_last_price_cny = self._optional_price_field(payload.get("alibabaLastPriceCny"))
         apply_scope = str(payload.get("applyScope", "single")).strip()
 
         if apply_scope not in (
@@ -2339,116 +2329,108 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if apply_scope == "url_offer_all" and not alibaba_offer_id:
             raise ValueError("無法從阿里巴巴商品 URL 解析 Offer ID")
 
-        golden_path = str(self._golden_table_path())
-        if not os.path.exists(golden_path):
-            raise FileNotFoundError("找不到 golden_table.json")
+        golden_path = self._golden_table_path()
+        with GOLDEN_TABLE_LOCK:
+            if not golden_path.exists():
+                raise FileNotFoundError("找不到 golden_table.json")
+            golden_table = self._load_json_file(golden_path)
 
-        with open(golden_path, "r", encoding="utf-8") as f:
-            golden_table = json.load(f)
+            product, product_created = self._ensure_golden_table_product(
+                golden_table, product_id, spec_id, model_name
+            )
 
-        product, product_created = self._ensure_golden_table_product(
-            golden_table, product_id, spec_id, model_name
-        )
+            models = product.get("型號", [])
+            if not isinstance(models, list):
+                raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
 
-        models = product.get("型號", [])
-        if not isinstance(models, list):
-            raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
+            target_model = self._find_golden_model(models, spec_id, model_name)
+            if target_model is None:
+                raise FileNotFoundError("找不到對應型號")
 
-        target_model = self._find_golden_model(models, spec_id, model_name)
-        if target_model is None:
-            raise FileNotFoundError("找不到對應型號")
+            if apply_scope == "single":
+                models_to_update = [target_model]
+            elif apply_scope == "fill_missing":
+                models_to_update = [
+                    model for model in models
+                    if isinstance(model, dict) and not str(model.get("阿里巴巴商品URL", "")).strip()
+                ]
+                if target_model not in models_to_update:
+                    models_to_update.append(target_model)
+            elif apply_scope in ("overwrite_all", "url_offer_all"):
+                models_to_update = [model for model in models if isinstance(model, dict)]
+            else:
+                selected_models = payload.get("selectedModels")
+                if not isinstance(selected_models, list) or len(selected_models) == 0:
+                    raise ValueError("請至少選擇一個要套用的型號")
 
-        if apply_scope == "single":
-            models_to_update = [target_model]
-        elif apply_scope == "fill_missing":
-            models_to_update = [
-                model for model in models
-                if not str(model.get("阿里巴巴商品URL", "")).strip()
+                models_to_update = []
+                seen_model_ids = set()
+                for selected_model in selected_models:
+                    if not isinstance(selected_model, dict):
+                        continue
+
+                    selected_spec_id = normalize_identifier(selected_model.get("specId", ""))
+                    selected_model_name = str(selected_model.get("modelName", "")).strip()
+                    selected_golden_model = self._find_golden_model(
+                        models, selected_spec_id, selected_model_name)
+                    if selected_golden_model is None:
+                        continue
+
+                    model_identity = id(selected_golden_model)
+                    if model_identity not in seen_model_ids:
+                        models_to_update.append(selected_golden_model)
+                        seen_model_ids.add(model_identity)
+
+                if len(models_to_update) == 0:
+                    raise ValueError("找不到勾選的型號")
+
+            offer_changed_models = [
+                model for model in models_to_update
+                if self._offer_changed(model, alibaba_product_url, alibaba_offer_id)
             ]
-            if target_model not in models_to_update:
-                models_to_update.append(target_model)
-        elif apply_scope in ("overwrite_all", "url_offer_all"):
-            models_to_update = models
-        else:
-            selected_models = payload.get("selectedModels")
-            if not isinstance(selected_models, list) or len(selected_models) == 0:
-                raise ValueError("請至少選擇一個要套用的型號")
 
-            models_to_update = []
-            seen_model_ids = set()
-            for selected_model in selected_models:
-                if not isinstance(selected_model, dict):
+            if apply_scope == "url_offer_all":
+                apply_offer_to_models(models_to_update, alibaba_product_url, alibaba_offer_id)
+            else:
+                for model in models_to_update:
+                    model["阿里巴巴商品名稱"] = alibaba_product_name
+                    model["阿里巴巴商品URL"] = alibaba_product_url
+                    model["1688_offer_id"] = alibaba_offer_id
+                    model["1688_min_order_qty"] = alibaba_min_order_qty
+                    model["1688_package_multiple"] = alibaba_package_multiple
+                    model["1688_last_price_cny"] = alibaba_last_price_cny
+
+            # SKU 是單一型號的選擇，絕不複製到其他型號。
+            pending_models = []
+            if apply_scope != "url_offer_all" and self._apply_payload_mapping_edit(target_model, payload):
+                pending_models.append(target_model)
+            for model in offer_changed_models:
+                # 舊 SKU 屬於舊商品頁；保留名稱供工作台參考，但不可再當已核准使用。
+                model.pop("1688_offer_fingerprint", None)
+                if model in pending_models or not (model.get("1688_sku_name") or model.get("1688_sku_id")):
                     continue
+                apply_unreviewed_mapping_edit(
+                    model, model.get("1688_sku_name", ""), model.get("1688_sku_second_name", "")
+                )
+                pending_models.append(model)
+            mapping_changed = bool(pending_models)
 
-                selected_spec_id = normalize_identifier(selected_model.get("specId", ""))
-                selected_model_name = str(selected_model.get("modelName", "")).strip()
-                selected_golden_model = self._find_golden_model(
-                    models, selected_spec_id, selected_model_name)
-                if selected_golden_model is None:
-                    continue
-
-                model_identity = id(selected_golden_model)
-                if model_identity not in seen_model_ids:
-                    models_to_update.append(selected_golden_model)
-                    seen_model_ids.add(model_identity)
-
-            if len(models_to_update) == 0:
-                raise ValueError("找不到勾選的型號")
-
-        if apply_scope == "url_offer_all":
-            apply_offer_to_models(models_to_update, alibaba_product_url, alibaba_offer_id)
-        else:
-            for model in models_to_update:
-                model["阿里巴巴商品名稱"] = alibaba_product_name
-                model["阿里巴巴商品URL"] = alibaba_product_url
-                model["1688_offer_id"] = alibaba_offer_id
-                model["1688_sku_id"] = alibaba_sku_id
-                model["1688_sku_name"] = alibaba_sku_name
-                if alibaba_sku_second_name:
-                    model["1688_sku_second_name"] = alibaba_sku_second_name
-                else:
-                    model.pop("1688_sku_second_name", None)
-                model["1688_min_order_qty"] = alibaba_min_order_qty
-                model["1688_package_multiple"] = alibaba_package_multiple
-                model["1688_last_price_cny"] = alibaba_last_price_cny
-                model["1688_mapping_status"] = "approved" if mapping_approved and alibaba_sku_name else "missing"
-                model["1688_mapping_source"] = "manual" if mapping_approved and alibaba_sku_name else "legacy_import"
-                if mapping_approved and alibaba_sku_name:
-                    model["1688_dimension_count"] = 2 if alibaba_sku_second_name else 1
-                    model["1688_mapping_fingerprint"] = mapping_candidate_key(alibaba_offer_id, alibaba_sku_name, alibaba_sku_second_name)
-                    model["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-        backup_path = f"{golden_path}.bak"
-        shutil.copy2(golden_path, backup_path)
-
-        with open(golden_path, "w", encoding="utf-8") as f:
-            json.dump(golden_table, f, ensure_ascii=False, indent=4)
+            backup_path = f"{golden_path}.bak"
+            shutil.copy2(golden_path, backup_path)
+            write_json_atomic(golden_path, golden_table)
 
         store = self._procurement_store()
         for model in models_to_update:
-            store.upsert_binding({
-                "productId": product_id,
-                "modelId": normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱", "")).strip(),
-                "productName": product.get("商品名稱", ""),
-                "modelName": model.get("型號名稱", ""),
-                "alibabaProductName": model.get("阿里巴巴商品名稱", ""),
-                "alibabaProductUrl": model.get("阿里巴巴商品URL", ""),
-                "alibabaOfferId": model.get("1688_offer_id", ""),
-                "alibabaSkuId": model.get("1688_sku_id", ""),
-                "alibabaSkuName": model.get("1688_sku_name", ""),
-                "alibabaSkuSecondName": model.get("1688_sku_second_name", ""),
-                "alibabaMinOrderQty": model.get("1688_min_order_qty", 1),
-                "alibabaPackageMultiple": model.get("1688_package_multiple", 1),
-                "alibabaLastPriceCny": model.get("1688_last_price_cny"),
-                "alibabaMappingStatus": model.get("1688_mapping_status", "missing"),
-                "alibabaSpecText": model.get("1688_spec_text", ""),
-                "alibabaOfferFingerprint": model.get("1688_offer_fingerprint", ""),
-            })
+            store.upsert_binding(self._golden_model_binding(product_id, product, model))
+        for model in pending_models:
+            self._register_mapping_edit_for_review(product_id, product, model)
 
         if apply_scope == "url_offer_all":
             message = f"已將 1688 商品 URL 與 Offer ID 套用到 {len(models_to_update)} 個型號"
         else:
             message = "已新增商品並更新阿里巴巴資料" if product_created else "已更新阿里巴巴資料"
+        if mapping_changed:
+            message += f"；{MAPPING_PENDING_NOTICE}"
 
         return {
             "status": "success",
@@ -2457,118 +2439,125 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             "productCreated": product_created,
             "applyScope": apply_scope,
             "updatedCount": len(models_to_update),
+            "mappingPendingReview": bool(mapping_changed),
+            "pendingReviewCount": len(pending_models),
             "updatedModels": models_to_update
         }
 
+    @staticmethod
+    def _positive_int_field(value):
+        try:
+            number = int(float(value))
+        except (TypeError, ValueError):
+            return 1
+        return number if number > 0 else 1
+
+    @staticmethod
+    def _optional_price_field(value):
+        if value is None or str(value).strip() == "":
+            return None
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            raise ValueError("單價 CNY 必須是數字")
+
+    @staticmethod
+    def _current_offer_id(model):
+        return normalize_identifier(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL"))
+
+    def _offer_changed(self, model, new_url, new_offer_id):
+        """True when an already bound 1688 offer is replaced or its URL is cleared."""
+        current_offer_id = self._current_offer_id(model)
+        if not current_offer_id:
+            return False
+        return not new_url or new_offer_id != current_offer_id
+
+    def _apply_payload_mapping_edit(self, model, payload):
+        """Apply SKU fields present in the payload; return True when the mapping changed."""
+        if not any(key in payload for key in ("alibabaSkuName", "alibabaSkuSecondName", "alibabaSkuId")):
+            return False
+        current_name = str(model.get("1688_sku_name") or "").strip()
+        current_second = str(model.get("1688_sku_second_name") or "").strip()
+        current_sku_id = normalize_identifier(model.get("1688_sku_id"))
+        new_name = str(payload.get("alibabaSkuName", current_name) or "").strip()
+        new_second = str(payload.get("alibabaSkuSecondName", current_second) or "").strip()
+        new_sku_id = normalize_identifier(payload.get("alibabaSkuId", current_sku_id))
+        sku_id_changed = new_sku_id != current_sku_id
+        if new_name == current_name and new_second == current_second and not sku_id_changed:
+            return False
+        # 只有使用者明確輸入新的 skuId 才保留；沿用舊 skuId 會讓補貨在名稱不符時退回買舊 SKU。
+        apply_unreviewed_mapping_edit(model, new_name, new_second, new_sku_id if sku_id_changed else "")
+        return True
+
+    def _register_mapping_edit_for_review(self, product_id, product, model):
+        try:
+            self._sku_mapping_store().register_external_mapping_edit(
+                product_id, product.get("商品名稱", ""), model
+            )
+        except Exception:
+            # Golden 已標成 pending，補貨會被擋下；只是工作台清單要等下次同步才會出現。
+            logger.exception("同步手動 1688 SKU 修改到 SKU Mapping 工作台失敗")
+
+    def _golden_model_binding(self, product_id, product, model):
+        return {
+            "productId": product_id,
+            "modelId": normalize_identifier(model.get("規格ID", "")) or str(model.get("型號名稱", "")).strip(),
+            "productName": product.get("商品名稱", ""),
+            "modelName": model.get("型號名稱", ""),
+            "alibabaProductName": model.get("阿里巴巴商品名稱", ""),
+            "alibabaProductUrl": model.get("阿里巴巴商品URL", ""),
+            "alibabaOfferId": model.get("1688_offer_id", ""),
+            "alibabaSkuId": model.get("1688_sku_id", ""),
+            "alibabaSkuName": model.get("1688_sku_name", ""),
+            "alibabaSkuSecondName": model.get("1688_sku_second_name", ""),
+            "alibabaMinOrderQty": model.get("1688_min_order_qty", 1),
+            "alibabaPackageMultiple": model.get("1688_package_multiple", 1),
+            "alibabaLastPriceCny": model.get("1688_last_price_cny"),
+            "alibabaMappingStatus": self._golden_mapping_status(model),
+            "alibabaSpecText": model.get("1688_spec_text", ""),
+            "alibabaOfferFingerprint": model.get("1688_offer_fingerprint", ""),
+        }
+
+    @staticmethod
+    def _golden_mapping_status(model):
+        return str(model.get("1688_mapping_status") or ("pending" if model.get("1688_sku_name") else "missing"))
+
     def _update_golden_table_model_1688_sku(self, payload):
-        """只更新單一型號的 1688 顯示名稱，保留網址與其他採購欄位。"""
+        """只更新單一型號的 1688 對應名稱；變更後一律待工作台核准。"""
         product_id = normalize_identifier(payload.get("productId", ""))
         spec_id = normalize_identifier(payload.get("specId", ""))
         model_name = str(payload.get("modelName", "")).strip()
-        alibaba_sku_name = str(payload.get("alibabaSkuName", "")).strip()
-        alibaba_sku_second_name = str(payload.get("alibabaSkuSecondName", "")).strip()
-
-        if not product_id:
-            raise ValueError("缺少商品ID")
         if not spec_id and not model_name:
             raise ValueError("缺少規格ID或型號名稱")
-
-        golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
-        if not os.path.exists(golden_path):
-            raise FileNotFoundError("找不到 golden_table.json")
-
-        with open(golden_path, "r", encoding="utf-8") as f:
-            golden_table = json.load(f)
-
-        product, product_created = self._ensure_golden_table_product(
-            golden_table, product_id, spec_id, model_name
+        response = self._update_golden_table_product_1688_skus({
+            "productId": product_id,
+            "mappings": [{
+                "specId": spec_id,
+                "modelName": model_name,
+                "alibabaSkuName": payload.get("alibabaSkuName", ""),
+                "alibabaSkuSecondName": payload.get("alibabaSkuSecondName", ""),
+            }],
+        })
+        changed = response["changedCount"] > 0
+        message = (
+            "已新增商品並更新 1688 對應型號" if response["productCreated"] else
+            ("已更新 1688 對應型號" if changed else "1688 對應型號未變更")
         )
-
-        models = product.get("型號", [])
-        if not isinstance(models, list):
-            raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
-
-        target_model = self._find_golden_model(models, spec_id, model_name)
-        if target_model is None:
-            raise FileNotFoundError("找不到對應型號")
-
-        current_sku_name = str(target_model.get("1688_sku_name") or "").strip()
-        current_sku_second_name = str(target_model.get("1688_sku_second_name") or "").strip()
-        changed = current_sku_name != alibaba_sku_name or current_sku_second_name != alibaba_sku_second_name
-        backup_path = ""
-        if changed or product_created:
-            backup_path = f"{golden_path}.bak"
-            shutil.copy2(golden_path, backup_path)
-            if alibaba_sku_name:
-                target_model["1688_sku_name"] = alibaba_sku_name
-            else:
-                target_model.pop("1688_sku_name", None)
-            if alibaba_sku_second_name:
-                target_model["1688_sku_second_name"] = alibaba_sku_second_name
-            else:
-                target_model.pop("1688_sku_second_name", None)
-            if alibaba_sku_name and str(target_model.get("1688_mapping_status") or "") == "approved":
-                offer_id = normalize_identifier(target_model.get("1688_offer_id")) or parse_offer_id(target_model.get("阿里巴巴商品URL"))
-                target_model["1688_dimension_count"] = 2 if alibaba_sku_second_name else 1
-                target_model["1688_mapping_fingerprint"] = mapping_candidate_key(offer_id, alibaba_sku_name, alibaba_sku_second_name)
-                target_model["1688_verified_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
-
-            with open(golden_path, "w", encoding="utf-8") as f:
-                json.dump(golden_table, f, ensure_ascii=False, indent=4)
-
-        self._sync_model_1688_sku_binding(product_id, product, target_model, alibaba_sku_name)
-
+        if changed:
+            message += f"；{MAPPING_PENDING_NOTICE}"
         return {
             "status": "success",
-            "message": (
-                "已新增商品並更新 1688 對應型號" if product_created else
-                ("已更新 1688 對應型號" if changed else "1688 對應型號未變更")
-            ),
-            "productId": product_id,
-            "productCreated": product_created,
+            "message": message,
+            "productId": response["productId"],
+            "productCreated": response["productCreated"],
             "changed": changed,
-            "backupPath": backup_path,
-            "updatedModel": target_model
+            "mappingPendingReview": changed,
+            "backupPath": response["backupPath"],
+            "updatedModel": response["updatedModels"][0],
         }
 
-    def _sync_model_1688_sku_binding(
-        self,
-        product_id,
-        product,
-        target_model,
-        alibaba_sku_name,
-        alibaba_sku_second_name=None,
-    ):
-        """同步採購草稿資料庫，讓批次與單筆編輯共用相同行為。"""
-        model_id = normalize_identifier(target_model.get("規格ID", "")) or str(target_model.get("型號名稱", "")).strip()
-        store = self._procurement_store()
-        existing_binding = store.get_binding(product_id, model_id) or {}
-        if alibaba_sku_second_name is None:
-            alibaba_sku_second_name = target_model.get("1688_sku_second_name", "")
-
-        store.upsert_binding({
-            "productId": product_id,
-            "modelId": model_id,
-            "productName": product.get("商品名稱", ""),
-            "modelName": target_model.get("型號名稱", ""),
-            "alibabaProductName": existing_binding.get("alibabaProductName") or target_model.get("阿里巴巴商品名稱", ""),
-            "alibabaProductUrl": existing_binding.get("alibabaProductUrl") or target_model.get("阿里巴巴商品URL", ""),
-            "alibabaOfferId": existing_binding.get("alibabaOfferId") or target_model.get("1688_offer_id", ""),
-            "alibabaSkuId": existing_binding.get("alibabaSkuId") or target_model.get("1688_sku_id", ""),
-            "alibabaSkuName": alibaba_sku_name,
-            "alibabaSkuSecondName": target_model.get("1688_sku_second_name", ""),
-            "alibabaSpecText": target_model.get("1688_spec_text", ""),
-            "alibabaMappingStatus": target_model.get("1688_mapping_status") or ("pending" if target_model.get("1688_sku_name") else "missing"),
-            "alibabaOfferFingerprint": target_model.get("1688_offer_fingerprint", ""),
-            "alibabaMinOrderQty": existing_binding.get("alibabaMinOrderQty") or target_model.get("1688_min_order_qty", 1),
-            "alibabaPackageMultiple": existing_binding.get("alibabaPackageMultiple") or target_model.get("1688_package_multiple", 1),
-            "alibabaLastPriceCny": existing_binding.get("alibabaLastPriceCny")
-            if existing_binding.get("alibabaLastPriceCny") is not None
-            else target_model.get("1688_last_price_cny"),
-        })
-
     def _update_golden_table_product_1688_skus(self, payload):
-        """一次更新同商品的所有 1688 型號對應，確保寫檔與備份只發生一次。"""
+        """一次更新同商品的 1688 型號對應，寫檔與備份只發生一次；變更的型號待工作台核准。"""
         product_id = normalize_identifier(payload.get("productId", ""))
         mappings = payload.get("mappings")
         if not product_id:
@@ -2576,78 +2565,90 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if not isinstance(mappings, list) or not mappings:
             raise ValueError("缺少要更新的型號對應")
 
-        golden_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden_table.json")
-        if not os.path.exists(golden_path):
-            raise FileNotFoundError("找不到 golden_table.json")
+        golden_path = self._golden_table_path()
+        with GOLDEN_TABLE_LOCK:
+            if not golden_path.exists():
+                raise FileNotFoundError("找不到 golden_table.json")
+            golden_table = self._load_json_file(golden_path)
+            product, product_created = self._ensure_golden_table_product(golden_table, product_id)
 
-        with open(golden_path, "r", encoding="utf-8") as f:
-            golden_table = json.load(f)
-        product, product_created = self._ensure_golden_table_product(golden_table, product_id)
+            models = product.get("型號", [])
+            if not isinstance(models, list):
+                raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
 
-        models = product.get("型號", [])
-        if not isinstance(models, list):
-            raise ValueError(f"商品 {product_id} 的型號資料格式不正確")
+            resolved = []
+            seen_model_ids = set()
+            for index, mapping in enumerate(mappings, 1):
+                if not isinstance(mapping, dict):
+                    raise ValueError(f"第 {index} 筆型號對應格式不正確")
+                spec_id = normalize_identifier(mapping.get("specId", ""))
+                model_name = str(mapping.get("modelName", "")).strip()
+                if not spec_id and not model_name:
+                    raise ValueError(f"第 {index} 筆缺少規格ID或型號名稱")
+                target_model = self._find_golden_model(models, spec_id, model_name)
+                if target_model is None:
+                    raise FileNotFoundError(f"找不到型號：{model_name or spec_id}")
+                model_id = normalize_identifier(target_model.get("規格ID", "")) or str(target_model.get("型號名稱", "")).strip()
+                if model_id in seen_model_ids:
+                    raise ValueError(f"型號重複：{target_model.get('型號名稱', model_id)}")
+                seen_model_ids.add(model_id)
+                resolved.append((
+                    target_model,
+                    str(mapping.get("alibabaSkuName", "")).strip(),
+                    str(mapping.get("alibabaSkuSecondName", "")).strip(),
+                ))
 
-        resolved = []
-        seen_model_ids = set()
-        for index, mapping in enumerate(mappings, 1):
-            if not isinstance(mapping, dict):
-                raise ValueError(f"第 {index} 筆型號對應格式不正確")
-            spec_id = normalize_identifier(mapping.get("specId", ""))
-            model_name = str(mapping.get("modelName", "")).strip()
-            if not spec_id and not model_name:
-                raise ValueError(f"第 {index} 筆缺少規格ID或型號名稱")
-            target_model = self._find_golden_model(models, spec_id, model_name)
-            if target_model is None:
-                raise FileNotFoundError(f"找不到型號：{model_name or spec_id}")
-            model_id = normalize_identifier(target_model.get("規格ID", "")) or str(target_model.get("型號名稱", "")).strip()
-            if model_id in seen_model_ids:
-                raise ValueError(f"型號重複：{target_model.get('型號名稱', model_id)}")
-            seen_model_ids.add(model_id)
-            resolved.append((
-                target_model,
-                str(mapping.get("alibabaSkuName", "")).strip(),
-                str(mapping.get("alibabaSkuSecondName", "")).strip(),
-            ))
+            changed_models = []
+            for target_model, sku_name, sku_second_name in resolved:
+                current_sku_name = str(target_model.get("1688_sku_name") or "").strip()
+                current_sku_second_name = str(target_model.get("1688_sku_second_name") or "").strip()
+                if current_sku_name == sku_name and current_sku_second_name == sku_second_name:
+                    continue
+                apply_unreviewed_mapping_edit(target_model, sku_name, sku_second_name)
+                changed_models.append(target_model)
 
-        changed_models = []
-        for target_model, sku_name, sku_second_name in resolved:
-            current_sku_name = str(target_model.get("1688_sku_name") or "").strip()
-            current_sku_second_name = str(target_model.get("1688_sku_second_name") or "").strip()
-            if current_sku_name == sku_name and current_sku_second_name == sku_second_name:
-                continue
-            if sku_name:
-                target_model["1688_sku_name"] = sku_name
-            else:
-                target_model.pop("1688_sku_name", None)
-            if sku_second_name:
-                target_model["1688_sku_second_name"] = sku_second_name
-            else:
-                target_model.pop("1688_sku_second_name", None)
-            changed_models.append(target_model)
+            backup_path = ""
+            if changed_models or product_created:
+                backup_path = f"{golden_path}.bak"
+                shutil.copy2(golden_path, backup_path)
+                write_json_atomic(golden_path, golden_table)
 
-        backup_path = ""
-        if changed_models or product_created:
-            backup_path = f"{golden_path}.bak"
-            shutil.copy2(golden_path, backup_path)
-            with open(golden_path, "w", encoding="utf-8") as f:
-                json.dump(golden_table, f, ensure_ascii=False, indent=4)
+        store = self._procurement_store()
+        for target_model in changed_models:
+            store.upsert_binding(self._merged_procurement_binding(store, product_id, product, target_model))
+            self._register_mapping_edit_for_review(product_id, product, target_model)
 
-        for target_model, sku_name, _ in resolved:
-            self._sync_model_1688_sku_binding(product_id, product, target_model, sku_name)
-
+        message = (
+            f"已新增商品並更新 {len(changed_models)} 個 1688 型號對應"
+            if product_created else f"已更新 {len(changed_models)} 個 1688 型號對應"
+        )
+        if changed_models:
+            message += f"；{MAPPING_PENDING_NOTICE}"
         return {
             "status": "success",
-            "message": (
-                f"已新增商品並更新 {len(changed_models)} 個 1688 型號對應"
-                if product_created else f"已更新 {len(changed_models)} 個 1688 型號對應"
-            ),
+            "message": message,
             "productId": product_id,
             "productCreated": product_created,
             "changedCount": len(changed_models),
+            "mappingPendingReview": bool(changed_models),
             "backupPath": backup_path,
             "updatedModels": [target_model for target_model, _, _ in resolved],
         }
+
+    def _merged_procurement_binding(self, store, product_id, product, target_model):
+        """SKU 欄位以 Golden 為準；只沿用採購資料庫裡 Golden 沒有的採購設定。"""
+        binding = self._golden_model_binding(product_id, product, target_model)
+        existing = store.get_binding(binding["productId"], binding["modelId"]) or {}
+        for key in ("alibabaProductName", "alibabaProductUrl", "alibabaOfferId"):
+            binding[key] = binding[key] or existing.get(key, "")
+        for key, golden_key in (
+            ("alibabaMinOrderQty", "1688_min_order_qty"),
+            ("alibabaPackageMultiple", "1688_package_multiple"),
+            ("alibabaLastPriceCny", "1688_last_price_cny"),
+        ):
+            if target_model.get(golden_key) is None and existing.get(key) is not None:
+                binding[key] = existing.get(key)
+        return binding
 
     def _ensure_golden_table_product(self, golden_table, product_id, spec_id="", model_name=""):
         """必要時從本次蝦皮搜尋快取匯入新商品，讓編輯 API 可直接寫入 golden table。"""
@@ -2655,7 +2656,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if isinstance(product, dict):
             return product, False
 
-        source_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "shopee_products.json")
+        source_path = self._shopee_products_path()
         if not os.path.exists(source_path):
             raise FileNotFoundError(f"找不到商品ID: {product_id}（且沒有本次蝦皮搜尋快取）")
         try:

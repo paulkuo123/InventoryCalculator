@@ -33,6 +33,7 @@ from urllib.parse import urlparse
 
 import requests
 
+from golden_table_io import golden_write
 from config_loader import load_deepseek_api_key, load_gemini_api_key, load_openai_api_key, load_openai_config_value, load_xai_api_key
 from mapping_knowledge import (
     NEGATIVE_ORIGINS,
@@ -1337,6 +1338,7 @@ class SkuMappingService:
             # Do not rewrite golden_table.json on this path.
             self.migrate_legacy_mappings(write_golden=False)
 
+    @golden_write
     def run_startup_repairs(self) -> Dict[str, Any]:
         """Run Golden/SQLite migrations that used to hide inside ``__init__``.
 
@@ -1808,6 +1810,70 @@ class SkuMappingService:
                     existing_keys.add((str(product_id), model_id))
                     imported += 1
         return {"imported": imported, "existing": existing}
+
+    def register_external_mapping_edit(
+        self,
+        product_id: Any,
+        product_name: Any,
+        model: Mapping[str, Any],
+        reviewer: str = "home_page",
+    ) -> Dict[str, Any]:
+        """Send a 1688 SKU edit made outside the workbench back to review.
+
+        The home and product pages can type SKU names into Golden, but only
+        the workbench may approve them.  Upsert the model's suggestion row as
+        pending (or missing when cleared) and bump its version so any open
+        workbench card for the old mapping must reload before deciding.
+        """
+        product_id = normalize_id(product_id)
+        model_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+        if not product_id or not model_id:
+            raise ValueError("缺少商品 ID 或型號 ID")
+        sku_name = display_text(model.get("1688_sku_name"))
+        second_name = display_text(model.get("1688_sku_second_name"))
+        offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(canonical_url(model.get("阿里巴巴商品URL")))
+        status = "pending" if sku_name else "missing"
+        reason = "主頁手動修改 1688 SKU，待工作台核准" if sku_name else "主頁清除 1688 SKU，待工作台重新對應"
+        now = int(time.time())
+        after = {"status": status, "suggested_sku_name": sku_name, "suggested_second_name": second_name, "offer_id": offer_id}
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+                (product_id, model_id),
+            ).fetchone()
+            if row:
+                suggestion_id = int(row["id"])
+                before = dict(row)
+                conn.execute(
+                    """UPDATE sku_mapping_suggestions
+                       SET status=?, decision='abstain', review_tier='red', review_reason=?,
+                           offer_id=?, suggested_candidate_key='', suggested_sku_id='',
+                           suggested_sku_name=?, suggested_second_name=?,
+                           version=version+1, updated_at=?
+                     WHERE id=?""",
+                    (status, reason, offer_id, sku_name, second_name, now, suggestion_id),
+                )
+            else:
+                before = {}
+                cursor = conn.execute(
+                    """INSERT INTO sku_mapping_suggestions
+                    (product_id, model_id, model_name, product_name, offer_id,
+                     suggested_sku_name, suggested_second_name, status, decision,
+                     confidence, evidence_json, review_tier, review_reason, created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'abstain', 0, ?, 'red', ?, ?, ?)""",
+                    (
+                        product_id, model_id, str(model.get("型號名稱") or ""), str(product_name or ""),
+                        offer_id, sku_name, second_name, status,
+                        json.dumps({"source": "manual_edit", "legacy": True}, ensure_ascii=False),
+                        reason, now, now,
+                    ),
+                )
+                suggestion_id = int(cursor.lastrowid)
+            conn.execute(
+                "INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)",
+                (suggestion_id, "external_edit", json.dumps(before, ensure_ascii=False), json.dumps(after, ensure_ascii=False), reviewer, now),
+            )
+        return {"productId": product_id, "modelId": model_id, "status": status}
 
     def _repair_suggestion_statuses(self) -> None:
         """Normalize rows created by older scanner versions."""
@@ -2755,6 +2821,7 @@ class SkuMappingService:
             ),
         )
 
+    @golden_write
     def commit_url_change(
         self,
         product_id: Any,
@@ -4557,6 +4624,7 @@ class SkuMappingService:
             self._mark_offer_stale(offer_id, fingerprint)
         return {"id": row["id"], "offer_id": offer_id, "product_url": canonical_url(url), "product_name": product_name, "status": "ok", "fingerprint": fingerprint, "skus": skus, "raw": raw}
 
+    @golden_write
     def _mark_offer_stale(self, offer_id: str, new_fingerprint: str) -> None:
         """Invalidate only mappings whose approved name pair disappeared.
 
@@ -6816,6 +6884,7 @@ class SkuMappingService:
             "second_name": row.get("suggested_second_name", ""),
         }
 
+    @golden_write
     def decisions(self, items: Iterable[Dict[str, Any]], reviewer: str = "local_user", batch: bool = False) -> Dict[str, Any]:
         items = list(items or [])
         if not items:
@@ -7071,6 +7140,7 @@ class SkuMappingService:
                     (json.dumps(after_payload, ensure_ascii=False), review_id),
                 )
 
+    @golden_write
     def _write_approved_mapping(
         self,
         suggestion: Dict[str, Any],
@@ -7191,6 +7261,7 @@ class SkuMappingService:
                 return str(model.get("1688_mapping_status") or "")
         return ""
 
+    @golden_write
     def _write_golden_status(self, suggestion: Dict[str, Any], status: str) -> Tuple[Dict[str, Any], Dict[str, Any], bytes]:
         """Write one model's Golden mapping status and procurement binding.
 
@@ -7246,6 +7317,7 @@ class SkuMappingService:
             raise
         return target, before_mapping, original_bytes
 
+    @golden_write
     def _restore_golden(self, original_bytes: bytes) -> None:
         restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
         restore_tmp.write_bytes(original_bytes)

@@ -215,20 +215,24 @@ document.addEventListener('DOMContentLoaded', function() {
             .catch(err => console.warn('載入阿里巴巴連結失敗:', err));
     }
 
-    function loadAlibabaBindings(force = false) {
+    function loadAlibabaBindings(force = false, strict = false) {
         if (!force && Object.keys(window.alibabaBindings).length > 0) {
             return Promise.resolve(window.alibabaBindings);
         }
-        return fetch('/api/alibaba/bindings')
-            .then(r => r.json())
-            .then(data => {
-                window.alibabaBindings = data || {};
+        return fetch('/api/alibaba/bindings', { cache: 'no-store' })
+            .then(async r => {
+                const data = await r.json().catch(() => null);
+                if (!r.ok || !data || typeof data !== 'object' || data.status === 'error') {
+                    throw new Error((data && data.message) || `HTTP ${r.status}`);
+                }
+                window.alibabaBindings = data;
                 return window.alibabaBindings;
             })
             .catch(err => {
                 console.warn('載入 1688 綁定失敗:', err);
-                window.alibabaBindings = {};
-                return {};
+                // 保留上一份對應；清空會讓編輯視窗以空白值覆寫 Golden Table。
+                if (strict) throw err;
+                return window.alibabaBindings || {};
             });
     }
 
@@ -513,6 +517,14 @@ document.addEventListener('DOMContentLoaded', function() {
     function parseAlibabaOfferId(url) {
         const match = String(url || '').match(/\/offer\/(\d+)\.html/);
         return match ? match[1] : '';
+    }
+
+    // 已綁定的 1688 商品被換掉或清除時，必須走工作台的換網址流程重新驗證 SKU。
+    function needsWorkbenchUrlChange(originalOfferId, newUrl, newOfferId) {
+        const original = String(originalOfferId || '').trim();
+        if (!original) return false;
+        if (!String(newUrl || '').trim()) return true;
+        return String(newOfferId || '').trim() !== original;
     }
 
     function getAlibabaBinding(productId, modelData, productName = '', modelName = '') {
@@ -1634,14 +1646,6 @@ document.addEventListener('DOMContentLoaded', function() {
                             <input type="text" id="alibabaOfferIdInput" autocomplete="off" placeholder="可由商品URL自動解析">
                         </div>
                         <div>
-                            <label for="alibabaSkuIdInput">1688 skuId</label>
-                            <input type="text" id="alibabaSkuIdInput" autocomplete="off">
-                        </div>
-                        <div>
-                            <label for="alibabaSkuNameInput">1688 SKU 名稱</label>
-                            <input type="text" id="alibabaSkuNameInput" autocomplete="off">
-                        </div>
-                        <div>
                             <label for="alibabaPriceInput">單價 CNY</label>
                             <input type="number" id="alibabaPriceInput" min="0" step="0.01">
                         </div>
@@ -1654,6 +1658,11 @@ document.addEventListener('DOMContentLoaded', function() {
                             <input type="number" id="alibabaPackageMultipleInput" min="1" step="1" value="1">
                         </div>
                     </div>
+
+                    <p class="sku-mapping-help">
+                        目前 1688 SKU：<span id="alibabaEditSkuSummary">—</span><br>
+                        這裡只修改採購資料，SKU 對應不會被改動，也不會複製到其他型號；要改 SKU 請用「1688 對應型號」或 <a href="/sku-mapping.html">SKU Mapping 工作台</a>。更換或清除已綁定的 1688 商品 URL 會轉到工作台的換網址流程。
+                    </p>
 
                     <label for="alibabaApplyScopeInput">套用範圍</label>
                     <select id="alibabaApplyScopeInput">
@@ -1807,8 +1816,9 @@ document.addEventListener('DOMContentLoaded', function() {
         modal.querySelector('#alibabaProductNameInput').value = binding.alibabaProductName || '';
         modal.querySelector('#alibabaProductUrlInput').value = modelData.阿里巴巴商品URL || effectiveUrl || '';
         modal.querySelector('#alibabaOfferIdInput').value = binding.alibabaOfferId || '';
-        modal.querySelector('#alibabaSkuIdInput').value = binding.alibabaSkuId || '';
-        modal.querySelector('#alibabaSkuNameInput').value = binding.alibabaSkuName || '';
+        modal.querySelector('#alibabaEditSkuSummary').textContent = binding.alibabaSkuName
+            ? `${binding.alibabaSkuName}${binding.alibabaSkuSecondName ? ` / ${binding.alibabaSkuSecondName}` : ''}（${binding.alibabaMappingStatus || 'pending'}）`
+            : '未對應';
         modal.querySelector('#alibabaPriceInput').value = binding.alibabaLastPriceCny || '';
         modal.querySelector('#alibabaMinOrderQtyInput').value = binding.alibabaMinOrderQty || 1;
         modal.querySelector('#alibabaPackageMultipleInput').value = binding.alibabaPackageMultiple || 1;
@@ -1820,10 +1830,10 @@ document.addEventListener('DOMContentLoaded', function() {
         modal.querySelector('#alibabaProductUrlInput').focus();
 
         modal.querySelector('#alibabaProductUrlInput').oninput = function() {
+            // URL 是 offerId 的唯一來源：貼上新網址時必須同步改掉舊 offerId。
             const parsedOfferId = parseAlibabaOfferId(this.value);
-            const offerInput = modal.querySelector('#alibabaOfferIdInput');
-            if (parsedOfferId && !offerInput.value.trim()) {
-                offerInput.value = parsedOfferId;
+            if (parsedOfferId) {
+                modal.querySelector('#alibabaOfferIdInput').value = parsedOfferId;
             }
         };
     }
@@ -1855,6 +1865,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 <form id="skuMappingEditForm" class="alibaba-edit-form">
                     <div id="skuMappingRows" class="sku-mapping-rows"></div>
                     <p class="sku-mapping-help">補貨時會依序點選第一規格、第二規格，再輸入數量與加入採購車。第二規格留白表示此商品只有一段規格。</p>
+                    <p class="sku-mapping-help">修改後的型號會變成「待核准」，需到 <a href="/sku-mapping.html">SKU Mapping 工作台</a> 核准後才會用於補貨。</p>
                     <div id="skuMappingEditMessage" class="alibaba-edit-message" aria-live="polite"></div>
                     <div class="alibaba-modal-actions">
                         <button type="button" class="btn-secondary" data-sku-mapping-close="true">取消</button>
@@ -1874,23 +1885,41 @@ document.addEventListener('DOMContentLoaded', function() {
         return modal;
     }
 
+    function set1688SkuEditorReady(modal, ready) {
+        modal.querySelector('#skuMappingSaveButton').disabled = !ready;
+        modal.querySelectorAll('.sku-mapping-input').forEach(input => {
+            input.disabled = !ready;
+        });
+    }
+
     function open1688SkuEditor(productId, product, modelData, alibabaLink) {
         const modal = ensure1688SkuEditor();
-        window.current1688SkuEdit = {
+        const context = {
             productId: String(productId || ''),
             product
         };
-        const renderRows = function() {
-            modal.querySelector('#skuMappingProductName').textContent = product.商品名稱 || '未知商品';
-            render1688SkuMappingRows(modal, productId, product, modelData, alibabaLink);
-        };
-        renderRows();
-        modal.querySelector('#skuMappingEditMessage').textContent = '';
+        window.current1688SkuEdit = context;
+        const message = modal.querySelector('#skuMappingEditMessage');
+        modal.querySelector('#skuMappingProductName').textContent = product.商品名稱 || '未知商品';
+        render1688SkuMappingRows(modal, productId, product, modelData, alibabaLink);
+        // 載入最新對應前不可編輯或儲存：重畫會蓋掉已輸入的值，
+        // 而以舊快照或空白值儲存會覆寫 Golden Table。
+        set1688SkuEditorReady(modal, false);
+        message.textContent = '正在載入 golden_table.json 的最新對應…';
+        message.className = 'alibaba-edit-message';
         modal.classList.remove('hidden');
-        // 搜尋結果是爬蟲當次的快照；開窗時強制載入 golden_table.json 的最新對應。
-        loadAlibabaBindings(true)
-            .then(renderRows)
-            .catch(error => console.warn('重新載入 1688 對應失敗:', error));
+        loadAlibabaBindings(true, true)
+            .then(() => {
+                if (window.current1688SkuEdit !== context) return;
+                render1688SkuMappingRows(modal, productId, product, modelData, alibabaLink);
+                set1688SkuEditorReady(modal, true);
+                message.textContent = '';
+            })
+            .catch(error => {
+                if (window.current1688SkuEdit !== context) return;
+                message.textContent = `無法載入最新 1688 對應，為避免覆寫資料已停用儲存：${error.message || error}`;
+                message.className = 'alibaba-edit-message error';
+            });
     }
 
     function render1688SkuMappingRows(modal, productId, product, activeModelData, activeAlibabaLink) {
@@ -1982,8 +2011,14 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 applyAlibabaUpdatesToCurrentResults(context.productId, data.updatedModels || []);
                 return loadAlibabaBindings(true).then(() => {
-                    close1688SkuEditor();
                     rerenderCurrentProducts();
+                    if (!data.mappingPendingReview) {
+                        close1688SkuEditor();
+                        return;
+                    }
+                    // 改過的型號已改為待核准；留在視窗提示使用者去工作台核准。
+                    message.innerHTML = `${escapeHtml(data.message || '已儲存')}。<a href="/sku-mapping.html">前往 SKU Mapping 工作台</a>`;
+                    message.className = 'alibaba-edit-message success';
                 });
             })
             .catch(error => {
@@ -2032,8 +2067,6 @@ document.addEventListener('DOMContentLoaded', function() {
         const nameInput = modal.querySelector('#alibabaProductNameInput');
         const urlInput = modal.querySelector('#alibabaProductUrlInput');
         const offerInput = modal.querySelector('#alibabaOfferIdInput');
-        const skuIdInput = modal.querySelector('#alibabaSkuIdInput');
-        const skuNameInput = modal.querySelector('#alibabaSkuNameInput');
         const priceInput = modal.querySelector('#alibabaPriceInput');
         const minOrderInput = modal.querySelector('#alibabaMinOrderQtyInput');
         const packageMultipleInput = modal.querySelector('#alibabaPackageMultipleInput');
@@ -2041,11 +2074,11 @@ document.addEventListener('DOMContentLoaded', function() {
         const message = modal.querySelector('#alibabaEditMessage');
         const saveButton = modal.querySelector('#alibabaEditSaveButton');
         const alibabaProductUrl = urlInput.value.trim();
-        const alibabaOfferId = offerInput.value.trim() || parseAlibabaOfferId(alibabaProductUrl);
+        const alibabaOfferId = parseAlibabaOfferId(alibabaProductUrl) || offerInput.value.trim();
         const applyScope = scopeInput.value;
         const selectedModels = applyScope === 'selected_models' ? getSelectedAlibabaModels(modal) : [];
 
-        if (alibabaProductUrl && alibabaOfferId !== String(context.originalOfferId || '')) {
+        if (needsWorkbenchUrlChange(context.originalOfferId, alibabaProductUrl, alibabaOfferId)) {
             const params = new URLSearchParams({
                 mode: 'urls',
                 productId: context.productId,
@@ -2084,8 +2117,6 @@ document.addEventListener('DOMContentLoaded', function() {
                 alibabaProductName: nameInput.value.trim(),
                 alibabaProductUrl,
                 alibabaOfferId,
-                alibabaSkuId: skuIdInput.value.trim(),
-                alibabaSkuName: skuNameInput.value.trim(),
                 alibabaLastPriceCny: priceInput.value.trim(),
                 alibabaMinOrderQty: minOrderInput.value.trim() || '1',
                 alibabaPackageMultiple: packageMultipleInput.value.trim() || '1',
@@ -2103,7 +2134,6 @@ document.addEventListener('DOMContentLoaded', function() {
             .then(data => {
                 applyAlibabaUpdatesToCurrentResults(context.productId, data.updatedModels);
                 window.alibabaLinks = {};
-                window.alibabaBindings = {};
                 loadAlibabaLinks();
                 loadAlibabaBindings(true).then(() => {
                     closeAlibabaEditor();
