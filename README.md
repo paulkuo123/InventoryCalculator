@@ -363,6 +363,7 @@ InventoryCalculator/
 ├── alibaba_restocker.py    # 正向 1688 加採購車
 ├── restock_batch.py / restock_rules.py
 ├── sku_mapping_service.py  # SKU 快照、候選、AI 與審核
+├── golden_batch_writer.py  # 人簽核後才批次寫入 Golden；沒有 --apply 不改對照表與資料庫
 ├── mapping_eval.py         # 離線 mapping 評估 baseline（2.3 分層＋對帳；不改 golden、不 auto-approve）
 ├── mapping_knowledge.py    # mapping 知識包載入（config／aliases／rules／categories）
 ├── mapping_knowledge_pack/ # 知識包檔（config、aliases、rules、categories）
@@ -372,14 +373,16 @@ InventoryCalculator/
 ├── crawler.py              # 蝦皮爬蟲與廣告匯出
 ├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / CDP mutate；Phase 1 讀車 + Phase 2 mtop HTTP；Phase 3 `--via-mtop` 預設關）
 ├── restock_loop/           # 唯讀觀察清單應補摘要（python -m restock_loop scan）
-├── scripts/                # 現行 CDP 輔助腳本（freeze／mutate 以 runpy 載入，勿刪）
-│   ├── freeze_reverse_audit_pools_20260905.py
-│   ├── mutate_add_missing_cdp_20260906.py
-│   ├── mutate_set_qty_cdp.py
-│   ├── mutate_remove_cdp.py
+├── scripts/                # CDP 輔助腳本，加上只讀月報／水位訊號
+│   ├── freeze_reverse_audit_pools_20260905.py  # 勿刪（runpy 載入）
+│   ├── mutate_add_missing_cdp_20260906.py      # 勿刪（runpy 載入）
+│   ├── mutate_set_qty_cdp.py                   # 勿刪（runpy 載入）
+│   ├── mutate_remove_cdp.py                    # 勿刪（runpy 載入）
 │   ├── reconcile_cart.py
 │   ├── record_1688_cart_network.py
-│   └── run_watchlist_restock.py
+│   ├── run_watchlist_restock.py
+│   ├── monthly_inventory_report.py             # 只讀每月庫存月報：不爬、不加車、不改 golden 與首頁月數
+│   └── watchlist_stock_signal.py               # 只讀觀察清單水位訊號，月數沿用 restock_rules
 ├── purchase_history_store.py / purchase_history_import.py
 │                           # 1688 歷史採購 KB（kb_*；Phase 2 schema／dry-run stub）
 ├── mapping_kb_import.py    # Mapping KB 隔離收成（Golden 唯讀 → 隔離 db；預設 dry-run）
@@ -406,6 +409,8 @@ InventoryCalculator/
 │   ├── offer_discovery_spike.md  # TASK 9：第 1 層 offer 來源（設計）
 │   ├── offer_discovery.md        # Mapping Engine 2.2：第 1 層唯讀建議
 │   ├── restock_closed_loop_review.md   # Goal A：補貨閉環現況 vs 最終流程
+│   ├── monthly_inventory_report.md     # 每月庫存月報怎麼跑、讀哪些檔、寫出哪些報告
+│   ├── golden_batch_writer.md          # Golden 批次寫入的提案、簽核與還原說明
 │   └── golden_ai_automation_review.md  # Goal B：Golden AI；#41–#46 暫停中勿合
 ├── tests/                  # unittest（含 reverse_audit 離線安全測試）
 ├── watchlists/             # 個人關注與排除清單
