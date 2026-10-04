@@ -10,6 +10,8 @@ import uuid
 from collections import defaultdict
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from golden_table_io import GOLDEN_TABLE_LOCK
+
 
 DB_FILE = "procurement.db"
 
@@ -927,6 +929,11 @@ class InboundStore:
                     changes.append(update)
         if not changes:
             return
+        # 與主頁、SKU Mapping 工作台共用同一把鎖，避免互相覆蓋 Golden Table。
+        with GOLDEN_TABLE_LOCK:
+            self._write_synced_stocks(changes)
+
+    def _write_synced_stocks(self, changes: List[Dict[str, Any]]) -> None:
         table = self._load_golden_table()
         changed = False
         synced_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
