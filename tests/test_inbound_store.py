@@ -2,8 +2,10 @@ import json
 import os
 import sqlite3
 import tempfile
+import threading
 import unittest
 
+from golden_table_io import GOLDEN_TABLE_LOCK
 from inbound_store import InboundStore, normalize_mapping_text
 
 
@@ -298,6 +300,35 @@ class InboundStoreTest(unittest.TestCase):
                     "allowOverReceipt": True,
                 }],
             })
+
+    def test_sync_successful_stocks_waits_for_golden_lock(self):
+        # 鎖被佔住時，成功入庫的庫存寫回要等到釋放才落筆。只用暫存 golden 與假入庫單。
+        receipt = {
+            "lines": [{
+                "updates": [{
+                    "status": "success",
+                    "stock_after": 42,
+                    "shopee_product_id": "p3",
+                    "shopee_model_id": "m3",
+                }],
+            }],
+        }
+        done = threading.Event()
+
+        def sync():
+            self.store.sync_successful_stocks_to_golden(receipt)
+            done.set()
+
+        with GOLDEN_TABLE_LOCK:
+            worker = threading.Thread(target=sync)
+            worker.start()
+            self.assertFalse(done.wait(0.3))
+            with open(self.golden_path, encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle)["p3"]["型號"][0]["商品庫存"], "5")
+        worker.join(timeout=5)
+        self.assertTrue(done.is_set())
+        with open(self.golden_path, encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["p3"]["型號"][0]["商品庫存"], "42")
 
 
 if __name__ == "__main__":
