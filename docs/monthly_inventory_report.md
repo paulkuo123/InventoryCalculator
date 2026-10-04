@@ -25,7 +25,8 @@ python3 scripts/monthly_inventory_report.py
 ## 參數
 
 - `--max-age-hours N`：商品檔修改時間最久可以幾小時。預設 **48**。超過就停止、不寫報告。確定要用較舊的檔時再調高，例如 `--max-age-hours 72`。
-- `--overwrite`：輸出目錄裡已經有 `monthly_report.md`、JSON、CSV、`BLOCKER.md` 或 `sources/` 時，**預設拒絕覆寫**。加上這個參數才會重跑，而且會先把舊檔複製到同一個資料夾，檔名後面加上時間，例如 `monthly_report.md.20261004T210615+0800`。
+- `--overwrite`：輸出目錄裡已經有月報檔（`monthly_report.md`、`monthly_report.json`、`critical_models.csv`、`priority_batch.csv`、`BLOCKER.md`）時，**預設拒絕覆寫**。只有 `sources/` 不算已有報告，會照常執行，也不會為了備份去複製 `sources/`。加上 `--overwrite` 才重跑，而且只先備份那些月報檔。檔名後面是本機時間與時區偏移，不固定寫成 `+0800`。
+- 水位訊號的四個檔（`watchlist_stock_signal.md`、`watchlist_stock_signal_history.json`、`watchlist_stock_signal_priority.csv`、`watchlist_stock_signal_products.csv`）若已在目錄裡，呼叫前會先備份。`history.json` 是累積的趨勢紀錄，備份失敗就整次中止，不覆寫。
 - `--month YYYYMM`、`--out`、`--products`、`--skip-stock-signal`：月份、輸出目錄、商品檔路徑，以及要不要順便跑水位訊號。
 
 ```bash
@@ -41,7 +42,8 @@ python3 scripts/monthly_inventory_report.py --help
 - `critical_models.csv`：危急型號
 - `priority_batch.csv`：第一批（斷貨且建議至少 20 件）
 - `BLOCKER.md`：觀察清單有、商品檔沒有的商品 ID。都抓到就不會留這個檔
-- `sources/`：這次用到的商品檔與清單副本，加上 `manifest.json`（含 golden 的檢查碼）。不複製 `procurement.db`
+- `sources/`：這次用到的商品檔與清單副本，加上 `manifest.json`（含 golden 的檢查碼）。不複製 `procurement.db`。目錄裡只有這層時，不會被當成舊月報而拒絕
+- 水位訊號（`scripts/watchlist_stock_signal.py` 在的時候）：跟月報同一目錄的四個檔，見上面的備份規則
 
 ## 算法（沿用現成函式）
 
@@ -51,7 +53,7 @@ python3 scripts/monthly_inventory_report.py --help
 - 建議量：`restock_rules.calculated_restock_details`。目標用月銷乘月數後四捨五入，減掉庫存，再取整。庫存是 0 時，這支函式可能改用歷史銷量佔比。
 - 第一批：斷貨，而且建議量至少 20 件。
 - 補到目標水位：觀察清單裡每一個規格都用 `calculated_restock_details` 算建議量，再加總。已經在 3 或 4 個月水位以上的是 0。這個數字包含還沒跌破 1.5 個月、但還沒補滿的規格，所以會大於或等於危急建議件數。
-- 分類：`restock_rules.restock_category`。手機殼（目標 3 個月）、吊飾／掛繩（目標 4 個月）、其餘（目標 4 個月）各一列。規格名是「加購」的手機殼仍算在手機殼那一列，月數依店規改回 4。
+- 分類：`restock_rules.restock_category`。手機殼、吊飾／掛繩、其餘各一列。JSON 的 `phone_case_critical` 與 `categories.phone_case.critical_specs` 是同一個數，三列的危急規格加總等於 `critical_specs`。規格名是「加購」的手機殼仍算在手機殼這一列（所以會進 `phone_case_critical`），目標月數依店規改回 4，不會因為不是 3 個月就被算到「其餘」。
 - 停售：`restock_loop.scan.launcher_ineligibility_reasons` 裡的停售規格名與對照狀態。危急名單裡會標出來，**主數字不扣**。上一份手寫月報也沒扣。
 
 ## 跟上一份手寫月報對數字時要注意
@@ -65,6 +67,6 @@ python3 scripts/monthly_inventory_report.py --help
 
 這份程式庫沒有 2026-10 的商品檔與 `procurement.db`，實數要在遠端機器上對。
 
-## 水位訊號（還沒接上）
+## 水位訊號
 
-PR #135 的 `scripts/watchlist_stock_signal.py` 還沒進主線。月報裡留了標記 `OPTIONAL HOOK: PR #135 watchlist_stock_signal`。檔案不在就略過，月報照樣完成。以後檔案出現，同一支指令會順便呼叫它，產出仍放在這個月份目錄。`--skip-stock-signal` 可以關掉這一步。
+`scripts/watchlist_stock_signal.py` 已在主線。月報跑完會順便呼叫它，產出放在同一個月份目錄。報告裡仍留標記 `OPTIONAL HOOK: PR #135 watchlist_stock_signal`。檔案不在就略過，月報照樣完成。`--skip-stock-signal` 可以關掉這一步，已有的那四個檔就不會被動到。

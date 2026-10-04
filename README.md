@@ -322,7 +322,7 @@ python3 ads_analysis.py --include-ai true
 - 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`，沒帶旗標時是預設 `mac`）
 - 遠端盒每月庫存：`python3 crawler.py --browser-source remote`
 - 唯讀應補摘要：`python -m restock_loop scan`
-- 每月庫存分析：`python3 scripts/monthly_inventory_report.py`（只讀，寫到 `reports/monthly_inventory_YYYYMM/`；目錄裡已有月報時預設不覆寫）。例行任務改成跑這支再摘要，說明見 [`docs/monthly_inventory_report.md`](docs/monthly_inventory_report.md)
+- 每月庫存分析：`python3 scripts/monthly_inventory_report.py`（只讀，寫到 `reports/monthly_inventory_YYYYMM/`；目錄裡已有月報檔時預設不覆寫，只有 `sources/` 不算）。例行任務改成跑這支再摘要，說明見 [`docs/monthly_inventory_report.md`](docs/monthly_inventory_report.md)
 - 廣告匯出／分析：`/ads.html` 或 `crawler.py --mode ads-export`／`ads_analysis.py`
 
 ## 應用程式打包 (發布)

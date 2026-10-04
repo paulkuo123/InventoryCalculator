@@ -33,7 +33,6 @@ from home_bootstrap import (  # noqa: E402
 from restock_loop.scan import _launcher, launcher_ineligibility_reasons  # noqa: E402
 from restock_rules import (  # noqa: E402
     DEFAULT_RESTOCK_MONTHS,
-    PHONE_CASE_MONTHS,
     calculated_restock_details,
     restock_category,
     target_months_for_product,
@@ -52,8 +51,14 @@ REPORT_OUTPUT_NAMES = (
     "priority_batch.csv",
     "BLOCKER.md",
 )
+# 趨勢紀錄放第一個。它是累積資料，備份失敗就中止，不往下覆寫。
+STOCK_SIGNAL_OUTPUT_NAMES = (
+    "watchlist_stock_signal_history.json",
+    "watchlist_stock_signal.md",
+    "watchlist_stock_signal_priority.csv",
+    "watchlist_stock_signal_products.csv",
+)
 CATEGORY_ORDER = ("phone_case", "charm", "other")
-# PR #135 還沒進 main。月報不 import 這支、也不因為它不存在而失敗。
 STOCK_SIGNAL_SCRIPT = "scripts/watchlist_stock_signal.py"
 STOCK_SIGNAL_HOOK_MARK = "OPTIONAL HOOK: PR #135 watchlist_stock_signal"
 
@@ -74,37 +79,49 @@ def _blank_category() -> Dict[str, int]:
     }
 
 
-def existing_report_outputs(out_dir: Path) -> List[Path]:
-    """這支腳本會寫的檔。備份檔（檔名後面帶時間）不算。"""
+def backup_stamp(now: datetime) -> str:
+    """備份檔名用這台機器的時區偏移，不寫死 +0800。"""
+    return now.astimezone().strftime("%Y%m%dT%H%M%S%z")
+
+
+def existing_named_files(out_dir: Path, names: Sequence[str]) -> List[Path]:
+    """只認這幾個檔名。sources/ 與檔名後面帶時間的備份都不算。"""
     if not out_dir.exists():
         return []
     found: List[Path] = []
-    for name in REPORT_OUTPUT_NAMES:
+    for name in names:
         path = out_dir / name
-        if path.exists():
+        if path.is_file():
             found.append(path)
-    sources = out_dir / "sources"
-    if sources.exists():
-        found.append(sources)
     return found
 
 
-def backup_existing_outputs(out_dir: Path, now: datetime) -> List[str]:
-    """把已有的報告檔複製成同資料夾裡帶時間的備份，再讓後面覆寫本體。"""
-    stamp = now.astimezone(TZ).strftime("%Y%m%dT%H%M%S%z")
-    backed: List[str] = []
-    for path in existing_report_outputs(out_dir):
-        dest = path.with_name(f"{path.name}.{stamp}")
-        suffix = 2
-        while dest.exists():
-            dest = path.with_name(f"{path.name}.{stamp}-{suffix}")
-            suffix += 1
-        if path.is_dir():
-            shutil.copytree(path, dest)
-        else:
-            shutil.copy2(path, dest)
-        backed.append(str(dest))
-    return backed
+def existing_report_outputs(out_dir: Path) -> List[Path]:
+    """已有的月報檔。只有 sources/ 時回傳空的，不擋這次執行。"""
+    return existing_named_files(out_dir, REPORT_OUTPUT_NAMES)
+
+
+def copy_backup(path: Path, stamp: str) -> str:
+    """複製成同資料夾裡帶時間的備份。失敗就中止，呼叫端不可再覆寫原檔。"""
+    if not path.is_file():
+        raise ReportInputError(f"備份失敗，已中止，沒有覆寫：{path.name} 不是檔案")
+    dest = path.with_name(f"{path.name}.{stamp}")
+    suffix = 2
+    while dest.exists():
+        dest = path.with_name(f"{path.name}.{stamp}-{suffix}")
+        suffix += 1
+    try:
+        shutil.copy2(path, dest)
+        if dest.read_bytes() != path.read_bytes():
+            raise OSError("備份內容與原檔不同")
+    except OSError as exc:
+        raise ReportInputError(f"備份失敗，已中止，沒有覆寫：{path.name}（{exc}）") from exc
+    return str(dest)
+
+
+def backup_named_files(paths: Sequence[Path], now: datetime) -> List[str]:
+    stamp = backup_stamp(now)
+    return [copy_backup(path, stamp) for path in paths]
 
 
 def guard_output_dir(out_dir: Path, overwrite: bool) -> List[Path]:
@@ -458,7 +475,7 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
                     "product_name": name,
                     "spec_id": spec_id,
                     "model_name": model_name,
-                    "is_phone_case": months == PHONE_CASE_MONTHS,
+                    "is_phone_case": category == "phone_case",
                     "target_months": months,
                     "stock": stock,
                     "monthly_sales": monthly,
@@ -480,9 +497,6 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
         )
     )
     first_batch = [row for row in rows if row["first_batch"]]
-    phone_rows = [row for row in rows if row["is_phone_case"]]
-    charm_rows = [row for row in rows if restock_category(row["product_name"], row["model_name"]) == "charm"]
-    other_rows = [row for row in rows if restock_category(row["product_name"], row["model_name"]) == "other"]
     oos_rows = [row for row in rows if row["out_of_stock"]]
     discontinued_rows = [row for row in rows if row["discontinued_labels"]]
 
@@ -512,12 +526,12 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
         "first_batch_specs": len(first_batch),
         "first_batch_suggested_qty": qty_sum(first_batch),
         "categories": categories,
-        "phone_case_critical": len(phone_rows),
-        "phone_case_suggested_qty": qty_sum(phone_rows),
-        "charm_critical": len(charm_rows),
-        "charm_suggested_qty": qty_sum(charm_rows),
-        "other_critical": len(other_rows),
-        "other_suggested_qty": qty_sum(other_rows),
+        "phone_case_critical": categories["phone_case"]["critical_specs"],
+        "phone_case_suggested_qty": categories["phone_case"]["critical_suggested_qty"],
+        "charm_critical": categories["charm"]["critical_specs"],
+        "charm_suggested_qty": categories["charm"]["critical_suggested_qty"],
+        "other_critical": categories["other"]["critical_specs"],
+        "other_suggested_qty": categories["other"]["critical_suggested_qty"],
         "discontinued_in_critical": len(discontinued_rows),
         "discontinued_suggested_qty": qty_sum(discontinued_rows),
     }
@@ -538,7 +552,7 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
             "ran": False,
             "note": (
                 f"{STOCK_SIGNAL_HOOK_MARK}。"
-                "scripts/watchlist_stock_signal.py 尚未在這份程式庫，這次沒有呼叫。"
+                "這份程式庫沒有 scripts/watchlist_stock_signal.py，這次沒有呼叫。"
             ),
         },
     }
@@ -961,7 +975,8 @@ def run_optional_stock_signal(
 ) -> Dict[str, Any]:
     """OPTIONAL HOOK: PR #135 scripts/watchlist_stock_signal.py。
 
-    main 還沒有這支程式時直接略過。有的話才呼叫，失敗也不推翻月報。
+    檔案不在就略過。有的話才呼叫，失敗也不推翻月報。
+    呼叫前若那四個產出已在，要先備份；這一步由 run() 做。
     """
     script = root / STOCK_SIGNAL_SCRIPT
     if not script.is_file():
@@ -969,8 +984,7 @@ def run_optional_stock_signal(
             "ran": False,
             "note": (
                 f"{STOCK_SIGNAL_HOOK_MARK}。"
-                "scripts/watchlist_stock_signal.py 尚未在這份程式庫（PR #135 還沒進主線），這次沒有呼叫。"
-                "月報不依賴它。"
+                "這份程式庫沒有 scripts/watchlist_stock_signal.py，這次沒有呼叫。月報不依賴它。"
             ),
         }
     command = [
@@ -1044,7 +1058,13 @@ def run(
     before = _fingerprint(watched)
     data = load_inputs(root, products_path, db_path, precheck, period)
     report = build_report(data)
-    backups = backup_existing_outputs(destination, clock) if pending_outputs else []
+    backups: List[str] = []
+    if pending_outputs:
+        backups.extend(backup_named_files(pending_outputs, clock))
+    if run_stock_signal:
+        signal_files = existing_named_files(destination, STOCK_SIGNAL_OUTPUT_NAMES)
+        if signal_files:
+            backups.extend(backup_named_files(signal_files, clock))
     snapshot_sources(destination, products_path, root)
     if run_stock_signal:
         signal = run_optional_stock_signal(root, destination, products_path, period)
@@ -1088,15 +1108,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--overwrite",
         action="store_true",
         help=(
-            "輸出目錄已經有月報時才允許重跑。"
-            "會先把舊檔複製成同資料夾裡帶時間的備份。不加這個參數就拒絕覆寫。"
+            "輸出目錄已經有月報檔（monthly_report.md、JSON、CSV、BLOCKER.md）時才允許重跑。"
+            "sources/ 不算。會先備份月報檔，以及已存在的水位訊號四個檔；不備份 sources/。"
+            "趨勢紀錄備份失敗就中止、不覆寫。不加這個參數就拒絕覆寫。"
         ),
     )
     parser.add_argument("--procurement-db", default=None, help="procurement.db 路徑，預設程式庫根目錄，只讀")
     parser.add_argument(
         "--skip-stock-signal",
         action="store_true",
-        help="不要呼叫 PR #135 的水位訊號腳本（那支還沒進主線時本來就會略過）",
+        help="不要呼叫觀察清單水位訊號腳本。已有的那四個檔這次不會動",
     )
     return parser
 

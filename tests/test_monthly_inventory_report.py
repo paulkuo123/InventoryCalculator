@@ -8,6 +8,7 @@ import sqlite3
 import subprocess
 import sys
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -17,6 +18,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
 from restock_rules import (  # noqa: E402
+    PHONE_CASE_MONTHS,
     calculated_restock_details,
     restock_category,
     target_months_for_product,
@@ -25,9 +27,10 @@ from reverse_audit.util import sha256_file  # noqa: E402
 from monthly_inventory_report import (  # noqa: E402
     DEFAULT_MAX_AGE_HOURS,
     LOW_COVER_MONTHS,
-    PHONE_CASE_MONTHS,
+    STOCK_SIGNAL_OUTPUT_NAMES,
     ReportInputError,
     STOCK_SIGNAL_HOOK_MARK,
+    backup_stamp,
     build_parser,
     build_report,
     load_inputs,
@@ -124,13 +127,13 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(summary["removed"], 2)
         self.assertEqual(summary["matched"], 5)
         self.assertEqual(summary["missing_ids"], ["2999"])
-        self.assertEqual(summary["selling_specs"], 7)
+        self.assertEqual(summary["selling_specs"], 8)
         self.assertEqual(summary["zero_sales_specs"], 1)
         self.assertEqual(summary["missing_sales_specs"], 1)
-        # 襪子與排除清單不進數字。危急：a1 a2 c1 e1 h1。b4 可撐 2 個月，未到危急。
-        self.assertEqual(summary["critical_specs"], 5)
-        self.assertEqual(summary["oos_specs"], 4)
-        self.assertEqual(summary["phone_case_critical"], 3)
+        # 襪子與排除清單不進數字。危急：a1 a2 a3 c1 e1 h1。b4 可撐 2 個月，未到危急。
+        self.assertEqual(summary["critical_specs"], 6)
+        self.assertEqual(summary["oos_specs"], 5)
+        self.assertEqual(summary["phone_case_critical"], 4)
         self.assertEqual(summary["charm_critical"], 1)
         self.assertEqual(summary["other_critical"], 1)
 
@@ -155,6 +158,9 @@ class ReportTests(unittest.TestCase):
         self.assertFalse(by_spec["a2"]["first_batch"])
         self.assertFalse(by_spec["a2"]["out_of_stock"])
         self.assertEqual(by_spec["a2"]["suggested_qty"], 5)
+        self.assertEqual(by_spec["a3"]["target_months"], 4)
+        self.assertTrue(by_spec["a3"]["is_phone_case"])
+        self.assertEqual(restock_category("合成測試手機殼", "透明,加購"), "phone_case")
 
         hist_product = json.loads((FIX / "shopee_products_latest.json").read_text(encoding="utf-8"))["2007"]
         hist_months = target_months_for_product(hist_product["商品名稱"], 4, "白色,15")
@@ -186,7 +192,15 @@ class ReportTests(unittest.TestCase):
             summary["critical_suggested_qty"] + gap_details["suggestedQty"],
         )
         categories = summary["categories"]
-        self.assertEqual(categories["phone_case"]["critical_specs"], 3)
+        self.assertEqual(categories["phone_case"]["critical_specs"], 4)
+        self.assertEqual(summary["phone_case_critical"], categories["phone_case"]["critical_specs"])
+        self.assertEqual(summary["phone_case_suggested_qty"], categories["phone_case"]["critical_suggested_qty"])
+        self.assertEqual(summary["charm_critical"], categories["charm"]["critical_specs"])
+        self.assertEqual(summary["other_critical"], categories["other"]["critical_specs"])
+        self.assertEqual(
+            summary["phone_case_critical"] + summary["charm_critical"] + summary["other_critical"],
+            summary["critical_specs"],
+        )
         self.assertEqual(categories["charm"]["critical_specs"], 1)
         self.assertEqual(categories["charm"]["selling_specs"], 1)
         self.assertEqual(restock_category("合成測試手機殼吊飾", "玫瑰繩"), "charm")
@@ -301,7 +315,7 @@ class ReportTests(unittest.TestCase):
         self.assertIn("每月蝦皮庫存分析", proc.stdout)
         self.assertIn("合成測試資料", proc.stdout)
         payload = json.loads((out / "monthly_report.json").read_text(encoding="utf-8"))
-        self.assertEqual(payload["summary"]["critical_specs"], 5)
+        self.assertEqual(payload["summary"]["critical_specs"], 6)
         self.assertTrue((out / "sources" / "shopee_products_latest.json").exists())
         self.assertEqual(sha256_file(self.root / "golden_table.json"), self.golden_sha)
 
@@ -335,7 +349,7 @@ class ReportTests(unittest.TestCase):
             run_stock_signal=False,
             month="202610",
         )
-        self.assertEqual(report["summary"]["critical_specs"], 5)
+        self.assertEqual(report["summary"]["critical_specs"], 6)
         self.assertFalse((fresh_out / "monthly_report.md").read_text(encoding="utf-8") == "")
         tight_out = Path(self.tmp.name) / "age-1"
         with self.assertRaises(ReportInputError) as caught:
@@ -374,6 +388,11 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(list(out.glob("monthly_report.md.*")), [])
         self.assertFalse(first["backups"])
 
+        moment = datetime(2026, 10, 4, 21, 6, 15, tzinfo=TZ)
+        stamp = backup_stamp(moment)
+        self.assertEqual(stamp, moment.astimezone().strftime("%Y%m%dT%H%M%S%z"))
+        if moment.astimezone().strftime("%z") != "+0800":
+            self.assertFalse(stamp.endswith("+0800"))
         second = run(
             self.root,
             out_dir=out,
@@ -381,16 +400,132 @@ class ReportTests(unittest.TestCase):
             run_stock_signal=False,
             month="202610",
             overwrite=True,
-            now=datetime(2026, 10, 4, 21, 6, 15, tzinfo=TZ),
+            now=moment,
         )
-        backups = list(out.glob("monthly_report.md.20261004T210615+0800*"))
+        backups = list(out.glob(f"monthly_report.md.{stamp}*"))
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), original)
         self.assertTrue((out / "monthly_report.md").exists())
-        self.assertTrue(any(Path(path).name.startswith("sources.20261004T210615+0800") for path in second["backups"]))
-        backed_sources = next(path for path in out.iterdir() if path.name.startswith("sources.20261004T210615+0800"))
-        self.assertTrue((backed_sources / "shopee_products_latest.json").is_file())
+        self.assertFalse(any(path.name.startswith("sources.") for path in out.iterdir()))
+        self.assertFalse(any(Path(path).name.startswith("sources.") for path in second["backups"]))
+        self.assertTrue((out / "sources" / "shopee_products_latest.json").is_file())
         self.assertEqual(sha256_file(self.root / "golden_table.json"), self.golden_sha)
+
+    def test_sources_alone_does_not_count_as_existing_report(self):
+        out = Path(self.tmp.name) / "sources-only"
+        sources = out / "sources"
+        sources.mkdir(parents=True)
+        (sources / "do-not-copy.txt").write_text("留在原處\n", encoding="utf-8")
+        report = run(
+            self.root,
+            out_dir=out,
+            max_age_hours=100000,
+            run_stock_signal=False,
+            month="202610",
+        )
+        self.assertEqual(report["backups"], [])
+        self.assertFalse(any(path.name.startswith("sources.") for path in out.iterdir()))
+        self.assertTrue((out / "monthly_report.md").is_file())
+        self.assertEqual((sources / "do-not-copy.txt").read_text(encoding="utf-8"), "留在原處\n")
+        self.assertEqual(sha256_file(self.root / "golden_table.json"), self.golden_sha)
+
+    def test_stock_signal_files_are_backed_up_before_overwrite(self):
+        import watchlist_stock_signal as signal
+
+        self.assertEqual(
+            list(STOCK_SIGNAL_OUTPUT_NAMES),
+            [
+                signal.HISTORY_NAME,
+                signal.MARKDOWN_NAME,
+                signal.PRIORITY_CSV_NAME,
+                signal.PRODUCT_CSV_NAME,
+            ],
+        )
+        out = Path(self.tmp.name) / "signal-out"
+        run(
+            self.root,
+            out_dir=out,
+            max_age_hours=100000,
+            run_stock_signal=False,
+            month="202610",
+        )
+        history = (
+            '{"schemaVersion": 1, "runs": [{"period": "2026-09", "note": "舊的累積趨勢"}]}\n'
+        ).encode("utf-8")
+        payloads = {
+            "watchlist_stock_signal_history.json": history,
+            "watchlist_stock_signal.md": "舊的水位訊號\n".encode("utf-8"),
+            "watchlist_stock_signal_priority.csv": "舊的優先名單\n".encode("utf-8"),
+            "watchlist_stock_signal_products.csv": "舊的商品名單\n".encode("utf-8"),
+        }
+        for name, payload in payloads.items():
+            (out / name).write_bytes(payload)
+        with self.assertRaises(ReportInputError):
+            run(
+                self.root,
+                out_dir=out,
+                max_age_hours=100000,
+                run_stock_signal=True,
+                month="202610",
+            )
+        self.assertEqual((out / "watchlist_stock_signal_history.json").read_bytes(), history)
+        self.assertEqual(list(out.glob("watchlist_stock_signal_history.json.*")), [])
+
+        moment = datetime(2026, 10, 4, 9, 30, 0, tzinfo=TZ)
+        stamp = backup_stamp(moment)
+        run(
+            self.root,
+            out_dir=out,
+            max_age_hours=100000,
+            run_stock_signal=True,
+            month="202610",
+            overwrite=True,
+            now=moment,
+        )
+        for name, payload in payloads.items():
+            backed = out / f"{name}.{stamp}"
+            self.assertTrue(backed.is_file(), name)
+            self.assertEqual(backed.read_bytes(), payload)
+        self.assertFalse(any(path.name.startswith("sources.") for path in out.iterdir()))
+
+    def test_history_backup_failure_stops_before_overwrite(self):
+        out = Path(self.tmp.name) / "history-fail"
+        run(
+            self.root,
+            out_dir=out,
+            max_age_hours=100000,
+            run_stock_signal=False,
+            month="202610",
+        )
+        history = out / "watchlist_stock_signal_history.json"
+        original_history = '{"schemaVersion": 1, "runs": [{"period": "2026-08", "keep": true}]}\n'.encode()
+        history.write_bytes(original_history)
+        original_report = (out / "monthly_report.md").read_bytes()
+        real_copy = shutil.copy2
+
+        def fail_history(src, dst, *args, **kwargs):
+            if Path(src).name == "watchlist_stock_signal_history.json":
+                raise OSError("磁碟寫入失敗")
+            return real_copy(src, dst, *args, **kwargs)
+
+        import monthly_inventory_report as report_module
+
+        with mock.patch.object(report_module.shutil, "copy2", side_effect=fail_history):
+            with self.assertRaises(ReportInputError) as caught:
+                run(
+                    self.root,
+                    out_dir=out,
+                    max_age_hours=100000,
+                    run_stock_signal=True,
+                    month="202610",
+                    overwrite=True,
+                    now=datetime(2026, 10, 4, 9, 45, 0, tzinfo=TZ),
+                )
+        self.assertIn("備份失敗", str(caught.exception))
+        self.assertIn("watchlist_stock_signal_history.json", str(caught.exception))
+        self.assertEqual(history.read_bytes(), original_history)
+        self.assertEqual((out / "monthly_report.md").read_bytes(), original_report)
+        self.assertEqual(list(out.glob("watchlist_stock_signal_history.json.*")), [])
 
 
 class InputShapeTests(unittest.TestCase):
