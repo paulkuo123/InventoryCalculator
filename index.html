@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>莉莉安蝦皮庫存管理系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=20260830-restock-batch">
+    <link rel="stylesheet" href="styles.css?v=20261004-home-ui">
 </head>
 <body class="inventory-home">
     <header>
@@ -14,7 +14,10 @@
                 <div class="logo-circle">
                     <i class="fas fa-store"></i>
                 </div>
-                <h1>莉莉安蝦皮庫存管理系統</h1>
+                <div class="brand-text">
+                    <h1>莉莉安蝦皮庫存管理系統</h1>
+                    <span class="brand-subtitle">庫存水位 · 補貨建議 · 1688 採購</span>
+                </div>
             </div>
             <div class="header-actions">
                 <a class="btn-secondary header-link-button" href="/products.html">
@@ -27,7 +30,7 @@
                 </a>
                 <a class="btn-secondary header-link-button" href="/sku-mapping.html">
                     <i class="fas fa-link"></i>
-                    1688 SKU Mapping
+                    SKU Mapping
                 </a>
                 <a class="btn-secondary header-link-button" href="/golden-import.html">
                     <i class="fas fa-plus"></i>
@@ -35,10 +38,10 @@
                 </a>
                 <a class="btn-secondary header-link-button" href="/ads.html">
                     <i class="fas fa-bullhorn"></i>
-                    前往廣告分析
+                    廣告分析
                 </a>
                 <div class="stats-badge">
-                    <i class="fas fa-chart-line"></i>
+                    <span class="stats-dot" aria-hidden="true"></span>
                     <span>庫存監控中</span>
                 </div>
             </div>
@@ -48,7 +51,7 @@
     <div class="container">
         <div class="card">
             <div class="search-container">
-                <input type="text" id="searchInput" placeholder="輸入商品關鍵字...">
+                <input type="text" id="searchInput" placeholder="輸入商品關鍵字（留空搜尋全部商品）" aria-label="商品關鍵字">
                 <div class="headless-option">
                     <label class="toggle-switch">
                         <input type="checkbox" id="headlessMode" checked>
@@ -85,44 +88,46 @@
             </div>
         </div>
 
-        <div class="card cookie-import-card shopee-products-import-card">
-            <div class="cookie-import-header">
-                <div>
-                    <h3><i class="fas fa-file-import"></i> 手動匯入 shopee_products.json</h3>
-                    <p>選擇商品資料檔後按「匯入並套用」。觀察清單請在下方另外匯入。</p>
+        <section class="home-tools" aria-label="資料匯入">
+            <div class="card cookie-import-card shopee-products-import-card">
+                <div class="cookie-import-header">
+                    <div>
+                        <h3><i class="fas fa-file-import"></i> 匯入商品資料</h3>
+                        <p>選擇 <code>shopee_products.json</code> 後按「匯入並套用」。觀察清單請在下方另外匯入。</p>
+                    </div>
+                </div>
+                <div class="shopee-products-import-actions">
+                    <input id="shopeeProductsFile" type="file" accept=".json,application/json">
+                    <button id="shopeeProductsImportButton" class="btn-secondary" type="button" disabled>
+                        <i class="fas fa-file-import"></i>
+                        匯入並套用
+                    </button>
+                    <span id="shopeeProductsImportStatus" class="shopee-products-import-status" role="status" aria-live="polite"></span>
                 </div>
             </div>
-            <div class="shopee-products-import-actions">
-                <input id="shopeeProductsFile" type="file" accept=".json,application/json">
-                <button id="shopeeProductsImportButton" class="btn-secondary" type="button" disabled>
-                    <i class="fas fa-file-import"></i>
-                    匯入並套用
-                </button>
-                <span id="shopeeProductsImportStatus" class="shopee-products-import-status" role="status" aria-live="polite"></span>
-            </div>
-        </div>
 
-        <div class="card cookie-import-card">
-            <div class="cookie-import-header">
-                <div>
-                    <h3><i class="fas fa-key"></i> 匯入蝦皮 Cookies</h3>
-                    <p>貼上從瀏覽器匯出的 Cookie JSON，或 <code>name=value; ...</code> 文字，系統會直接存成專案根目錄的 <code>cookies.json</code>。</p>
+            <div class="card cookie-import-card">
+                <div class="cookie-import-header">
+                    <div>
+                        <h3><i class="fas fa-key"></i> 匯入蝦皮 Cookies</h3>
+                        <p>貼上瀏覽器匯出的 Cookie JSON 或 <code>name=value; ...</code> 文字，會存成專案根目錄的 <code>cookies.json</code>。</p>
+                    </div>
+                    <span class="cookie-import-hint">不回顯 Cookie 值</span>
                 </div>
-                <span class="cookie-import-hint">只顯示數量與網域，不回顯 Cookie 值</span>
+                <textarea id="cookieImportText" class="cookie-import-textarea" rows="3" spellcheck="false" placeholder="請貼上 Cookie JSON，或 name=value; another=value" autocomplete="off"></textarea>
+                <div class="cookie-import-actions">
+                    <button id="cookieImportButton" class="btn-secondary" type="button">
+                        <i class="fas fa-file-import"></i>
+                        儲存 Cookies
+                    </button>
+                    <button id="cookieImportClearButton" class="btn-outline" type="button">
+                        <i class="fas fa-eraser"></i>
+                        清空
+                    </button>
+                    <span id="cookieImportStatus" class="cookie-import-status" role="status" aria-live="polite"></span>
+                </div>
             </div>
-            <textarea id="cookieImportText" class="cookie-import-textarea" rows="5" spellcheck="false" placeholder="請貼上 Cookie JSON，或 name=value; another=value" autocomplete="off"></textarea>
-            <div class="cookie-import-actions">
-                <button id="cookieImportButton" class="btn-secondary" type="button">
-                    <i class="fas fa-file-import"></i>
-                    儲存 Cookies
-                </button>
-                <button id="cookieImportClearButton" class="btn-outline" type="button">
-                    <i class="fas fa-eraser"></i>
-                    清空
-                </button>
-                <span id="cookieImportStatus" class="cookie-import-status" role="status" aria-live="polite"></span>
-            </div>
-        </div>
+        </section>
 
         <!-- 庫存健康儀表板 (Dashboard Summary) -->
         <div class="card dashboard-summary" id="dashboardSummary">
@@ -192,7 +197,7 @@
             <div class="cookie-import-header">
                 <div>
                     <h3><i class="fas fa-bookmark"></i> 個人觀察清單</h3>
-                    <p>手動匯入觀察清單後，可切換「只顯示我的觀察清單」。曾手動匯入的清單會保留在此瀏覽器；再次匯入商品資料會保留目前的篩選選擇。</p>
+                    <p>匯入觀察清單後可切換「只顯示我的觀察清單」。清單會保留在此瀏覽器，再次匯入商品資料也會保留目前的篩選。</p>
                 </div>
                 <span class="cookie-import-hint" id="personalWatchlistSummary">尚未匯入</span>
             </div>
