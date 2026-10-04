@@ -1135,6 +1135,63 @@ class GoldenBatchWriterTest(unittest.TestCase):
         self.assertFalse(record["verification"]["ok"])
         self.assertTrue(any("決策檔不一致" in item for item in record["verification"]["problems"]))
 
+    def test_kill_before_record_explains_how_to_retry(self):
+        batch_id, proposal_path, decision_path = self._cup_files()
+        self._seed_cup_snapshot()
+        before_golden = self.golden_path.read_bytes()
+        before_db = self.db_path.read_bytes()
+        batch_dir = self.base / "backups" / "batches" / batch_id
+
+        with self.assertRaises(GoldenBatchError) as caught:
+            rollback_batch(
+                str(self.base),
+                batch_id,
+                mode="whole",
+                apply=True,
+                input_fn=self._confirm(batch_id),
+            )
+        self.assertIn("找不到批次紀錄", str(caught.exception))
+        self.assertIn("還沒開始改", str(caught.exception))
+        self.assertIn("golden_sha_at_proposal", str(caught.exception))
+        self.assertIn("可以直接重新套用", str(caught.exception))
+
+        batch_dir.mkdir(parents=True)
+        (batch_dir / "golden_table.json").write_bytes(before_golden)
+        with self.assertRaises(GoldenBatchError) as caught:
+            apply_batch(
+                str(proposal_path),
+                str(decision_path),
+                str(self.base),
+                apply=True,
+                input_fn=self._confirm(batch_id),
+            )
+        self.assertIn("刪掉整個資料夾", str(caught.exception))
+        self.assertIn(str(batch_dir), str(caught.exception))
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        with self.assertRaises(GoldenBatchError) as caught:
+            rollback_batch(
+                str(self.base),
+                batch_id,
+                mode="whole",
+                apply=False,
+            )
+        self.assertIn("刪掉整個資料夾", str(caught.exception))
+
+        (batch_dir / "golden_table.json").write_bytes(before_golden + b"\n")
+        with self.assertRaises(GoldenBatchError) as caught:
+            apply_batch(
+                str(proposal_path),
+                str(decision_path),
+                str(self.base),
+                apply=True,
+                input_fn=self._confirm(batch_id),
+            )
+        self.assertIn("複製蓋回", str(caught.exception))
+        self.assertIn("不能自動還原", str(caught.exception))
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+
     def test_batch_backups_survive_golden_and_housekeeping_prune(self):
         root = self.base / "prune"
         root.mkdir()

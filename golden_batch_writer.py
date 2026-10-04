@@ -1215,8 +1215,10 @@ def apply_batch(
         }
 
     record_path = batch_dir / "batch_record.json"
-    if record_path.exists() or (batch_dir / "golden_table.json").exists():
+    if record_path.exists():
         _fail("這個批次已經有寫入紀錄或備份，不能再寫一次。")
+    if (batch_dir / "golden_table.json").exists():
+        _fail(_interrupted_before_record_message(base, batch_id))
     if input_fn is None:
         _fail("套用必須由人輸入批次編號。請在終端機執行，不要用程式代填。")
     _confirm(
@@ -1347,11 +1349,57 @@ def dry_run(
     )
 
 
+def _interrupted_before_record_message(base: Path, batch_id: str) -> str:
+    """Explain a kill that happened before batch_record.json was written.
+
+    The write loop starts only after that record exists, so a missing record
+    means this batch has not rewritten the official Golden file. A leftover
+    ``golden_table.json`` in the batch folder is the pre-write copy, and its
+    presence is what blocks the next apply.
+    """
+    batch_dir = _batch_dir(base, batch_id)
+    backup = batch_dir / "golden_table.json"
+    official = base / "golden_table.json"
+    proposal_hint = "提案檔每一列的 golden_sha_at_proposal 是提案當下整份對照表的 SHA-256。"
+    if not backup.is_file():
+        return (
+            f"找不到批次紀錄：{batch_id}。"
+            f"{batch_dir} 裡沒有寫入前的整份備份 golden_table.json。"
+            "沒有批次紀錄代表這一批還沒開始改正式的 golden_table.json，還原命令無法代為還原。"
+            f"請比對正式 golden_table.json 的 SHA-256 和提案時的檢查碼。{proposal_hint}"
+            "檢查碼相同就可以直接重新套用。資料夾裡若只有預覽差異檔，留著或刪掉都不會擋住重跑。"
+            "檢查碼不同代表正式表是在這一批之外被改過，請人工比對；這時候沒有整份批次備份可以還原。"
+        )
+    official_sha = sha256_file(official) if official.is_file() else ""
+    backup_sha = sha256_file(backup)
+    if official_sha == backup_sha:
+        return (
+            f"找不到批次紀錄：{batch_id}。"
+            f"{batch_dir} 已有寫入前的整份備份 golden_table.json，"
+            "而且正式 golden_table.json 的 SHA-256 和這份備份相同。"
+            "這表示程序在批次紀錄寫入之前就停了，正式表還沒被這一批改寫。"
+            f"請刪掉整個資料夾 {batch_dir} 後重新套用。重跑會被擋住，是因為這個備份檔還在。"
+            f"{proposal_hint}"
+            "若正式檔和提案時的檢查碼不同，那是套用前就已經不同；刪掉這個資料夾之後仍可重跑。"
+            "開啟服務可能已更新既有建議列的時間，刪資料夾不會把資料庫改回去，重跑會再次開啟服務。"
+        )
+    return (
+        f"找不到批次紀錄：{batch_id}。"
+        f"{batch_dir} 裡有寫入前的整份備份，但正式 golden_table.json 的 SHA-256（{official_sha}）"
+        f"和備份（{backup_sha}）不同。"
+        "這支還原命令沒有批次紀錄，不能自動還原。"
+        f"請人工比對後，把 {backup} 複製蓋回 {official}，"
+        "確認正式檔的 SHA-256 和備份相同，再刪掉整個資料夾 "
+        f"{batch_dir}，然後重新套用。"
+        f"{proposal_hint}"
+    )
+
+
 def _load_record(base: Path, batch_id: str) -> Tuple[Path, Dict[str, Any]]:
     batch_id = _require_batch_id(batch_id, "命令")
     record_path = _batch_dir(base, batch_id) / "batch_record.json"
     if not record_path.is_file():
-        _fail(f"找不到批次紀錄：{batch_id}")
+        _fail(_interrupted_before_record_message(base, batch_id))
     data, _raw, _digest = _read_json(record_path)
     if not isinstance(data, dict):
         _fail("批次紀錄不是物件。")

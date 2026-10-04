@@ -674,6 +674,16 @@
     return cardElement.querySelector('.candidate');
   }
 
+  function hasExplicitSelection(cardElement) {
+    if (cardElement.querySelector('.catalog-select')?.value) return true;
+    const item = state.itemCache.get(String(cardElement.dataset.id));
+    const selected = cardElement.querySelector('.candidate.selected');
+    // Green rows render their unique suggestion pre-selected; that is the
+    // system's default, not a reviewer choice.
+    if (!selected) return false;
+    return !(item?.review_tier === 'green' && selected.classList.contains('suggested'));
+  }
+
   function rememberSelection(cardElement) {
     const id = String(cardElement?.dataset.id || '');
     if (id) state.selections.set(id, selectionFromCard(cardElement));
@@ -821,7 +831,6 @@
     if (state.batchBusy) return;
     const cards = [...document.querySelectorAll('.queue .card')].filter(card => card.querySelector('.select-item')?.checked);
     if (!cards.length && !state.selectedIds.size) { message('請先勾選要批次處理的型號。', 'error'); return; }
-    cards.forEach(card => rememberSelection(card));
     const rows = [...state.selectedIds].map(id => state.itemCache.get(String(id))).filter(Boolean);
     if (!rows.length) { message('清單資料已更新，請先重新載入。', 'error'); return; }
     const prompt = action === 'defer'
@@ -874,7 +883,14 @@
     if (state.batchBusy) return;
     const cards = [...document.querySelectorAll('.queue .card')].filter(card => card.querySelector('.select-item')?.checked);
     if (!cards.length && !state.selectedIds.size) { message('請先勾選要批次核准的型號。', 'error'); return; }
-    cards.forEach(card => rememberSelection(card));
+    // Only a clicked candidate card or a catalog choice counts as manual.
+    // rememberSelection() falls back to candidate #1, so check intent before
+    // persisting the visible cards, otherwise every row looks hand-picked.
+    const manualIds = new Set(state.selections.keys());
+    cards.forEach(card => {
+      if (hasExplicitSelection(card)) manualIds.add(String(card.dataset.id));
+    });
+    cards.forEach(card => { if (manualIds.has(String(card.dataset.id))) rememberSelection(card); });
     const selectedRows = [...state.selectedIds].map(id => state.itemCache.get(String(id))).filter(Boolean);
     if (!selectedRows.length) { message('清單資料已更新，請先重新載入再批次核准。', 'error'); return; }
     const selections = selectedRows.map(row => {
@@ -897,11 +913,13 @@
       version: selection.row.version,
     }));
     if (!items.length) { message('請先勾選有候選 SKU 的型號。', 'error'); return; }
-    const manualCount = selections.filter(selection => state.selections.has(String(selection.row.id))).length;
-    const defaultCount = selections.filter(selection => !selection.selection.candidateKey).length;
+    const manualCount = selections.filter(selection => manualIds.has(String(selection.row.id))).length;
+    const defaulted = selections.filter(selection => !manualIds.has(String(selection.row.id)));
+    const defaultNonGreen = defaulted.filter(selection => selection.row.review_tier !== 'green').length;
     const warning = [
-      manualCount ? `${manualCount} 筆使用完整 SKU 清單中的手動選擇。` : '',
-      defaultCount ? `${defaultCount} 筆未手動指定，將使用候選第 1 號。` : '',
+      manualCount ? `${manualCount} 筆使用你手動選擇的規格。` : '',
+      defaulted.length ? `${defaulted.length} 筆未手動指定，將使用畫面上的候選第 1 號。` : '',
+      defaultNonGreen ? `⚠ 其中 ${defaultNonGreen} 筆不是綠色唯一精確，請確認候選第 1 號正確。` : '',
     ].filter(Boolean).join('\n') || '每筆都已手動選擇候選。';
     if (!window.confirm(`確定核准 ${items.length} 筆 SKU mapping？\n${warning}`)) return;
     setBatchBusy(true, `批次核准進行中：正在處理 ${items.length} 筆，請稍候…`);
@@ -1333,13 +1351,25 @@
       if (candidate && cardElement) {
         cardElement.querySelectorAll('.candidate').forEach(node => node.classList.remove('selected'));
         candidate.classList.add('selected');
+        const catalogSelect = cardElement.querySelector('.catalog-select');
+        if (catalogSelect) catalogSelect.value = '';
         rememberSelection(cardElement);
       }
       return decide(cardElement, 'reject_candidate', rejectButton);
     }
     if (event.target.closest('.why-panel')) return;
     const candidate = event.target.closest('.candidate');
-    if (candidate) { const parent = candidate.closest('.card'); parent.querySelectorAll('.candidate').forEach(node => node.classList.remove('selected')); candidate.classList.add('selected'); rememberSelection(parent); return; }
+    if (candidate) {
+      const parent = candidate.closest('.card');
+      parent.querySelectorAll('.candidate').forEach(node => node.classList.remove('selected'));
+      candidate.classList.add('selected');
+      // The catalog dropdown wins in selectionFromCard(); clear it so the
+      // approved SKU is the card the reviewer just clicked.
+      const catalogSelect = parent.querySelector('.catalog-select');
+      if (catalogSelect) catalogSelect.value = '';
+      rememberSelection(parent);
+      return;
+    }
     const button = event.target.closest('button[data-action]');
     if (!button) return;
     const cardElement = button.closest('.card');
@@ -1354,6 +1384,7 @@
   $('queue').addEventListener('change', event => {
     const catalogSelect = event.target.closest('.catalog-select');
     if (catalogSelect) {
+      if (catalogSelect.value) catalogSelect.closest('.card').querySelectorAll('.candidate.selected').forEach(node => node.classList.remove('selected'));
       rememberSelection(catalogSelect.closest('.card'));
       message(catalogSelect.value ? '已選擇完整 SKU；請按下方綠色「核准選取 SKU」儲存。' : '請從完整 SKU 清單選擇一個規格。', catalogSelect.value ? 'success' : '');
       return;
@@ -1412,10 +1443,16 @@
       closeUrlChange();
       return;
     }
+    if (event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+    if (!$('reasonModal')?.hidden || !$('urlChangeModal').hidden) return;
+    const focused = document.activeElement;
+    // A focused button/link already handles Enter natively; also approving the
+    // hovered card would fire two actions, possibly on two different cards.
+    if (focused && focused !== document.body && focused.closest('input, select, textarea, button, a, summary, [contenteditable="true"]')) return;
     const active = document.querySelector('.card:hover');
-    if (!active || ['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName)) return;
+    if (!active) return;
     if (/^[1-5]$/.test(event.key)) active.querySelectorAll('.candidate')[Number(event.key) - 1]?.click();
-    if (event.key === 'Enter') active.querySelector('[data-action="approve"]')?.click();
+    if (event.key === 'Enter') { event.preventDefault(); active.querySelector('[data-action="approve"]')?.click(); }
   });
   $('reasonConfirm')?.addEventListener('click', () => {
     const reason = readReasonForm(Boolean(state.reasonOptional));
