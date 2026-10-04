@@ -79,6 +79,7 @@ AI_SUCCESS_SOURCES = {"openai", "grok", "deepseek", "gemini"}
 AI_GREEN_CONFIDENCE_THRESHOLD = 0.95
 AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD = 0.90
 DEFERRED_REVIEW_REASON = "人工保留，稍後比較候選"
+UNAPPROVABLE_SNAPSHOT_STATUSES = frozenset({"stale", "waiting_for_login", "error", "suspected_discontinued"})
 REVIEW_TIERS = {"green", "yellow", "red", "approved"}
 MAX_REVIEW_CANDIDATES = 4
 GOLDEN_BACKUP_KEEP = 3
@@ -6890,8 +6891,16 @@ class SkuMappingService:
             raise ValueError("批次處理一次只能選擇同一種動作：核准、稍後處理、無匹配或停售")
         action = next(iter(actions))
         for item in items:
-            product_id, model_id, _row, candidates = self._decision_context(item)
+            product_id, model_id, row, candidates = self._decision_context(item)
+            if action == "no_match":
+                # Raise before any row is written; otherwise a bad reason on a
+                # later row leaves the earlier rows already applied.
+                self._decision_reason(item, action)
             if action == "approve":
+                # Mirror _apply_decision's snapshot gate here so one unusable
+                # row rejects the whole batch instead of failing mid-way.
+                if str(row.get("status") or "") in UNAPPROVABLE_SNAPSHOT_STATUSES:
+                    raise ValueError(f"{product_id}/{model_id} 目前快照不可用（{row.get('status')}），請先重新掃描後再批次核准")
                 if not candidates:
                     raise ValueError(f"{product_id}/{model_id} 沒有候選 SKU，不能批次核准")
                 selected_key = str(item.get("candidateKey") or item.get("candidate_key") or "").strip()
@@ -6916,7 +6925,7 @@ class SkuMappingService:
             # A manually discontinued row can still have a valid, current SKU
             # snapshot.  Allow the explicit human selection to restore it to
             # approved; scanner-detected/unusable states remain blocked.
-            if str(row.get("status") or "") in {"stale", "waiting_for_login", "error", "suspected_discontinued"}:
+            if str(row.get("status") or "") in UNAPPROVABLE_SNAPSHOT_STATUSES:
                 raise ValueError("目前快照不可用，請先重新掃描並確認登入／商品狀態")
             if not selected:
                 raise ValueError("核准的 1688 規格名稱組合不在候選清單")
@@ -6975,30 +6984,59 @@ class SkuMappingService:
             if action == "no_match":
                 reason_code, reason_text = self._decision_reason(item, action)
                 after_payload["negative_example_ids"] = []
-            with self.connect() as conn:
-                conn.execute("UPDATE sku_mapping_suggestions SET status=?, review_tier=?, review_reason=?, version=version+1, updated_at=? WHERE id=?", (new_status, new_tier, new_reason, now, row["id"]))
-                review = conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (row["id"], action, json.dumps(row, ensure_ascii=False), json.dumps(after_payload, ensure_ascii=False), reviewer, now))
-                if action == "no_match":
-                    review_id = int(review.lastrowid)
-                    negative_ids = []
-                    for candidate in candidates:
-                        negative_ids.append(self._upsert_negative_example(
-                            conn, row, candidate,
-                            origin="no_match",
-                            reason_code=reason_code,
-                            reason_text=reason_text,
-                            reviewer=reviewer,
-                            review_id=review_id,
-                            created_at=now,
-                        ))
-                    after_payload["negative_example_ids"] = negative_ids
-                    conn.execute(
-                        "UPDATE sku_mapping_reviews SET after_json=? WHERE id=?",
-                        (json.dumps(after_payload, ensure_ascii=False), review_id),
-                    )
+            # The Golden Table is what procurement reads.  no_match takes an
+            # approved model out of approval, so Golden must follow, otherwise
+            # the old SKU keeps being purchased while the queue says no_match.
+            # defer only means "look again later" and keeps a valid approval.
+            golden_restore = None
+            if action == "no_match" and self._golden_model_status(row) == "approved":
+                _target, _before, golden_restore = self._write_golden_status(row, new_status)
+                after_payload["golden_mapping_status"] = new_status
+            try:
+                self._write_no_match_or_defer(row, action, new_status, new_tier, new_reason, reason_code if action == "no_match" else "", reason_text if action == "no_match" else "", candidates, after_payload, reviewer, now)
+            except Exception:
+                if golden_restore is not None:
+                    self._restore_golden(golden_restore)
+                raise
         else:
             raise ValueError("不支援的 mapping action")
         return {"productId": product_id, "modelId": model_id, "status": new_status, "candidateKey": str(selected.get("candidate_key") or "") if selected else "", "skuId": selected_id, "skuName": str(selected.get("sku_name") or "") if selected else "", "skuSecondName": str(selected.get("second_name") or "") if selected else ""}
+
+    def _write_no_match_or_defer(
+        self,
+        row: Dict[str, Any],
+        action: str,
+        new_status: str,
+        new_tier: str,
+        new_reason: str,
+        reason_code: str,
+        reason_text: str,
+        candidates: Sequence[Dict[str, Any]],
+        after_payload: Dict[str, Any],
+        reviewer: str,
+        now: int,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute("UPDATE sku_mapping_suggestions SET status=?, review_tier=?, review_reason=?, version=version+1, updated_at=? WHERE id=?", (new_status, new_tier, new_reason, now, row["id"]))
+            review = conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (row["id"], action, json.dumps(row, ensure_ascii=False), json.dumps(after_payload, ensure_ascii=False), reviewer, now))
+            if action == "no_match":
+                review_id = int(review.lastrowid)
+                negative_ids = []
+                for candidate in candidates:
+                    negative_ids.append(self._upsert_negative_example(
+                        conn, row, candidate,
+                        origin="no_match",
+                        reason_code=reason_code,
+                        reason_text=reason_text,
+                        reviewer=reviewer,
+                        review_id=review_id,
+                        created_at=now,
+                    ))
+                after_payload["negative_example_ids"] = negative_ids
+                conn.execute(
+                    "UPDATE sku_mapping_reviews SET after_json=? WHERE id=?",
+                    (json.dumps(after_payload, ensure_ascii=False), review_id),
+                )
 
     def _write_approved_mapping(
         self,
@@ -7112,7 +7150,21 @@ class SkuMappingService:
             "alibabaLastCheckedAt": target.get("1688_verified_at") or time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now)),
         })
 
-    def _write_status_mapping(self, suggestion: Dict[str, Any], status: str, reviewer: str) -> None:
+    def _golden_model_status(self, suggestion: Dict[str, Any]) -> str:
+        product = self._golden().get(str(suggestion["product_id"]), {})
+        for model in product.get("型號", []) if isinstance(product, dict) else []:
+            current_id = normalize_id(model.get("規格ID")) or str(model.get("型號名稱") or "").strip()
+            if current_id == str(suggestion["model_id"]):
+                return str(model.get("1688_mapping_status") or "")
+        return ""
+
+    def _write_golden_status(self, suggestion: Dict[str, Any], status: str) -> Tuple[Dict[str, Any], Dict[str, Any], bytes]:
+        """Write one model's Golden mapping status and procurement binding.
+
+        Returns the target model, its mapping fields before the change and the
+        original Golden bytes so the caller can roll back with
+        ``_restore_golden`` if its own SQLite update fails.
+        """
         golden = self._golden()
         product = golden.get(str(suggestion["product_id"]), {})
         target = None
@@ -7140,31 +7192,42 @@ class SkuMappingService:
         os.replace(tmp_path, self.golden_path)
         self._remember_golden(golden)
         try:
-            if target is not None:
-                from procurement_store import ProcurementStore
-                ProcurementStore(base_dir=str(self.base_dir)).upsert_binding({
-                    "productId": suggestion["product_id"],
-                    "modelId": suggestion["model_id"],
-                    "productName": suggestion.get("product_name", ""),
-                    "modelName": suggestion.get("model_name", ""),
-                    "alibabaProductUrl": target.get("阿里巴巴商品URL", ""),
-                    "alibabaOfferId": target.get("1688_offer_id", ""),
-                    "alibabaSkuId": target.get("1688_sku_id", ""),
-                    "alibabaSkuName": target.get("1688_sku_name", ""),
-                    "alibabaSkuSecondName": target.get("1688_sku_second_name", ""),
-                    "alibabaSpecText": target.get("1688_spec_text", ""),
-                    "alibabaOfferFingerprint": target.get("1688_offer_fingerprint", ""),
-                    "alibabaMappingStatus": status,
-                    "alibabaLastPriceCny": target.get("1688_last_price_cny"),
-                })
+            from procurement_store import ProcurementStore
+            ProcurementStore(base_dir=str(self.base_dir)).upsert_binding({
+                "productId": suggestion["product_id"],
+                "modelId": suggestion["model_id"],
+                "productName": suggestion.get("product_name", ""),
+                "modelName": suggestion.get("model_name", ""),
+                "alibabaProductUrl": target.get("阿里巴巴商品URL", ""),
+                "alibabaOfferId": target.get("1688_offer_id", ""),
+                "alibabaSkuId": target.get("1688_sku_id", ""),
+                "alibabaSkuName": target.get("1688_sku_name", ""),
+                "alibabaSkuSecondName": target.get("1688_sku_second_name", ""),
+                "alibabaSpecText": target.get("1688_spec_text", ""),
+                "alibabaOfferFingerprint": target.get("1688_offer_fingerprint", ""),
+                "alibabaMappingStatus": status,
+                "alibabaLastPriceCny": target.get("1688_last_price_cny"),
+            })
+        except Exception:
+            self._restore_golden(original_bytes)
+            raise
+        return target, before_mapping, original_bytes
+
+    def _restore_golden(self, original_bytes: bytes) -> None:
+        restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
+        restore_tmp.write_bytes(original_bytes)
+        os.replace(restore_tmp, self.golden_path)
+        self._invalidate_golden_cache()
+
+    def _write_status_mapping(self, suggestion: Dict[str, Any], status: str, reviewer: str) -> None:
+        target, before_mapping, original_bytes = self._write_golden_status(suggestion, status)
+        now = int(time.time())
+        try:
             with self.connect() as conn:
                 conn.execute("UPDATE sku_mapping_suggestions SET status=?, review_tier='red', review_reason=?, version=version+1, updated_at=? WHERE id=?", (status, f"人工標記：{status}", now, suggestion["id"]))
                 conn.execute("INSERT INTO sku_mapping_reviews(suggestion_id,action,before_json,after_json,reviewer,created_at) VALUES(?,?,?,?,?,?)", (suggestion["id"], status, json.dumps(before_mapping, ensure_ascii=False), json.dumps({key: target.get(key, "") for key in before_mapping}, ensure_ascii=False), reviewer, now))
         except Exception:
-            restore_tmp = self.golden_path.with_suffix(".json.restore.tmp")
-            restore_tmp.write_bytes(original_bytes)
-            os.replace(restore_tmp, self.golden_path)
-            self._invalidate_golden_cache()
+            self._restore_golden(original_bytes)
             raise
 
     def _snapshot_fingerprint(self, snapshot_id: Any) -> str:
