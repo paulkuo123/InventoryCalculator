@@ -1,6 +1,8 @@
 """賣家中心清單爬蟲：換頁確認、總數核對、無規格商品。不連瀏覽器。"""
 import io
 import json
+import os
+import stat
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
@@ -16,9 +18,11 @@ from crawler import (
 from home_bootstrap import load_home_bootstrap
 from pw_adapter import By, NoSuchElementException
 from shopee_products_import import (
+    CRAWL_COUNT_CHECK_KEY,
     CRAWL_PAGE_LOG_KEY,
     merge_shopee_products_with_golden,
     validate_shopee_products,
+    without_crawl_metadata,
 )
 
 
@@ -306,10 +310,12 @@ class ListingIntegrityTests(unittest.TestCase):
         self.assertEqual(saved[CRAWL_PAGE_LOG_KEY], [{
             "頁碼": 1,
             "DOM列數": 3,
+            "商品列數": 2,
             "成功": 2,
             "跳過": 1,
             "無效": 0,
         }])
+        self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["count_check"], "matched")
         self.assertNotIn("無規格", saved["111"])
         self.assertEqual(len(saved["111"]["型號"]), 1)
         no_spec = saved["15848359384"]
@@ -401,13 +407,25 @@ class ListingIntegrityTests(unittest.TestCase):
             body_text="架上商品(355)",
             next_enabled=False,
         )
-        crawler = make_crawler(ListingDriver([page]), "unused.json")
-        crawler.search_keyword = "登山扣"
-        stdout = io.StringIO()
-        with redirect_stdout(stdout):
-            crawler.get_all_products_info()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            crawler = make_crawler(ListingDriver([page]), str(output_path))
+            crawler.search_keyword = "登山扣"
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                crawler.get_all_products_info()
+                crawler.save_to_file(crawler.products_data)
+            message = stdout.getvalue()
+            saved = json.loads(output_path.read_text(encoding="utf-8"))
         self.assertEqual(list(crawler.products_data), ["111"])
-        self.assertIn("略過數量核對", stdout.getvalue())
+        self.assertIn("count_check: unverified_store_total_only", message)
+        self.assertNotIn("商品數量核對通過", message)
+        self.assertNotIn("count_check: matched", message)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "unverified_store_total_only")
+        self.assertEqual(crawler.crawl_count_check["bounds_check"], "not_available")
+        self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["count_check"], "unverified_store_total_only")
+        self.assertNotIn(CRAWL_COUNT_CHECK_KEY, without_crawl_metadata(saved))
+        self.assertEqual(validate_shopee_products(saved)["sourceProductCount"], 1)
 
     def test_keyword_uses_filtered_count_when_the_page_shows_one(self):
         page = ListingPage(
@@ -418,8 +436,14 @@ class ListingIntegrityTests(unittest.TestCase):
         )
         crawler = make_crawler(ListingDriver([page]), "unused.json")
         crawler.search_keyword = "登山扣"
-        crawler.get_all_products_info()
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
         self.assertEqual(list(crawler.products_data), ["111"])
+        self.assertIn("count_check: matched", message)
+        self.assertIn("商品數量核對通過", message)
+        self.assertNotIn("unverified_store_total_only", message)
 
     def test_shop_total_without_keyword_still_must_match(self):
         page = ListingPage(
@@ -507,8 +531,14 @@ class ListingIntegrityTests(unittest.TestCase):
             output_path.write_text('{"old": true}\n', encoding="utf-8")
             crawler = make_crawler(ListingDriver([page]), str(output_path))
             crawler.login = lambda: None
-            with self.assertRaisesRegex(CrawlIntegrityError, "讀不完整"):
+            with self.assertRaises(CrawlIntegrityError) as caught:
                 crawler.get_all_products_info()
+            message = str(caught.exception)
+            self.assertIn("讀不完整", message)
+            self.assertIn("111", message)
+            self.assertIn("222", message)
+            self.assertIn("缺少已售出總數量", message)
+            self.assertIn("缺少商品名稱", message)
             self.assertNotIn("111", crawler.products_data)
             self.assertNotIn("222", crawler.products_data)
             self.assertEqual(crawler.crawl_page_logs[0]["無效"], 2)
@@ -583,6 +613,165 @@ class ListingIntegrityTests(unittest.TestCase):
             saved = json.loads(output_path.read_text(encoding="utf-8"))
             self.assertEqual(saved["111"]["商品名稱"], "甲")
             self.assertEqual(list(Path(temp_dir).glob(".shopee_products_*")), [])
+
+    def test_keyword_store_total_stays_unverified_when_page_bounds_fit(self):
+        pages = [
+            ListingPage(
+                indicator="1 / 2",
+                rows=[
+                    product_row("111", "第一個", models=[model_row(spec_id="1")]),
+                    product_row("112", "第二個", models=[model_row(spec_id="2")]),
+                ],
+                body_text="架上商品(355)",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="2 / 2",
+                rows=[product_row("222", "最後一個", models=[model_row(spec_id="3")])],
+                body_text="架上商品(355)",
+                next_enabled=True,
+            ),
+        ]
+
+        def advance(driver):
+            driver.index += 1
+
+        crawler = make_crawler(ListingDriver(pages, on_next=advance), "unused.json")
+        crawler.search_keyword = "扣"
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(set(crawler.products_data), {"111", "112", "222"})
+        self.assertEqual(crawler.crawl_count_check["count_check"], "unverified_store_total_only")
+        self.assertEqual(crawler.crawl_count_check["bounds_check"], "inside")
+        self.assertEqual(crawler.crawl_count_check["lower"], 3)
+        self.assertEqual(crawler.crawl_count_check["upper"], 4)
+        self.assertIn("count_check: unverified_store_total_only", message)
+        self.assertIn("這只是範圍，不是總數核對", message)
+        self.assertNotIn("商品數量核對通過", message)
+
+    def test_keyword_page_bounds_failure_does_not_replace_official_file(self):
+        pages = [
+            ListingPage(
+                indicator="",
+                rows=[
+                    product_row("111", "第一個", models=[model_row(spec_id="1")]),
+                    product_row("112", "第二個", models=[model_row(spec_id="2")]),
+                ],
+                body_text="架上商品(355)",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="",
+                rows=[product_row("111", "重複", models=[model_row(spec_id="1")])],
+                body_text="架上商品(355)",
+                next_enabled=True,
+            ),
+        ]
+
+        def advance(driver):
+            if driver.index == 0:
+                driver.index = 1
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler = make_crawler(ListingDriver(pages, on_next=advance), str(output_path))
+            crawler.search_keyword = "扣"
+            crawler.login = lambda: None
+            stdout = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                result = crawler.run()
+            self.assertIsNone(result)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), '{"old": true}\n')
+            message = stdout.getvalue()
+            self.assertIn("count_check: unverified_store_total_only", message)
+            self.assertIn("超出頁數範圍", message)
+            self.assertNotIn("商品數量核對通過", message)
+
+    def test_missing_sold_count_lists_every_row_and_keeps_official_file(self):
+        pages = [
+            ListingPage(
+                indicator="1 / 2",
+                rows=[
+                    product_row("111", "第一頁缺已售出", include_sales=False, models=[model_row(spec_id="1")]),
+                    product_row("112", "第一頁正常", models=[model_row(spec_id="2")]),
+                ],
+                body_text="架上商品(4) 4 件商品",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="2 / 2",
+                rows=[
+                    product_row("222", "第二頁缺已售出", include_sales=False, models=[model_row(spec_id="3")]),
+                    product_row("333", "第二頁也缺", include_sales=False, variation=False),
+                ],
+                body_text="架上商品(4) 4 件商品",
+                next_enabled=True,
+            ),
+        ]
+
+        def advance(driver):
+            driver.index += 1
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler = make_crawler(ListingDriver(pages, on_next=advance), str(output_path))
+            crawler.login = lambda: None
+            stdout = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                result = crawler.run()
+            self.assertIsNone(result)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), '{"old": true}\n')
+            self.assertIn("112", crawler.products_data)
+            self.assertNotIn("111", crawler.products_data)
+            self.assertNotIn("222", crawler.products_data)
+            self.assertNotIn("333", crawler.products_data)
+            message = stdout.getvalue()
+            self.assertIn("讀不到已售出數量的列共 3 列", message)
+            self.assertIn("商品 ID 111", message)
+            self.assertIn("商品 ID 222", message)
+            self.assertIn("商品 ID 333", message)
+            self.assertIn("第 1 頁", message)
+            self.assertIn("第 2 頁", message)
+            self.assertNotIn("已儲存部分收集的資料", message)
+
+    def test_save_keeps_previous_mode_or_umask_default(self):
+        sample = {
+            "111": {
+                "商品名稱": "甲",
+                "已售出總數量": "4",
+                "型號": [],
+            }
+        }
+        with tempfile.TemporaryDirectory() as temp_dir:
+            existing = Path(temp_dir) / "shopee_products.json"
+            existing.write_text('{"old": true}\n', encoding="utf-8")
+            os.chmod(existing, 0o640)
+            crawler = make_crawler(ListingDriver([]), str(existing))
+            crawler.save_to_file(sample)
+            self.assertEqual(stat.S_IMODE(existing.stat().st_mode), 0o640)
+            saved = json.loads(existing.read_text(encoding="utf-8"))
+            self.assertEqual(saved["111"]["商品名稱"], "甲")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fresh = Path(temp_dir) / "shopee_products.json"
+            crawler = make_crawler(ListingDriver([]), str(fresh))
+            previous_umask = os.umask(0o022)
+            try:
+                crawler.save_to_file(sample)
+            finally:
+                os.umask(previous_umask)
+            self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o644)
+            previous_umask = os.umask(0o027)
+            try:
+                fresh.unlink()
+                crawler.save_to_file(sample)
+            finally:
+                os.umask(previous_umask)
+            self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o640)
 
 
 if __name__ == "__main__":

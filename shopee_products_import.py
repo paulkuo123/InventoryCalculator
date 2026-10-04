@@ -10,8 +10,10 @@ from typing import Any, Dict, List, Tuple
 
 
 MAX_SHOPEE_PRODUCTS_IMPORT_BYTES = 20 * 1024 * 1024
-# 爬蟲逐頁紀錄。不是商品，讀商品的人要略過這個鍵。
+# 爬蟲逐頁紀錄與數量核對狀態。不是商品，讀商品的人要略過這些鍵。
 CRAWL_PAGE_LOG_KEY = "_crawl_page_log"
+CRAWL_COUNT_CHECK_KEY = "_crawl_count_check"
+CRAWL_METADATA_KEYS = frozenset({CRAWL_PAGE_LOG_KEY, CRAWL_COUNT_CHECK_KEY})
 
 _ALIBABA_NAME_FIELDS = {"阿里巴巴商品名稱", "阿里巴巴商品URL"}
 _PRODUCT_IMAGE_FIELD = "商品圖片網址"
@@ -53,13 +55,13 @@ def _is_blank(value: Any) -> bool:
 
 
 def without_crawl_metadata(payload: Any) -> Any:
-    """回傳不含爬蟲頁面紀錄的商品表。沒有該鍵時沿用原物件。"""
-    if not isinstance(payload, dict) or CRAWL_PAGE_LOG_KEY not in payload:
+    """回傳不含爬蟲頁面紀錄與數量核對狀態的商品表。沒有這些鍵時沿用原物件。"""
+    if not isinstance(payload, dict) or not any(key in payload for key in CRAWL_METADATA_KEYS):
         return payload
     return {
         key: value
         for key, value in payload.items()
-        if key != CRAWL_PAGE_LOG_KEY
+        if key not in CRAWL_METADATA_KEYS
     }
 
 
@@ -146,7 +148,7 @@ def validate_shopee_products(payload: Any) -> Dict[str, int]:
     seen_ids = set()
     model_count = 0
     for raw_product_id, product in payload.items():
-        if str(raw_product_id) == CRAWL_PAGE_LOG_KEY:
+        if str(raw_product_id) in CRAWL_METADATA_KEYS:
             continue
         product_id = normalize_product_id(raw_product_id)
         if not product_id:

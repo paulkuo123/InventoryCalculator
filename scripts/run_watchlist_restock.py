@@ -38,6 +38,7 @@ from home_bootstrap import (
     without_watchlist_exclusions,
 )
 from restock_rules import calculated_restock_details, target_months_for_product
+from shopee_products_import import without_crawl_metadata
 
 EXIT_ERROR = 1
 EXIT_PAUSED = 2
@@ -203,7 +204,7 @@ def build_list_from_files(
     keyword: str,
     months: int = 4,
 ) -> Dict[str, Any]:
-    products = json.loads(products_path.read_text(encoding="utf-8"))
+    products = without_crawl_metadata(json.loads(products_path.read_text(encoding="utf-8")))
     watchlist = json.loads(watchlist_path.read_text(encoding="utf-8"))
     exclusion_ids = merged_watchlist_exclusion_ids(
         load_watchlist_exclusion_ids(watchlist_path.parent / "personal_watchlist_exclusions.json"),

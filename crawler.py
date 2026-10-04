@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import parse_qs, urlencode, urlparse
 import re
+import stat
 import sys
 import os
 import random
@@ -28,7 +29,7 @@ from restock_rules import round_calculated_restock_qty
 from pw_adapter import (By, WebDriverWait, EC, Keys,
                         NoSuchElementException,
                         PlaywrightDriver)
-from shopee_products_import import CRAWL_PAGE_LOG_KEY
+from shopee_products_import import CRAWL_COUNT_CHECK_KEY, CRAWL_METADATA_KEYS, CRAWL_PAGE_LOG_KEY
 
 if os.name == 'nt':
     sys.stdout.reconfigure(encoding='utf-8')
@@ -76,6 +77,15 @@ def split_listed_product_counts(text):
     tab_total = next(iter(tab_numbers)) if tab_numbers else None
     list_total = next(iter(list_numbers)) if list_numbers else None
     return tab_total, list_total
+
+
+def mode_for_replaced_output(output_path):
+    """沿用舊檔權限。沒有舊檔時用 umask 算出來的一般檔案權限（常見是 644）。"""
+    if output_path and os.path.exists(output_path):
+        return stat.S_IMODE(os.stat(output_path).st_mode)
+    current_umask = os.umask(0)
+    os.umask(current_umask)
+    return stat.S_IMODE(0o666 & ~current_umask)
 
 
 def parse_listed_product_total(text):
@@ -634,7 +644,7 @@ class ShopeeCrawler:
         # 計算每個商品的總月銷量並添加到商品數據中
         print("開始計算每個商品的總月銷量...")
         for product_id, product_info in data.items():
-            if str(product_id) == CRAWL_PAGE_LOG_KEY or not isinstance(product_info, dict):
+            if str(product_id) in CRAWL_METADATA_KEYS or not isinstance(product_info, dict):
                 continue
             total_monthly_sales = 0
             model_sales_details = []
@@ -732,7 +742,7 @@ class ShopeeCrawler:
             (
                 (product_id, product_info)
                 for product_id, product_info in data.items()
-                if str(product_id) != CRAWL_PAGE_LOG_KEY and isinstance(product_info, dict)
+                if str(product_id) not in CRAWL_METADATA_KEYS and isinstance(product_info, dict)
             ),
             key=get_monthly_sales,
             reverse=True)
@@ -740,6 +750,9 @@ class ShopeeCrawler:
         page_logs = list(getattr(self, "crawl_page_logs", None) or [])
         if page_logs:
             sorted_data[CRAWL_PAGE_LOG_KEY] = page_logs
+        count_check = getattr(self, "crawl_count_check", None)
+        if isinstance(count_check, dict) and count_check.get("count_check"):
+            sorted_data[CRAWL_COUNT_CHECK_KEY] = count_check
 
         # 輸出排序結果的前幾項
         print("排序結果的前 5 項:")
@@ -752,6 +765,7 @@ class ShopeeCrawler:
         try:
             directory = os.path.dirname(os.path.abspath(output_path)) or "."
             os.makedirs(directory, exist_ok=True)
+            output_mode = mode_for_replaced_output(output_path)
             descriptor, temp_path = tempfile.mkstemp(
                 prefix=".shopee_products_",
                 suffix=".tmp.json",
@@ -761,6 +775,7 @@ class ShopeeCrawler:
                 json.dump(sorted_data, handle, ensure_ascii=False, indent=4)
                 handle.flush()
                 os.fsync(handle.fileno())
+            os.chmod(temp_path, output_mode)
             os.replace(temp_path, output_path)
             temp_path = None
             print(f"資料已成功保存到 {output_path}，並按總月銷量從大到小排序")
@@ -2249,10 +2264,7 @@ class ShopeeCrawler:
         elif tab_total is not None and not keyword:
             total = tab_total
         elif tab_total is not None:
-            print(
-                f"這次有搜尋關鍵字「{keyword}」，頁面只顯示全店架上商品({tab_total})，"
-                "沒有篩選後的件數，略過數量核對。"
-            )
+            self._record_unverified_store_total(tab_total, keyword, collected)
             return None
         else:
             total = None
@@ -2270,8 +2282,68 @@ class ShopeeCrawler:
                 f"{direction} {abs(difference)} 個。"
                 "已停止，不會把這次結果當成完整資料。"
             )
+        self.crawl_count_check = {
+            "count_check": "matched",
+            "expected": total,
+            "collected": collected,
+        }
         print(f"商品數量核對通過：頁面顯示 {total} 個，實際收集 {collected} 個。")
+        print("count_check: matched")
         return total
+
+    def _page_count_bounds(self):
+        """用已看過的整頁筆數，估算這次頁數該落在哪個範圍。看不出整頁筆數就回傳 None。"""
+        page_size = getattr(self, "listing_full_page_size", None)
+        logs = list(getattr(self, "crawl_page_logs", None) or [])
+        if not page_size or not logs:
+            return None
+        pages = len(logs)
+        last_rows = int(logs[-1].get("商品列數") or 0)
+        upper = pages * int(page_size)
+        lower = (pages - 1) * int(page_size) + min(last_rows, int(page_size))
+        return {
+            "pages": pages,
+            "page_size": int(page_size),
+            "lower": lower,
+            "upper": upper,
+        }
+
+    def _record_unverified_store_total(self, store_total, keyword, collected):
+        """只有全店總數時，不可以寫成已核對。頁數範圍對不上則失敗。"""
+        bounds = self._page_count_bounds()
+        record = {
+            "count_check": "unverified_store_total_only",
+            "store_total": store_total,
+            "collected": collected,
+            "keyword": keyword,
+            "bounds_check": "inside" if bounds else "not_available",
+        }
+        if bounds:
+            record.update(bounds)
+        if bounds and (collected < bounds["lower"] or collected > bounds["upper"]):
+            record["bounds_check"] = "outside"
+            self.crawl_count_check = record
+            raise CrawlIntegrityError(
+                "關鍵字結果沒有篩選後件數可核對，而且收集筆數超出頁數範圍："
+                f"共 {bounds['pages']} 頁、每頁 {bounds['page_size']} 筆，"
+                f"收集 {collected} 筆，應介於 {bounds['lower']} 到 {bounds['upper']}。"
+                "這不是總數核對。count_check: unverified_store_total_only。"
+                "已停止，不會把這次結果存成正式檔。"
+            )
+        self.crawl_count_check = record
+        print(
+            f"這次有搜尋關鍵字「{keyword}」，頁面只顯示全店架上商品({store_total})，"
+            "沒有篩選後件數，數量沒有核對。"
+        )
+        print("count_check: unverified_store_total_only")
+        if bounds:
+            print(
+                f"另以頁數做範圍檢查：共 {bounds['pages']} 頁、每頁 {bounds['page_size']} 筆，"
+                f"收集 {collected} 筆，落在 {bounds['lower']} 到 {bounds['upper']}。"
+                "這只是範圍，不是總數核對。"
+            )
+        else:
+            print("看不出每頁固定筆數，沒有做頁數範圍檢查。這不是總數核對。")
 
     def _parse_page_indicator_numbers(self, indicator):
         match = re.search(r"(\d+)\s*/\s*(\d+)", str(indicator or ""))
@@ -2769,12 +2841,25 @@ class ShopeeCrawler:
 
         print(f"捲動完成，共載入 {last_count} 個 eds-table__row")
 
+    def _listing_row_gaps(self, product_info):
+        if not isinstance(product_info, dict):
+            return ["沒有商品資料"]
+        gaps = []
+        name = str(product_info.get("商品名稱") or "").strip()
+        sales = str(product_info.get("已售出總數量") or "").strip()
+        if not name or name == "未找到":
+            gaps.append("缺少商品名稱")
+        if not sales or sales == "未找到":
+            gaps.append("缺少已售出總數量")
+        return gaps
+
     def _collect_current_listing_page(self, page_number):
         all_rows = self.driver.find_elements(By.CLASS_NAME, "eds-table__row")
         dom_row_count = len(all_rows)
         success_count = 0
         skipped_count = 0
         invalid_count = 0
+        page_product_ids = []
         print(f"找到 {dom_row_count} 個潛在商品行")
 
         for index, product_row in enumerate(all_rows, 1):
@@ -2784,12 +2869,24 @@ class ShopeeCrawler:
                 skipped_count += 1
                 continue
             print(f"\n處理第 {index}/{dom_row_count} 個商品列")
+            if product_id:
+                page_product_ids.append(product_id)
             if not product_id:
                 invalid_count += 1
+                self._note_invalid_row(page_number, "（沒有商品 ID）", "", ["無法取得商品 ID"])
                 print("無法取得商品 ID，跳過此行")
                 continue
             try:
                 product_info = self.get_product_info(product_row)
+                gaps = self._listing_row_gaps(product_info)
+                product_name = ""
+                if isinstance(product_info, dict):
+                    product_name = str(product_info.get("商品名稱") or "")
+                if gaps:
+                    invalid_count += 1
+                    self._note_invalid_row(page_number, product_id, product_name, gaps)
+                    print(f"商品資訊無效，跳過：{'、'.join(gaps)}")
+                    continue
                 if product_info and self.is_valid_product(product_info):
                     stored_id = product_info.pop("商品ID")
                     if stored_id in self.products_data:
@@ -2804,17 +2901,24 @@ class ShopeeCrawler:
                             print(f"成功添加商品 ID: {stored_id}")
                     else:
                         invalid_count += 1
+                        self._note_invalid_row(
+                            page_number, product_id, product_name, ["商品 ID 無效"])
                         print("商品 ID 無效，跳過")
                 else:
                     invalid_count += 1
+                    self._note_invalid_row(
+                        page_number, product_id, product_name, ["其他欄位無效"])
                     print("商品資訊無效，跳過")
             except Exception as error:
                 invalid_count += 1
+                self._note_invalid_row(
+                    page_number, product_id, "", [f"處理時出錯：{error}"])
                 print(f"處理商品時出錯: {error}")
 
         entry = {
             "頁碼": page_number,
             "DOM列數": dom_row_count,
+            "商品列數": len(set(page_product_ids)),
             "成功": success_count,
             "跳過": skipped_count,
             "無效": invalid_count,
@@ -2826,13 +2930,40 @@ class ShopeeCrawler:
             f"第 {page_number} 頁：DOM 列數 {dom_row_count}，"
             f"成功 {success_count}，跳過 {skipped_count}，無效 {invalid_count}"
         )
-        if invalid_count:
-            raise CrawlIntegrityError(
-                f"第 {page_number} 頁有 {invalid_count} 列讀不完整"
-                "（商品名稱讀不到或其他必要欄位無效）。"
-                "已停止，不會把這次結果存成正式檔。"
-            )
         return entry
+
+    def _note_invalid_row(self, page_number, product_id, product_name, gaps):
+        if not isinstance(getattr(self, "crawl_invalid_rows", None), list):
+            self.crawl_invalid_rows = []
+        self.crawl_invalid_rows.append({
+            "頁碼": page_number,
+            "商品ID": product_id,
+            "商品名稱": product_name or "（沒有名稱）",
+            "問題": list(gaps),
+        })
+
+    def _raise_if_rows_are_incomplete(self):
+        rows = list(getattr(self, "crawl_invalid_rows", None) or [])
+        if not rows:
+            return
+        missing_sales = [row for row in rows if "缺少已售出總數量" in row["問題"]]
+        others = [row for row in rows if "缺少已售出總數量" not in row["問題"]]
+        lines = ["有列讀不完整，不會把這次結果存成正式檔。"]
+        if missing_sales:
+            lines.append(f"讀不到已售出數量的列共 {len(missing_sales)} 列（沒有改成 0）：")
+            for row in missing_sales:
+                lines.append(
+                    f"- 第 {row['頁碼']} 頁，商品 ID {row['商品ID']}，"
+                    f"名稱 {row['商品名稱']}，{'、'.join(row['問題'])}"
+                )
+        if others:
+            lines.append(f"其他讀不完整的列共 {len(others)} 列：")
+            for row in others:
+                lines.append(
+                    f"- 第 {row['頁碼']} 頁，商品 ID {row['商品ID']}，"
+                    f"名稱 {row['商品名稱']}，{'、'.join(row['問題'])}"
+                )
+        raise CrawlIntegrityError("\n".join(lines))
 
     def get_all_products_info(self):
         try:
@@ -2840,6 +2971,8 @@ class ShopeeCrawler:
             has_next_page = True
             self.products_data = {}  # Initialize storage for product info
             self.crawl_page_logs = []
+            self.crawl_invalid_rows = []
+            self.crawl_count_check = None
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
@@ -2882,9 +3015,15 @@ class ShopeeCrawler:
                 else:
                     print("已到達最後一頁")
 
+            self._raise_if_rows_are_incomplete()
             self._ensure_collected_count_matches_page()
             print(f"\n===== 爬蟲完成 =====")
             print(f"共處理了 {page} 頁，成功收集了 {len(self.products_data)} 個商品資訊")
+            count_status = str((getattr(self, "crawl_count_check", None) or {}).get("count_check") or "")
+            if count_status == "unverified_store_total_only":
+                print("數量沒有用篩選後件數核對。count_check: unverified_store_total_only")
+            elif count_status == "matched":
+                print("數量已核對。count_check: matched")
             return self.products_data
 
         except CrawlIntegrityError:
