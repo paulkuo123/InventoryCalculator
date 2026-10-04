@@ -137,6 +137,10 @@ reports/ads_weekly/20260911/
 | 週報 bot／碼農 | `python3 ads_weekly.py` | **remote** |
 | 舊 refresh 指令 | `python3 ads_analysis.py --refresh-source true` | **remote** |
 | `ads.html` 匯出 | `crawler.py --mode ads-export` | mac／cookies（不變） |
+| 本機庫存爬蟲 | `python3 crawler.py` | mac／cookies（預設不變） |
+| 遠端盒每月庫存 | `python3 crawler.py --browser-source remote` | **remote**（旗標必填，不靠預設） |
+
+庫存爬蟲的 `--browser-source` 預設仍是 `mac`。遠端盒抓每月庫存請用上一列的完整指令，不要省略 `--browser-source remote`。`--mode ads-export` 沒帶旗標時也還是本機 Chromium + cookies。
 
 可選後備（程式還留著，營運預設不要用）：`python3 ads_weekly.py --source mac`
 

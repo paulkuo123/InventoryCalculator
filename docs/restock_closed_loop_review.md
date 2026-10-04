@@ -108,7 +108,7 @@
 
 ### 已能用（main，人工操作）
 
-- 賣家中心爬庫存＋月銷：`crawler.py`、`GET /search`（要 cookies）。提醒走 Grok Bot routines，不再用 Telegram `/搜尋`。
+- 賣家中心爬庫存＋月銷：本機 `crawler.py` 預設 `mac`（cookies）。遠端盒每月庫存請明確執行 `python3 crawler.py --browser-source remote`。`GET /search` 沒帶這個旗標，所以仍走預設 mac。提醒走 Grok Bot routines，不再用 Telegram `/搜尋`。
 - 店規水位（CLI／反向）：`restock_rules.calculated_restock_details`（含歷史銷量保護、近十、條件最低 5）。
 - 觀察清單 ∩ 排除：`watchlists/personal_watchlist.json`（158）+ exclusions（66）+ 品名含「襪」。
 - 正向整頁加車（路 A）：`scripts/run_watchlist_restock.py --i-approve-watchlist-restock`、首頁預覽、`restock_batch` 可續跑。`--yes` 只跳過 Enter；沒有核准旗標不會 POST。不是 `reverse_audit mutate`。

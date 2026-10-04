@@ -2800,6 +2800,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             output_path,
             task_name="爬蟲",
             timeout=20000,
+            preserve_existing_output=True,
         )
         if result.get("status") == "error":
             return {"error": result.get("message", "爬蟲執行失敗")}
@@ -2863,7 +2864,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             logger.warning(f"載入 SQLite 1688 綁定失敗: {e}")
         return links_map
 
-    def run_worker_process(self, worker_args, output_path, task_name="任務", timeout=20000, script_name="crawler.py"):
+    def run_worker_process(self, worker_args, output_path, task_name="任務", timeout=20000, script_name="crawler.py", preserve_existing_output=False):
         """執行 worker 子程序並讀取 JSON 結果"""
         global current_crawler_process  # 全局變量聲明必須在函數開頭
 
@@ -2872,11 +2873,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 logger.warning(f"{task_name}啟動失敗：已有進程在執行")
                 return {"status": "error", "message": "目前已有其他流程在執行，請稍後再試"}
 
-            if os.path.exists(output_path):
-                try:
-                    os.remove(output_path)
-                except OSError:
-                    logger.warning(f"無法刪除舊結果文件: {output_path}")
+            remove_worker_output_if_requested(
+                output_path,
+                preserve_existing_output=preserve_existing_output,
+            )
 
             logger.info(f"===== 開始執行{task_name} =====")
             cmd = []
@@ -2974,6 +2974,19 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             logger.exception(f"執行{task_name}時出錯: {e}")
             current_crawler_process = None
             return {"status": "error", "message": f"執行{task_name}時出錯: {e}"}
+
+
+def remove_worker_output_if_requested(output_path, preserve_existing_output=False):
+    """刪除舊結果檔。庫存爬蟲要保留正式檔，成功後才由爬蟲自己替換。"""
+    if preserve_existing_output:
+        if output_path and os.path.exists(output_path):
+            logger.info(f"保留既有結果檔，成功後才會替換：{output_path}")
+        return
+    if output_path and os.path.exists(output_path):
+        try:
+            os.remove(output_path)
+        except OSError:
+            logger.warning(f"無法刪除舊結果文件: {output_path}")
 
 
 class RestockBatchPersister:

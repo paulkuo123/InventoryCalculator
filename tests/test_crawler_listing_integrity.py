@@ -7,7 +7,12 @@ from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 import crawler as crawler_module
-from crawler import CrawlIntegrityError, ShopeeCrawler, parse_listed_product_total
+from crawler import (
+    CrawlIntegrityError,
+    ShopeeCrawler,
+    build_crawler_argument_parser,
+    parse_listed_product_total,
+)
 from home_bootstrap import load_home_bootstrap
 from pw_adapter import By, NoSuchElementException
 from shopee_products_import import (
@@ -116,15 +121,16 @@ def model_row(name="黑色", spec_id="9001"):
     })
 
 
-def product_row(product_id, name, sales="已售出 4", models=None, variation=True):
+def product_row(product_id, name, sales="已售出 4", models=None, variation=True, include_sales=True):
     children = {
         (By.CLASS_NAME, "item-id"): [FakeElement(text=f"商品 ID: {product_id}")],
         (By.CLASS_NAME, "product-name-wrap"): [FakeElement(text=name)],
         (By.CSS_SELECTOR, "a.product-name-wrap[href]"): [
             FakeElement(text=name, attrs={"href": f"/portal/product/{product_id}"})
         ],
-        (By.CLASS_NAME, "list-view-sales"): [FakeElement(text=sales)],
     }
+    if include_sales:
+        children[(By.CLASS_NAME, "list-view-sales")] = [FakeElement(text=sales)]
     if variation:
         children[(By.CLASS_NAME, "product-variation-item")] = [FakeElement()]
     if models:
@@ -150,10 +156,12 @@ def make_crawler(driver, output_path):
 class ListingIntegrityTests(unittest.TestCase):
     def setUp(self):
         self._sleep = crawler_module.time.sleep
+        self._monotonic = crawler_module.time.monotonic
         crawler_module.time.sleep = lambda *_args, **_kwargs: None
 
     def tearDown(self):
         crawler_module.time.sleep = self._sleep
+        crawler_module.time.monotonic = self._monotonic
 
     def test_page_change_rules(self):
         crawler = ShopeeCrawler.__new__(ShopeeCrawler)
@@ -331,6 +339,250 @@ class ListingIntegrityTests(unittest.TestCase):
             self.assertEqual(loaded["shopee"]["productCount"], 2)
             self.assertTrue(loaded["products"]["15848359384"]["無規格"])
             self.assertIn(CRAWL_PAGE_LOG_KEY, json.loads(products_path.read_text(encoding="utf-8")))
+
+    def test_non_paging_error_does_not_replace_official_file(self):
+        pages = [
+            ListingPage(
+                indicator="1 / 30",
+                rows=[product_row("111", "第一頁", models=[model_row(spec_id="1")])],
+                body_text="架上商品(355) 355 件商品",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="2 / 30",
+                rows=[product_row("222", "第二頁", models=[model_row(spec_id="2")])],
+                body_text="架上商品(355) 355 件商品",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="3 / 30",
+                rows=[product_row("333", "第三頁", models=[model_row(spec_id="3")])],
+                body_text="架上商品(355) 355 件商品",
+                next_enabled=True,
+            ),
+        ]
+
+        def advance(driver):
+            driver.index += 1
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler = make_crawler(ListingDriver(pages, on_next=advance), str(output_path))
+            calls = {"n": 0}
+
+            def scroll():
+                calls["n"] += 1
+                if calls["n"] >= 5:
+                    raise RuntimeError("browser died")
+
+            crawler.scroll_to_load_all_rows = scroll
+            crawler.login = lambda: None
+            crawler.get_monthly_sales = lambda *_args, **_kwargs: calls.__setitem__("monthly", True)
+            stdout = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                result = crawler.run()
+
+            self.assertIsNone(result)
+            self.assertNotIn("monthly", calls)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), '{"old": true}\n')
+            self.assertEqual(list(Path(temp_dir).glob(".shopee_products_*")), [])
+            message = stdout.getvalue()
+            self.assertIn("爬蟲完整性檢查失敗", message)
+            self.assertIn("第 3 頁", message)
+            self.assertIn("browser died", message)
+            self.assertIn("正式檔", message)
+            self.assertNotIn("已儲存部分收集的資料", message)
+
+    def test_keyword_with_only_shop_total_does_not_false_fail(self):
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=[product_row("111", "登山扣", models=[model_row()])],
+            body_text="架上商品(355)",
+            next_enabled=False,
+        )
+        crawler = make_crawler(ListingDriver([page]), "unused.json")
+        crawler.search_keyword = "登山扣"
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        self.assertEqual(list(crawler.products_data), ["111"])
+        self.assertIn("略過數量核對", stdout.getvalue())
+
+    def test_keyword_uses_filtered_count_when_the_page_shows_one(self):
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=[product_row("111", "登山扣", models=[model_row()])],
+            body_text="架上商品(355)\n1 件商品",
+            next_enabled=False,
+        )
+        crawler = make_crawler(ListingDriver([page]), "unused.json")
+        crawler.search_keyword = "登山扣"
+        crawler.get_all_products_info()
+        self.assertEqual(list(crawler.products_data), ["111"])
+
+    def test_shop_total_without_keyword_still_must_match(self):
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=[product_row("111", "手機殼", models=[model_row()])],
+            body_text="架上商品(355)",
+            next_enabled=False,
+        )
+        crawler = make_crawler(ListingDriver([page]), "unused.json")
+        with self.assertRaisesRegex(CrawlIntegrityError, "355"):
+            crawler.get_all_products_info()
+
+    def test_last_page_indicator_finishes_without_disabled_marker(self):
+        pages = [
+            ListingPage(
+                indicator="1 / 2",
+                rows=[product_row("111", "第一頁", models=[model_row(spec_id="1")])],
+                body_text="架上商品(2) 2 件商品",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="2 / 2",
+                rows=[product_row("222", "第二頁", models=[model_row(spec_id="2")])],
+                body_text="架上商品(2) 2 件商品",
+                next_enabled=True,
+            ),
+        ]
+        clicks = {"n": 0}
+
+        def advance(driver):
+            clicks["n"] += 1
+            driver.index += 1
+
+        crawler = make_crawler(ListingDriver(pages, on_next=advance), "unused.json")
+        crawler.get_all_products_info()
+        self.assertEqual(clicks["n"], 1)
+        self.assertEqual(set(crawler.products_data), {"111", "222"})
+
+    def test_short_last_page_stops_without_disabled_marker(self):
+        pages = [
+            ListingPage(
+                indicator="",
+                rows=[
+                    product_row("111", "第一個", models=[model_row(spec_id="1")]),
+                    product_row("112", "第二個", models=[model_row(spec_id="2")]),
+                ],
+                body_text="架上商品(3) 3 件商品",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="",
+                rows=[product_row("222", "最後一個", models=[model_row(spec_id="3")])],
+                body_text="架上商品(3) 3 件商品",
+                next_enabled=True,
+            ),
+        ]
+        clicks = {"n": 0}
+
+        def advance(driver):
+            clicks["n"] += 1
+            if driver.index == 0:
+                driver.index = 1
+
+        crawler = make_crawler(ListingDriver(pages, on_next=advance), "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        self.assertEqual(clicks["n"], 1)
+        self.assertEqual(set(crawler.products_data), {"111", "112", "222"})
+        self.assertNotIn("翻頁後頁面沒有換成下一頁", stdout.getvalue())
+
+    def test_unreadable_name_is_invalid_and_is_not_labeled_no_spec(self):
+        rows = [
+            product_row("111", "", models=None, variation=False),
+            product_row("222", "看得到名稱", models=None, variation=False, include_sales=False),
+        ]
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=rows,
+            body_text="架上商品(2) 2 件商品",
+            next_enabled=False,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler = make_crawler(ListingDriver([page]), str(output_path))
+            crawler.login = lambda: None
+            with self.assertRaisesRegex(CrawlIntegrityError, "讀不完整"):
+                crawler.get_all_products_info()
+            self.assertNotIn("111", crawler.products_data)
+            self.assertNotIn("222", crawler.products_data)
+            self.assertEqual(crawler.crawl_page_logs[0]["無效"], 2)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), '{"old": true}\n')
+            for product in crawler.products_data.values():
+                self.assertNotEqual(product.get("商品名稱"), "無規格")
+                self.assertNotEqual(product.get("已售出總數量"), "0")
+
+    def test_page_change_timeout_is_fifteen_seconds(self):
+        self.assertEqual(crawler_module.PAGE_CHANGE_TIMEOUT_SECONDS, 15)
+        crawler = ShopeeCrawler.__new__(ShopeeCrawler)
+        crawler.driver = ListingDriver([
+            ListingPage(
+                indicator="1 / 2",
+                rows=[product_row("111", "手機殼", models=[model_row()])],
+                body_text="架上商品(2)",
+                next_enabled=True,
+            )
+        ])
+        self.assertEqual(crawler._page_change_timeout(), 15)
+        clock = {"now": 1000.0}
+
+        def monotonic():
+            return clock["now"]
+
+        def sleep(seconds):
+            clock["now"] += float(seconds)
+
+        crawler_module.time.monotonic = monotonic
+        crawler_module.time.sleep = sleep
+        with self.assertRaisesRegex(CrawlIntegrityError, "已等待 15 秒"):
+            crawler._wait_for_listing_page_change({"indicator": "1 / 2", "rows": ("111",)})
+        self.assertGreaterEqual(clock["now"], 1015.0)
+
+    def test_browser_source_default_stays_mac_and_remote_command_is_explicit(self):
+        parser = build_crawler_argument_parser()
+        self.assertEqual(parser.parse_args([]).browser_source, "mac")
+        self.assertEqual(parser.parse_args([]).mode, "inventory")
+        self.assertEqual(parser.parse_args(["--mode", "ads-export"]).browser_source, "mac")
+        self.assertEqual(
+            parser.parse_args(["--browser-source", "remote"]).browser_source,
+            "remote",
+        )
+        readme = Path(__file__).resolve().parents[1].joinpath("README.md").read_text(encoding="utf-8")
+        self.assertIn("python3 crawler.py --browser-source remote", readme)
+
+    def test_startup_log_names_the_browser_source(self):
+        crawler = ShopeeCrawler.__new__(ShopeeCrawler)
+        crawler.browser_source = "mac"
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler._log_browser_source()
+        self.assertEqual(stdout.getvalue().strip(), "瀏覽器來源：mac")
+        crawler.browser_source = "remote"
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler._log_browser_source()
+        self.assertEqual(stdout.getvalue().strip(), "瀏覽器來源：remote")
+
+    def test_save_replaces_official_file_only_after_the_temp_write(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler = make_crawler(ListingDriver([]), str(output_path))
+            crawler.save_to_file({
+                "111": {
+                    "商品名稱": "甲",
+                    "已售出總數量": "4",
+                    "型號": [],
+                }
+            })
+            saved = json.loads(output_path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["111"]["商品名稱"], "甲")
+            self.assertEqual(list(Path(temp_dir).glob(".shopee_products_*")), [])
 
 
 if __name__ == "__main__":

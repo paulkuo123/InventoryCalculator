@@ -10,6 +10,7 @@ import sys
 import os
 import random
 import shutil
+import tempfile
 
 from ads_session import (
     BROWSER_SOURCE_MAC,
@@ -47,17 +48,17 @@ PAGE_CHANGE_POLL_SECONDS = 0.25
 
 
 class CrawlIntegrityError(RuntimeError):
-    """清單頁無法證明已經換頁，或抓到的商品數與頁面總數不一致。"""
+    """清單抓取無法證明完整：換頁失敗、中途出錯、無效列，或數量對不上。"""
 
 
-def parse_listed_product_total(text):
-    """讀頁面上的商品總數。
+def split_listed_product_counts(text):
+    """回傳 (架上商品分頁總數, 目前清單件數)。
 
-    「架上商品(N)」是賣場分頁總數；「N 件商品」是目前這份清單。
-    兩者都有且不同時，用清單件數（關鍵字搜尋不該拿全店總數來比）。
+    「架上商品(N)」是賣場分頁總數；「N 件商品」／「共 N 個商品」是目前這份清單。
+    同一類出現兩個不同數字就失敗。
     """
     if not text:
-        return None
+        return None, None
     tab_numbers = {
         int(match)
         for match in re.findall(r"架上商品\s*[（(]\s*(\d+)\s*[）)]", text)
@@ -74,6 +75,16 @@ def parse_listed_product_total(text):
         raise CrawlIntegrityError(f"頁面上的商品件數不一致：{shown}")
     tab_total = next(iter(tab_numbers)) if tab_numbers else None
     list_total = next(iter(list_numbers)) if list_numbers else None
+    return tab_total, list_total
+
+
+def parse_listed_product_total(text):
+    """讀頁面上的商品總數。
+
+    兩者都有且不同時，用清單件數（關鍵字搜尋不該拿全店總數來比）。
+    只有全店分頁總數時仍回傳該數字；有沒有關鍵字、要不要拿來核對，由呼叫端決定。
+    """
+    tab_total, list_total = split_listed_product_counts(text)
     if tab_total is None and list_total is None:
         return None
     if tab_total is not None and list_total is not None and tab_total != list_total:
@@ -108,6 +119,8 @@ class ShopeeCrawler:
         self.cdp_endpoint = resolve_cdp_endpoint(cdp_endpoint)
         self.products_data = {}
         self.crawl_page_logs = []
+        self.listing_full_page_size = None
+        self._log_browser_source()
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
         self._owns_page = True
@@ -125,6 +138,9 @@ class ShopeeCrawler:
         except Exception as e:
             print(f"載入 golden_table.json 失敗: {e}")
             return {}
+
+    def _log_browser_source(self):
+        print(f"瀏覽器來源：{self.browser_source}", flush=True)
 
     def _init_browser(self):
         """使用 Playwright 初始化瀏覽器"""
@@ -732,17 +748,30 @@ class ShopeeCrawler:
             total_sales = product_info.get("總月銷量", "0")
             print(f"{i}. 商品 {product_id} ({product_name}): 總月銷量 {total_sales}")
 
+        temp_path = None
         try:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(sorted_data, f, ensure_ascii=False, indent=4)
+            directory = os.path.dirname(os.path.abspath(output_path)) or "."
+            os.makedirs(directory, exist_ok=True)
+            descriptor, temp_path = tempfile.mkstemp(
+                prefix=".shopee_products_",
+                suffix=".tmp.json",
+                dir=directory,
+            )
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(sorted_data, handle, ensure_ascii=False, indent=4)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temp_path, output_path)
+            temp_path = None
             print(f"資料已成功保存到 {output_path}，並按總月銷量從大到小排序")
         except Exception as e:
-            print(f"保存資料時發生錯誤: {e}")
-            # 備份到臨時文件
-            backup_path = f"shopee_backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
-            with open(backup_path, 'w', encoding='utf-8') as f:
-                json.dump(sorted_data, f, ensure_ascii=False, indent=4)
-            print(f"已備份資料到 {backup_path}")
+            print(f"保存資料時發生錯誤: {e}。正式檔沒有被替換。")
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
+            raise
 
     def save_cookies(self):
         """將瀏覽器當前的最新 Cookies 回存至 cookies.json，延長登入有效期。"""
@@ -2103,12 +2132,7 @@ class ShopeeCrawler:
             print(f"爬蟲執行過程中出錯: {e}")
             import traceback
             traceback.print_exc()
-
-            # 即使出錯，也嘗試儲存已收集的資料
-            if hasattr(self, 'products_data') and self.products_data:
-                self.save_to_file(self.products_data)
-                print(f"已儲存部分收集的資料至 {self.output_path}")
-
+            print("這次沒有成功，正式輸出檔維持不變。")
             return None
         finally:
             # 關閉瀏覽器
@@ -2213,7 +2237,25 @@ class ShopeeCrawler:
 
     def _ensure_collected_count_matches_page(self):
         collected = len(getattr(self, "products_data", {}) or {})
-        total = parse_listed_product_total(self._read_page_body_text())
+        tab_total, list_total = split_listed_product_counts(self._read_page_body_text())
+        keyword = str(getattr(self, "search_keyword", "") or "").strip()
+        if tab_total is not None and list_total is not None and tab_total != list_total:
+            print(
+                f"頁面同時出現架上商品({tab_total})與 {list_total} 件商品，"
+                "以目前清單件數核對。"
+            )
+        if list_total is not None:
+            total = list_total
+        elif tab_total is not None and not keyword:
+            total = tab_total
+        elif tab_total is not None:
+            print(
+                f"這次有搜尋關鍵字「{keyword}」，頁面只顯示全店架上商品({tab_total})，"
+                "沒有篩選後的件數，略過數量核對。"
+            )
+            return None
+        else:
+            total = None
         if total is None:
             raise CrawlIntegrityError(
                 "抓取結束後在頁面上找不到商品總數（例如「架上商品(355)」），"
@@ -2231,6 +2273,32 @@ class ShopeeCrawler:
         print(f"商品數量核對通過：頁面顯示 {total} 個，實際收集 {collected} 個。")
         return total
 
+    def _parse_page_indicator_numbers(self, indicator):
+        match = re.search(r"(\d+)\s*/\s*(\d+)", str(indicator or ""))
+        if not match:
+            return None, None
+        return int(match.group(1)), int(match.group(2))
+
+    def _known_last_listing_page(self, snapshot):
+        """頁碼已經到總頁數，或這一頁的商品列少於先前看過的整頁，就當成最後一頁。"""
+        current, total = self._parse_page_indicator_numbers(
+            (snapshot or {}).get("indicator"))
+        if current is not None and total is not None and total >= 1 and current >= total:
+            return True
+        known_size = getattr(self, "listing_full_page_size", None)
+        product_count = len(tuple((snapshot or {}).get("rows") or ()))
+        if known_size and product_count < known_size:
+            return True
+        return False
+
+    def _remember_full_listing_page_size(self, snapshot):
+        product_count = len(tuple((snapshot or {}).get("rows") or ()))
+        if product_count <= 0:
+            return
+        known_size = getattr(self, "listing_full_page_size", None)
+        if known_size is None or product_count > known_size:
+            self.listing_full_page_size = product_count
+
     def go_to_next_page(self, confirm_change=True):
         """
         嘗試點擊下一頁按鈕。
@@ -2238,6 +2306,12 @@ class ShopeeCrawler:
         :return: 如果成功點擊下一頁則返回 True，否則返回 False
         """
         try:
+            before = self._snapshot_listing_page() if confirm_change else None
+            if confirm_change and self._known_last_listing_page(before):
+                indicator = (before or {}).get("indicator") or "（沒有頁碼）"
+                print(f"已到最後一頁（頁碼「{indicator}」），不再點下一頁")
+                return False
+
             # 尋找下一頁按鈕，使用您提供的 class
             next_page_selectors = [
                 "//button[contains(@class, 'eds-pager__button-next')]",
@@ -2278,7 +2352,8 @@ class ShopeeCrawler:
             # 確保按鈕可見
             WebDriverWait(self.driver, 2).until(EC.visibility_of(next_button))
 
-            before = self._snapshot_listing_page()
+            if before is None:
+                before = self._snapshot_listing_page()
             if before.get("indicator"):
                 print(f"當前頁碼: {before['indicator']}")
 
@@ -2299,6 +2374,7 @@ class ShopeeCrawler:
 
             print("等待頁碼或商品列實際換頁...")
             self._wait_for_listing_page_change(before)
+            self._remember_full_listing_page_size(before)
             return True
 
         except CrawlIntegrityError:
@@ -2307,6 +2383,11 @@ class ShopeeCrawler:
             print(f"嘗試跳轉到下一頁時出錯: {e}")
             import traceback
             traceback.print_exc()
+            if confirm_change:
+                raise CrawlIntegrityError(
+                    f"換頁時發生錯誤（不是正常的最後一頁）：{e}。"
+                    "已停止，不會把這次結果存成正式檔。"
+                ) from e
             return False
 
     def is_valid_product(self, product_info):
@@ -2510,24 +2591,28 @@ class ShopeeCrawler:
         # Extract product image URL from golden table
         product_image_url = golden_info.get("商品圖片網址", "未找到")
 
-        # Extract product name
+        # 名稱與已售出數量只採頁面上讀到的文字。讀不到就留「未找到」，
+        # 不拿 Golden 或 0 補上，也不把名稱寫成「無規格」。
         try:
             product_name = product_row.find_element(By.CLASS_NAME,
                                                     'product-name-wrap').text
-            if not product_name.strip():
-                product_name = golden_info.get("商品名稱", "未找到")
-        except:
-            product_name = golden_info.get("商品名稱", "未找到")
+            if not str(product_name).strip():
+                product_name = "未找到"
+        except Exception:
+            product_name = "未找到"
 
-        # Extract total sales
         try:
-            total_sales = product_row.find_element(By.CLASS_NAME,
-                                                   'list-view-sales').text
-            total_sales = self.convert_sales_number(total_sales, preferred_label="已售出")
-            if not total_sales.strip():
-                total_sales = golden_info.get("已售出總數量", "0")
-        except:
-            total_sales = golden_info.get("已售出總數量", "0")
+            raw_sales = product_row.find_element(By.CLASS_NAME,
+                                                 'list-view-sales').text
+            if not str(raw_sales).strip():
+                total_sales = "未找到"
+            else:
+                total_sales = self.convert_sales_number(
+                    raw_sales, preferred_label="已售出")
+                if not str(total_sales).strip():
+                    total_sales = "未找到"
+        except Exception:
+            total_sales = "未找到"
 
         # Create quick lookups for model metadata from golden table
         golden_model_list = golden_info.get("型號", [])
@@ -2643,14 +2728,6 @@ class ShopeeCrawler:
         }
         if not models:
             product_info["無規格"] = True
-            if (
-                not str(product_info.get("商品名稱") or "").strip()
-                or product_info.get("商品名稱") == "未找到"
-            ):
-                product_info["商品名稱"] = "無規格"
-            sales = str(product_info.get("已售出總數量") or "").strip()
-            if not sales or sales == "未找到":
-                product_info["已售出總數量"] = "0"
 
         return product_info
 
@@ -2749,6 +2826,12 @@ class ShopeeCrawler:
             f"第 {page_number} 頁：DOM 列數 {dom_row_count}，"
             f"成功 {success_count}，跳過 {skipped_count}，無效 {invalid_count}"
         )
+        if invalid_count:
+            raise CrawlIntegrityError(
+                f"第 {page_number} 頁有 {invalid_count} 列讀不完整"
+                "（商品名稱讀不到或其他必要欄位無效）。"
+                "已停止，不會把這次結果存成正式檔。"
+            )
         return entry
 
     def get_all_products_info(self):
@@ -2808,41 +2891,49 @@ class ShopeeCrawler:
             raise
         except Exception as e:
             print(f"獲取所有商品資訊時出錯: {e}")
-            return {}
+            raise CrawlIntegrityError(
+                f"抓取第 {page} 頁時發生錯誤（不是正常的最後一頁）：{e}。"
+                "已停止，不會把這次結果存成正式檔。"
+            ) from e
 
-def main():
+def build_crawler_argument_parser():
     import argparse
 
+    parser = argparse.ArgumentParser(description='Shopee Crawler')
+    parser.add_argument('keyword', nargs='?', default='', help='搜尋關鍵字')
+    parser.add_argument('--output',
+                        default='shopee_products.json',
+                        help='輸出檔案路徑')
+    parser.add_argument('--headless',
+                        type=str,
+                        default='true',
+                        help='是否使用無頭模式 (true/false)')
+    parser.add_argument('--inventory-month',
+                        type=int,
+                        default=4,
+                        help='庫存月份')
+    parser.add_argument('--mode',
+                        choices=['inventory', 'ads-export'],
+                        default='inventory',
+                        help='執行模式')
+    parser.add_argument('--browser-source',
+                        choices=['remote', 'mac'],
+                        default='mac',
+                        help='預設 mac（本機 Chromium + cookies.json）。'
+                             '遠端盒請明確加上 --browser-source remote')
+    parser.add_argument('--cdp-endpoint',
+                        default='',
+                        help='CDP URL，預設 SHOPEE_ADS_CDP 或 http://127.0.0.1:9232')
+    parser.add_argument('--ads-export-dir',
+                        default='',
+                        help='廣告 CSV 下載目錄（週報請指向 reports/ads_weekly/YYYYMMDD/ads_exports）')
+    return parser
+
+
+def main():
     if len(sys.argv) > 1:
         # 使用 argparse 解析命令行參數
-        parser = argparse.ArgumentParser(description='Shopee Crawler')
-        parser.add_argument('keyword', nargs='?', default='', help='搜尋關鍵字')
-        parser.add_argument('--output',
-                            default='shopee_products.json',
-                            help='輸出檔案路徑')
-        parser.add_argument('--headless',
-                            type=str,
-                            default='true',
-                            help='是否使用無頭模式 (true/false)')
-        parser.add_argument('--inventory-month',
-                            type=int,
-                            default=4,
-                            help='庫存月份')
-        parser.add_argument('--mode',
-                            choices=['inventory', 'ads-export'],
-                            default='inventory',
-                            help='執行模式')
-        parser.add_argument('--browser-source',
-                            choices=['remote', 'mac'],
-                            default='mac',
-                            help='remote=連已登入 Chrome CDP；mac=本機 Chromium + cookies.json')
-        parser.add_argument('--cdp-endpoint',
-                            default='',
-                            help='CDP URL，預設 SHOPEE_ADS_CDP 或 http://127.0.0.1:9232')
-        parser.add_argument('--ads-export-dir',
-                            default='',
-                            help='廣告 CSV 下載目錄（週報請指向 reports/ads_weekly/YYYYMMDD/ads_exports）')
-
+        parser = build_crawler_argument_parser()
         args = parser.parse_args()
 
         # 將 headless 參數轉換為布林值
