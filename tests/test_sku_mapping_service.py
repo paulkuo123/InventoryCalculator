@@ -3,6 +3,7 @@ import os
 import tempfile
 import time
 import unittest
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from sku_mapping_service import (
@@ -1202,6 +1203,73 @@ class SkuMappingServiceTest(unittest.TestCase):
         restored = next(row for row in reloaded.queue(status="deferred")["items"])
         self.assertEqual(restored["review_tier"], "yellow")
         self.assertEqual(restored["review_reason"], DEFERRED_REVIEW_REASON)
+
+    def _seed_single_candidate(self, index):
+        model = self.service._scope_models("all")[index]
+        snapshot = self.service._save_snapshot(model["offer_id"], model["url"], model["product_name"], [
+            {"sku_id": f"seed-{index}", "sku_name": "白色", "second_name": "", "spec_text": "白色", "parts": ["白色"]}
+        ], {})
+        self.service._save_suggestion(model, snapshot, self.service.generate_candidates(model, snapshot["skus"]), None, {})
+        return model
+
+    def _queue_item(self, model):
+        return next(row for row in self.service.queue(status="all")["items"] if row["product_id"] == model["product_id"] and row["model_id"] == model["model_id"])
+
+    def _golden_model(self, model):
+        with open(self.golden_path, encoding="utf-8") as handle:
+            golden = json.load(handle)
+        return next(row for row in golden[model["product_id"]]["型號"] if row["規格ID"] == model["model_id"])
+
+    def test_no_match_or_defer_after_approve_removes_golden_approval(self):
+        for index, action, expected in ((0, "no_match", "no_match"), (1, "defer", "pending")):
+            with self.subTest(action=action):
+                model = self._seed_single_candidate(index)
+                item = self._queue_item(model)
+                self.assertTrue(item["candidates"])
+                self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "approve", "candidateKey": item["candidates"][0]["candidate_key"], "version": item["version"]}])
+                self.assertEqual(self._golden_model(model)["1688_mapping_status"], "approved")
+
+                item = self._queue_item(model)
+                self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": action, "version": item["version"]}])
+
+                self.assertEqual(self._queue_item(model)["status"], expected)
+                self.assertEqual(self._golden_model(model)["1688_mapping_status"], expected)
+
+    def test_defer_unapproved_row_does_not_rewrite_golden(self):
+        model = self._seed_single_candidate(0)
+        item = self._queue_item(model)
+        before = Path(self.golden_path).read_bytes()
+        self.service.decisions([{"productId": model["product_id"], "modelId": model["model_id"], "action": "defer", "version": item["version"]}])
+        self.assertEqual(Path(self.golden_path).read_bytes(), before)
+
+    def test_batch_approve_rejects_unusable_row_before_writing_any(self):
+        first = self._seed_single_candidate(0)
+        second = self._seed_single_candidate(1)
+        with self.service.connect() as conn:
+            conn.execute("UPDATE sku_mapping_suggestions SET status='stale' WHERE product_id=? AND model_id=?", (second["product_id"], second["model_id"]))
+        items = []
+        for model in (first, second):
+            item = self._queue_item(model)
+            self.assertTrue(item["candidates"])
+            items.append({"productId": model["product_id"], "modelId": model["model_id"], "action": "approve", "candidateKey": item["candidates"][0]["candidate_key"], "version": item["version"]})
+        before = Path(self.golden_path).read_bytes()
+
+        with self.assertRaisesRegex(ValueError, "快照不可用"):
+            self.service.decisions(items, batch=True)
+
+        self.assertNotEqual(self._queue_item(first)["status"], "approved")
+        self.assertEqual(Path(self.golden_path).read_bytes(), before)
+
+    def test_batch_no_match_rejects_invalid_reason_before_writing_any(self):
+        first = self._seed_single_candidate(0)
+        second = self._seed_single_candidate(1)
+        items = [
+            {"productId": first["product_id"], "modelId": first["model_id"], "action": "no_match", "version": self._queue_item(first)["version"], "reasonCode": "COLOR_MISMATCH"},
+            {"productId": second["product_id"], "modelId": second["model_id"], "action": "no_match", "version": self._queue_item(second)["version"], "reasonCode": "OTHER", "reasonText": ""},
+        ]
+        with self.assertRaisesRegex(ValueError, "OTHER"):
+            self.service.decisions(items, batch=True)
+        self.assertNotEqual(self._queue_item(first)["status"], "no_match")
 
     def test_batch_status_actions_support_defer_no_match_and_discontinued(self):
         model = self.service._scope_models("all")[0]
