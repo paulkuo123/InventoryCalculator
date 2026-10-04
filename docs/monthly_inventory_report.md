@@ -20,13 +20,23 @@ python3 scripts/monthly_inventory_report.py
 | `golden_table.json` | 只讀。停售標記用對照狀態與 1688 規格名 |
 | `procurement.db` | 可缺。有的話以唯讀開啟，看綁定與疑似下架 |
 
-開始前會檢查商品檔：必須是有效 JSON、至少有一個商品、修改時間不能太舊（預設 48 小時，`--max-age-hours` 可調）。不合用就印出錯誤並結束，不寫報告。
+開始前會檢查商品檔：必須是有效 JSON、至少有一個商品、修改時間不能太舊。不合用就印出錯誤並結束，不寫報告。
+
+## 參數
+
+- `--max-age-hours N`：商品檔修改時間最久可以幾小時。預設 **48**。超過就停止、不寫報告。確定要用較舊的檔時再調高，例如 `--max-age-hours 72`。
+- `--overwrite`：輸出目錄裡已經有 `monthly_report.md`、JSON、CSV、`BLOCKER.md` 或 `sources/` 時，**預設拒絕覆寫**。加上這個參數才會重跑，而且會先把舊檔複製到同一個資料夾，檔名後面加上時間，例如 `monthly_report.md.20261004T210615+0800`。
+- `--month YYYYMM`、`--out`、`--products`、`--skip-stock-signal`：月份、輸出目錄、商品檔路徑，以及要不要順便跑水位訊號。
+
+```bash
+python3 scripts/monthly_inventory_report.py --help
+```
 
 ## 它寫什麼
 
 目錄是 `reports/monthly_inventory_YYYYMM/`（月份用商品檔修改時間，台北時間；可用 `--month YYYYMM` 指定）：
 
-- `monthly_report.md`：給人看的報告，先講大數字，再分 A～E
+- `monthly_report.md`：給人看的報告。開頭先講大數字（危急件數、補到目標水位的總件數、斷貨、第一批），再分 A～E
 - `monthly_report.json`：同一份數字，方便對帳
 - `critical_models.csv`：危急型號
 - `priority_batch.csv`：第一批（斷貨且建議至少 20 件）
@@ -40,6 +50,8 @@ python3 scripts/monthly_inventory_report.py
 - 水位：`restock_rules.target_months_for_product`。名稱有「手機殼」或「手机壳」、後面不是吊飾或掛繩，目標 3 個月；其餘 4 個月。
 - 建議量：`restock_rules.calculated_restock_details`。目標用月銷乘月數後四捨五入，減掉庫存，再取整。庫存是 0 時，這支函式可能改用歷史銷量佔比。
 - 第一批：斷貨，而且建議量至少 20 件。
+- 補到目標水位：觀察清單裡每一個規格都用 `calculated_restock_details` 算建議量，再加總。已經在 3 或 4 個月水位以上的是 0。這個數字包含還沒跌破 1.5 個月、但還沒補滿的規格，所以會大於或等於危急建議件數。
+- 分類：`restock_rules.restock_category`。手機殼（目標 3 個月）、吊飾／掛繩（目標 4 個月）、其餘（目標 4 個月）各一列。規格名是「加購」的手機殼仍算在手機殼那一列，月數依店規改回 4。
 - 停售：`restock_loop.scan.launcher_ineligibility_reasons` 裡的停售規格名與對照狀態。危急名單裡會標出來，**主數字不扣**。上一份手寫月報也沒扣。
 
 ## 跟上一份手寫月報對數字時要注意

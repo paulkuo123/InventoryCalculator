@@ -16,13 +16,19 @@ FIX = ROOT / "tests" / "fixtures" / "monthly_inventory"
 sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "scripts"))
 
-from restock_rules import calculated_restock_details, target_months_for_product  # noqa: E402
+from restock_rules import (  # noqa: E402
+    calculated_restock_details,
+    restock_category,
+    target_months_for_product,
+)
 from reverse_audit.util import sha256_file  # noqa: E402
 from monthly_inventory_report import (  # noqa: E402
+    DEFAULT_MAX_AGE_HOURS,
     LOW_COVER_MONTHS,
     PHONE_CASE_MONTHS,
     ReportInputError,
     STOCK_SIGNAL_HOOK_MARK,
+    build_parser,
     build_report,
     load_inputs,
     main,
@@ -118,14 +124,15 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(summary["removed"], 2)
         self.assertEqual(summary["matched"], 5)
         self.assertEqual(summary["missing_ids"], ["2999"])
-        self.assertEqual(summary["selling_specs"], 6)
+        self.assertEqual(summary["selling_specs"], 7)
         self.assertEqual(summary["zero_sales_specs"], 1)
         self.assertEqual(summary["missing_sales_specs"], 1)
-        # 襪子與排除清單不進數字。危急：a1 a2 c1 e1 h1。
+        # 襪子與排除清單不進數字。危急：a1 a2 c1 e1 h1。b4 可撐 2 個月，未到危急。
         self.assertEqual(summary["critical_specs"], 5)
         self.assertEqual(summary["oos_specs"], 4)
         self.assertEqual(summary["phone_case_critical"], 3)
-        self.assertEqual(summary["other_critical"], 2)
+        self.assertEqual(summary["charm_critical"], 1)
+        self.assertEqual(summary["other_critical"], 1)
 
         by_spec = {row["spec_id"]: row for row in report["critical"]}
         phone = json.loads((FIX / "shopee_products_latest.json").read_text(encoding="utf-8"))["2001"]
@@ -162,11 +169,58 @@ class ReportTests(unittest.TestCase):
         self.assertEqual(summary["discontinued_in_critical"], 1)
         self.assertNotIn("d1", by_spec)
         self.assertNotIn("b1", by_spec)
+        self.assertNotIn("b4", by_spec)
+
+        products = json.loads((FIX / "shopee_products_latest.json").read_text(encoding="utf-8"))
+        gap_model = next(model for model in products["2002"]["型號"] if model["規格ID"] == "b4")
+        gap_details = calculated_restock_details(
+            products["2002"],
+            gap_model,
+            target_months_for_product(products["2002"]["商品名稱"], 4, gap_model["型號名稱"]),
+        )
+        self.assertGreaterEqual(float(gap_model["商品庫存"]) / float(gap_model["月銷量"]), LOW_COVER_MONTHS)
+        self.assertGreater(gap_details["suggestedQty"], 0)
+        self.assertEqual(summary["target_gap_specs"], summary["critical_specs"] + 1)
+        self.assertEqual(
+            summary["target_gap_qty"],
+            summary["critical_suggested_qty"] + gap_details["suggestedQty"],
+        )
+        categories = summary["categories"]
+        self.assertEqual(categories["phone_case"]["critical_specs"], 3)
+        self.assertEqual(categories["charm"]["critical_specs"], 1)
+        self.assertEqual(categories["charm"]["selling_specs"], 1)
+        self.assertEqual(restock_category("合成測試手機殼吊飾", "玫瑰繩"), "charm")
+        self.assertEqual(
+            categories["other"]["target_gap_qty"],
+            by_spec["h1"]["suggested_qty"] + gap_details["suggestedQty"],
+        )
+        self.assertEqual(
+            sum(bucket["selling_specs"] for bucket in categories.values()),
+            summary["selling_specs"],
+        )
+        self.assertEqual(
+            sum(bucket["critical_suggested_qty"] for bucket in categories.values()),
+            summary["critical_suggested_qty"],
+        )
+        self.assertEqual(
+            sum(bucket["target_gap_qty"] for bucket in categories.values()),
+            summary["target_gap_qty"],
+        )
+        self.assertGreater(summary["target_gap_qty"], summary["critical_suggested_qty"])
 
         text = (out / "monthly_report.md").read_text(encoding="utf-8")
         self.assertIn("這份是合成測試資料，不是賣場實數。", text)
         for heading in ("## A. 全貌", "## B. 這次算進哪些商品", "## C. 危急型號", "## D. 建議件數", "## E. 下一步"):
             self.assertIn(heading, text)
+        self.assertLess(text.index("補到目標水位"), text.index("## A. 全貌"))
+        self.assertLess(text.index("## A. 全貌"), text.index("## B. 這次算進哪些商品"))
+        self.assertLess(text.index("## B. 這次算進哪些商品"), text.index("## C. 危急型號"))
+        self.assertLess(text.index("## C. 危急型號"), text.index("吊飾／掛繩（目標 4 個月）"))
+        self.assertLess(text.index("吊飾／掛繩（目標 4 個月）"), text.index("## D. 建議件數"))
+        self.assertLess(text.index("## D. 建議件數"), text.index("## E. 下一步"))
+        self.assertIn("手機殼（目標 3 個月）", text)
+        self.assertIn("其餘（目標 4 個月）", text)
+        self.assertIn(f"補到目標水位的件數 | {summary['target_gap_qty']}", text.replace(",", ""))
         self.assertIn(STOCK_SIGNAL_HOOK_MARK, text)
         self.assertIn("PR #135", text)
         blocker = (out / "BLOCKER.md").read_text(encoding="utf-8")
@@ -249,6 +303,93 @@ class ReportTests(unittest.TestCase):
         payload = json.loads((out / "monthly_report.json").read_text(encoding="utf-8"))
         self.assertEqual(payload["summary"]["critical_specs"], 5)
         self.assertTrue((out / "sources" / "shopee_products_latest.json").exists())
+        self.assertEqual(sha256_file(self.root / "golden_table.json"), self.golden_sha)
+
+    def test_help_documents_max_age_hours_and_overwrite(self):
+        parser = build_parser()
+        self.assertEqual(parser.get_default("max_age_hours"), DEFAULT_MAX_AGE_HOURS)
+        self.assertEqual(DEFAULT_MAX_AGE_HOURS, 48)
+        self.assertFalse(parser.get_default("overwrite"))
+        proc = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "monthly_inventory_report.py"), "--help"],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertIn("--max-age-hours", proc.stdout)
+        self.assertIn("48", proc.stdout)
+        self.assertIn("--overwrite", proc.stdout)
+        self.assertIn("拒絕覆寫", proc.stdout)
+
+    def test_max_age_hours_accepts_ten_hour_file_at_48_and_rejects_at_1(self):
+        products = self.root / "shopee_products_latest.json"
+        recent = datetime.now(TZ) - timedelta(hours=10)
+        os.utime(products, (recent.timestamp(), recent.timestamp()))
+        fresh_out = Path(self.tmp.name) / "age-48"
+        report = run(
+            self.root,
+            out_dir=fresh_out,
+            max_age_hours=48,
+            run_stock_signal=False,
+            month="202610",
+        )
+        self.assertEqual(report["summary"]["critical_specs"], 5)
+        self.assertFalse((fresh_out / "monthly_report.md").read_text(encoding="utf-8") == "")
+        tight_out = Path(self.tmp.name) / "age-1"
+        with self.assertRaises(ReportInputError) as caught:
+            run(
+                self.root,
+                out_dir=tight_out,
+                max_age_hours=1,
+                run_stock_signal=False,
+                month="202610",
+            )
+        self.assertIn("太舊", str(caught.exception))
+        self.assertFalse((tight_out / "monthly_report.md").exists())
+
+    def test_refuses_overwrite_unless_flag_then_backs_up(self):
+        out = Path(self.tmp.name) / "keep-out"
+        first = run(
+            self.root,
+            out_dir=out,
+            max_age_hours=100000,
+            run_stock_signal=False,
+            month="202610",
+        )
+        original = (out / "monthly_report.md").read_bytes()
+        self.assertIn("每月蝦皮庫存分析", original.decode("utf-8"))
+        with self.assertRaises(ReportInputError) as caught:
+            run(
+                self.root,
+                out_dir=out,
+                max_age_hours=100000,
+                run_stock_signal=False,
+                month="202610",
+            )
+        self.assertIn("不覆寫", str(caught.exception))
+        self.assertIn("monthly_report.md", str(caught.exception))
+        self.assertEqual((out / "monthly_report.md").read_bytes(), original)
+        self.assertEqual(list(out.glob("monthly_report.md.*")), [])
+        self.assertFalse(first["backups"])
+
+        second = run(
+            self.root,
+            out_dir=out,
+            max_age_hours=100000,
+            run_stock_signal=False,
+            month="202610",
+            overwrite=True,
+            now=datetime(2026, 10, 4, 21, 6, 15, tzinfo=TZ),
+        )
+        backups = list(out.glob("monthly_report.md.20261004T210615+0800*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(backups[0].read_bytes(), original)
+        self.assertTrue((out / "monthly_report.md").exists())
+        self.assertTrue(any(Path(path).name.startswith("sources.20261004T210615+0800") for path in second["backups"]))
+        backed_sources = next(path for path in out.iterdir() if path.name.startswith("sources.20261004T210615+0800"))
+        self.assertTrue((backed_sources / "shopee_products_latest.json").is_file())
         self.assertEqual(sha256_file(self.root / "golden_table.json"), self.golden_sha)
 
 

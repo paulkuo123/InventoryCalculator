@@ -35,6 +35,7 @@ from restock_rules import (  # noqa: E402
     DEFAULT_RESTOCK_MONTHS,
     PHONE_CASE_MONTHS,
     calculated_restock_details,
+    restock_category,
     target_months_for_product,
 )
 from reverse_audit.util import sha256_file  # noqa: E402
@@ -44,6 +45,14 @@ LOW_COVER_MONTHS = 1.5
 FIRST_BATCH_MIN_QTY = 20
 DEFAULT_MAX_AGE_HOURS = 48.0
 PRODUCTS_NAME = "shopee_products_latest.json"
+REPORT_OUTPUT_NAMES = (
+    "monthly_report.md",
+    "monthly_report.json",
+    "critical_models.csv",
+    "priority_batch.csv",
+    "BLOCKER.md",
+)
+CATEGORY_ORDER = ("phone_case", "charm", "other")
 # PR #135 還沒進 main。月報不 import 這支、也不因為它不存在而失敗。
 STOCK_SIGNAL_SCRIPT = "scripts/watchlist_stock_signal.py"
 STOCK_SIGNAL_HOOK_MARK = "OPTIONAL HOOK: PR #135 watchlist_stock_signal"
@@ -53,6 +62,60 @@ Row = Dict[str, Any]
 
 class ReportInputError(Exception):
     """商品檔或必要來源不合用。呼叫端應大聲失敗、不要寫報告。"""
+
+
+def _blank_category() -> Dict[str, int]:
+    return {
+        "selling_specs": 0,
+        "critical_specs": 0,
+        "critical_suggested_qty": 0,
+        "target_gap_specs": 0,
+        "target_gap_qty": 0,
+    }
+
+
+def existing_report_outputs(out_dir: Path) -> List[Path]:
+    """這支腳本會寫的檔。備份檔（檔名後面帶時間）不算。"""
+    if not out_dir.exists():
+        return []
+    found: List[Path] = []
+    for name in REPORT_OUTPUT_NAMES:
+        path = out_dir / name
+        if path.exists():
+            found.append(path)
+    sources = out_dir / "sources"
+    if sources.exists():
+        found.append(sources)
+    return found
+
+
+def backup_existing_outputs(out_dir: Path, now: datetime) -> List[str]:
+    """把已有的報告檔複製成同資料夾裡帶時間的備份，再讓後面覆寫本體。"""
+    stamp = now.astimezone(TZ).strftime("%Y%m%dT%H%M%S%z")
+    backed: List[str] = []
+    for path in existing_report_outputs(out_dir):
+        dest = path.with_name(f"{path.name}.{stamp}")
+        suffix = 2
+        while dest.exists():
+            dest = path.with_name(f"{path.name}.{stamp}-{suffix}")
+            suffix += 1
+        if path.is_dir():
+            shutil.copytree(path, dest)
+        else:
+            shutil.copy2(path, dest)
+        backed.append(str(dest))
+    return backed
+
+
+def guard_output_dir(out_dir: Path, overwrite: bool) -> List[Path]:
+    existing = existing_report_outputs(out_dir)
+    if not existing or overwrite:
+        return existing
+    names = "、".join(path.name for path in existing)
+    raise ReportInputError(
+        f"輸出目錄已有報告檔（{names}）：{out_dir}。"
+        "預設不覆寫。要重跑請加 --overwrite，舊檔會先複製成同資料夾裡帶時間的備份。"
+    )
 
 
 def now_iso() -> str:
@@ -316,6 +379,7 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
     missing_sales = 0
     zero_sales = 0
     selling = 0
+    categories = {key: _blank_category() for key in CATEGORY_ORDER}
 
     for product_id in data["watch_ids"]:
         product = products.get(product_id)
@@ -340,6 +404,16 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
             cover = (stock / monthly) if monthly > 0 else None
             critical = monthly > 0 and cover is not None and cover < LOW_COVER_MONTHS
             out_of_stock = monthly > 0 and stock == 0
+            category = restock_category(name, model_name)
+            bucket = categories[category]
+            if state == "positive":
+                bucket["selling_specs"] += 1
+            if suggested > 0:
+                bucket["target_gap_specs"] += 1
+                bucket["target_gap_qty"] += suggested
+            if critical:
+                bucket["critical_specs"] += 1
+                bucket["critical_suggested_qty"] += suggested
             labels: List[str] = []
             mapped = golden_model(golden, product_id, spec_id, model_name)
             for reason in discontinued_reasons(
@@ -407,12 +481,16 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
     )
     first_batch = [row for row in rows if row["first_batch"]]
     phone_rows = [row for row in rows if row["is_phone_case"]]
-    other_rows = [row for row in rows if not row["is_phone_case"]]
+    charm_rows = [row for row in rows if restock_category(row["product_name"], row["model_name"]) == "charm"]
+    other_rows = [row for row in rows if restock_category(row["product_name"], row["model_name"]) == "other"]
     oos_rows = [row for row in rows if row["out_of_stock"]]
     discontinued_rows = [row for row in rows if row["discontinued_labels"]]
 
     def qty_sum(items: Sequence[Row]) -> int:
         return sum(int(item["suggested_qty"]) for item in items)
+
+    def bucket_sum(key: str) -> int:
+        return sum(int(categories[name][key]) for name in CATEGORY_ORDER)
 
     summary = {
         "watchlist_before": int(data["watchlist_before"]),
@@ -427,12 +505,17 @@ def build_report(data: Dict[str, Any]) -> Dict[str, Any]:
         "missing_sales_specs": missing_sales,
         "critical_specs": len(rows),
         "critical_suggested_qty": qty_sum(rows),
+        "target_gap_specs": bucket_sum("target_gap_specs"),
+        "target_gap_qty": bucket_sum("target_gap_qty"),
         "oos_specs": len(oos_rows),
         "oos_suggested_qty": qty_sum(oos_rows),
         "first_batch_specs": len(first_batch),
         "first_batch_suggested_qty": qty_sum(first_batch),
+        "categories": categories,
         "phone_case_critical": len(phone_rows),
         "phone_case_suggested_qty": qty_sum(phone_rows),
+        "charm_critical": len(charm_rows),
+        "charm_suggested_qty": qty_sum(charm_rows),
         "other_critical": len(other_rows),
         "other_suggested_qty": qty_sum(other_rows),
         "discontinued_in_critical": len(discontinued_rows),
@@ -504,17 +587,46 @@ def _scope_lines(report: Dict[str, Any]) -> List[str]:
 
 def _group_table(report: Dict[str, Any]) -> List[str]:
     summary = report["summary"]
-    rows = [
-        ("手機殼（目標 3 個月）", summary["phone_case_critical"], summary["phone_case_suggested_qty"]),
-        ("其他（目標 4 個月）", summary["other_critical"], summary["other_suggested_qty"]),
-        ("合計", summary["critical_specs"], summary["critical_suggested_qty"]),
-    ]
+    categories = summary["categories"]
+    labeled = (
+        ("手機殼（目標 3 個月）", categories["phone_case"]),
+        ("吊飾／掛繩（目標 4 個月）", categories["charm"]),
+        ("其餘（目標 4 個月）", categories["other"]),
+    )
     lines = [
-        "| 範圍 | 危急型號 | 建議件數 |",
-        "| --- | ---: | ---: |",
+        (
+            "分類沿用 restock_rules。"
+            "名稱有「手機殼」或「手机壳」、後面不是吊飾或掛繩，算手機殼、目標 3 個月。"
+            "吊飾、掛飾、掛繩、掛鏈自己一列，目標 4 個月。剩下的也是 4 個月。"
+        ),
+        "",
+        "| 範圍 | 有賣出規格 | 危急規格 | 危急建議件數 | 補到目標水位件數 |",
+        "| --- | ---: | ---: | ---: | ---: |",
     ]
-    for label, count, qty in rows:
-        lines.append(f"| {label} | {_fmt_int(count)} | {_fmt_int(qty)} |")
+    for label, bucket in labeled:
+        lines.append(
+            "| {label} | {selling} | {critical} | {critical_qty} | {gap_qty} |".format(
+                label=label,
+                selling=_fmt_int(bucket["selling_specs"]),
+                critical=_fmt_int(bucket["critical_specs"]),
+                critical_qty=_fmt_int(bucket["critical_suggested_qty"]),
+                gap_qty=_fmt_int(bucket["target_gap_qty"]),
+            )
+        )
+    lines.append(
+        "| 合計 | {selling} | {critical} | {critical_qty} | {gap_qty} |".format(
+            selling=_fmt_int(summary["selling_specs"]),
+            critical=_fmt_int(summary["critical_specs"]),
+            critical_qty=_fmt_int(summary["critical_suggested_qty"]),
+            gap_qty=_fmt_int(summary["target_gap_qty"]),
+        )
+    )
+    lines.append("")
+    lines.append(
+        "規格名稱是「加購」的手機殼，店規改成 4 個月，仍算在手機殼這列。"
+        "補到目標水位的件數，是該範圍每個規格的建議量加總；已經在水位以上的是 0。"
+        "所以它會大於或等於危急建議件數。"
+    )
     return lines
 
 
@@ -557,7 +669,12 @@ def render_markdown(report: Dict[str, Any]) -> str:
                 f"建議 {_fmt_int(summary['critical_suggested_qty'])} 件。"
             ),
             (
-                f"其中斷貨 {_fmt_int(summary['oos_specs'])} 個型號、"
+                f"要把有缺口的規格補到目標水位，一共 {_fmt_int(summary['target_gap_qty'])} 件"
+                f"（{_fmt_int(summary['target_gap_specs'])} 個規格）。"
+                "這包含還沒跌破 1.5 個月、但還沒補到 3 或 4 個月的規格。"
+            ),
+            (
+                f"危急型號裡，斷貨 {_fmt_int(summary['oos_specs'])} 個型號、"
                 f"{_fmt_int(summary['oos_suggested_qty'])} 件。"
                 f"第一批（斷貨且建議至少 {FIRST_BATCH_MIN_QTY} 件）"
                 f"{_fmt_int(summary['first_batch_specs'])} 個型號、"
@@ -574,6 +691,8 @@ def render_markdown(report: Dict[str, Any]) -> str:
             f"| 有賣出的型號 | {_fmt_int(summary['selling_specs'])} |",
             f"| 危急型號（水位不到 1.5 個月） | {_fmt_int(summary['critical_specs'])} |",
             f"| 危急建議件數 | {_fmt_int(summary['critical_suggested_qty'])} |",
+            f"| 要補到目標水位的規格 | {_fmt_int(summary['target_gap_specs'])} |",
+            f"| 補到目標水位的件數 | {_fmt_int(summary['target_gap_qty'])} |",
             f"| 斷貨型號 | {_fmt_int(summary['oos_specs'])} |",
             f"| 斷貨建議件數 | {_fmt_int(summary['oos_suggested_qty'])} |",
             f"| 第一批型號 | {_fmt_int(summary['first_batch_specs'])} |",
@@ -904,13 +1023,16 @@ def run(
     max_age_hours: float = DEFAULT_MAX_AGE_HOURS,
     procurement_path: Optional[Path] = None,
     run_stock_signal: bool = True,
+    overwrite: bool = False,
     now: Optional[datetime] = None,
 ) -> Dict[str, Any]:
     root = Path(root).expanduser().resolve()
     products_path = find_products_path(root, products)
-    precheck = precheck_products_file(products_path, max_age_hours, now=now)
+    clock = now or datetime.now(TZ)
+    precheck = precheck_products_file(products_path, max_age_hours, now=clock)
     period = parse_month(month) if month else period_stamp_from_mtime(products_path)
     destination = Path(out_dir).expanduser().resolve() if out_dir else default_out_dir(root, period)
+    pending_outputs = guard_output_dir(destination, overwrite)
     db_path = Path(procurement_path).expanduser().resolve() if procurement_path else root / "procurement.db"
     watched = [
         products_path,
@@ -922,6 +1044,7 @@ def run(
     before = _fingerprint(watched)
     data = load_inputs(root, products_path, db_path, precheck, period)
     report = build_report(data)
+    backups = backup_existing_outputs(destination, clock) if pending_outputs else []
     snapshot_sources(destination, products_path, root)
     if run_stock_signal:
         signal = run_optional_stock_signal(root, destination, products_path, period)
@@ -931,6 +1054,7 @@ def run(
             "note": f"{STOCK_SIGNAL_HOOK_MARK}。這次指定略過水位訊號腳本。月報不依賴它。",
         }
     report["stock_signal"] = signal
+    report["backups"] = backups
     outputs = write_outputs(report, destination)
     report["outputs"] = outputs
     _ensure_unchanged(before)
@@ -953,7 +1077,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-age-hours",
         type=float,
         default=DEFAULT_MAX_AGE_HOURS,
-        help=f"商品檔修改時間最久可以幾小時，預設 {DEFAULT_MAX_AGE_HOURS:g}",
+        metavar="N",
+        help=(
+            "商品檔修改時間最久可以幾小時。"
+            f"預設 {DEFAULT_MAX_AGE_HOURS:g}。"
+            "超過就停止、不寫報告。確定要用較舊的檔時再調高。"
+        ),
+    )
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help=(
+            "輸出目錄已經有月報時才允許重跑。"
+            "會先把舊檔複製成同資料夾裡帶時間的備份。不加這個參數就拒絕覆寫。"
+        ),
     )
     parser.add_argument("--procurement-db", default=None, help="procurement.db 路徑，預設程式庫根目錄，只讀")
     parser.add_argument(
@@ -976,6 +1113,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_age_hours=float(args.max_age_hours),
             procurement_path=Path(args.procurement_db) if args.procurement_db else None,
             run_stock_signal=not args.skip_stock_signal,
+            overwrite=bool(args.overwrite),
         )
     except ReportInputError as exc:
         print(f"錯誤：{exc}", file=sys.stderr)
