@@ -3,8 +3,8 @@
 Agents may only create proposal files. A person signs a separate decision
 file, then runs this CLI. Without ``--apply`` nothing in Golden or SQLite is
 written. Actual row writes go through ``SkuMappingService.commit_url_change``,
-``_write_approved_mapping``, and ``_write_status_mapping``. This module does
-not reimplement those writers.
+``_apply_decision`` (which calls ``_write_approved_mapping``), and
+``_write_status_mapping``. This module does not reimplement those writers.
 
 Batch copies live under ``backups/batches/<batch_id>/``. That directory is
 outside ``prune_golden_table_backups`` (which only deletes
@@ -31,7 +31,6 @@ from sku_mapping_service import (
     SkuMappingService,
     canonical_url,
     display_text,
-    mapping_candidate_key,
     normalize_id,
     parse_offer_id,
 )
@@ -903,30 +902,6 @@ def _require_suggestion(service: SkuMappingService, product_id: str, spec_id: st
     return dict(row)
 
 
-def _candidate_from_values(values: Mapping[str, str], offer_id: str) -> Dict[str, Any]:
-    sku_name = display_text(values.get("1688_sku_name"))
-    if not sku_name:
-        _fail("第 2 層和第 3 層必須有 1688 規格名稱。")
-    second = display_text(values.get("1688_sku_second_name"))
-    spec = display_text(values.get("1688_spec_text"))
-    sku_id = normalize_id(values.get("1688_sku_id"))
-    if spec:
-        parts = [part.strip() for part in re.split(r"[;；]", spec) if part.strip()]
-    else:
-        parts = [sku_name]
-    if second and (len(parts) < 2 or parts[-1] != second):
-        parts.append(second)
-    return {
-        "sku_id": sku_id,
-        "sku_name": sku_name,
-        "second_name": second,
-        "spec_text": spec,
-        "parts": parts or [sku_name],
-        "dimension_count": max(len(parts), 1),
-        "candidate_key": mapping_candidate_key(offer_id, sku_name, second),
-    }
-
-
 def _apply_layer1(service: SkuMappingService, item: Mapping[str, Any], reviewer: str) -> str:
     canonical, _offer_id, fingerprint = _matching_snapshot(service, item["effective_values"]["阿里巴巴商品URL"])
     product_id = str(item["product_id"])
@@ -951,21 +926,20 @@ def _apply_layer1(service: SkuMappingService, item: Mapping[str, Any], reviewer:
 
 def _apply_sku(service: SkuMappingService, item: Mapping[str, Any], reviewer: str) -> str:
     suggestion = _require_suggestion(service, item["product_id"], item["spec_id"])
-    golden = service._golden()
-    located = _locate(golden, item["product_id"], item["spec_id"])
-    if located is None:
-        _fail(f"在對照表裡找不到：{item['product_id']}/{item['spec_id']}")
-    _product, _index, model = located
-    offer_id = str(
-        suggestion.get("offer_id")
-        or model.get("1688_offer_id")
-        or parse_offer_id(model.get("阿里巴巴商品URL"))
-        or ""
-    )
-    candidate = _candidate_from_values(item["effective_values"], offer_id)
+    values = item["effective_values"]
     action = "replace" if item["decision"] == "replace" else "approve"
-    service._write_approved_mapping(suggestion, candidate, action, reviewer)
-    return "_write_approved_mapping"
+    # The review screen's gate (status, candidate, second spec) runs inside
+    # _apply_decision. A made-up spec never becomes an approved row.
+    service._apply_decision({
+        "productId": item["product_id"],
+        "modelId": item["spec_id"],
+        "action": action,
+        "version": int(suggestion["version"]),
+        "skuName": values.get("1688_sku_name", ""),
+        "skuSecondName": values.get("1688_sku_second_name", ""),
+        "skuId": values.get("1688_sku_id", ""),
+    }, reviewer)
+    return "_apply_decision"
 
 
 def _apply_discontinued(service: SkuMappingService, item: Mapping[str, Any], reviewer: str) -> str:
@@ -985,14 +959,175 @@ def _apply_one(service: SkuMappingService, item: Mapping[str, Any], reviewer: st
     return _apply_sku(service, item, reviewer)
 
 
-def _check_preconditions(service: SkuMappingService, planned: Sequence[Mapping[str, Any]]) -> None:
+def _readonly_connect(db_path: Path) -> sqlite3.Connection:
+    """Open procurement.db without creating or modifying it."""
+    if not db_path.is_file():
+        _fail("找不到 procurement.db，無法核對 1688 快照。這一步不會建立資料庫。")
+    uri = f"{db_path.resolve().as_uri()}?mode=ro"
+    try:
+        conn = sqlite3.connect(uri, uri=True)
+    except sqlite3.Error as exc:
+        _fail(f"無法以唯讀方式開啟資料庫：{exc}")
+        raise exc
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _catalog_from_connection(conn: sqlite3.Connection, offer_id: str) -> Dict[str, Any]:
+    """Same latest-snapshot lookup as ``SkuMappingService._snapshot_catalog``."""
+    if not _table_exists(conn, "alibaba_offer_snapshots"):
+        return {"catalogStatus": "not_scanned", "snapshotId": None, "skus": []}
+    row = conn.execute(
+        """SELECT * FROM alibaba_offer_snapshots
+           WHERE offer_id=? ORDER BY fetched_at DESC LIMIT 1""",
+        (normalize_id(offer_id),),
+    ).fetchone()
+    if not row:
+        return {"catalogStatus": "not_scanned", "snapshotId": None, "skus": []}
+    try:
+        raw_skus = json.loads(row["skus_json"] or "[]")
+    except (TypeError, ValueError):
+        raw_skus = []
+    skus = [
+        SkuMappingService._catalog_candidate({**sku, "offer_id": row["offer_id"]})
+        for sku in raw_skus
+        if isinstance(sku, dict) and normalize_id(sku.get("sku_id"))
+    ]
+    return {
+        "catalogStatus": str(row["status"] or "unknown"),
+        "snapshotId": row["id"],
+        "offerId": str(row["offer_id"] or offer_id),
+        "skus": skus,
+    }
+
+
+def _suggestion_from_connection(
+    conn: sqlite3.Connection,
+    product_id: str,
+    spec_id: str,
+) -> Optional[Dict[str, Any]]:
+    if not _table_exists(conn, "sku_mapping_suggestions"):
+        return None
+    row = conn.execute(
+        "SELECT * FROM sku_mapping_suggestions WHERE product_id=? AND model_id=?",
+        (product_id, spec_id),
+    ).fetchone()
+    return dict(row) if row else None
+
+
+def _stored_candidates(
+    conn: sqlite3.Connection,
+    suggestion: Mapping[str, Any],
+    offer_id: str,
+) -> List[Dict[str, Any]]:
+    if not suggestion.get("id") or not _table_exists(conn, "sku_mapping_candidates"):
+        return []
+    rows = conn.execute(
+        "SELECT * FROM sku_mapping_candidates WHERE suggestion_id=? ORDER BY rank",
+        (suggestion["id"],),
+    ).fetchall()
+    return [
+        SkuMappingService._candidate_public(dict(row), offer_id)
+        for row in rows
+    ]
+
+
+def _row_can_gain_suggestion(model: Mapping[str, Any]) -> bool:
+    sku_name = str(model.get("1688_sku_name") or "").strip()
+    offer_id = normalize_id(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL"))
+    return bool(sku_name or offer_id)
+
+
+def _matching_snapshot_connection(conn: sqlite3.Connection, url: str) -> Tuple[str, str, str]:
+    try:
+        canonical, offer_id = SkuMappingService._validate_1688_url(url)
+    except ValueError as exc:
+        _fail(str(exc))
+        raise exc
+    row = None
+    if _table_exists(conn, "alibaba_offer_snapshots"):
+        row = conn.execute(
+            """SELECT fingerprint FROM alibaba_offer_snapshots
+               WHERE offer_id=? AND status='ok' AND product_url=?
+               ORDER BY fetched_at DESC, id DESC LIMIT 1""",
+            (offer_id, canonical),
+        ).fetchone()
+    if row is None:
+        _fail(
+            "第 1 層必須走現有的連結更新流程。那個流程要求資料庫裡已經有一筆成功、"
+            "而且連結相符的 1688 商品快照。現在找不到，所以整批停止，還沒有寫入。"
+            f"連結：{canonical}"
+        )
+    return canonical, offer_id, str(row["fingerprint"])
+
+
+def _offer_id_for_row(suggestion: Optional[Mapping[str, Any]], model: Mapping[str, Any]) -> str:
+    if suggestion is not None and normalize_id(suggestion.get("offer_id")):
+        return normalize_id(suggestion.get("offer_id"))
+    return normalize_id(model.get("1688_offer_id")) or parse_offer_id(model.get("阿里巴巴商品URL"))
+
+
+def _gate_planned(conn: sqlite3.Connection, planned: Sequence[Mapping[str, Any]], golden: Mapping[str, Any]) -> None:
+    """Spec, snapshot, and suggestion checks. The connection must be read-only."""
     for item in planned:
         if item["decision"] == "skip":
             continue
-        if item["decision"] == "discontinued" or int(item["layer"]) != 1:
-            _require_suggestion(service, item["product_id"], item["spec_id"])
+        label = f"{item['product_id']}/{item['spec_id']}"
+        located = _locate(golden, item["product_id"], item["spec_id"])
+        if located is None:
+            _fail(f"在對照表裡找不到：{label}")
+        _product, _index, model = located
         if item["decision"] in {"approve", "replace"} and int(item["layer"]) == 1:
-            _matching_snapshot(service, item["effective_values"]["阿里巴巴商品URL"])
+            _matching_snapshot_connection(conn, item["effective_values"]["阿里巴巴商品URL"])
+            continue
+        suggestion = _suggestion_from_connection(conn, item["product_id"], item["spec_id"])
+        if suggestion is None and not _row_can_gain_suggestion(model):
+            _fail(
+                f"找不到 {label} 的對照建議。"
+                "現有寫入流程一定要有這筆資料庫列。這次不會另外新增一筆。"
+            )
+        if item["decision"] == "discontinued":
+            continue
+        if item["decision"] not in {"approve", "replace"}:
+            continue
+        offer_id = _offer_id_for_row(suggestion, model)
+        if not offer_id:
+            _fail(f"{label} 找不到 1688 offer，無法核對規格。")
+        values = item["effective_values"]
+        decision_item = {
+            "skuName": values.get("1688_sku_name", ""),
+            "skuSecondName": values.get("1688_sku_second_name", ""),
+            "skuId": values.get("1688_sku_id", ""),
+        }
+        stored = _stored_candidates(conn, suggestion or {}, offer_id)
+        catalog = _catalog_from_connection(conn, offer_id)
+        candidates = SkuMappingService.candidates_for_decision(decision_item, stored, catalog)
+        selected = SkuMappingService.select_decision_candidate(decision_item, candidates)
+        status_row = suggestion if suggestion is not None else {"status": "pending"}
+        try:
+            SkuMappingService.assert_mapping_approval(status_row, selected)
+        except ValueError as exc:
+            _fail(f"{label}：{exc}")
+        # Name-pair is the combination the review screen approves. An id-only
+        # fallback must not accept a different second spec than the decision.
+        if selected is None:
+            _fail(f"{label}：核准的 1688 規格名稱組合不在候選清單")
+        if display_text(selected.get("sku_name")) != display_text(values.get("1688_sku_name")):
+            _fail(f"{label}：核准的 1688 規格名稱組合不在候選清單")
+        if display_text(selected.get("second_name")) != display_text(values.get("1688_sku_second_name")):
+            _fail(f"{label}：核准的 1688 規格名稱組合不在候選清單")
+        requested_id = normalize_id(values.get("1688_sku_id"))
+        if requested_id and normalize_id(selected.get("sku_id")) != requested_id:
+            _fail(f"{label}：核准的 1688 規格名稱組合不在候選清單")
+
+
+def _gate_readonly(base: Path, planned: Sequence[Mapping[str, Any]], golden: Mapping[str, Any]) -> None:
+    db_path = base / "procurement.db"
+    conn = _readonly_connect(db_path)
+    try:
+        _gate_planned(conn, planned, golden)
+    finally:
+        conn.close()
 
 
 def _confirm(input_fn: Callable[[str], str], prompt: str, expected: str, failure: str) -> None:
@@ -1065,6 +1200,10 @@ def apply_batch(
     if any(item["stale_fields"] for item in planned):
         _write_json(dry_diff_path, diff)
         _fail(_stale_message(planned) + f"。差異檔：{dry_diff_path}")
+    # Snapshot and spec gates run before any prompt and before SkuMappingService
+    # is constructed. The connection is read-only, so a refusal leaves the
+    # database bytes untouched.
+    _gate_readonly(base, planned, golden)
     if not apply:
         _write_json(dry_diff_path, diff)
         return {
@@ -1080,8 +1219,6 @@ def apply_batch(
         _fail("這個批次已經有寫入紀錄或備份，不能再寫一次。")
     if input_fn is None:
         _fail("套用必須由人輸入批次編號。請在終端機執行，不要用程式代填。")
-    ready = _prepare_service(base, service)
-    _check_preconditions(ready, planned)
     _confirm(
         input_fn,
         f"這次會寫入 Golden 對照表。請輸入批次編號：{batch_id}",
@@ -1099,14 +1236,16 @@ def apply_batch(
             f"第 1 層確認失敗（{token}），已停止，沒有寫入任何列。",
         )
 
-    # Prompts can take a while. Snapshot whatever is on disk now, and refuse if
-    # a target row moved during confirmation.
+    # The service constructor writes procurement.db. It runs only after the
+    # person has typed the batch id (and each layer-1 token).
+    ready = _prepare_service(base, service)
     golden = _load_golden(base)
     planned = _plan_rows(proposal, decision, golden)
     if any(item["stale_fields"] for item in planned):
         _fail(_stale_message(planned) + "。確認期間對照表已變，沒有寫入。")
     if proposal_file.read_bytes() != proposal_bytes or decision_file.read_bytes() != decision_bytes:
         _fail("提案檔或決策檔在確認期間被改動，已停止，沒有寫入。")
+    _gate_readonly(base, planned, golden)
     before_bytes = golden_path.read_bytes()
     before_sha = sha256_bytes(before_bytes)
     diff = _diff_payload(proposal, planned, before_sha)
@@ -1120,6 +1259,16 @@ def apply_batch(
     _write_json(batch_dir / "sqlite_snapshot.json", snapshot)
     _write_json(batch_dir / "diff.json", diff)
     reviewer = str(decision["sign_off"]["reviewer"])
+    proposal_golden_sha = str(proposal["rows"][0]["golden_sha_at_proposal"])
+    rows_planned = [
+        {
+            "product_id": item["product_id"],
+            "spec_id": item["spec_id"],
+            "layer": item["layer"],
+            "decision": item["decision"],
+        }
+        for item in write_items
+    ]
     record: Dict[str, Any] = {
         "batch_id": batch_id,
         "status": "applying",
@@ -1133,7 +1282,10 @@ def apply_batch(
         "finished_at": "",
         "before_golden_sha256": before_sha,
         "after_golden_sha256": "",
+        "golden_sha_at_proposal": proposal_golden_sha,
+        "golden_sha_matches_proposal": before_sha.lower() == proposal_golden_sha.lower(),
         "row_count_before": _count_models(golden),
+        "rows_planned": rows_planned,
         "rows_touched": [],
     }
     _write_json(record_path, record)
@@ -1157,7 +1309,7 @@ def apply_batch(
         record["after_golden_sha256"] = after_sha
         record["rows_touched"] = touched
         _write_json(record_path, record)
-    except BaseException as exc:
+    except Exception as exc:
         restored, restore_error = _try_restore(golden_path, before_bytes, db_path, snapshot, keys, ready)
         record["status"] = "apply_failed" if restored else "apply_failed_restore_failed"
         record["finished_at"] = _now_iso()
@@ -1167,8 +1319,6 @@ def apply_batch(
             _write_json(record_path, record)
         except OSError:
             pass
-        if not isinstance(exc, Exception):
-            raise
         if restored:
             _fail(f"寫入失敗，已把這一批還原到寫入前。原因：{exc}")
         _fail(f"寫入失敗，而且自動還原也失敗。寫入原因：{exc}。還原原因：{restore_error}")
@@ -1260,6 +1410,7 @@ def verify_batch(base_dir: str, batch_id: str) -> Dict[str, Any]:
                 problems.append(f"不在這一批裡的列也被改到：{product_id}/{spec_id}")
     if current_sha != record.get("after_golden_sha256"):
         problems.append("目前檔案和寫入完成時的檢查碼不同。")
+    problems.extend(_decision_mismatches(record, current, backup))
     verification = {
         "checked_at": _now_iso(),
         "before_golden_sha256": before_sha,
@@ -1280,6 +1431,63 @@ def verify_batch(base_dir: str, batch_id: str) -> Dict[str, Any]:
         "after_golden_sha256": record.get("after_golden_sha256"),
         "row_count": _count_models(current),
     }
+
+
+def _decision_mismatches(
+    record: Mapping[str, Any],
+    current: Mapping[str, Any],
+    backup: Mapping[str, Any],
+) -> List[str]:
+    """Compare written models with the human decision file."""
+    proposal_path = Path(str(record.get("proposal_path") or ""))
+    decision_path = Path(str(record.get("decision_path") or ""))
+    if not proposal_path.is_file() or not decision_path.is_file():
+        return ["找不到決策檔或提案檔，無法比對寫入後內容。"]
+    try:
+        proposal, _proposal_sha = _proposal_from_path(proposal_path)
+        decision, _decision_sha = _decision_from_path(decision_path, proposal)
+        planned = _plan_rows(proposal, decision, backup)
+    except GoldenBatchError as exc:
+        return [f"決策檔或提案檔無法讀取，無法比對寫入後內容：{exc}"]
+    problems: List[str] = []
+    for item in planned:
+        label = f"{item['product_id']}/{item['spec_id']}"
+        current_located = _locate(current, item["product_id"], item["spec_id"])
+        backup_located = _locate(backup, item["product_id"], item["spec_id"])
+        if current_located is None or backup_located is None:
+            problems.append(f"{label} 在對照表裡找不到，無法和決策檔比對。")
+            continue
+        model = current_located[2]
+        before_model = backup_located[2]
+        decision_name = item["decision"]
+        if decision_name == "skip":
+            if model != before_model:
+                problems.append(f"{label} 的決策是略過，但寫入後內容和決策檔不一致。")
+            continue
+        if decision_name == "discontinued":
+            if str(model.get("1688_mapping_status") or "") != "discontinued":
+                problems.append(f"{label} 的決策是停售，但寫入後狀態和決策檔不一致。")
+            continue
+        if int(item["layer"]) == 1:
+            expected = canonical_url(item["effective_values"].get("阿里巴巴商品URL"))
+            actual = canonical_url(model.get("阿里巴巴商品URL"))
+            if actual != expected:
+                problems.append(f"{label} 的商品連結和決策檔不一致。")
+            continue
+        if str(model.get("1688_mapping_status") or "") != "approved":
+            problems.append(f"{label} 的決策是核准，但寫入後狀態和決策檔不一致。")
+        values = item["effective_values"]
+        comparisons = (
+            ("1688_sku_name", display_text(model.get("1688_sku_name")), display_text(values.get("1688_sku_name"))),
+            ("1688_sku_second_name", display_text(model.get("1688_sku_second_name")), display_text(values.get("1688_sku_second_name"))),
+            ("1688_sku_id", normalize_id(model.get("1688_sku_id")), normalize_id(values.get("1688_sku_id"))),
+        )
+        for field, actual, expected in comparisons:
+            if field not in values:
+                continue
+            if actual != expected:
+                problems.append(f"{label} 的 {field} 和決策檔不一致。")
+    return problems
 
 
 def _load_snapshot(batch_dir: Path) -> Dict[str, Any]:
@@ -1326,6 +1534,25 @@ def _restore_golden_rows(base: Path, batch_dir: Path, keys: Sequence[Tuple[str, 
     os.replace(tmp, golden_path)
 
 
+def _recorded_keys(record: Mapping[str, Any]) -> List[Tuple[str, str]]:
+    """Rows a rollback may touch. An interrupted apply keeps them in rows_planned."""
+    def parse(field: str) -> List[Tuple[str, str]]:
+        keys = []
+        for row in record.get(field) or []:
+            if isinstance(row, dict) and row.get("product_id") and row.get("spec_id"):
+                keys.append((str(row["product_id"]), str(row["spec_id"])))
+        return keys
+
+    if record.get("status") == "applying":
+        planned = parse("rows_planned")
+        if planned:
+            return planned
+    touched = parse("rows_touched")
+    if touched:
+        return touched
+    return parse("rows_planned")
+
+
 def rollback_batch(
     base_dir: str,
     batch_id: str,
@@ -1341,11 +1568,7 @@ def rollback_batch(
     base = _base_dir(base_dir)
     record_path, record = _load_record(base, batch_id)
     batch_id = str(record.get("batch_id") or batch_id)
-    touched = [
-        (row["product_id"], row["spec_id"])
-        for row in record.get("rows_touched") or []
-        if isinstance(row, dict) and row.get("product_id") and row.get("spec_id")
-    ]
+    touched = _recorded_keys(record)
     if spec_keys:
         selected = []
         known = set(touched)
@@ -1385,11 +1608,12 @@ def rollback_batch(
     golden_path = base / "golden_table.json"
     batch_dir = record_path.parent
     if mode == "whole":
-        if record.get("status") != "applied" or not record.get("after_golden_sha256"):
-            _fail("寫入可能中斷，沒有寫入後檢查碼，不能整批還原。請改用逐列還原。")
-        current_sha = sha256_file(golden_path)
-        if current_sha != record.get("after_golden_sha256"):
-            _fail("目前的對照表和寫入後的檢查碼不同，不能整批還原。請改用逐列還原。")
+        if record.get("status") == "applied":
+            if not record.get("after_golden_sha256"):
+                _fail("寫入可能中斷，沒有寫入後檢查碼，不能整批還原。請改用逐列還原。")
+            current_sha = sha256_file(golden_path)
+            if current_sha != record.get("after_golden_sha256"):
+                _fail("目前的對照表和寫入後的檢查碼不同，不能整批還原。請改用逐列還原。")
         if set(keys) != set(touched):
             _fail("整批還原必須涵蓋這一批寫入的每一列。")
         backup_path = batch_dir / "golden_table.json"

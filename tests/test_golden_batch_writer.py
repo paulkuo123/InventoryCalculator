@@ -171,6 +171,26 @@ class GoldenBatchWriterTest(unittest.TestCase):
         ProcurementStore(base_dir=str(self.base))
         return service
 
+    def _seed_cup_snapshot(self, service=None):
+        service = service or self._service()
+        before = self.golden_path.read_bytes()
+        service._save_snapshot(
+            "100",
+            "https://detail.1688.com/offer/100.html",
+            "杯子",
+            [{
+                "sku_id": "sku-red",
+                "sku_name": "紅色",
+                "second_name": "大",
+                "spec_text": "紅色;大",
+                "parts": ["紅色", "大"],
+            }],
+            {},
+            mark_stale=False,
+        )
+        self.assertEqual(self.golden_path.read_bytes(), before)
+        return service
+
     def _confirm(self, batch_id):
         def input_fn(prompt):
             if "請輸入批次編號：" in prompt:
@@ -255,7 +275,7 @@ class GoldenBatchWriterTest(unittest.TestCase):
 
     def _apply_cups(self):
         batch_id, proposal_path, decision_path = self._cup_files()
-        service = self._service()
+        service = self._seed_cup_snapshot()
         before_bytes = self.golden_path.read_bytes()
         before_sql = dump_db(self.db_path)
         result = apply_batch(
@@ -374,6 +394,7 @@ class GoldenBatchWriterTest(unittest.TestCase):
 
     def test_stale_row_detected_but_unrelated_file_change_is_allowed(self):
         batch_id, proposal_path, decision_path = self._cup_files()
+        self._seed_cup_snapshot()
         golden = json.loads(self.golden_path.read_text(encoding="utf-8"))
         golden["p-other"]["商品名稱"] = "別的已改"
         with self.golden_path.open("w", encoding="utf-8") as handle:
@@ -396,7 +417,7 @@ class GoldenBatchWriterTest(unittest.TestCase):
 
     def test_default_is_dry_run_and_cli_without_apply_writes_nothing(self):
         batch_id, proposal_path, decision_path = self._cup_files()
-        service = self._service()
+        service = self._seed_cup_snapshot()
         before_bytes = self.golden_path.read_bytes()
         before_sql = dump_db(self.db_path)
         result = apply_batch(
@@ -459,7 +480,9 @@ class GoldenBatchWriterTest(unittest.TestCase):
 
     def test_apply_without_terminal_refuses_before_writing_golden(self):
         _batch_id, proposal_path, decision_path = self._cup_files()
+        self._seed_cup_snapshot()
         before_bytes = self.golden_path.read_bytes()
+        before_db = self.db_path.read_bytes()
         stderr = io.StringIO()
         with patch.object(sys.stdin, "isatty", return_value=False), redirect_stderr(stderr):
             code = main([
@@ -471,6 +494,7 @@ class GoldenBatchWriterTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("終端機", stderr.getvalue())
         self.assertEqual(self.golden_path.read_bytes(), before_bytes)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
         self.assertFalse((self.base / "backups" / "batches" / "B-20261004-01" / "golden_table.json").exists())
 
     def test_apply_records_hashes_and_uses_chosen_values(self):
@@ -481,6 +505,13 @@ class GoldenBatchWriterTest(unittest.TestCase):
         self.assertEqual(record["reviewer"], "測試人員")
         self.assertEqual(record["before_golden_sha256"], hashlib.sha256(state["before_bytes"]).hexdigest())
         self.assertEqual(record["after_golden_sha256"], sha256_file(self.golden_path))
+        proposal = json.loads(state["proposal_path"].read_text(encoding="utf-8"))
+        self.assertEqual(record["golden_sha_at_proposal"], proposal["rows"][0]["golden_sha_at_proposal"])
+        self.assertTrue(record["golden_sha_matches_proposal"])
+        self.assertEqual(
+            {(row["product_id"], row["spec_id"]) for row in record["rows_planned"]},
+            {(row["product_id"], row["spec_id"]) for row in record["rows_touched"]},
+        )
         self.assertEqual(state["proposal_path"].read_bytes(), state["proposal_path"].read_bytes())
         proposal_bytes = state["proposal_path"].read_bytes()
         self.assertEqual(sha256_file(state["proposal_path"]), hashlib.sha256(proposal_bytes).hexdigest())
@@ -502,7 +533,7 @@ class GoldenBatchWriterTest(unittest.TestCase):
         self.assertEqual(binding["alibaba_mapping_status"], "approved")
         self.assertEqual(self._binding("p-cup", "cup-green")["alibaba_mapping_status"], "discontinued")
         points = {row["entry_point"] for row in record["rows_touched"]}
-        self.assertEqual(points, {"_write_approved_mapping", "_write_status_mapping"})
+        self.assertEqual(points, {"_apply_decision", "_write_status_mapping"})
         verified = verify_batch(str(self.base), state["batch_id"])
         self.assertTrue(verified["ok"])
         self.assertEqual(verified["before_golden_sha256"], record["before_golden_sha256"])
@@ -577,7 +608,7 @@ class GoldenBatchWriterTest(unittest.TestCase):
 
     def test_failed_write_restores_golden_sqlite_and_binding(self):
         batch_id, proposal_path, decision_path = self._cup_files()
-        service = self._service()
+        service = self._seed_cup_snapshot()
         before_bytes = self.golden_path.read_bytes()
         before_sql = dump_db(self.db_path)
         real = service._write_approved_mapping
@@ -754,6 +785,355 @@ class GoldenBatchWriterTest(unittest.TestCase):
         self.assertEqual(self.golden_path.read_bytes(), before_bytes)
         self.assertEqual(dump_db(self.db_path), before_sql)
         self.assertIsNone(self._binding("p-empty", "empty-a"))
+
+    def test_rejects_spec_name_not_in_snapshot(self):
+        batch_id, proposal_path, decision_path = self._cup_files()
+        self._seed_cup_snapshot()
+        decision = json.loads(decision_path.read_text(encoding="utf-8"))
+        decision["rows"][0]["chosen_values"]["1688_sku_name"] = "亂寫規格"
+        decision["rows"][0]["chosen_values"]["1688_sku_second_name"] = "不存在"
+        decision["rows"][0]["chosen_values"]["1688_sku_id"] = "sku-made-up"
+        write_json(decision_path, decision)
+        before_golden = self.golden_path.read_bytes()
+        before_db = self.db_path.read_bytes()
+
+        def refuse(_prompt):
+            raise AssertionError("規格不符時不該詢問")
+
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                with self.assertRaises(GoldenBatchError) as caught:
+                    apply_batch(
+                        str(proposal_path),
+                        str(decision_path),
+                        str(self.base),
+                        apply=apply,
+                        input_fn=refuse,
+                    )
+                self.assertIn("cup-red", str(caught.exception))
+                self.assertIn("不在候選清單", str(caught.exception))
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertIsNone(self._binding("p-cup", "cup-red"))
+        self.assertNotEqual(self._model("p-cup", "cup-red").get("1688_mapping_status"), "approved")
+
+    def test_rejects_stale_suggestion(self):
+        batch_id, proposal_path, decision_path = self._cup_files()
+        service = self._seed_cup_snapshot()
+        with service.connect() as conn:
+            conn.execute(
+                "UPDATE sku_mapping_suggestions SET status='stale' WHERE product_id=? AND model_id=?",
+                ("p-cup", "cup-red"),
+            )
+        before_golden = self.golden_path.read_bytes()
+        before_db = self.db_path.read_bytes()
+
+        def refuse(_prompt):
+            raise AssertionError("建議已過期時不該詢問")
+
+        for apply in (False, True):
+            with self.subTest(apply=apply):
+                with self.assertRaises(GoldenBatchError) as caught:
+                    apply_batch(
+                        str(proposal_path),
+                        str(decision_path),
+                        str(self.base),
+                        apply=apply,
+                        input_fn=refuse,
+                    )
+                self.assertIn("cup-red", str(caught.exception))
+                self.assertIn("目前快照不可用", str(caught.exception))
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertIsNone(self._binding("p-cup", "cup-red"))
+
+    def test_rejects_second_spec_mismatch(self):
+        batch_id, proposal_path, decision_path = self._cup_files()
+        service = self._seed_cup_snapshot()
+        decision = json.loads(decision_path.read_text(encoding="utf-8"))
+        decision["rows"][0]["chosen_values"]["1688_sku_second_name"] = "小"
+        decision["rows"][0]["chosen_values"]["1688_sku_id"] = "sku-red"
+        write_json(decision_path, decision)
+        before_db = self.db_path.read_bytes()
+        with self.assertRaises(GoldenBatchError) as caught:
+            dry_run(str(proposal_path), str(decision_path), str(self.base))
+        self.assertIn("不在候選清單", str(caught.exception))
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+
+        loaded, digest = self._write_golden({
+            "p-dual": {
+                "商品名稱": "雙規格",
+                "型號": [{
+                    "規格ID": "dual",
+                    "型號名稱": "甲",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/300.html",
+                }],
+            },
+        })
+        dual_batch = "B-20261004-06"
+        url = "https://detail.1688.com/offer/300.html"
+        proposal = {
+            "batch_id": dual_batch,
+            "rows": [self._row(loaded, dual_batch, digest, "p-dual", "dual", 2, {
+                "1688_sku_id": "sku-dual",
+                "1688_sku_name": "紅色",
+                "1688_sku_second_name": "",
+                "1688_spec_text": "紅色",
+            })],
+        }
+        dual_decision = self._decision(dual_batch, [{
+            "product_id": "p-dual",
+            "spec_id": "dual",
+            "decision": "approve",
+        }])
+        dual_proposal, dual_decision_path = self._paths(dual_batch, proposal, dual_decision)
+        before_golden = self.golden_path.read_bytes()
+        service._save_snapshot(
+            "300",
+            url,
+            "雙規格",
+            [{
+                "sku_id": "sku-dual",
+                "sku_name": "紅色",
+                "second_name": "",
+                "spec_text": "紅色;",
+                "parts": ["紅色", ""],
+            }],
+            {},
+            mark_stale=False,
+        )
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        before_db = self.db_path.read_bytes()
+        with self.assertRaises(GoldenBatchError) as caught:
+            apply_batch(
+                str(dual_proposal),
+                str(dual_decision_path),
+                str(self.base),
+                apply=True,
+                input_fn=self._confirm(dual_batch),
+            )
+        self.assertIn("第二規格", str(caught.exception))
+        self.assertIn("dual", str(caught.exception))
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertNotEqual(self._model("p-dual", "dual").get("1688_mapping_status"), "approved")
+
+    def test_killed_apply_rolls_back_from_applying_backup(self):
+        batch_id, proposal_path, decision_path = self._cup_files()
+        service = self._seed_cup_snapshot()
+        before_bytes = self.golden_path.read_bytes()
+        before_sql = dump_db(self.db_path)
+        real = service._apply_decision
+
+        def kill(item, reviewer):
+            real(item, reviewer)
+            raise SystemExit("killed")
+
+        with patch.object(service, "_apply_decision", side_effect=kill):
+            with self.assertRaises(SystemExit):
+                apply_batch(
+                    str(proposal_path),
+                    str(decision_path),
+                    str(self.base),
+                    apply=True,
+                    input_fn=self._confirm(batch_id),
+                    service=service,
+                )
+        record_path = self.base / "backups" / "batches" / batch_id / "batch_record.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["status"], "applying")
+        self.assertGreaterEqual(len(record["rows_planned"]), 1)
+        self.assertEqual(record["rows_touched"], [])
+        self.assertNotEqual(self.golden_path.read_bytes(), before_bytes)
+        self.assertIsNotNone(self._binding("p-cup", "cup-red"))
+        killed_golden = self.golden_path.read_bytes()
+        killed_db = self.db_path.read_bytes()
+        with self.assertRaises(GoldenBatchError) as caught:
+            rollback_batch(
+                str(self.base),
+                batch_id,
+                mode="whole",
+                apply=True,
+                input_fn=lambda _prompt: "B-20261004-99",
+            )
+        self.assertIn("批次編號", str(caught.exception))
+        self.assertEqual(self.golden_path.read_bytes(), killed_golden)
+        self.assertEqual(self.db_path.read_bytes(), killed_db)
+        rollback_batch(
+            str(self.base),
+            batch_id,
+            mode="whole",
+            apply=True,
+            input_fn=self._confirm(batch_id),
+            service=service,
+        )
+        self.assertEqual(self.golden_path.read_bytes(), before_bytes)
+        self.assertEqual(dump_db(self.db_path), before_sql)
+        self.assertIsNone(self._binding("p-cup", "cup-red"))
+        self.assertIsNone(self._binding("p-cup", "cup-green"))
+        restored = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertEqual(restored["status"], "rolled_back")
+
+    def test_refused_apply_leaves_procurement_db_bytes_unchanged(self):
+        batch_id, proposal_path, decision_path = self._cup_files()
+        self._seed_cup_snapshot()
+        before_golden = self.golden_path.read_bytes()
+        before_db = self.db_path.read_bytes()
+        with self.assertRaises(GoldenBatchError) as caught:
+            apply_batch(
+                str(proposal_path),
+                str(decision_path),
+                str(self.base),
+                apply=True,
+                input_fn=lambda _prompt: "B-20261004-99",
+            )
+        self.assertIn("批次編號", str(caught.exception))
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertFalse((self.base / "backups" / "batches" / batch_id / "golden_table.json").exists())
+
+        stderr = io.StringIO()
+        with patch.object(sys.stdin, "isatty", return_value=False), redirect_stderr(stderr):
+            code = main([
+                "apply", str(proposal_path),
+                "--decision", str(decision_path),
+                "--base-dir", str(self.base),
+                "--apply",
+            ])
+        self.assertEqual(code, 2)
+        self.assertIn("終端機", stderr.getvalue())
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+
+        bare = self.base / "bare"
+        bare.mkdir()
+        bare_golden = {
+            "p": {"商品名稱": "沒有資料庫", "型號": [{
+                "規格ID": "only",
+                "型號名稱": "唯一",
+                "阿里巴巴商品URL": "https://detail.1688.com/offer/100.html",
+            }]},
+        }
+        with (bare / "golden_table.json").open("w", encoding="utf-8") as handle:
+            json.dump(bare_golden, handle, ensure_ascii=False, indent=4)
+            handle.write("\n")
+        loaded = json.loads((bare / "golden_table.json").read_text(encoding="utf-8"))
+        digest = sha256_file(bare / "golden_table.json")
+        bare_batch = "B-20261004-07"
+        row = {
+            "batch_id": bare_batch,
+            "layer": 2,
+            "product_id": "p",
+            "spec_id": "only",
+            "old_values": snapshot_old_values(loaded["p"]["型號"][0], 2),
+            "new_values": {"1688_sku_name": "紅色"},
+            "evidence": [{
+                "type": "fixture",
+                "source": "單元測試",
+                "captured_at": "2026-10-04T00:00:00Z",
+            }],
+            "confidence": 0.8,
+            "agent_version": "test-1",
+            "golden_sha_at_proposal": digest,
+        }
+        proposal_path = bare / "proposals" / f"{bare_batch}.json"
+        decision_path = bare / "decisions" / f"{bare_batch}.json"
+        write_json(proposal_path, {"batch_id": bare_batch, "rows": [row]})
+        write_json(decision_path, self._decision(bare_batch, [{
+            "product_id": "p",
+            "spec_id": "only",
+            "decision": "approve",
+        }]))
+        with self.assertRaises(GoldenBatchError) as caught:
+            apply_batch(
+                str(proposal_path),
+                str(decision_path),
+                str(bare),
+                apply=True,
+                input_fn=self._confirm(bare_batch),
+            )
+        self.assertIn("不會建立資料庫", str(caught.exception))
+        self.assertFalse((bare / "procurement.db").exists())
+
+    def test_dry_run_checks_layer1_snapshot(self):
+        batch_id = "B-20261004-08"
+        loaded, digest = self._write_golden({
+            "p-empty": {
+                "商品名稱": "沒有連結",
+                "型號": [{"規格ID": "empty-a", "型號名稱": "甲"}],
+            },
+        })
+        url = "https://detail.1688.com/offer/999.html"
+        proposal = {
+            "batch_id": batch_id,
+            "rows": [self._row(loaded, batch_id, digest, "p-empty", "empty-a", 1, {
+                "阿里巴巴商品URL": url,
+            })],
+        }
+        decision = self._decision(batch_id, [{
+            "product_id": "p-empty",
+            "spec_id": "empty-a",
+            "decision": "approve",
+        }])
+        proposal_path, decision_path = self._paths(batch_id, proposal, decision)
+        before_golden = self.golden_path.read_bytes()
+        with self.assertRaises(GoldenBatchError) as caught:
+            dry_run(str(proposal_path), str(decision_path), str(self.base))
+        self.assertIn("快照", str(caught.exception))
+        self.assertFalse(self.db_path.exists())
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+
+        service = self._service()
+        before_db = self.db_path.read_bytes()
+        with self.assertRaises(GoldenBatchError) as caught:
+            dry_run(str(proposal_path), str(decision_path), str(self.base))
+        self.assertIn("快照", str(caught.exception))
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+
+        service._save_snapshot(
+            "999",
+            "https://detail.1688.com/offer/111.html",
+            "別的連結",
+            [{"sku_id": "sku-999", "sku_name": "甲", "spec_text": "甲", "parts": ["甲"]}],
+            {},
+            mark_stale=False,
+        )
+        before_db = self.db_path.read_bytes()
+        with self.assertRaises(GoldenBatchError) as caught:
+            dry_run(str(proposal_path), str(decision_path), str(self.base))
+        self.assertIn("快照", str(caught.exception))
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+
+        service._save_snapshot(
+            "999",
+            url,
+            "測試商品",
+            [{"sku_id": "sku-ok", "sku_name": "甲", "spec_text": "甲", "parts": ["甲"]}],
+            {},
+            mark_stale=False,
+        )
+        before_golden = self.golden_path.read_bytes()
+        before_db = self.db_path.read_bytes()
+        result = dry_run(str(proposal_path), str(decision_path), str(self.base))
+        self.assertFalse(result["wrote"])
+        self.assertEqual(self.golden_path.read_bytes(), before_golden)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+
+    def test_verify_lists_decision_mismatches(self):
+        state = self._apply_cups()
+        text = self.golden_path.read_text(encoding="utf-8")
+        self.golden_path.write_text(
+            text.replace('"1688_sku_name": "紅色"', '"1688_sku_name": "被改掉"', 1),
+            encoding="utf-8",
+        )
+        with self.assertRaises(GoldenBatchError) as caught:
+            verify_batch(str(self.base), state["batch_id"])
+        self.assertIn("驗證失敗", str(caught.exception))
+        self.assertIn("1688_sku_name", str(caught.exception))
+        self.assertIn("決策檔不一致", str(caught.exception))
+        record = json.loads(Path(state["result"]["record_path"]).read_text(encoding="utf-8"))
+        self.assertFalse(record["verification"]["ok"])
+        self.assertTrue(any("決策檔不一致" in item for item in record["verification"]["problems"]))
 
     def test_batch_backups_survive_golden_and_housekeeping_prune(self):
         root = self.base / "prune"
