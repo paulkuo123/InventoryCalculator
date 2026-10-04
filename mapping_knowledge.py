@@ -76,14 +76,6 @@ DEFAULT_RULES: List[Dict[str, Any]] = [
     },
 ]
 
-# Registry: rules.json ``impl`` names → existing sku_mapping_service functions.
-RULE_IMPL_REGISTRY = {
-    "explicit_size_compatible": "_explicit_size_compatible",
-    "phone_mismatch": "_phone_mismatch",
-    "alphanumeric_code_mismatch": "_alphanumeric_code_mismatch",
-    "ignore_parenthetical_noise": "_strip_sku_code",
-}
-
 _DISABLED_STATUSES = frozenset({"disabled", "inactive", "off"})
 _ACTIVE_STATUSES = frozenset({"", "active", "enabled", "on"})
 

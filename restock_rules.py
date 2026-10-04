@@ -5,7 +5,11 @@ import re
 MAX_ALIBABA_RESTOCK_SKUS = 200
 PHONE_CASE_MONTHS = 3
 DEFAULT_RESTOCK_MONTHS = 4
-PHONE_CASE_NAME_RE = re.compile(r"(?:手機殼|手机壳)(?!\s*(?:吊飾|掛飾|掛繩|掛鏈|吊饰|挂饰|挂绳|挂链))")
+# 手機殼後面緊接這些詞時，不適用 3 個月水位（吊飾、掛繩維持 4 個月）。
+PHONE_CASE_CHARM_RE = re.compile(r"吊飾|掛飾|掛繩|掛鏈|吊饰|挂饰|挂绳|挂链")
+PHONE_CASE_NAME_RE = re.compile(
+    rf"(?:手機殼|手机壳)(?!\s*(?:{PHONE_CASE_CHARM_RE.pattern}))"
+)
 
 
 def target_months_for_product(product_name, default_months=DEFAULT_RESTOCK_MONTHS, model_name=""):
@@ -24,6 +28,21 @@ def target_months_for_product(product_name, default_months=DEFAULT_RESTOCK_MONTH
     if PHONE_CASE_NAME_RE.search(str(product_name or "")):
         return PHONE_CASE_MONTHS
     return months
+
+
+def restock_category(product_name, model_name=""):
+    """phone_case、charm 或 other。月數仍以 target_months_for_product 為準。
+
+    手機殼（後面不是吊飾／掛繩）算 phone_case。名稱有吊飾、掛飾、掛繩、掛鏈，
+    而且沒被上面那條手機殼規則認走，算 charm。其餘算 other。
+    model_name 不改分類；「加購」只會把月數改回 4，規格仍留在手機殼這一列。
+    """
+    name = str(product_name or "")
+    if PHONE_CASE_NAME_RE.search(name):
+        return "phone_case"
+    if PHONE_CASE_CHARM_RE.search(name):
+        return "charm"
+    return "other"
 
 
 def validate_restock_sku_count(item_count):

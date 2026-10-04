@@ -72,7 +72,7 @@
 | `shopee_products.json` | 蝦皮商品／銷售快照（gitignore，本機資料） |
 | `cookies.json` | 蝦皮登入 Cookies（gitignore，**勿提交**） |
 | `watchlists/` | 個人關注與排除清單 |
-| `reports/` | reverse_audit／廣告等產出（應 gitignore；含 live dump，勿提交） |
+| `reports/` | reverse_audit／廣告／每月庫存等產出（應 gitignore；含 live dump，勿提交） |
 | `alibaba_chrome_profile/`、`alibaba_browser_profile/`、`shopee_chrome_profile/` | 本機瀏覽器登入狀態（gitignore，勿提交） |
 | `debug_snapshots/` | 除錯快照（gitignore） |
 | `data/1688_master/` | 1688 歷史採購 KB 的 JSONL 匯出（gitignore；非正式 SoT） |
@@ -117,6 +117,20 @@ cd InventoryCalculator
 `ALIBABA_RESTOCK_BROWSER=auto` 是預設值；也可設成 `ego` 強制要求 ego-lite，或設成 `playwright` 讓沒有／不使用 ego-lite 的環境固定走 Chrome／Chromium。ego-lite 已被選用後若發生執行、登入或驗證錯誤，不會中途切換瀏覽器。
 
 舊有蝦皮爬蟲仍可使用 Playwright Chromium；這與 1688 SKU live scan 的瀏覽器路徑分開。
+
+### 蝦皮庫存爬蟲用哪個瀏覽器
+
+`crawler.py` 的 `--browser-source` **預設是 `mac`**：本機 Chromium，讀 `cookies.json`。本機直接跑不要改這個預設，其他人也是靠這個預設。
+
+遠端盒（已經登入賣家中心的 Chrome）做每月庫存時，請把來源寫在指令裡，不要靠預設：
+
+```bash
+python3 crawler.py --browser-source remote
+```
+
+啟動時會印一行 `瀏覽器來源：mac` 或 `瀏覽器來源：remote`，用來確認這次連的是哪一種。
+
+`--mode ads-export` 沒帶這個旗標時，仍是本機 Chromium + cookies。週報請用 `python3 ads_weekly.py`，它會自己帶 `--browser-source remote`。
 
 ### 設置 Cookies
 1. 至 Chrome 線上應用程式商店安裝 Cookie Editor (https://chromewebstore.google.com/detail/cookie-editor/hlkenndednhfkekhgcdicdfddnkalmdm?hl=zh-TW&utm_source=ext_sidebar)
@@ -305,8 +319,10 @@ python3 ads_analysis.py --include-ai true
 ### 補貨提醒（非 Telegram）
 庭安已確認不再使用 Telegram。庫存／低水位提醒改走 **Grok Bot routines**，本系統不另建應用內推播頻道。
 
-- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`）
+- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`，沒帶旗標時是預設 `mac`）
+- 遠端盒每月庫存：`python3 crawler.py --browser-source remote`
 - 唯讀應補摘要：`python -m restock_loop scan`
+- 每月庫存分析：`python3 scripts/monthly_inventory_report.py`（只讀，寫到 `reports/monthly_inventory_YYYYMM/`；目錄裡已有月報檔時預設不覆寫，只有 `sources/` 不算）。例行任務改成跑這支再摘要，說明見 [`docs/monthly_inventory_report.md`](docs/monthly_inventory_report.md)
 - 廣告匯出／分析：`/ads.html` 或 `crawler.py --mode ads-export`／`ads_analysis.py`
 
 ## 應用程式打包 (發布)

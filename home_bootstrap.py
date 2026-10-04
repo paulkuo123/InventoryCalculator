@@ -12,6 +12,7 @@ from shopee_products_import import (
     merge_shopee_products_with_golden,
     normalize_product_id,
     validate_shopee_products,
+    without_crawl_metadata,
 )
 
 
@@ -229,6 +230,7 @@ def load_home_bootstrap(
             "goldenMatchedModelCount": 0,
         }
 
+    products = without_crawl_metadata(products)
     mapping = golden_mapping_stats(products)
     result["products"] = products
     result["shopee"] = {

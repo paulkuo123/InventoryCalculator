@@ -1,0 +1,34 @@
+{
+  "_synthetic": true,
+  "bindings": [
+    {
+      "productId": "2006",
+      "modelId": "b1",
+      "mappingStatus": "discontinued",
+      "skuName": "黑色"
+    },
+    {
+      "productId": "2001",
+      "modelId": "s1",
+      "mappingStatus": "approved",
+      "skuName": "粉色"
+    }
+  ],
+  "suggestions": [
+    {
+      "productId": "2007",
+      "modelId": "m1",
+      "status": "suspected_discontinued"
+    },
+    {
+      "productId": "2002",
+      "modelId": "t1",
+      "status": "pending"
+    },
+    {
+      "productId": "2001",
+      "modelId": "s3",
+      "status": "discontinued"
+    }
+  ]
+}

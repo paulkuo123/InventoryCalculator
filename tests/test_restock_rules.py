@@ -5,6 +5,7 @@ from restock_rules import (
     MAX_ALIBABA_RESTOCK_SKUS,
     PHONE_CASE_MONTHS,
     resolve_restock_quantity,
+    restock_category,
     round_calculated_restock_qty,
     target_months_for_product,
     validate_restock_sku_count,
@@ -61,6 +62,13 @@ class RestockRulesTests(unittest.TestCase):
         self.assertEqual(target_months_for_product("可爱手机壳"), 3)
         self.assertEqual(target_months_for_product("iPhone 吊飾掛繩"), 4)
         self.assertEqual(target_months_for_product("iPad 保護貼"), 4)
+        self.assertEqual(target_months_for_product("合成測試手機殼吊飾"), 4)
+        self.assertEqual(restock_category("氣囊防摔 iPhone 手機殼"), "phone_case")
+        self.assertEqual(restock_category("合成測試手機殼吊飾", "玫瑰繩"), "charm")
+        self.assertEqual(restock_category("iPhone 吊飾掛繩"), "charm")
+        self.assertEqual(restock_category("iPad 保護貼"), "other")
+        self.assertEqual(restock_category("氣囊防摔 iPhone 手機殼", "透明,加購"), "phone_case")
+        self.assertEqual(target_months_for_product("氣囊防摔 iPhone 手機殼", 4, "透明,加購"), 4)
 
 
 if __name__ == "__main__":

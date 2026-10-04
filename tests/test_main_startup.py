@@ -120,6 +120,36 @@ class MainStartupHygieneTests(unittest.TestCase):
         finally:
             listener.close()
 
+    def test_inventory_crawl_keeps_the_official_file_until_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = os.path.join(directory, "shopee_products.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                handle.write('{"keep": true}')
+            main.remove_worker_output_if_requested(path, preserve_existing_output=True)
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), '{"keep": true}')
+            main.remove_worker_output_if_requested(path, preserve_existing_output=False)
+            self.assertFalse(os.path.exists(path))
+
+    def test_run_crawler_preserves_output_and_does_not_force_remote(self):
+        handler = main.CustomHandler.__new__(main.CustomHandler)
+        handler.run_worker_process = Mock(return_value={"status": "error", "message": "失敗"})
+        result = handler.run_crawler("關鍵字", False, 4)
+        self.assertEqual(result, {"error": "失敗"})
+        self.assertTrue(handler.run_worker_process.call_args.kwargs["preserve_existing_output"])
+        worker_args = handler.run_worker_process.call_args.args[0]
+        self.assertNotIn("--browser-source", worker_args)
+
+    def test_ads_export_still_clears_its_own_output_and_keeps_local_browser(self):
+        handler = main.CustomHandler.__new__(main.CustomHandler)
+        handler.run_worker_process = Mock(return_value={"status": "ok"})
+        handler.run_ads_export(True)
+        self.assertFalse(
+            handler.run_worker_process.call_args.kwargs.get("preserve_existing_output", False)
+        )
+        worker_args = handler.run_worker_process.call_args.args[0]
+        self.assertNotIn("--browser-source", worker_args)
+
 
 if __name__ == "__main__":
     unittest.main()
