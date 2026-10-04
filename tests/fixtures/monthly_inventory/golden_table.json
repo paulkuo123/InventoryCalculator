@@ -1,0 +1,29 @@
+{
+  "2005": {
+    "型號": [
+      {
+        "規格ID": "e1",
+        "型號名稱": "黑色,14",
+        "1688_mapping_status": "discontinued",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/50005.html",
+        "1688_offer_id": "50005",
+        "1688_sku_id": "sku-stop",
+        "1688_sku_name": "停售"
+      }
+    ]
+  },
+  "2001": {
+    "型號": [
+      {
+        "規格ID": "a1",
+        "型號名稱": "粉色,13",
+        "1688_mapping_status": "approved",
+        "阿里巴巴商品URL": "https://detail.1688.com/offer/10001.html",
+        "1688_offer_id": "10001",
+        "1688_sku_id": "sku-a",
+        "1688_sku_name": "粉色",
+        "1688_sku_second_name": "13"
+      }
+    ]
+  }
+}

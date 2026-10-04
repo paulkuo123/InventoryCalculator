@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-10-04T00:00:00+08:00",
+  "shopId": "synthetic",
+  "uniqueProducts": 8,
+  "productIds": ["2001", "2002", "2003", "2004", "2005", "2007", "2999", "8888"]
+}
