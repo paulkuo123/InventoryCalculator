@@ -1,0 +1,76 @@
+connected {"browser": "Chrome/151.0.7922.169", "cdp": "http://127.0.0.1:9232", "targetId": "71F962BF969E1593904E57A77E5CC6A9", "prior_url": "https://detail.1688.com/offer/740525848630.html", "prior_title": "少女心碎花折叠镜化妆镜随身旅行便携学生宿舍梳妆台式可立小镜子 - 阿里巴巴"}
+slow_nav settle>=4.2s post_sleep=3.5s
+resume loaded rows=253 blocked_pending=120 keep_with=89 keep_no=44
+
+=== resume3 blocked products 47 rows 111 priority0=18344672033
+before_counts {"with_candidate": 89, "conf_低": 45, "q_P1_no_url_with_candidate": 17, "no_candidate": 44, "q_P1_no_url_no_candidate": 28, "blocked_captcha": 120, "q_P1_no_url_blocked_captcha": 58, "conf_中": 25, "q_AI2_off_shelf_no_candidate": 1, "q_AI2_dead_with_candidate": 21, "conf_高": 19, "q_AI2_dead_no_candidate": 14, "q_AI2_dead_blocked_captcha": 48, "q_AI2_off_shelf_with_candidate": 2, "q_AI2_off_shelf_blocked_captcha": 4, "q_P3_mapping_suspect_with_candidate": 49, "q_P3_mapping_suspect_blocked_captcha": 10, "q_P3_mapping_suspect_no_candidate": 1}
+
+### resume product 18344672033 n=3 隔日到貨🔥 iPhone 充電線 14 13 12 11 Lightning 蘋
+
+=== 3B search 18344672033 q=lightning 充电线 type-c
+  SEARCH lightning 充电线 type-c
+  SEARCH lightning 充电线 type-c
+  search_ok n=20 url=https://s.1688.com/selloffer/offer_search.htm?keywords=lightning%20%E5%85%85%E7%94%B5%E7%B
+  DETAIL 857934633935 https://detail.1688.com/offer/857934633935.html
+  DETAIL 911714772948 https://detail.1688.com/offer/911714772948.html
+
+### resume product 24077547688 n=2 隔日到貨🔥 冰絲無痕波浪安全褲 睡褲 平口褲 打底褲 寬鬆防走光不捲邊 內搭褲 
+
+=== 3B search 24077547688 q=冰丝安全裤
+  SEARCH 冰丝安全裤
+  SEARCH 冰丝安全裤
+  search_ok n=20 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E5%86%B0%E4%B8%9D%E5%AE%89%E5%85%A
+  DETAIL 1039512900763 https://detail.1688.com/offer/1039512900763.html
+
+### resume product 25811193291 n=1 隔日到貨🔥 Type-C To Lightning母 蘋果充電線轉接器 可充電 
+
+=== 3B search 25811193291 q=type-c lightning 转接头
+  SEARCH type-c lightning 转接头
+  SEARCH type-c lightning 转接头
+  search_ok n=9 url=https://s.1688.com/selloffer/offer_search.htm?keywords=type-c%20lightning%20%E8%BD%AC%E6%8
+  DETAIL 773635969692 https://detail.1688.com/offer/773635969692.html
+
+### resume product 18644662056 n=2 隔日到貨🔥 雙孔快充頭 20W 30W Type-C充電頭 POLYWELL P
+
+=== 3B search 18644662056 q=双孔 快充头 20W type-c
+  SEARCH 双孔 快充头 20W type-c
+  SEARCH 双孔 快充头 20W type-c
+  search_ok n=20 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E5%8F%8C%E5%AD%94%20%E5%BF%AB%E5%8
+  DETAIL 1001283758278 https://detail.1688.com/offer/1001283758278.html
+
+### resume product 11515936363 n=10 隔日到貨🔥 韓風熱銷款🏆 韓國ins 吊飾 鑰匙扣 鑰匙圈 文青 汽車鑰匙 公仔
+
+=== 3c 11515936363 n=10/10 隔日到貨🔥 韓風熱銷款🏆 韓國ins 吊飾 鑰匙扣 鑰匙圈 文青 汽車鑰匙 公仔
+  DETAIL 601777449827 https://detail.1688.com/offer/601777449827.html
+  DETAIL 622441480241 https://detail.1688.com/offer/622441480241.html
+  DETAIL 608534568405 https://detail.1688.com/offer/608534568405.html
+  DETAIL 617123543564 https://detail.1688.com/offer/617123543564.html
+
+=== 3B search 11515936363 q=韩风 韩国 吊饰钥匙扣钥匙圈文青汽车钥匙公仔挂饰吊坠挂钩吊环坠饰 2 荷
+  SEARCH 韩风 韩国 吊饰钥匙扣钥匙圈文青汽车钥匙公仔挂饰吊坠挂钩吊环坠饰 2 荷
+  SEARCH 韩风 韩国 吊饰钥匙扣钥匙圈文青汽车钥匙公仔挂饰吊坠挂钩吊环坠饰 2 荷
+  search_ok n=20 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E9%9F%A9%E9%A3%8E%20%E9%9F%A9%E5%9
+  DETAIL 893147198403 https://detail.1688.com/offer/893147198403.html
+  DETAIL 716624252488 https://detail.1688.com/offer/716624252488.html
+
+### resume product 23244459752 n=3 隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 
+
+=== 3B search 23244459752 q=韩系帆布袋 帆布包单肩包帆布袋手提袋单肩包提袋环保袋购物袋收纳包简约文青
+  SEARCH 韩系帆布袋 帆布包单肩包帆布袋手提袋单肩包提袋环保袋购物袋收纳包简约文青
+  SEARCH 韩系帆布袋 帆布包单肩包帆布袋手提袋单肩包提袋环保袋购物袋收纳包简约文青
+  search_ok n=0 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E9%9F%A9%E7%B3%BB%E5%B8%86%E5%B8%8
+
+### resume product 9791809096 n=5 隔日到貨🔥 ins風 韓版 鏡子 化妝鏡 折疊鏡 隨身鏡 簡約 可愛 女學生必備
+
+=== 3c 9791809096 n=5/5 隔日到貨🔥 ins風 韓版 鏡子 化妝鏡 折疊鏡 隨身鏡 簡約 可愛 女學生必備
+  DETAIL 707606084272 https://detail.1688.com/offer/707606084272.html
+  DETAIL 640066215865 https://detail.1688.com/offer/640066215865.html
+
+=== 3B search 9791809096 q=镜子化妆镜折叠镜随身镜简约可爱女学生 小镜子 2 波点咖啡熊
+  SEARCH 镜子化妆镜折叠镜随身镜简约可爱女学生 小镜子 2 波点咖啡熊
+  SEARCH 镜子化妆镜折叠镜随身镜简约可爱女学生 小镜子 2 波点咖啡熊
+RESUME {"stopped_at": "2026-09-09T05:13:38Z", "round": "resume3", "last_completed_product_id": "23244459752", "last_attempted_product_id": "9791809096", "row_index": 159, "blocked_url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfEX0h0uAv8VxXargYw9lmALrfPosVopBkGFincKYqk5OlOwDjFi3Uo88n5Gz_1Gs8_k9cyza6HbhubJ9ByGOyw-IVkUK_pFqMzZYiUpaxtmEewWgkNEF-PpOI6ViIqnaLz4TGRqAKG439XAxEWZKDXoXXxc4i0NvI8znBwayYDS-Zq-lO5A4OF35xAlWzfpcvBkqa9EpNgr_Q7FDUkQPSq5SKyAPzLC4auYIttAKkmuzEzig38zxdm07pefbvGnGg1bS6USXC_wSCJ2IeGtDUsdKdtS0VLAASCcQBqAERl2rymhMPTKveW1KAywTxEL2Y9YWcoRSyibENV9s5Zevty50jnI_2F5g1xKbe21Q9SCyBHMbPGwkSKLJKlGWXlCs8fxCmOZLKZZ3E4JOQ6coHF1RaJrLKTf0HmZnCQxwuZ_gzy9aOjCY2evJi
+RESUME {"stopped_at": "2026-09-09T05:13:38Z", "round": "resume3", "last_completed_product_id": "23244459752", "last_attempted_product_id": "9791809096", "row_index": 253, "blocked_url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfEX0h0uAv8VxXargYw9lmALrfPosVopBkGFincKYqk5OlOwDjFi3Uo88n5Gz_1Gs8_k9cyza6HbhubJ9ByGOyw-IVkUK_pFqMzZYiUpaxtmEewWgkNEF-PpOI6ViIqnaLz4TGRqAKG439XAxEWZKDXoXXxc4i0NvI8znBwayYDS-Zq-lO5A4OF35xAlWzfpcvBkqa9EpNgr_Q7FDUkQPSq5SKyAPzLC4auYIttAKkmuzEzig38zxdm07pefbvGnGg1bS6USXC_wSCJ2IeGtDUsdKdtS0VLAASCcQBqAERl2rymhMPTKveW1KAywTxEL2Y9YWcoRSyibENV9s5Zevty50jnI_2F5g1xKbe21Q9SCyBHMbPGwkSKLJKlGWXlCs8fxCmOZLKZZ3E4JOQ6coHF1RaJrLKTf0HmZnCQxwuZ_gzy9aOjCY2evJi
+DONE {"with_candidate": 100, "conf_低": 49, "q_P1_no_url_with_candidate": 22, "no_candidate": 51, "q_P1_no_url_no_candidate": 33, "conf_高": 22, "blocked_captcha": 102, "q_P1_no_url_blocked_captcha": 48, "conf_中": 29, "q_AI2_off_shelf_no_candidate": 1, "q_AI2_dead_with_candidate": 27, "q_AI2_dead_no_candidate": 16, "q_AI2_dead_blocked_captcha": 40, "q_AI2_off_shelf_with_candidate": 2, "q_AI2_off_shelf_blocked_captcha": 4, "q_P3_mapping_suspect_with_candidate": 49, "q_P3_mapping_suspect_blocked_captcha": 10, "q_P3_mapping_suspect_no_candidate": 1}
+stopped {'reason': 'waf', 'url': 'https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfEX0h0uAv8VxXargYw9lmALrfPosVopBkGFincKYqk5OlOwDjFi3Uo88n5Gz_1Gs8_k9cyza6HbhubJ9ByGOyw-IVkUK_pFqMzZYiUpaxtmEewWgkNEF-PpOI6ViIqnaLz4TGRqAKG439XAxEWZKDXoXXxc4i0NvI8znBwayYDS-Zq-lO5A4OF35xAlWzfpcvBkqa9EpNgr_Q7FDUkQPSq5SKyAPzLC4auYIttAKkmuzEzig38zxdm07pefbvGnGg1bS6USXC_wSCJ2IeGtDUsdKdtS0VLAASCcQBqAERl2rymhMPTKveW1KAywTxEL2Y9YWcoRSyibENV9s5Zevty50jnI_2F5g1xKbe21Q9SCyBHMbPGwkSKLJKlGWXlCs8fxCmOZLKZZ3E4JOQ6coHF1RaJrLKTf0HmZnCQxwuZ_gzy9aOjCY2evJi7JogKi_ooBmtKFbEemdW0rGbA9jdzDdb8z4A5uE1S5nuRVwdna2xHnah8Du6TH2RZfMEtlBjCPLZ9SD1n_MYor-3wpUCuAZQ9aH-i4cT31M74nK7wFW0_LnJ6c1bNvYKdwPk8ufTB619QQ1TbIcUG5idlQB9n5shxzJ_1oMdpqXLsOExsqSR8El4hc_CGKs-FY7cj52G2t_1-GhogCLrMi5bsx2cg88HM79NzhHexqluXAkoj5veursrPlZ8DHPK_oHhEG2HDLEVaBnT53tZYTbprpWWmSWKdnhotvo8gPPnKM83hkaFZlYePLx3TWY1vfM4_FB13IJY84KY7mP1Op1gdxJTw_6dARJaGADeiJB8rHGMkpDiRehsBHESGMuS4YP_zgTk7UBuTC8ZgGQPuRRQyG_MkSghm-Cbyvm_uVbA0R_j7E8ZEy5buNJfJksDauSiootDRE3dvkvHjkubTLk6m-yxVg__bx__s.1688.com%2fselloffer%2foffer_search.htm&x5step=1'}
+EXIT_CODE=2
