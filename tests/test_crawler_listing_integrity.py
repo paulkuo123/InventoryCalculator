@@ -4,6 +4,7 @@
 - 讀不到頁碼時，列數變短不能當成最後一頁。
 - 點了下一頁但商品列和前一頁一樣，要重試後失敗，不能繼續往下。
 - Execution context was destroyed 要重試同一頁，次數用完才整次失敗。
+- 點了下一頁、頁面已經換過去才被銷毀時，不可再點一次而漏頁。
 """
 import io
 import json
@@ -1055,6 +1056,114 @@ class ListingIntegrityTests(unittest.TestCase):
             self.assertIn("正式檔", message)
             self.assertEqual(message.count("重試第 1 頁"), 2)
             self.assertNotIn("已儲存部分收集的資料", message)
+
+    def _crawl_after_click_destroyed(self, output_path, body, indicators, keyword, advance_when):
+        """點下一頁後第一次讀指紋就丟 destroyed。advance_when(點擊次數) 決定這次點擊有沒有換頁。"""
+        pages = []
+        for index, product_id in enumerate(("111", "222", "333")):
+            pages.append(ListingPage(
+                indicator=indicators[index],
+                rows=[product_row(
+                    product_id,
+                    f"商品{product_id}",
+                    models=[model_row(spec_id=product_id)],
+                )],
+                body_text=body,
+                next_enabled=index < 2,
+            ))
+        state = {"clicks": 0, "raised": False}
+
+        def advance(driver):
+            state["clicks"] += 1
+            if advance_when(state["clicks"]):
+                driver.index += 1
+
+        def flaky(driver):
+            if state["clicks"] >= 1 and not state["raised"]:
+                state["raised"] = True
+                raise RuntimeError(
+                    "Page.evaluate: Execution context was destroyed, "
+                    "most likely because of a navigation"
+                )
+            return None
+
+        crawler = make_crawler(
+            ListingDriver(pages, on_next=advance, on_fingerprint=flaky),
+            str(output_path),
+        )
+        if keyword:
+            crawler.search_keyword = keyword
+        crawler.login = lambda: None
+        crawler.get_monthly_sales = lambda *_args, **_kwargs: None
+        stdout = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+            result = crawler.run()
+        return crawler, result, stdout.getvalue(), state
+
+    def test_destroyed_after_the_page_turned_does_not_click_next_again(self):
+        """點擊後已經換頁才被銷毀：不要再點下一頁，111、222、333 都要收到。"""
+        cases = (
+            ("沒有關鍵字、有頁碼、總數 3", "", "架上商品(3) 3 件商品", ("1 / 3", "2 / 3", "3 / 3"), True, "matched"),
+            ("沒有關鍵字、讀不到頁碼、總數 3", "", "架上商品(3) 3 件商品", ("", "", ""), True, "matched"),
+            ("關鍵字、清單寫 355 件", "手機殼", "架上商品(355) 355 件商品", ("", "", ""), False, None),
+            ("關鍵字、只有全店總數", "手機殼", "架上商品(355)", ("", "", ""), True, "unverified_store_total_only"),
+        )
+        for title, keyword, body, indicators, expect_saved, count_check in cases:
+            with self.subTest(title=title):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    output_path = Path(temp_dir) / "shopee_products.json"
+                    output_path.write_text('{"old": true}\n', encoding="utf-8")
+                    crawler, result, message, state = self._crawl_after_click_destroyed(
+                        output_path, body, indicators, keyword, advance_when=lambda _clicks: True,
+                    )
+                    saved = json.loads(output_path.read_text(encoding="utf-8"))
+                self.assertTrue(state["raised"])
+                self.assertEqual(set(crawler.products_data), {"111", "222", "333"})
+                self.assertEqual(state["clicks"], 2)
+                self.assertEqual(crawler.driver.index, 2)
+                self.assertIn("不再重點下一頁", message)
+                self.assertIn("第一列商品 ID 222", message)
+                self.assertIn("第一列商品 ID 333", message)
+                if expect_saved:
+                    self.assertIsNotNone(result)
+                    product_ids = sorted(
+                        key for key in saved
+                        if key not in ("_crawl_page_log", "_crawl_count_check")
+                    )
+                    self.assertEqual(product_ids, ["111", "222", "333"])
+                    self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["count_check"], count_check)
+                    self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["collected"], 3)
+                else:
+                    self.assertIsNone(result)
+                    self.assertEqual(saved, {"old": True})
+                    self.assertIn("少 352 個", message)
+                    self.assertIn("不會把這次結果當成完整資料", message)
+
+    def test_destroyed_after_click_before_the_page_turns_retries_the_click(self):
+        """點擊後尚未換頁就被銷毀：仍可重試點下一頁，三頁都要收到。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler, result, message, state = self._crawl_after_click_destroyed(
+                output_path,
+                "架上商品(3) 3 件商品",
+                ("1 / 3", "2 / 3", "3 / 3"),
+                "",
+                advance_when=lambda clicks: clicks >= 2,
+            )
+            saved = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertTrue(state["raised"])
+        self.assertEqual(state["clicks"], 3)
+        self.assertEqual(set(crawler.products_data), {"111", "222", "333"})
+        self.assertIn("頁面仍是剛收完的第 1 頁，重試點下一頁", message)
+        self.assertNotIn("不再重點下一頁", message)
+        self.assertIsNotNone(result)
+        product_ids = sorted(
+            key for key in saved
+            if key not in ("_crawl_page_log", "_crawl_count_check")
+        )
+        self.assertEqual(product_ids, ["111", "222", "333"])
+        self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["count_check"], "matched")
 
 
 if __name__ == "__main__":

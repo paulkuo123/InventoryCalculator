@@ -3094,11 +3094,41 @@ class ShopeeCrawler:
         if not isinstance(getattr(self, "crawl_page_logs", None), list):
             self.crawl_page_logs = []
         self.crawl_page_logs.append(entry)
+        self._collected_listing_snapshot = {
+            "indicator": self._read_page_indicator(),
+            "rows": tuple(page_product_ids),
+        }
         print(
             f"第 {page_number} 頁：DOM 列數 {dom_row_count}，"
             f"成功 {success_count}，跳過 {skipped_count}，無效 {invalid_count}"
         )
         return entry
+
+    def _page_turn_since_collect(self):
+        """點下一頁後執行環境被銷毀時，看畫面是不是已經離開剛收完的那一頁。
+
+        回傳 turned（第一列或頁碼已經不同）、same（還是同一頁）、unknown（還讀不到）。
+        """
+        current = self._snapshot_listing_page()
+        previous = getattr(self, "_collected_listing_snapshot", None) or {}
+        current_rows = tuple(current.get("rows") or ())
+        previous_rows = tuple(previous.get("rows") or ())
+        if current_rows and previous_rows:
+            if current_rows[0] != previous_rows[0]:
+                return "turned"
+            return "same"
+        current_indicator = str(current.get("indicator") or "")
+        previous_indicator = str(previous.get("indicator") or "")
+        if current_indicator and previous_indicator:
+            if current_indicator != previous_indicator:
+                return "turned"
+            return "same"
+        return "unknown"
+
+    def _accept_already_turned_page(self):
+        previous = getattr(self, "_collected_listing_snapshot", None) or {}
+        self._listing_rows_left_behind = tuple(previous.get("rows") or ())
+        print("點下一頁後頁面已經換成下一頁，不再重點下一頁，接著收集目前這一頁")
 
     def _reject_unchanged_collected_page(self, page_number, page_product_ids):
         """翻頁確認後若真正讀到的列還是上一頁，就不能當成新的一頁繼續。"""
@@ -3207,11 +3237,14 @@ class ShopeeCrawler:
             self.crawl_invalid_rows = []
             self.crawl_count_check = None
             self._listing_rows_left_behind = ()
+            self._collected_listing_snapshot = {"indicator": "", "rows": ()}
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
                 page_ready = False
                 attempt = 0
+                # 銷毀後還讀不到列時，先不要點下一頁，只重讀指紋。
+                hold_click = False
                 while True:
                     attempt += 1
                     ids_before_attempt = set(self.products_data)
@@ -3219,6 +3252,18 @@ class ShopeeCrawler:
                         if not page_ready:
                             self._load_and_collect_listing_page(page)
                             page_ready = True
+                        if hold_click:
+                            hold_click = False
+                            turn = self._page_turn_since_collect()
+                            if turn == "turned":
+                                self._accept_already_turned_page()
+                                has_next_page = True
+                                break
+                            if turn != "same":
+                                raise RuntimeError(
+                                    "Page.evaluate: Execution context was destroyed, "
+                                    "most likely because of a navigation"
+                                )
                         has_next_page = self.go_to_next_page()
                         break
                     except CrawlIntegrityError:
@@ -3228,12 +3273,37 @@ class ShopeeCrawler:
                             self._rollback_listing_page_attempt(page, ids_before_attempt)
                         if (is_destroyed_execution_context(error)
                                 and attempt < LISTING_PAGE_ATTEMPTS):
+                            self._wait_until_listing_readable()
+                            if page_ready:
+                                try:
+                                    turn = self._page_turn_since_collect()
+                                except Exception as read_error:
+                                    if not is_destroyed_execution_context(read_error):
+                                        raise
+                                    turn = "unknown"
+                                if turn == "turned":
+                                    self._accept_already_turned_page()
+                                    has_next_page = True
+                                    break
+                                if turn == "unknown":
+                                    print(
+                                        "頁面導向或重新載入，執行環境被銷毀。"
+                                        f"還讀不到商品列，先不重點下一頁"
+                                        f"（第 {attempt}/{LISTING_PAGE_ATTEMPTS} 次失敗）"
+                                    )
+                                    hold_click = True
+                                    continue
+                                print(
+                                    "頁面導向或重新載入，執行環境被銷毀。"
+                                    f"頁面仍是剛收完的第 {page} 頁，重試點下一頁"
+                                    f"（第 {attempt}/{LISTING_PAGE_ATTEMPTS} 次失敗）"
+                                )
+                                continue
                             print(
                                 "頁面導向或重新載入，執行環境被銷毀。"
                                 f"等待頁面穩定後重試第 {page} 頁"
                                 f"（第 {attempt}/{LISTING_PAGE_ATTEMPTS} 次失敗）"
                             )
-                            self._wait_until_listing_readable()
                             continue
                         if is_destroyed_execution_context(error):
                             raise CrawlIntegrityError(
