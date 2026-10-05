@@ -562,6 +562,54 @@ class GoldenBatchWriterTest(unittest.TestCase):
         self.assertIsNone(self._binding("p-cup", "cup-red"))
         self.assertIsNone(self._binding("p-cup", "cup-green"))
 
+    def test_rollback_without_apply_leaves_applied_batch_unchanged(self):
+        state = self._apply_cups()
+        record_path = self.base / "backups" / "batches" / state["batch_id"] / "batch_record.json"
+        record = json.loads(record_path.read_text(encoding="utf-8"))
+        self.assertEqual(record["status"], "applied")
+        self.assertTrue(record.get("rows_touched"))
+
+        repo_root = Path(__file__).resolve().parents[1]
+        self.assertNotEqual(self.golden_path.resolve(), (repo_root / "golden_table.json").resolve())
+        self.assertNotEqual(self.db_path.resolve(), (repo_root / "procurement.db").resolve())
+
+        golden_bytes = self.golden_path.read_bytes()
+        db_bytes = self.db_path.read_bytes()
+        record_bytes = record_path.read_bytes()
+
+        def refuse(_prompt):
+            raise AssertionError("不該詢問")
+
+        result = rollback_batch(
+            str(self.base),
+            state["batch_id"],
+            mode="whole",
+            apply=False,
+            input_fn=refuse,
+        )
+        self.assertFalse(result["wrote"])
+        self.assertGreaterEqual(len(result["rows"]), 1)
+        self.assertEqual(self.golden_path.read_bytes(), golden_bytes)
+        self.assertEqual(self.db_path.read_bytes(), db_bytes)
+        self.assertEqual(record_path.read_bytes(), record_bytes)
+
+        stdout = io.StringIO()
+        argv = [
+            "rollback",
+            "--batch-id", state["batch_id"],
+            "--mode", "whole",
+            "--base-dir", str(self.base),
+        ]
+        self.assertNotIn("--apply", argv)
+        with redirect_stdout(stdout):
+            code = main(argv)
+        self.assertEqual(code, 0)
+        self.assertIn("沒有還原", stdout.getvalue())
+        self.assertEqual(self.golden_path.read_bytes(), golden_bytes)
+        self.assertEqual(self.db_path.read_bytes(), db_bytes)
+        self.assertEqual(record_path.read_bytes(), record_bytes)
+        self.assertEqual(json.loads(record_path.read_text(encoding="utf-8"))["status"], "applied")
+
     def test_rollback_per_row_restores_json_sqlite_and_binding(self):
         state = self._apply_cups()
         rollback_batch(
