@@ -1,6 +1,6 @@
 # 補貨閉環審查（Goal A）
 
-對照庭安要的最終流程，審查 **main 現況**（本文件寫作時：`340db20`）。  
+對照庭安要的最終流程，審查 **main 現況**（本文件寫作時：`bc40520`）。  
 只讀程式與既有文件，**不**改 `golden_table.json`、live `procurement.db`、ROAS 門檻、`auto_approve.enabled`，也**不**重啟 Golden 寫入管線。
 
 相關：[`reverse_audit.md`](reverse_audit.md)、[`cart-reconciliation.md`](cart-reconciliation.md)、[`sku_mapping_knowhow_engine.md`](sku_mapping_knowhow_engine.md)、[`golden_ai_automation_review.md`](golden_ai_automation_review.md)。
@@ -31,7 +31,7 @@
 
 額外、容易踩到的現況：
 
-- **首頁／爬蟲的水位月數不是 3／4 分流。** `index.html` 的 `#inventoryMonth` 預設 4；`script.js` 的 `calculateModelRestock`／`calculateInventoryStatistics` 用同一個月數。`crawler.py` 用 `--inventory-month`（預設 4）寫 `建議補貨數量`。真正套用店規的是 `scripts/run_watchlist_restock.build_list_from_files` 與 `reverse_audit.dry_run.build_expected`。低水位提醒改走 **Grok Bot routines**（不再經 Telegram、也不另建應用內推播）。
+- **首頁／爬蟲的水位月數不是 3／4 分流。** `index.html` 的 `#inventoryMonth` 預設 4；`script.js` 的 `calculateModelRestock`／`calculateInventoryStatistics` 用同一個月數。`crawler.py` 用 `--inventory-month`（預設 4）寫 `建議補貨數量`。真正套用店規的是 `scripts/run_watchlist_restock.build_list_from_files` 與 `reverse_audit.dry_run.build_expected`。`scripts/monthly_inventory_report.py` 與 `scripts/watchlist_stock_signal.py` 也呼叫 `restock_rules.target_months_for_product`。低水位提醒改走 **Grok Bot routines**（不再經 Telegram、也不另建應用內推播）。
 - **repo 觀察清單不會自動進首頁表格。** `script.js` 寫明 “Project watchlists are never bootstrapped”；表格靠現場搜尋或本機匯入。`GET /api/home/bootstrap`（`home_bootstrap.load_home_bootstrap`）會讀磁碟上的 `shopee_products.json` + `watchlists/personal_watchlist.json`，但驗證技能與原始碼都顯示**首頁不會拿它填表**。
 - **襪子不進觀察清單補貨。** `home_bootstrap.is_watchlist_excluded_product_name` 看到「襪／袜」就排除；另有 `personal_watchlist_exclusions.json`（66 個 productId）。現況 watchlist 158 個商品。
 
