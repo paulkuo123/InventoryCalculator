@@ -1,0 +1,21 @@
+{
+  "note": "Read-only CDP/browser samples after HTTP WAF. No cart mutation.",
+  "samples": [
+    {
+      "url": "https://detail.1688.com/offer/734419757382.html",
+      "method": "playwright_mcp_chrome",
+      "final_title": "Captcha Interception",
+      "health": "error",
+      "health_reason": "waf_punish",
+      "detail": "Navigated to _____tmd_____/punish (x5step=1). No offer SKU DOM."
+    },
+    {
+      "url": "https://detail.1688.com/offer/734419757382.html",
+      "method": "playwright_persistent_alibaba_chrome_profile",
+      "final_title": "全球领先的采购批发平台,批发网",
+      "health": "error",
+      "health_reason": "login_wall",
+      "detail": "Persistent context used repo alibaba_chrome_profile (read-only). Redirected to login.taobao.com / 1688 member jump. Session expired. Did not submit credentials or touch cart."
+    }
+  ]
+}
