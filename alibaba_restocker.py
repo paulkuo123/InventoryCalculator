@@ -739,7 +739,7 @@ def open_and_read_cart(
                 print(f"採購車核對：已讀取 {len(lines)} 個型號", flush=True)
                 return lines
             if lines and attempt == CART_READ_ATTEMPTS:
-                print(f"採購車核對：頁面仍未完整展開，不能可靠對帳", flush=True)
+                print("採購車核對：頁面仍未完整展開，不能可靠對帳", flush=True)
                 return None
             if page_looks_like_empty_cart(body):
                 print("採購車核對：採購車是空的", flush=True)
