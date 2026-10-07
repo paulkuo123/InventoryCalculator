@@ -239,7 +239,7 @@
       return `<div class="ai-summary ai-warning"><strong>${providerLabel} ${forced}未完成</strong>：${displayText(warnings.join('；') || 'API 呼叫失敗')}；請改用完整 SKU 清單人工確認。</div>`;
     }
     if (source === 'rules' && warnings.length) {
-      const providerLabel = ai.provider === 'gemini' ? 'AI' : ai.provider === 'deepseek' ? 'DeepSeek' : ai.provider === 'grok' ? 'Grok' : ai.provider === 'claude' ? 'Claude' : 'AI';
+      const providerLabel = ai.provider === 'gemini' ? 'AI' : ai.provider === 'deepseek' ? 'DeepSeek' : ai.provider === 'grok' ? 'Grok' : ai.provider === 'claude' ? 'Claude' : ai.provider === 'openai' ? 'OpenAI' : 'AI';
       const fallback = ai.provider === 'gemini' || ai.provider === 'deepseek' || ai.provider === 'grok' || ai.provider === 'claude' || ai.fallback === 'rules' ? `${providerLabel} 初判失敗，已回退規則` : 'AI 初判未執行';
       return `<div class="ai-summary ai-warning"><strong>${fallback}</strong>：${displayText(warnings.join('；'))}；目前顯示規則候選。</div>`;
     }

@@ -1679,13 +1679,13 @@ def rollback_batch(
     }
 
 
-def _tty_input(prompt: str) -> str:
+def _tty_input(prompt: str, *, empty_message: str = "沒有讀到輸入，已停止，沒有寫入。") -> str:
     if not sys.stdin.isatty():
         _fail("必須在終端機手動輸入，不能用管線或程式代填。")
     print(prompt, flush=True)
     line = sys.stdin.readline()
     if line == "":
-        _fail("沒有讀到輸入，已停止，沒有寫入。")
+        _fail(empty_message)
     return line
 
 
@@ -1737,7 +1737,7 @@ def build_parser() -> argparse.ArgumentParser:
     rollback.add_argument("--batch-id", required=True, help="批次編號。")
     rollback.add_argument("--mode", required=True, choices=("whole", "per-row"), help="whole 是整批，per-row 是逐列。")
     rollback.add_argument("--spec", action="append", default=[], help="逐列時可重複，格式是商品編號/規格編號。")
-    rollback.add_argument("--apply", action="store_true", help="真的還原。省略時只列出會還原的列。")
+    rollback.add_argument("--apply", action="store_true", help="真的還原。省略時只印會處理的列數、不還原。")
     return parser
 
 
@@ -1796,7 +1796,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 mode=args.mode,
                 apply=bool(args.apply),
                 spec_keys=args.spec,
-                input_fn=_tty_input if args.apply else None,
+                input_fn=(lambda prompt: _tty_input(prompt, empty_message="沒有讀到輸入，已停止，沒有還原。")) if args.apply else None,
             )
             if not result["wrote"]:
                 print(f"未加上 --apply，沒有還原。將處理 {len(result['rows'])} 列。")
