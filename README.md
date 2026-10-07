@@ -174,6 +174,21 @@ python3 setup_openai_key.py
 
 推理強度支援 `medium`、`high`、`xhigh`、`max`；目前預設 `xhigh`。`max` 只建議用於少數高風險決策，耗時與費用通常更高。
 
+### 設置 Claude（SKU mapping 可選 provider）
+
+商品配對的 AI 供應商由環境變數 `SKU_MAPPING_AI_PROVIDER` 決定。沒設定時程式仍用 **gemini**。可選值是 `gemini`、`openai`、`grok`、`deepseek`、`claude`。沒有網頁開關，`python -m sku_mapping_service` 也沒有 provider 旗標。
+
+要用 Claude，在啟動程式的環境設定：
+
+```bash
+export ANTHROPIC_API_KEY='你的金鑰'
+export SKU_MAPPING_AI_PROVIDER=claude
+```
+
+- 金鑰**只**讀環境變數 `ANTHROPIC_API_KEY`。不讀 `.env.local`，也不讀 `~/.zshrc`／`~/.bashrc`。不要把金鑰寫進檔案、log 或聊天。
+- 模型先看 `ANTHROPIC_SKU_MAPPING_MODEL`，沒有再看 `ANTHROPIC_MODEL`。這兩個跟其他非金鑰設定一樣，讀取順序是環境變數、專案 `.env.local`、shell rc。沒設定，或不在允許清單，就用 `claude-sonnet-5-5`（Anthropic 模型總覽上目前的 Claude Sonnet 系列 id）。允許的 id：`claude-sonnet-5-5`、`claude-sonnet-5`、`claude-sonnet-4-6`、`claude-sonnet-4-5`、`claude-sonnet-4-5-20250929`。
+- 呼叫 `https://api.anthropic.com/v1/messages`，header 是 `x-api-key` 與 `anthropic-version: 2023-06-01`。提示詞、JSON 欄位與候選驗證跟其他 provider 相同。逾時 120 秒。沒有金鑰、HTTP 429、API 錯誤或 JSON 解析失敗時，會記下原因並回退規則初判，不會把失敗假裝成配對成功。
+
 ### 設置 1688 開放平台憑證（補貨 API 用）
 第一版會先建立補貨草稿與待付款建單流程，但在取得 1688 開放平台下單 API 權限前，不會真的送出 1688 訂單。
 
@@ -436,7 +451,7 @@ InventoryCalculator/
 
 ## 1688 SKU Mapping 工作台
 
-`/sku-mapping.html` 是整個賣場的 1688 SKU 對照獨立審核頁。按「重建全部名稱 mapping（掃描 1688）」後，系統會以 1688 offer 分組取得結構化 SKU 快照，先做繁簡／顏色／尺寸／手機型號等規則比對；只要規則找到候選，就不呼叫 AI，直接交給人工確認。只有規則完全找不到候選時，才會把完整 SKU 清單交給 AI 初判；建議的預設設定為 OpenAI Responses API，請執行 `python3 setup_openai_key.py` 完成設定。之後在頁面逐筆或批次核准。清單預設依商品總月銷量由高到低排序，同一商品的不同型號會集中在一起，再依型號月銷量排列。未核准、失效、停售、名稱組合不存在或 live 目錄無法驗證的資料會被購物車流程阻擋。
+`/sku-mapping.html` 是整個賣場的 1688 SKU 對照獨立審核頁。按「重建全部名稱 mapping（掃描 1688）」後，系統會以 1688 offer 分組取得結構化 SKU 快照，先做繁簡／顏色／尺寸／手機型號等規則比對；只要規則找到候選，就不呼叫 AI，直接交給人工確認。只有規則完全找不到候選時，才會把完整 SKU 清單交給 AI 初判。未設定 `SKU_MAPPING_AI_PROVIDER` 時程式使用 gemini。若要改用 OpenAI Responses API，請執行 `python3 setup_openai_key.py`。Claude 的設定見上方「設置 Claude」。之後在頁面逐筆或批次核准。清單預設依商品總月銷量由高到低排序，同一商品的不同型號會集中在一起，再依型號月銷量排列。未核准、失效、停售、名稱組合不存在或 live 目錄無法驗證的資料會被購物車流程阻擋。
 
 - 工作台目前以所有已有 1688 URL 的型號為範圍，不再以「是否需要補貨」作為顯示或掃描條件；補貨數量欄位仍保留在庫存與購物車流程中。
 - 清單每頁最多顯示 200 筆，使用頁面底部的上一頁／下一頁瀏覽全部 URL 型號；跨頁勾選仍會保留，批次動作會一次套用所有已勾選項目。
@@ -452,7 +467,7 @@ InventoryCalculator/
 
 - 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。Know-how Engine 總覽、TASK 1 vs 現況數字與 auto-approve 反事實精度見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。第 1 層 offer 建議（#113 唯讀，不搜站、不寫 Golden）見 [`docs/offer_discovery.md`](docs/offer_discovery.md)；設計依據 [`docs/offer_discovery_spike.md`](docs/offer_discovery_spike.md)。全表 AI 補完 vs 2026-09-09 暫停（PRs #41–#46 勿合）見 [`docs/golden_ai_automation_review.md`](docs/golden_ai_automation_review.md)。
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
-- 規則完全找不到候選時，SKU mapping 預設使用 OpenAI Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning）做初判，並以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key 並把 provider 切換為 OpenAI。若要使用 Gemini、Grok 或 DeepSeek，可執行對應的 `python3 setup_gemini_key.py`、`python3 setup_xai_key.py` 或 `python3 setup_deepseek_key.py`，或直接編輯 `.env.local` 設定 `SKU_MAPPING_AI_PROVIDER` 與對應的 API Key／模型。API 額度／速率限制（429）、API 錯誤或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
+- 規則完全找不到候選時才呼叫 AI 初判。未設定 `SKU_MAPPING_AI_PROVIDER` 時仍是 gemini。OpenAI 路徑是 Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning），以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key，且只在設定檔還沒有 provider 時寫成 OpenAI。Gemini、Grok、DeepSeek 可執行 `python3 setup_gemini_key.py`、`python3 setup_xai_key.py`、`python3 setup_deepseek_key.py`，或直接編輯 `.env.local`。Claude 把 `SKU_MAPPING_AI_PROVIDER` 設成 `claude`，金鑰只放環境變數 `ANTHROPIC_API_KEY`（不讀 `.env.local`），模型用 `ANTHROPIC_SKU_MAPPING_MODEL` 或 `ANTHROPIC_MODEL`（預設 `claude-sonnet-5-5`）。API 額度／速率限制（429）、API 錯誤、JSON 解析失敗或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`、唯讀 `GET /api/sku-mapping/offer-suggestions`（第 1 層建議；UI 可能尚未呼叫，API 已公開唯讀）。
 - 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 

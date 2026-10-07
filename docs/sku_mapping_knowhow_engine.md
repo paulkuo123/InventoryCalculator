@@ -32,7 +32,7 @@ SkuMappingService.generate_candidates()
         ▼
 classify_review_tier()      綠 / 黃 / 紅（人工審核）
         │
-        ├─ 可選既有 AI judge（PROMPT_VERSION=2026-09-v2）
+        ├─ 可選既有 AI judge（PROMPT_VERSION=2026-09-v2；gemini／openai／grok／deepseek／claude，未設定時仍是 gemini）
         │
         ▼
 _save_suggestion()          evidence_json 必填欄（TASK 7）
