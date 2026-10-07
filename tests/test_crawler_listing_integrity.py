@@ -1,4 +1,11 @@
-"""賣家中心清單爬蟲：換頁確認、總數核對、無規格商品。不連瀏覽器。"""
+"""賣家中心清單爬蟲：換頁確認、總數核對、無規格商品。不連瀏覽器。
+
+遠端共用 Chrome 的三種假頁面：
+- 讀不到頁碼時，列數變短不能當成最後一頁。
+- 點了下一頁但商品列和前一頁一樣，要重試後失敗，不能繼續往下。
+- Execution context was destroyed 要重試同一頁，次數用完才整次失敗。
+- 點了下一頁、頁面已經換過去才被銷毀時，不可再點一次而漏頁。
+"""
 import io
 import json
 import os
@@ -69,10 +76,12 @@ class ListingPage:
 
 
 class ListingDriver:
-    def __init__(self, pages, on_next=None):
+    def __init__(self, pages, on_next=None, on_fingerprint=None):
         self.pages = pages
         self.index = 0
         self.on_next = on_next
+        # 換頁指紋讀取時可改回別的列，用來模擬畫面閃一下又變回去。
+        self.on_fingerprint = on_fingerprint
 
     def _page(self):
         return self.pages[self.index]
@@ -89,6 +98,10 @@ class ListingDriver:
         if by == By.CLASS_NAME and value == "eds-table__row":
             return list(page.rows)
         if by == By.CSS_SELECTOR and "eds-table__row" in value:
+            if self.on_fingerprint:
+                override = self.on_fingerprint(self)
+                if override is not None:
+                    return list(override)
             return list(page.rows)
         if by == By.TAG_NAME and value == "body":
             return [FakeElement(text=page.body_text)]
@@ -181,6 +194,11 @@ class ListingIntegrityTests(unittest.TestCase):
         self.assertTrue(crawler._listing_page_changed(
             {"indicator": "1 / 30", "rows": ()},
             {"indicator": "2 / 30", "rows": ()},
+        ))
+        # 第一列沒換、只是後面的列不一樣，不能當成已換頁。
+        self.assertFalse(crawler._listing_page_changed(
+            {"indicator": "", "rows": ("111", "112")},
+            {"indicator": "", "rows": ("111", "999")},
         ))
 
     def test_listed_total_uses_tab_or_current_list(self):
@@ -513,7 +531,10 @@ class ListingIntegrityTests(unittest.TestCase):
             crawler.get_all_products_info()
         self.assertEqual(clicks["n"], 1)
         self.assertEqual(set(crawler.products_data), {"111", "112", "222"})
-        self.assertNotIn("翻頁後頁面沒有換成下一頁", stdout.getvalue())
+        message = stdout.getvalue()
+        self.assertNotIn("翻頁後頁面沒有換成下一頁", message)
+        self.assertIn("達到頁面顯示總數 3", message)
+        self.assertNotIn("已到最後一頁（頁碼「（沒有頁碼）」）", message)
 
     def test_unreadable_name_is_invalid_and_is_not_labeled_no_spec(self):
         rows = [
@@ -664,9 +685,12 @@ class ListingIntegrityTests(unittest.TestCase):
             ),
             ListingPage(
                 indicator="",
-                rows=[product_row("111", "重複", models=[model_row(spec_id="1")])],
+                rows=[
+                    product_row("222", "新的", models=[model_row(spec_id="3")]),
+                    product_row("111", "重複", models=[model_row(spec_id="1")]),
+                ],
                 body_text="架上商品(355)",
-                next_enabled=True,
+                next_enabled=False,
             ),
         ]
 
@@ -772,6 +796,374 @@ class ListingIntegrityTests(unittest.TestCase):
             finally:
                 os.umask(previous_umask)
             self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o640)
+
+    def test_missing_page_number_does_not_treat_a_shorter_page_as_the_end(self):
+        """讀不到頁碼、第 2 頁比第 1 頁短，但總數還沒到，必須繼續翻，不能印已到最後一頁。"""
+        body = "架上商品(4) 4 件商品"
+        pages = [
+            ListingPage(
+                indicator="",
+                rows=[
+                    product_row("111", "甲", models=[model_row(spec_id="1")]),
+                    product_row("112", "乙", models=[model_row(spec_id="2")]),
+                ],
+                body_text=body,
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="",
+                rows=[product_row("222", "丙", models=[model_row(spec_id="3")])],
+                body_text=body,
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="",
+                rows=[product_row("333", "丁", models=[model_row(spec_id="4")])],
+                body_text=body,
+                next_enabled=True,
+            ),
+        ]
+        clicks = {"n": 0}
+
+        def advance(driver):
+            clicks["n"] += 1
+            driver.index += 1
+
+        crawler = make_crawler(ListingDriver(pages, on_next=advance), "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(clicks["n"], 2)
+        self.assertEqual(set(crawler.products_data), {"111", "112", "222", "333"})
+        self.assertIn(
+            "第 1 頁開頭：頁面顯示總數 4，目前累計 0 筆，本頁第一列商品 ID 111，本頁最後一列商品 ID 112",
+            message,
+        )
+        self.assertIn(
+            "第 2 頁開頭：頁面顯示總數 4，目前累計 2 筆，本頁第一列商品 ID 222，本頁最後一列商品 ID 222",
+            message,
+        )
+        self.assertIn(
+            "第 3 頁開頭：頁面顯示總數 4，目前累計 3 筆，本頁第一列商品 ID 333，本頁最後一列商品 ID 333",
+            message,
+        )
+        self.assertIn("已收集 4 筆，達到頁面顯示總數 4，不再點下一頁", message)
+        self.assertNotIn("已到最後一頁（頁碼「（沒有頁碼）」）", message)
+
+    def test_identical_rows_retry_then_fail_instead_of_continuing(self):
+        """點下一頁後商品列完全沒變：重試限定次數，仍相同就失敗，不把舊頁再讀成下一頁。"""
+        page = ListingPage(
+            indicator="",
+            rows=[
+                product_row("111", "甲", models=[model_row(spec_id="1")]),
+                product_row("112", "乙", models=[model_row(spec_id="2")]),
+            ],
+            body_text="架上商品(355) 355 件商品",
+            next_enabled=True,
+        )
+        clicks = {"n": 0}
+
+        def stay(_driver):
+            clicks["n"] += 1
+
+        crawler = make_crawler(ListingDriver([page], on_next=stay), "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("完全相同", message)
+        self.assertIn("上一頁", message)
+        self.assertIn("已重試 3 次", message)
+        self.assertEqual(clicks["n"], crawler_module.PAGE_CHANGE_ATTEMPTS)
+        self.assertEqual(set(crawler.products_data), {"111", "112"})
+        self.assertEqual(len(crawler.crawl_page_logs), 1)
+        self.assertNotIn("已到最後一頁（頁碼「（沒有頁碼）」）", stdout.getvalue())
+
+    def test_row_flicker_with_the_same_first_id_is_not_a_page_change(self):
+        """指紋閃一下（第一列沒換、或只閃一筆又回到舊列）不能確認換頁。"""
+        page = ListingPage(
+            indicator="",
+            rows=[product_row("111", "甲", models=[model_row(spec_id="1")])],
+            body_text="架上商品(355) 355 件商品",
+            next_enabled=True,
+        )
+        reads = {"n": 0}
+
+        def flicker(driver):
+            reads["n"] += 1
+            if reads["n"] == 2:
+                return [product_row("999", "閃一下", models=[model_row(spec_id="9")])]
+            return None
+
+        crawler = make_crawler(
+            ListingDriver([page], on_next=lambda _driver: None, on_fingerprint=flicker),
+            "unused.json",
+        )
+        with self.assertRaises(CrawlIntegrityError) as caught:
+            crawler.get_all_products_info()
+        self.assertIn("上一頁", str(caught.exception))
+        self.assertNotIn("999", crawler.products_data)
+        self.assertEqual(list(crawler.products_data), ["111"])
+        self.assertEqual(len(crawler.crawl_page_logs), 1)
+
+    def test_turn_that_reverts_to_the_previous_rows_fails(self):
+        """指紋先變成新商品、讀列時又回到上一頁：要失敗，不能把舊商品當成下一頁。"""
+        page = ListingPage(
+            indicator="",
+            rows=[
+                product_row("111", "甲", models=[model_row(spec_id="1")]),
+                product_row("112", "乙", models=[model_row(spec_id="2")]),
+            ],
+            body_text="架上商品(355) 355 件商品",
+            next_enabled=True,
+        )
+        reads = {"n": 0}
+
+        def look_like_the_next_page(_driver):
+            reads["n"] += 1
+            if reads["n"] == 1:
+                return None
+            return [product_row("999", "看起來像新頁", models=[model_row(spec_id="9")])]
+
+        crawler = make_crawler(
+            ListingDriver(
+                [page],
+                on_next=lambda _driver: None,
+                on_fingerprint=look_like_the_next_page,
+            ),
+            "unused.json",
+        )
+        with self.assertRaises(CrawlIntegrityError) as caught:
+            crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("完全相同", message)
+        self.assertIn("不會把舊頁再當成新的一頁", message)
+        self.assertEqual(set(crawler.products_data), {"111", "112"})
+        self.assertNotIn("999", crawler.products_data)
+        self.assertEqual([entry["頁碼"] for entry in crawler.crawl_page_logs], [1])
+
+    def test_no_new_rows_and_disabled_next_is_the_last_page(self):
+        """換頁後沒有新商品，而且下一頁已停用，才可以停；讀不到頁碼本身不是理由。"""
+        body = "架上商品(5) 5 件商品"
+        pages = [
+            ListingPage(
+                indicator="",
+                rows=[
+                    product_row("111", "甲", models=[model_row(spec_id="1")]),
+                    product_row("222", "乙", models=[model_row(spec_id="2")]),
+                ],
+                body_text=body,
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="",
+                rows=[product_row("222", "乙", models=[model_row(spec_id="2")])],
+                body_text=body,
+                next_enabled=False,
+            ),
+        ]
+
+        def advance(driver):
+            if driver.index == 0:
+                driver.index = 1
+
+        crawler = make_crawler(ListingDriver(pages, on_next=advance), "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            with self.assertRaisesRegex(CrawlIntegrityError, "少 3 個"):
+                crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertIn("這一頁沒有新商品列，而且下一頁按鈕已停用，視為最後一頁", message)
+        self.assertNotIn("已到最後一頁（頁碼「（沒有頁碼）」）", message)
+        self.assertEqual(set(crawler.products_data), {"111", "222"})
+
+    def test_destroyed_context_retries_the_same_page_then_finishes(self):
+        """讀頁時執行環境被銷毀一次：等頁面穩定後重試同一頁，後面的頁還是要抓。"""
+        pages = [
+            ListingPage(
+                indicator="1 / 2",
+                rows=[product_row("111", "第一頁", models=[model_row(spec_id="1")])],
+                body_text="架上商品(2) 2 件商品",
+                next_enabled=True,
+            ),
+            ListingPage(
+                indicator="2 / 2",
+                rows=[product_row("222", "第二頁", models=[model_row(spec_id="2")])],
+                body_text="架上商品(2) 2 件商品",
+                next_enabled=False,
+            ),
+        ]
+        fails = {"left": 1}
+
+        def scroll():
+            if fails["left"]:
+                fails["left"] -= 1
+                raise RuntimeError(
+                    "Page.evaluate: Execution context was destroyed, "
+                    "most likely because of a navigation"
+                )
+
+        def advance(driver):
+            driver.index += 1
+
+        crawler = make_crawler(ListingDriver(pages, on_next=advance), "unused.json")
+        crawler.scroll_to_load_all_rows = scroll
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(set(crawler.products_data), {"111", "222"})
+        self.assertEqual([entry["頁碼"] for entry in crawler.crawl_page_logs], [1, 2])
+        self.assertEqual(crawler.crawl_page_logs[0]["成功"], 1)
+        self.assertIn("執行環境被銷毀", message)
+        self.assertIn("重試第 1 頁", message)
+        self.assertEqual(fails["left"], 0)
+
+    def test_destroyed_context_fails_after_the_retry_limit_without_saving(self):
+        """執行環境一直被銷毀：重試次數用完就失敗，正式檔維持不變。"""
+        page = ListingPage(
+            indicator="",
+            rows=[product_row("111", "甲", models=[model_row(spec_id="1")])],
+            body_text="架上商品(355) 355 件商品",
+            next_enabled=True,
+        )
+
+        def scroll():
+            raise RuntimeError(
+                "Page.evaluate: Execution context was destroyed, "
+                "most likely because of a navigation"
+            )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler = make_crawler(ListingDriver([page]), str(output_path))
+            crawler.scroll_to_load_all_rows = scroll
+            crawler.login = lambda: None
+            calls = {}
+            crawler.get_monthly_sales = lambda *_args, **_kwargs: calls.__setitem__("monthly", True)
+            stdout = io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+                result = crawler.run()
+            self.assertIsNone(result)
+            self.assertNotIn("monthly", calls)
+            self.assertEqual(output_path.read_text(encoding="utf-8"), '{"old": true}\n')
+            message = stdout.getvalue()
+            self.assertIn("執行環境被銷毀", message)
+            self.assertIn("已重試 3 次仍失敗", message)
+            self.assertIn("正式檔", message)
+            self.assertEqual(message.count("重試第 1 頁"), 2)
+            self.assertNotIn("已儲存部分收集的資料", message)
+
+    def _crawl_after_click_destroyed(self, output_path, body, indicators, keyword, advance_when):
+        """點下一頁後第一次讀指紋就丟 destroyed。advance_when(點擊次數) 決定這次點擊有沒有換頁。"""
+        pages = []
+        for index, product_id in enumerate(("111", "222", "333")):
+            pages.append(ListingPage(
+                indicator=indicators[index],
+                rows=[product_row(
+                    product_id,
+                    f"商品{product_id}",
+                    models=[model_row(spec_id=product_id)],
+                )],
+                body_text=body,
+                next_enabled=index < 2,
+            ))
+        state = {"clicks": 0, "raised": False}
+
+        def advance(driver):
+            state["clicks"] += 1
+            if advance_when(state["clicks"]):
+                driver.index += 1
+
+        def flaky(driver):
+            if state["clicks"] >= 1 and not state["raised"]:
+                state["raised"] = True
+                raise RuntimeError(
+                    "Page.evaluate: Execution context was destroyed, "
+                    "most likely because of a navigation"
+                )
+            return None
+
+        crawler = make_crawler(
+            ListingDriver(pages, on_next=advance, on_fingerprint=flaky),
+            str(output_path),
+        )
+        if keyword:
+            crawler.search_keyword = keyword
+        crawler.login = lambda: None
+        crawler.get_monthly_sales = lambda *_args, **_kwargs: None
+        stdout = io.StringIO()
+        with redirect_stdout(stdout), redirect_stderr(io.StringIO()):
+            result = crawler.run()
+        return crawler, result, stdout.getvalue(), state
+
+    def test_destroyed_after_the_page_turned_does_not_click_next_again(self):
+        """點擊後已經換頁才被銷毀：不要再點下一頁，111、222、333 都要收到。"""
+        cases = (
+            ("沒有關鍵字、有頁碼、總數 3", "", "架上商品(3) 3 件商品", ("1 / 3", "2 / 3", "3 / 3"), True, "matched"),
+            ("沒有關鍵字、讀不到頁碼、總數 3", "", "架上商品(3) 3 件商品", ("", "", ""), True, "matched"),
+            ("關鍵字、清單寫 355 件", "手機殼", "架上商品(355) 355 件商品", ("", "", ""), False, None),
+            ("關鍵字、只有全店總數", "手機殼", "架上商品(355)", ("", "", ""), True, "unverified_store_total_only"),
+        )
+        for title, keyword, body, indicators, expect_saved, count_check in cases:
+            with self.subTest(title=title):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    output_path = Path(temp_dir) / "shopee_products.json"
+                    output_path.write_text('{"old": true}\n', encoding="utf-8")
+                    crawler, result, message, state = self._crawl_after_click_destroyed(
+                        output_path, body, indicators, keyword, advance_when=lambda _clicks: True,
+                    )
+                    saved = json.loads(output_path.read_text(encoding="utf-8"))
+                self.assertTrue(state["raised"])
+                self.assertEqual(set(crawler.products_data), {"111", "222", "333"})
+                self.assertEqual(state["clicks"], 2)
+                self.assertEqual(crawler.driver.index, 2)
+                self.assertIn("不再重點下一頁", message)
+                self.assertIn("第一列商品 ID 222", message)
+                self.assertIn("第一列商品 ID 333", message)
+                if expect_saved:
+                    self.assertIsNotNone(result)
+                    product_ids = sorted(
+                        key for key in saved
+                        if key not in ("_crawl_page_log", "_crawl_count_check")
+                    )
+                    self.assertEqual(product_ids, ["111", "222", "333"])
+                    self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["count_check"], count_check)
+                    self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["collected"], 3)
+                else:
+                    self.assertIsNone(result)
+                    self.assertEqual(saved, {"old": True})
+                    self.assertIn("少 352 個", message)
+                    self.assertIn("不會把這次結果當成完整資料", message)
+
+    def test_destroyed_after_click_before_the_page_turns_retries_the_click(self):
+        """點擊後尚未換頁就被銷毀：仍可重試點下一頁，三頁都要收到。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            output_path.write_text('{"old": true}\n', encoding="utf-8")
+            crawler, result, message, state = self._crawl_after_click_destroyed(
+                output_path,
+                "架上商品(3) 3 件商品",
+                ("1 / 3", "2 / 3", "3 / 3"),
+                "",
+                advance_when=lambda clicks: clicks >= 2,
+            )
+            saved = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertTrue(state["raised"])
+        self.assertEqual(state["clicks"], 3)
+        self.assertEqual(set(crawler.products_data), {"111", "222", "333"})
+        self.assertIn("頁面仍是剛收完的第 1 頁，重試點下一頁", message)
+        self.assertNotIn("不再重點下一頁", message)
+        self.assertIsNotNone(result)
+        product_ids = sorted(
+            key for key in saved
+            if key not in ("_crawl_page_log", "_crawl_count_check")
+        )
+        self.assertEqual(product_ids, ["111", "222", "333"])
+        self.assertEqual(saved[CRAWL_COUNT_CHECK_KEY]["count_check"], "matched")
 
 
 if __name__ == "__main__":
