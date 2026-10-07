@@ -445,6 +445,46 @@ class GoldenBatchWriterTest(unittest.TestCase):
         self.assertEqual(self.golden_path.read_bytes(), before_bytes)
         self.assertEqual(dump_db(self.db_path), before_sql)
 
+    def test_preview_stdout_names_diff_file_and_file_exists(self):
+        batch_id, proposal_path, decision_path = self._cup_files()
+        self._seed_cup_snapshot()
+        before_bytes = self.golden_path.read_bytes()
+        before_sql = dump_db(self.db_path)
+        diff_path = self.base / "backups" / "batches" / batch_id / "dry_run_diff.json"
+        cases = (
+            [
+                "dry-run", str(proposal_path),
+                "--decision", str(decision_path),
+                "--base-dir", str(self.base),
+            ],
+            [
+                "apply", str(proposal_path),
+                "--decision", str(decision_path),
+                "--base-dir", str(self.base),
+            ],
+        )
+        for argv in cases:
+            with self.subTest(command=argv[0]):
+                if diff_path.exists():
+                    diff_path.unlink()
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    code = main(argv)
+                text = stdout.getvalue()
+                self.assertEqual(code, 0)
+                self.assertIn("對照表與資料庫都沒有寫入", text)
+                self.assertIn("沒有寫入", text)
+                self.assertIn(f"差異檔寫在 {diff_path}", text)
+                self.assertTrue(diff_path.is_file())
+                payload = json.loads(diff_path.read_text(encoding="utf-8"))
+                self.assertEqual(payload["batch_id"], batch_id)
+                self.assertTrue(payload["rows"])
+                self.assertEqual(self.golden_path.read_bytes(), before_bytes)
+                self.assertEqual(dump_db(self.db_path), before_sql)
+                batch_dir = diff_path.parent
+                self.assertFalse((batch_dir / "golden_table.json").exists())
+                self.assertFalse((batch_dir / "batch_record.json").exists())
+
     def test_missing_or_empty_sign_off_blocks_apply(self):
         batch_id, proposal_path, decision_path = self._cup_files()
         before_bytes = self.golden_path.read_bytes()

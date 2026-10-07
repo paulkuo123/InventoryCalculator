@@ -8,7 +8,7 @@
 - 第 2、3 層核准或改成指定規格：`_apply_decision`（它先做網頁審核同一套狀態、候選與第二規格檢查，再呼叫 `_write_approved_mapping`）
 - 標成停售：`_write_status_mapping`
 
-沒有加上 `--apply` 時，不會改 `golden_table.json`，也不會改資料庫裡的對照建議、審核紀錄或 1688 綁定。
+沒有加上 `--apply` 時，不會改 `golden_table.json`，也不會改資料庫裡的對照建議、審核紀錄或 1688 綁定。`dry-run`，以及 `apply` 沒加 `--apply`，仍會把差異寫進 `backups/batches/<批次編號>/dry_run_diff.json`。
 
 ## 提案檔
 
@@ -120,7 +120,7 @@ python -m golden_batch_writer rollback --batch-id B-20261004-01 \
   --mode per-row --base-dir /你的資料夾 --apply
 ```
 
-`apply` 不加 `--apply` 時只做預覽。預覽會寫差異檔，不會改對照表。預覽和第 1 層一樣，會先確認資料庫裡已經有一筆成功、而且連結相符的快照。第 2、3 層的預覽也會核對規格。
+`dry-run`，以及 `apply` 不加 `--apply`，都只做預覽。預覽會把差異檔寫在 `backups/batches/<批次編號>/dry_run_diff.json`，對照表與資料庫都沒有寫入。預覽和第 1 層一樣，會先確認資料庫裡已經有一筆成功、而且連結相符的快照。第 2、3 層的預覽也會核對規格。
 
 真的套用時，必須在終端機手動輸入批次編號，不能用管線代填。第 1 層每一列還要再輸入一次 `商品編號/規格編號`，一次一列。任何一列打錯，整批停止，而且還沒開始寫。這些確認之前只用唯讀連線看快照和建議，不會建立 `SkuMappingService`，也不會改 `procurement.db` 的位元組。人打對批次編號之後，才開啟服務、取資料庫快照、開始寫。
 

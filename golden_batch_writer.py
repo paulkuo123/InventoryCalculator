@@ -1695,7 +1695,11 @@ def _add_base(parser: argparse.ArgumentParser) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Golden 對照表的批次寫入。代理只能提案；人簽核之後才寫入。沒有 --apply 不會改對照表，也不會改資料庫。",
+        description=(
+            "Golden 對照表的批次寫入。代理只能提案；人簽核之後才寫入。"
+            "沒有 --apply 不會改對照表，也不會改資料庫。"
+            "預覽會把差異檔寫在 backups/batches/<批次編號>/dry_run_diff.json。"
+        ),
     )
     commands = parser.add_subparsers(dest="command", required=True)
 
@@ -1703,7 +1707,13 @@ def build_parser() -> argparse.ArgumentParser:
     _add_base(validate)
     validate.add_argument("proposal", help="提案檔路徑，檔名必須是批次編號。")
 
-    preview = commands.add_parser("dry-run", help="預覽每一列的前後差異，不寫入。")
+    preview = commands.add_parser(
+        "dry-run",
+        help=(
+            "預覽每一列的前後差異。對照表與資料庫都沒有寫入，"
+            "差異檔會寫在 backups/batches/<批次編號>/dry_run_diff.json。"
+        ),
+    )
     _add_base(preview)
     preview.add_argument("proposal", help="提案檔路徑。")
     preview.add_argument("--decision", required=True, help="人填寫的決策檔路徑。")
@@ -1712,7 +1722,11 @@ def build_parser() -> argparse.ArgumentParser:
     _add_base(apply_cmd)
     apply_cmd.add_argument("proposal", help="提案檔路徑。")
     apply_cmd.add_argument("--decision", required=True, help="人填寫的決策檔路徑。")
-    apply_cmd.add_argument("--apply", action="store_true", help="真的寫入。省略時只做預覽。")
+    apply_cmd.add_argument(
+        "--apply",
+        action="store_true",
+        help="真的寫入。省略時只做預覽：對照表與資料庫都沒有寫入，差異檔仍會寫下。",
+    )
 
     verify = commands.add_parser("verify", help="寫入後檢查：只有這一批的列有變，列數不變。")
     _add_base(verify)
@@ -1740,7 +1754,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return 0
         if args.command == "dry-run":
             result = dry_run(args.proposal, args.decision, args.base_dir)
-            print(f"預覽完成，沒有寫入。差異檔：{result['diff_path']}")
+            print(
+                "預覽完成。對照表與資料庫都沒有寫入。"
+                f"差異檔寫在 {result['diff_path']}"
+            )
             if result["whole_file_sha_matches_proposal"]:
                 print("整份檔案的檢查碼和提案時相同。")
             else:
@@ -1749,8 +1766,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.command == "apply":
             if not args.apply:
                 result = dry_run(args.proposal, args.decision, args.base_dir)
-                print("未加上 --apply，沒有寫入任何資料。")
-                print(f"差異檔：{result['diff_path']}")
+                print(
+                    "未加上 --apply。對照表與資料庫都沒有寫入。"
+                    f"差異檔寫在 {result['diff_path']}"
+                )
                 return 0
             result = apply_batch(
                 args.proposal,
