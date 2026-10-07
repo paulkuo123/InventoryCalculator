@@ -3,14 +3,19 @@ import os
 import tempfile
 import time
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
+from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from config_loader import load_anthropic_api_key, load_openai_config_value
 from sku_mapping_service import (
     DEFERRED_REVIEW_REASON,
+    DEFAULT_ANTHROPIC_MODEL,
     URL_HEALTH_TTL_SECONDS,
     MappingConflict,
     SkuMappingService,
+    _ai_system_text,
     _phone_mismatch,
     _phone_tier_bonus,
     _phone_tokens,
@@ -1524,6 +1529,218 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertEqual(result["source"], "deepseek_error")
         self.assertIn("DeepSeek 沒有回傳 JSON", result["warnings"][0])
 
+    def _claude_config(self, **overrides):
+        values = {
+            "SKU_MAPPING_AI_PROVIDER": "claude",
+            "ANTHROPIC_SKU_MAPPING_MODEL": "",
+            "ANTHROPIC_MODEL": "",
+        }
+        values.update(overrides)
+
+        def config(name, default=""):
+            if name in values and values[name]:
+                return (values[name], "env")
+            return (default, "default")
+
+        return config
+
+    def test_unconfigured_provider_stays_gemini(self):
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "gemini-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+        seen = {}
+
+        def config(name, default=""):
+            seen[name] = default
+            return (default, "default")
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=config), patch("sku_mapping_service.load_gemini_api_key", return_value=("", "")), patch("sku_mapping_service.requests.post") as post:
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(seen["SKU_MAPPING_AI_PROVIDER"], "gemini")
+        self.assertEqual(result["provider"], "gemini")
+        self.assertEqual(result["source"], "rules")
+        self.assertIn("未設定 GEMINI_API_KEY", result["warnings"][0])
+        self.assertFalse(post.called)
+
+    def test_claude_messages_request_parses_text_and_ignores_thinking(self):
+        secret = "anthropic-test-key"
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+        decision = {
+            "decision": "match",
+            "selected_sku_id": "claude-valid",
+            "confidence": 0.91,
+            "matched_dimensions": ["白色"],
+            "evidence": ["規格一致"],
+            "warnings": [],
+        }
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {
+                    "model": "claude-sonnet-5-5",
+                    "content": [
+                        {"type": "thinking", "thinking": "不要當成判定"},
+                        {"type": "text", "text": json.dumps(decision, ensure_ascii=False)},
+                    ],
+                }
+
+        stdout, stderr = StringIO(), StringIO()
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post, redirect_stdout(stdout), redirect_stderr(stderr):
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(result["source"], "claude")
+        self.assertEqual(result["provider"], "claude")
+        self.assertEqual(result["selected_sku_id"], "claude-valid")
+        self.assertIsNone(result["effort"])
+        self.assertEqual(result["model"], "claude-sonnet-5-5")
+        self.assertEqual(post.call_args.args[0], "https://api.anthropic.com/v1/messages")
+        self.assertEqual(post.call_args.kwargs["timeout"], 120)
+        headers = post.call_args.kwargs["headers"]
+        self.assertEqual(headers["x-api-key"], secret)
+        self.assertEqual(headers["anthropic-version"], "2023-06-01")
+        self.assertEqual(headers["Content-Type"], "application/json")
+        self.assertNotIn("Authorization", headers)
+        body = post.call_args.kwargs["json"]
+        self.assertEqual(body["model"], DEFAULT_ANTHROPIC_MODEL)
+        self.assertEqual(body["max_tokens"], 2000)
+        self.assertEqual(body["system"], _ai_system_text(False))
+        self.assertEqual(body["messages"][0]["role"], "user")
+        user_payload = json.loads(body["messages"][0]["content"])
+        self.assertEqual(user_payload["shopee"]["model_name"], "白色")
+        self.assertIn("candidates", user_payload)
+        self.assertEqual(body["output_config"]["format"]["type"], "json_schema")
+        self.assertEqual(body["output_config"]["format"]["schema"]["properties"]["decision"]["enum"], ["match", "abstain"])
+        rendered = json.dumps(result, ensure_ascii=False) + stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn(secret, rendered)
+
+    def test_claude_model_setting_and_unknown_fallback(self):
+        secret = "anthropic-test-key"
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"model": "claude-sonnet-5", "content": [{"type": "text", "text": json.dumps({
+                    "decision": "match", "selected_sku_id": "claude-valid", "confidence": 0.9,
+                    "matched_dimensions": ["白色"], "evidence": ["規格一致"], "warnings": [],
+                })}]}
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config(ANTHROPIC_MODEL="claude-sonnet-5")), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post:
+            self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "claude-sonnet-5")
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config(ANTHROPIC_SKU_MAPPING_MODEL="claude-sonnet-4-6", ANTHROPIC_MODEL="claude-sonnet-5")), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post:
+            self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(post.call_args.kwargs["json"]["model"], "claude-sonnet-4-6")
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config(ANTHROPIC_SKU_MAPPING_MODEL="not-a-claude-model")), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post:
+            self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(post.call_args.kwargs["json"]["model"], DEFAULT_ANTHROPIC_MODEL)
+
+    def test_claude_missing_key_matches_other_providers(self):
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=("", "")), patch("sku_mapping_service.requests.post") as post:
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(result["source"], "rules")
+        self.assertEqual(result["provider"], "claude")
+        self.assertEqual(result["fallback"], "rules")
+        self.assertIn("未設定 ANTHROPIC_API_KEY", result["warnings"][0])
+        self.assertFalse(post.called)
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=("", "")):
+            forced = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates, force_match=True)
+        self.assertEqual(forced["source"], "claude_error")
+        self.assertTrue(forced["force_match"])
+        self.assertIn("未設定 ANTHROPIC_API_KEY", forced["warnings"][0])
+
+    def test_claude_invalid_json_falls_back_once(self):
+        secret = "anthropic-test-key"
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": "not-json"}]}
+
+        stdout, stderr = StringIO(), StringIO()
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post, redirect_stdout(stdout), redirect_stderr(stderr):
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(result["source"], "rules")
+        self.assertEqual(result["provider"], "claude")
+        self.assertEqual(result["fallback"], "rules")
+        self.assertIn("JSON", result["warnings"][0])
+        rendered = result["warnings"][0] + stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn(secret, rendered)
+
+    def test_claude_rate_limit_falls_back_and_redacts_key(self):
+        secret = "anthropic-test-key"
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+
+        class FakeResponse:
+            status_code = 429
+
+            def raise_for_status(self):
+                error = RuntimeError(f"rate limited {secret}")
+                error.response = self
+                raise error
+
+            def json(self):
+                return {"error": {"type": "rate_limit_error", "message": f"slow down {secret}"}}
+
+        stdout, stderr = StringIO(), StringIO()
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post, redirect_stdout(stdout), redirect_stderr(stderr):
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(post.call_count, 1)
+        self.assertEqual(post.call_args.kwargs["timeout"], 120)
+        self.assertEqual(result["source"], "rules")
+        self.assertEqual(result["provider"], "claude")
+        self.assertEqual(result["fallback"], "rules")
+        self.assertIn("429", result["warnings"][0])
+        rendered = result["warnings"][0] + stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn(secret, rendered)
+        self.assertIn("[redacted]", result["warnings"][0])
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()), redirect_stdout(StringIO()), redirect_stderr(StringIO()):
+            forced = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates, force_match=True)
+        self.assertEqual(forced["source"], "claude_error")
+        self.assertNotEqual(forced.get("fallback"), "rules")
+        self.assertIn("429", forced["warnings"][0])
+        self.assertNotIn(secret, forced["warnings"][0])
+
+    def test_claude_force_match_schema_requires_match(self):
+        secret = "anthropic-test-key"
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": json.dumps({
+                    "decision": "match", "selected_sku_id": "claude-valid", "confidence": 0.7,
+                    "matched_dimensions": ["白色"], "evidence": ["最接近"], "warnings": [],
+                })}]}
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post:
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates, force_match=True)
+        self.assertEqual(result["source"], "claude")
+        self.assertEqual(result["decision"], "match")
+        schema = post.call_args.kwargs["json"]["output_config"]["format"]["schema"]
+        self.assertEqual(schema["properties"]["decision"]["enum"], ["match"])
+        self.assertEqual(post.call_args.kwargs["json"]["system"], _ai_system_text(True))
+
     def test_gemini_is_default_provider_and_uses_generate_content(self):
         model = {"product_name": "短襪", "model_name": "白色"}
         candidates = [{"sku_id": "gemini-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
@@ -2503,6 +2720,31 @@ class NormalizeTextTrailingSeparatorTests(unittest.TestCase):
         self.assertEqual(normalize_text("浅驼＞L"), "淺駝,l")
         self.assertNotEqual(normalize_text("白色>L"), normalize_text("白色L"))
         self.assertNotEqual(normalize_text("白色>L"), normalize_text("白色"))
+
+
+class AnthropicApiKeyLoaderTests(unittest.TestCase):
+    def test_key_comes_only_from_environment(self):
+        secret = "anthropic-test-key"
+        with tempfile.TemporaryDirectory() as tmp:
+            env_path = os.path.join(tmp, ".env.local")
+            with open(env_path, "w", encoding="utf-8") as handle:
+                handle.write('ANTHROPIC_API_KEY="file-only-value"\n')
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": ""}, clear=False), patch("config_loader._load_shell_rc_values", return_value={}):
+                value, source = load_anthropic_api_key()
+                file_value, file_source = load_openai_config_value("ANTHROPIC_API_KEY", "", tmp)
+            self.assertEqual(value, "")
+            self.assertEqual(source, "")
+            self.assertEqual(file_value, "file-only-value")
+            self.assertEqual(file_source, ".env.local")
+
+            stdout, stderr = StringIO(), StringIO()
+            with patch.dict(os.environ, {"ANTHROPIC_API_KEY": secret}, clear=False), redirect_stdout(stdout), redirect_stderr(stderr):
+                value, source = load_anthropic_api_key()
+            self.assertEqual(value, secret)
+            self.assertEqual(source, "env")
+            rendered = stdout.getvalue() + stderr.getvalue()
+            self.assertNotIn(secret, rendered)
+            self.assertNotIn("file-only-value", rendered)
 
 
 if __name__ == "__main__":

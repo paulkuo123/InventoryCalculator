@@ -160,7 +160,7 @@ API：`POST /api/sku-mapping/decisions` 接受 `reasonCode`／`reasonText`；OTH
 - **Cross-offer**：`normalize_text(model_name)` 相同的過去核准 `1688_sku_name`。
 - 每個候選附 `historical_support_count` 與最多 5 筆 example summaries。目前列自己的核准答案不會算進去（避免評估洩漏）。
 - **負例閘門**：`(product_id, model_id, offer_id, candidate_key)` 命中 `mapping_negative_examples` → 剔除候選並記 `rule_type='negative'`。同一 `(offer_id, candidate_key)` 但**不同型號**不剔除，只進 prompt context。
-- LLM payload（`_request_structured_ai`／Gemini／DeepSeek）新增 `historical_examples`、`negative_examples`、`applied_rules`。`_ai_system_text`：歷史人工核准優先於相似度；負例中的候選不得選。`PROMPT_VERSION = "2026-09-v2"` 寫入 `evidence_json.ai.prompt_version`。
+- LLM payload（`_request_structured_ai`／Gemini／DeepSeek／Claude）新增 `historical_examples`、`negative_examples`、`applied_rules`。`_ai_system_text`：歷史人工核准優先於相似度；負例中的候選不得選。`PROMPT_VERSION = "2026-09-v2"` 寫入 `evidence_json.ai.prompt_version`。Claude 走 Anthropic Messages API，金鑰只讀環境變數 `ANTHROPIC_API_KEY`，模型預設 `claude-sonnet-5-5`；未設定 `SKU_MAPPING_AI_PROVIDER` 時仍是 gemini。
 
 預設 fixture 數字必須 ≥ TASK 1／2／3／4 基線（isolated eval 的 golden／負例是空的，規則層結果不變）：
 

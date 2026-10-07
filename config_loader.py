@@ -96,6 +96,18 @@ def load_deepseek_api_key(project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
     return _load_config_value("DEEPSEEK_API_KEY", project_root)
 
 
+def load_anthropic_api_key() -> Tuple[str, str]:
+    """讀取 Claude 金鑰。只看環境變數 ANTHROPIC_API_KEY。
+
+    不讀 .env.local、不讀 shell rc，也不把值寫進 log。
+    未設定或只有空白時回傳空字串。
+    """
+    value = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if value:
+        return value, "env"
+    return "", ""
+
+
 def load_openai_config_value(name: str, default: str = "", project_root: str = PROJECT_ROOT) -> Tuple[str, str]:
     """依環境變數、專案 .env.local、shell 設定的順序讀取非敏感 OpenAI 設定。"""
     value, source = _load_config_value(name, project_root)

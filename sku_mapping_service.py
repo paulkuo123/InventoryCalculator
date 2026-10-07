@@ -34,7 +34,14 @@ from urllib.parse import urlparse
 import requests
 
 from golden_table_io import golden_write
-from config_loader import load_deepseek_api_key, load_gemini_api_key, load_openai_api_key, load_openai_config_value, load_xai_api_key
+from config_loader import (
+    load_anthropic_api_key,
+    load_deepseek_api_key,
+    load_gemini_api_key,
+    load_openai_api_key,
+    load_openai_config_value,
+    load_xai_api_key,
+)
 from mapping_knowledge import (
     NEGATIVE_ORIGINS,
     NEGATIVE_REASON_CODES,
@@ -76,7 +83,19 @@ XAI_MODELS = {"grok-4.5", "grok-4.5-latest", "grok-4.20-0309-non-reasoning", "gr
 XAI_REASONING = {"low", "medium", "high"}
 GEMINI_MODELS = {"gemini-3.1-flash-lite", "gemini-3.5-flash-lite", "gemini-3.6-flash"}
 DEEPSEEK_MODELS = {"deepseek-v4-flash", "deepseek-v4-pro"}
-AI_SUCCESS_SOURCES = {"openai", "grok", "deepseek", "gemini"}
+# Current Sonnet series id from Anthropic's models overview (Claude Sonnet 5.5).
+# Older Sonnet ids remain selectable; anything else falls back to the default.
+DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5"
+ANTHROPIC_MODELS = {
+    "claude-sonnet-5-5",
+    "claude-sonnet-5",
+    "claude-sonnet-4-6",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-5-20250929",
+}
+ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages"
+ANTHROPIC_VERSION = "2023-06-01"
+AI_SUCCESS_SOURCES = {"openai", "grok", "deepseek", "gemini", "claude"}
 AI_GREEN_CONFIDENCE_THRESHOLD = 0.95
 AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD = 0.90
 DEFERRED_REVIEW_REASON = "人工保留，稍後比較候選"
@@ -296,6 +315,26 @@ def _mapping_response_schema(force_match: bool = False, gemini: bool = False) ->
     if force_match:
         schema["properties"]["decision"]["enum"] = ["match"]
     return schema
+
+
+def _redact_secret(text: str, secret: str) -> str:
+    """Drop a secret from text that may be logged. Never print a fragment."""
+    rendered = str(text or "")
+    token = str(secret or "").strip()
+    if token and token in rendered:
+        return rendered.replace(token, "[redacted]")
+    return rendered
+
+
+def resolve_anthropic_model() -> str:
+    """SKU mapping model, then ANTHROPIC_MODEL, then the current Sonnet id."""
+    configured, _ = load_openai_config_value("ANTHROPIC_SKU_MAPPING_MODEL", "")
+    if not str(configured or "").strip():
+        configured, _ = load_openai_config_value("ANTHROPIC_MODEL", "")
+    configured = str(configured or "").strip()
+    if configured in ANTHROPIC_MODELS:
+        return configured
+    return DEFAULT_ANTHROPIC_MODEL
 
 
 def _ai_task_text(force_match: bool = False) -> str:
@@ -6253,6 +6292,104 @@ class SkuMappingService:
         model_name = configured_model if configured_model in DEEPSEEK_MODELS else "deepseek-v4-flash"
         return self._request_deepseek_structured_ai(api_key, model_name, model, candidates, force_match=force_match)
 
+    @staticmethod
+    def _claude_response_text(data: Dict[str, Any]) -> str:
+        """Join Messages API text blocks. Thinking blocks are not the decision."""
+        content = data.get("content")
+        if isinstance(content, str):
+            return content.strip()
+        chunks: List[str] = []
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict) and block.get("type") == "text" and block.get("text"):
+                    chunks.append(str(block.get("text") or ""))
+        return "".join(chunks).strip()
+
+    @staticmethod
+    def _claude_error_text(exc: BaseException, api_key: str) -> str:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        status_text = f"HTTP {status}" if status else type(exc).__name__
+        detail = ""
+        response = getattr(exc, "response", None)
+        if response is not None:
+            try:
+                body = response.json()
+            except Exception:
+                body = None
+            if isinstance(body, dict):
+                error = body.get("error")
+                if isinstance(error, dict):
+                    detail = str(error.get("message") or "").strip()
+                elif error:
+                    detail = str(error).strip()
+        if detail:
+            status_text = f"{status_text}: {detail[:240]}"
+        elif str(exc).strip():
+            status_text = f"{status_text}: {str(exc).strip()[:240]}"
+        return _redact_secret(status_text, api_key)
+
+    def _request_claude_structured_ai(self, api_key: str, model_name: str, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
+        """Call Anthropic Messages API with the same prompt and JSON schema.
+
+        JSON parse failures, HTTP errors, and timeouts follow the DeepSeek
+        path: one request, no extra retry, timeout 120s, then an abstain
+        warning. The API key is redacted from any warning text.
+        """
+        request_payload = {
+            "model": model_name,
+            "max_tokens": 2000,
+            "system": _ai_system_text(force_match),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": json.dumps(self._ai_user_payload(model, candidates, force_match), ensure_ascii=False),
+                }
+            ],
+            "output_config": {
+                "format": {
+                    "type": "json_schema",
+                    "schema": _mapping_response_schema(force_match),
+                }
+            },
+        }
+        try:
+            response = requests.post(
+                ANTHROPIC_MESSAGES_URL,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": ANTHROPIC_VERSION,
+                    "Content-Type": "application/json",
+                },
+                json=request_payload,
+                timeout=120,
+            )
+            response.raise_for_status()
+            data = response.json()
+            text = self._claude_response_text(data if isinstance(data, dict) else {})
+            if not text:
+                raise ValueError("Claude 沒有回傳 JSON")
+            result = json.loads(text)
+            result = self._validate_ai_selection(result, candidates)
+            result["source"] = "claude"
+            result["provider"] = "claude"
+            result["model"] = data.get("model", model_name) if isinstance(data, dict) else model_name
+            result["effort"] = None
+            result["response_model"] = data.get("model", model_name) if isinstance(data, dict) else model_name
+            return self._stamp_prompt_version(result)
+        except Exception as exc:
+            status_text = self._claude_error_text(exc, api_key)
+            return self._stamp_prompt_version({
+                "source": "claude_error", "provider": "claude", "model": model_name, "effort": None,
+                "decision": "abstain", "confidence": 0, "warnings": [f"Claude API {status_text}"],
+            })
+
+    def _claude_decide(self, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
+        api_key, _ = load_anthropic_api_key()
+        if not api_key:
+            return self._ai_failure("claude", ["未設定 ANTHROPIC_API_KEY"], force_match)
+        model_name = resolve_anthropic_model()
+        return self._request_claude_structured_ai(api_key, model_name, model, candidates, force_match=force_match)
+
     def _maybe_ai_decide(self, model: Dict[str, Any], snapshot: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Optional[Dict[str, Any]]:
         candidates = self._prepare_ai_candidates(model, snapshot, candidates)
         if not candidates:
@@ -6304,6 +6441,17 @@ class SkuMappingService:
                 return failure
             warnings = result.get("warnings") or ["DeepSeek API 沒有回傳結果"]
             return self._ai_failure("deepseek", warnings, force_match)
+
+        if provider == "claude":
+            result = self._claude_decide(model, candidates, force_match=force_match)
+            if result.get("source") == "claude" and (not force_match or (result.get("decision") == "match" and (result.get("selected_candidate_key") or result.get("selected_sku_id")))):
+                return result
+            if result.get("source") == "claude" and force_match:
+                failure = self._ai_failure("claude", result.get("warnings") or ["AI 沒有選出候選"], True)
+                failure["error_kind"] = "invalid_selection"
+                return failure
+            warnings = result.get("warnings") or ["Claude API 沒有回傳結果"]
+            return self._ai_failure("claude", warnings, force_match)
 
         # Official xAI remains available as an explicit provider.  Once a key exists, any xAI
         # failure (including quota/rate-limit exhaustion) intentionally falls
