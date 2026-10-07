@@ -12,10 +12,15 @@ from config_loader import load_anthropic_api_key, load_openai_config_value
 from sku_mapping_service import (
     DEFERRED_REVIEW_REASON,
     DEFAULT_ANTHROPIC_MODEL,
+    GEMINI_MAPPING_SCHEMA,
+    MAPPING_SCHEMA,
     URL_HEALTH_TTL_SECONDS,
     MappingConflict,
     SkuMappingService,
     _ai_system_text,
+    _claude_mapping_schema,
+    _mapping_response_schema,
+    _strip_claude_unsupported_schema_keywords,
     _phone_mismatch,
     _phone_tier_bonus,
     _phone_tokens,
@@ -1740,6 +1745,237 @@ class SkuMappingServiceTest(unittest.TestCase):
         schema = post.call_args.kwargs["json"]["output_config"]["format"]["schema"]
         self.assertEqual(schema["properties"]["decision"]["enum"], ["match"])
         self.assertEqual(post.call_args.kwargs["json"]["system"], _ai_system_text(True))
+
+    def _schema_keys(self, node):
+        found = set()
+        if isinstance(node, dict):
+            found.update(node)
+            for value in node.values():
+                found.update(self._schema_keys(value))
+        elif isinstance(node, list):
+            for item in node:
+                found.update(self._schema_keys(item))
+        return found
+
+    def test_claude_request_schema_drops_unsupported_keywords(self):
+        # Keywords Anthropic structured outputs reject. minItems is allowed
+        # only for 0 and 1, so any other minItems is also unsupported.
+        # https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+        unsupported = {
+            "minimum",
+            "maximum",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "multipleOf",
+            "minLength",
+            "maxLength",
+            "maxItems",
+            "uniqueItems",
+            "minContains",
+            "maxContains",
+        }
+        secret = "anthropic-test-key"
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+        shared_before = json.loads(json.dumps(MAPPING_SCHEMA))
+
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": json.dumps({
+                    "decision": "match", "selected_sku_id": "claude-valid", "confidence": 0.7,
+                    "matched_dimensions": ["白色"], "evidence": ["規格一致"], "warnings": [],
+                })}]}
+
+        stdout, stderr = StringIO(), StringIO()
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as post, redirect_stdout(stdout), redirect_stderr(stderr):
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(result["source"], "claude")
+        schema = post.call_args.kwargs["json"]["output_config"]["format"]["schema"]
+        self.assertFalse(unsupported & self._schema_keys(schema))
+        self.assertIs(schema["additionalProperties"], False)
+        self.assertEqual(schema["properties"]["decision"]["enum"], ["match", "abstain"])
+        self.assertNotIn("minimum", schema["properties"]["confidence"])
+        self.assertNotIn("maximum", schema["properties"]["confidence"])
+        self.assertNotIn("maxItems", schema["properties"]["matched_dimensions"])
+        self.assertNotIn("maxItems", schema["properties"]["evidence"])
+        self.assertNotIn("maxItems", schema["properties"]["warnings"])
+        self.assertEqual(schema, _claude_mapping_schema(False))
+        self.assertEqual(MAPPING_SCHEMA, shared_before)
+        self.assertEqual(MAPPING_SCHEMA["properties"]["confidence"]["minimum"], 0)
+        self.assertEqual(MAPPING_SCHEMA["properties"]["confidence"]["maximum"], 1)
+        self.assertEqual(MAPPING_SCHEMA["properties"]["matched_dimensions"]["maxItems"], 12)
+        self.assertEqual(MAPPING_SCHEMA["properties"]["evidence"]["maxItems"], 8)
+        self.assertEqual(MAPPING_SCHEMA["properties"]["warnings"]["maxItems"], 8)
+        rendered = json.dumps(schema, ensure_ascii=False) + stdout.getvalue() + stderr.getvalue()
+        self.assertNotIn(secret, rendered)
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=FakeResponse()) as forced:
+            self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates, force_match=True)
+        forced_schema = forced.call_args.kwargs["json"]["output_config"]["format"]["schema"]
+        self.assertEqual(forced_schema["properties"]["decision"]["enum"], ["match"])
+        self.assertFalse(unsupported & self._schema_keys(forced_schema))
+        self.assertIs(forced_schema["additionalProperties"], False)
+        self.assertEqual(MAPPING_SCHEMA["properties"]["decision"]["enum"], ["match", "abstain"])
+
+        original = {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "kept": {"type": "array", "minItems": 0, "items": {"type": "string", "minLength": 1}},
+                "one": {"type": "array", "minItems": 1},
+                "too_many": {"type": "array", "minItems": 2, "maxItems": 4},
+            },
+        }
+        stripped = _strip_claude_unsupported_schema_keywords(original)
+        self.assertEqual(stripped["properties"]["kept"]["minItems"], 0)
+        self.assertEqual(stripped["properties"]["one"]["minItems"], 1)
+        self.assertNotIn("minItems", stripped["properties"]["too_many"])
+        self.assertNotIn("maxItems", stripped["properties"]["too_many"])
+        self.assertNotIn("minLength", stripped["properties"]["kept"]["items"])
+        self.assertIs(stripped["additionalProperties"], False)
+        self.assertIn("minLength", original["properties"]["kept"]["items"])
+        self.assertEqual(original["properties"]["too_many"]["maxItems"], 4)
+
+    def test_other_provider_schemas_keep_shared_constraints(self):
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "provider-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+        decision = {
+            "decision": "match",
+            "selected_sku_id": "provider-valid",
+            "confidence": 0.8,
+            "matched_dimensions": ["白色"],
+            "evidence": ["規格一致"],
+            "warnings": [],
+        }
+
+        class OpenAIResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"model": "gpt-5.6-luna", "output_text": json.dumps(decision)}
+
+        class GrokResponse(OpenAIResponse):
+            def json(self):
+                return {"model": "grok-4.5", "output_text": json.dumps(decision)}
+
+        class GeminiResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"modelVersion": "gemini-3.5-flash-lite", "candidates": [{"content": {"parts": [{"text": json.dumps(decision)}]}}]}
+
+        class DeepSeekResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"model": "deepseek-v4-flash", "choices": [{"message": {"content": json.dumps(decision)}}]}
+
+        def provider_config(provider):
+            return lambda name, default="": (provider, "") if name == "SKU_MAPPING_AI_PROVIDER" else (default, "")
+
+        expected_shared = _mapping_response_schema(False)
+        expected_gemini = _mapping_response_schema(False, gemini=True)
+        self.assertEqual(expected_gemini, json.loads(json.dumps(GEMINI_MAPPING_SCHEMA)))
+        self.assertIn("minimum", expected_shared["properties"]["confidence"])
+        self.assertIn("maximum", expected_shared["properties"]["confidence"])
+        self.assertEqual(expected_shared["properties"]["matched_dimensions"]["maxItems"], 12)
+        self.assertIs(expected_shared["additionalProperties"], False)
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=provider_config("openai")), patch("sku_mapping_service.load_openai_api_key", return_value=("openai-test", "")), patch("sku_mapping_service.requests.post", return_value=OpenAIResponse()) as post:
+            self.assertEqual(self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)["source"], "openai")
+        self.assertEqual(post.call_args.kwargs["json"]["text"]["format"]["schema"], expected_shared)
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=provider_config("grok")), patch("sku_mapping_service.load_xai_api_key", return_value=("xai-test", "")), patch("sku_mapping_service.requests.post", return_value=GrokResponse()) as post:
+            self.assertEqual(self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)["source"], "grok")
+        self.assertEqual(post.call_args.kwargs["json"]["text"]["format"]["schema"], expected_shared)
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=provider_config("gemini")), patch("sku_mapping_service.load_gemini_api_key", return_value=("gemini-test", "")), patch("sku_mapping_service.requests.post", return_value=GeminiResponse()) as post:
+            self.assertEqual(self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)["source"], "gemini")
+        self.assertEqual(post.call_args.kwargs["json"]["generationConfig"]["responseSchema"], expected_gemini)
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=provider_config("deepseek")), patch("sku_mapping_service.load_deepseek_api_key", return_value=("deepseek-test", "")), patch("sku_mapping_service.requests.post", return_value=DeepSeekResponse()) as post:
+            self.assertEqual(self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)["source"], "deepseek")
+        embedded = json.loads(post.call_args.kwargs["json"]["messages"][1]["content"])
+        self.assertEqual(embedded["required_json_schema"], expected_shared)
+
+    def _claude_decision_response(self, decision):
+        class FakeResponse:
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return {"model": "claude-sonnet-5-5", "content": [{"type": "text", "text": json.dumps(decision)}]}
+
+        return FakeResponse()
+
+    def test_claude_rejects_confidence_and_array_bounds(self):
+        secret = "anthropic-test-key"
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "claude-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+
+        def decide(decision, force_match=False):
+            stdout, stderr = StringIO(), StringIO()
+            with patch("sku_mapping_service.load_openai_config_value", side_effect=self._claude_config()), patch("sku_mapping_service.load_anthropic_api_key", return_value=(secret, "env")), patch("sku_mapping_service.requests.post", return_value=self._claude_decision_response(decision)) as post, redirect_stdout(stdout), redirect_stderr(stderr):
+                result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates, force_match=force_match)
+            rendered = json.dumps(result, ensure_ascii=False) + stdout.getvalue() + stderr.getvalue()
+            self.assertNotIn(secret, rendered)
+            self.assertEqual(post.call_count, 1)
+            return result
+
+        base = {
+            "decision": "match",
+            "selected_sku_id": "claude-valid",
+            "matched_dimensions": ["白色"],
+            "evidence": ["規格一致"],
+            "warnings": [],
+        }
+        high = decide({**base, "confidence": 1.2})
+        self.assertEqual(high["source"], "rules")
+        self.assertEqual(high["provider"], "claude")
+        self.assertEqual(high["fallback"], "rules")
+        self.assertIn("confidence 超出 0 到 1", high["warnings"][0])
+
+        low = decide({**base, "confidence": -0.01})
+        self.assertIn("confidence 超出 0 到 1", low["warnings"][0])
+        self.assertEqual(low["fallback"], "rules")
+
+        nan = decide({**base, "confidence": float("nan")})
+        self.assertIn("confidence 超出 0 到 1", nan["warnings"][0])
+
+        forced = decide({**base, "confidence": 2}, force_match=True)
+        self.assertEqual(forced["source"], "claude_error")
+        self.assertNotEqual(forced.get("fallback"), "rules")
+        self.assertIn("confidence 超出 0 到 1", forced["warnings"][0])
+
+        long_dimensions = decide({**base, "confidence": 0.5, "matched_dimensions": [str(i) for i in range(13)]})
+        self.assertIn("matched_dimensions 超過 12 項", long_dimensions["warnings"][0])
+        long_evidence = decide({**base, "confidence": 0.5, "evidence": [str(i) for i in range(9)]})
+        self.assertIn("evidence 超過 8 項", long_evidence["warnings"][0])
+        long_warnings = decide({**base, "confidence": 0.5, "warnings": [str(i) for i in range(9)]})
+        self.assertIn("warnings 超過 8 項", long_warnings["warnings"][0])
+
+        accepted = decide({
+            **base,
+            "confidence": 1,
+            "matched_dimensions": [str(i) for i in range(12)],
+            "evidence": [str(i) for i in range(8)],
+            "warnings": [str(i) for i in range(8)],
+        })
+        self.assertEqual(accepted["source"], "claude")
+        self.assertEqual(accepted["confidence"], 1)
+        self.assertEqual(len(accepted["matched_dimensions"]), 12)
+        self.assertEqual(len(accepted["evidence"]), 8)
+        self.assertEqual(len(accepted["warnings"]), 8)
+
+        zero = decide({**base, "confidence": 0})
+        self.assertEqual(zero["source"], "claude")
+        self.assertEqual(zero["confidence"], 0)
 
     def test_gemini_is_default_provider_and_uses_generate_content(self):
         model = {"product_name": "短襪", "model_name": "白色"}
