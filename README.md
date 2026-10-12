@@ -187,7 +187,7 @@ export SKU_MAPPING_AI_PROVIDER=claude
 
 - 金鑰**只**讀環境變數 `ANTHROPIC_API_KEY`。不讀 `.env.local`，也不讀 `~/.zshrc`／`~/.bashrc`。不要把金鑰寫進檔案、log 或聊天。
 - 模型先看 `ANTHROPIC_SKU_MAPPING_MODEL`，沒有再看 `ANTHROPIC_MODEL`。這兩個跟其他非金鑰設定一樣，讀取順序是環境變數、專案 `.env.local`、shell rc。沒設定，或不在允許清單，就用 `claude-sonnet-5-5`（Anthropic 模型總覽上目前的 Claude Sonnet 系列 id）。允許的 id：`claude-sonnet-5-5`、`claude-sonnet-5`、`claude-sonnet-4-6`、`claude-sonnet-4-5`、`claude-sonnet-4-5-20250929`。
-- 呼叫 `https://api.anthropic.com/v1/messages`，header 是 `x-api-key` 與 `anthropic-version: 2023-06-01`。提示詞、JSON 欄位與候選驗證跟其他 provider 相同。逾時 120 秒。沒有金鑰、HTTP 429、API 錯誤或 JSON 解析失敗時，會記下原因並回退規則初判，不會把失敗假裝成配對成功。
+- 呼叫 `https://api.anthropic.com/v1/messages`，header 是 `x-api-key` 與 `anthropic-version: 2023-06-01`。提示詞、JSON 欄位與候選驗證跟其他 provider 相同。欄位與候選驗證相同，但送給 Claude 的 schema 會拿掉官方不支援的限制（例如 `minimum`／`maximum`／`maxItems` 等），`confidence` 0 到 1 和陣列長度改在收到回應後由程式本地檢查。逾時 120 秒。沒有金鑰、額度或速率限制（429）、API 錯誤、JSON 解析失敗要分兩條路，跟下方工作台同一套分法。一般掃描（沒有 `force_match`）會記下原因並回退規則初判，建議狀態留在無匹配，不會把失敗假裝成配對成功。強制重判（`force_match`；卡片按鈕是「用現有 SKU 清單重判（AI 強制選最接近）」，整頁是「現有 SKU 重判（AI 強制選最接近）」）失敗時，結果是 `claude_error`，不會回退成規則初判。
 
 ### 設置 1688 開放平台憑證（補貨 API 用）
 第一版會先建立補貨草稿與待付款建單流程，但在取得 1688 開放平台下單 API 權限前，不會真的送出 1688 訂單。
