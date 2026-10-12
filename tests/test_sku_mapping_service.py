@@ -1561,6 +1561,28 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertIn("未設定 GEMINI_API_KEY", result["warnings"][0])
         self.assertFalse(post.called)
 
+    def test_unknown_provider_uses_grok_branch_without_calling_anthropic(self):
+        model = {"product_name": "短襪", "model_name": "白色"}
+        candidates = [{"sku_id": "grok-valid", "sku_name": "白色", "spec_text": "白色", "deterministic_score": 10, "evidence": {}}]
+
+        def config(name, default=""):
+            if name == "SKU_MAPPING_AI_PROVIDER":
+                return ("anthropic", "env")
+            return (default, "default")
+
+        with patch("sku_mapping_service.load_openai_config_value", side_effect=config), \
+             patch("sku_mapping_service.load_xai_api_key", return_value=("", "")), \
+             patch("sku_mapping_service.load_anthropic_api_key", return_value=("anthropic-should-not-be-used", "env")), \
+             patch("sku_mapping_service.requests.post") as post:
+            result = self.service._maybe_ai_decide(model, {"product_name": "短襪"}, candidates)
+        self.assertEqual(result["provider"], "grok")
+        self.assertEqual(result["source"], "rules")
+        self.assertEqual(result["fallback"], "rules")
+        self.assertIn("未設定 XAI_API_KEY", result["warnings"][0])
+        called_urls = [call.args[0] if call.args else call.kwargs.get("url", "") for call in post.call_args_list]
+        self.assertFalse(any("api.anthropic.com" in str(url) for url in called_urls))
+        self.assertFalse(post.called)
+
     def test_claude_messages_request_parses_text_and_ignores_thinking(self):
         secret = "anthropic-test-key"
         model = {"product_name": "短襪", "model_name": "白色"}

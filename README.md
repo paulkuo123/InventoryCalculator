@@ -176,7 +176,7 @@ python3 setup_openai_key.py
 
 ### 設置 Claude（SKU mapping 可選 provider）
 
-商品配對的 AI 供應商由環境變數 `SKU_MAPPING_AI_PROVIDER` 決定。沒設定時程式仍用 **gemini**。可選值是 `gemini`、`openai`、`grok`、`deepseek`、`claude`。沒有網頁開關，`python -m sku_mapping_service` 也沒有 provider 旗標。
+商品配對的 AI 供應商由環境變數 `SKU_MAPPING_AI_PROVIDER` 決定。沒設定時程式仍用 **gemini**。可選值是 `gemini`、`openai`、`grok`、`deepseek`、`claude`。`SKU_MAPPING_AI_PROVIDER` 不是 gemini／openai／grok／deepseek／claude 這五個值時，會走 Grok 分支（需 `XAI_API_KEY`）。沒有網頁開關，`python -m sku_mapping_service` 也沒有 provider 旗標。
 
 要用 Claude，在啟動程式的環境設定：
 
@@ -467,7 +467,7 @@ InventoryCalculator/
 
 - 離線評估既有規則／分級（不寫 golden、不 auto-approve）：`python -m mapping_eval run --db-path procurement.db --out data/mapping_eval/baseline/`。CI 用 `--fixture tests/fixtures/mapping_eval`。說明見 [`docs/mapping_eval.md`](docs/mapping_eval.md)。Know-how Engine 總覽、TASK 1 vs 現況數字與 auto-approve 反事實精度見 [`docs/sku_mapping_knowhow_engine.md`](docs/sku_mapping_knowhow_engine.md)。第 1 層 offer 建議（#113 唯讀，不搜站、不寫 Golden）見 [`docs/offer_discovery.md`](docs/offer_discovery.md)；設計依據 [`docs/offer_discovery_spike.md`](docs/offer_discovery_spike.md)。全表 AI 補完 vs 2026-09-09 暫停（PRs #41–#46 勿合）見 [`docs/golden_ai_automation_review.md`](docs/golden_ai_automation_review.md)。
 - golden table 只保存已核准的 mapping；快照、候選、AI 判定、版本與人工稽核紀錄保存於 `procurement.db`。
-- 規則完全找不到候選時才呼叫 AI 初判。未設定 `SKU_MAPPING_AI_PROVIDER` 時仍是 gemini。OpenAI 路徑是 Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning），以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key，且只在設定檔還沒有 provider 時寫成 OpenAI。Gemini、Grok、DeepSeek 可執行 `python3 setup_gemini_key.py`、`python3 setup_xai_key.py`、`python3 setup_deepseek_key.py`，或直接編輯 `.env.local`。Claude 把 `SKU_MAPPING_AI_PROVIDER` 設成 `claude`，金鑰只放環境變數 `ANTHROPIC_API_KEY`（不讀 `.env.local`），模型用 `ANTHROPIC_SKU_MAPPING_MODEL` 或 `ANTHROPIC_MODEL`（預設 `claude-sonnet-5-5`）。API 額度／速率限制（429）、API 錯誤、JSON 解析失敗或沒有 Key 時，會明確記錄原因並維持規則層的 no-match，不會假裝成 AI 結果。卡片上的「用現有 SKU 清單重跑 AI」是明確的人工覆核動作；所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
+- 規則完全找不到候選時才呼叫 AI 初判。未設定 `SKU_MAPPING_AI_PROVIDER` 時仍是 gemini。OpenAI 路徑是 Responses API（`OPENAI_API_KEY`、模型 `gpt-5.6-luna`、low reasoning），以嚴格 JSON Schema 接收結果。執行 `python3 setup_openai_key.py` 會以隱藏輸入方式儲存 Key，且只在設定檔還沒有 provider 時寫成 OpenAI。Gemini、Grok、DeepSeek 可執行 `python3 setup_gemini_key.py`、`python3 setup_xai_key.py`、`python3 setup_deepseek_key.py`，或直接編輯 `.env.local`。Claude 把 `SKU_MAPPING_AI_PROVIDER` 設成 `claude`，金鑰只放環境變數 `ANTHROPIC_API_KEY`（不讀 `.env.local`），模型用 `ANTHROPIC_SKU_MAPPING_MODEL` 或 `ANTHROPIC_MODEL`（預設 `claude-sonnet-5-5`）。沒有金鑰、額度或速率限制（429）、API 錯誤、JSON 解析失敗要分兩條路。一般掃描（沒有 `force_match`）會記下原因並回退規則初判，建議狀態留在無匹配，不會假裝成 AI 配對。OpenAI 沒金鑰也回退規則；但它的 HTTP 或 JSON 失敗會留下 `openai_error`，掃描不採用那次候選，狀態同樣留無匹配。「用現有 SKU 清單重跑 AI」（`force_match`；卡片按鈕是「用現有 SKU 清單重判（AI 強制選最接近）」，整頁是「現有 SKU 重判（AI 強制選最接近）」）失敗時，結果是 `<provider>_error`（例如 `claude_error`），不會回退成規則初判。整頁這條強制重判遇到這種供應商錯誤會把工作停掉，剩下的型號不再跑；若只是單筆欄位矛盾（`invalid_selection`），會留下那筆給人工審核並繼續。卡片上的這次重跑一樣不會把失敗存成規則初判。所有 AI 結果仍只進入人工審核，不會直接寫入 golden table。
 - 工作台 API：`POST /api/sku-mapping/scans`、`GET /api/sku-mapping/jobs/{id}`、`GET /api/sku-mapping/summary`、`GET /api/sku-mapping/queue`、`POST /api/sku-mapping/decisions`、唯讀 `GET /api/sku-mapping/offer-suggestions`（第 1 層建議；UI 可能尚未呼叫，API 已公開唯讀）。
 - 1688 登入、滑塊或驗證碼需要使用者在 ego-lite task space 完成；系統不會付款或送出正式訂單。
 
