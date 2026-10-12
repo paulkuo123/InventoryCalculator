@@ -16,6 +16,7 @@ import hashlib
 import base64
 import html
 import json
+import math
 import os
 import re
 from sku_spec import split_spec_dimensions
@@ -315,6 +316,86 @@ def _mapping_response_schema(force_match: bool = False, gemini: bool = False) ->
     if force_match:
         schema["properties"]["decision"]["enum"] = ["match"]
     return schema
+
+
+# Anthropic structured outputs reject these JSON Schema keywords with HTTP 400.
+# Numerical constraints: minimum, maximum, exclusiveMinimum, exclusiveMaximum,
+# multipleOf. String constraints: minLength, maxLength. Array constraints other
+# than minItems of 0 or 1: maxItems, uniqueItems, minContains, maxContains.
+# minItems is removed only when it is not 0 or 1. additionalProperties: false
+# stays. See https://platform.claude.com/docs/en/build-with-claude/structured-outputs
+_CLAUDE_UNSUPPORTED_SCHEMA_KEYWORDS = frozenset({
+    "minimum",
+    "maximum",
+    "exclusiveMinimum",
+    "exclusiveMaximum",
+    "multipleOf",
+    "minLength",
+    "maxLength",
+    "maxItems",
+    "uniqueItems",
+    "minContains",
+    "maxContains",
+})
+
+
+def _strip_claude_unsupported_schema_keywords(node: Any) -> Any:
+    """Copy a schema without keywords Claude structured outputs reject."""
+    if isinstance(node, list):
+        return [_strip_claude_unsupported_schema_keywords(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+    cleaned: Dict[str, Any] = {}
+    for key, value in node.items():
+        if key in _CLAUDE_UNSUPPORTED_SCHEMA_KEYWORDS:
+            continue
+        if key == "minItems" and value not in (0, 1):
+            continue
+        cleaned[key] = _strip_claude_unsupported_schema_keywords(value)
+    return cleaned
+
+
+def _claude_mapping_schema(force_match: bool = False) -> Dict[str, Any]:
+    """Return a Claude-only copy of the shared mapping schema.
+
+    ``MAPPING_SCHEMA`` itself is left unchanged so OpenAI, Grok, Gemini, and
+    DeepSeek keep sending the same schema they send today.
+    """
+    return _strip_claude_unsupported_schema_keywords(_mapping_response_schema(force_match))
+
+
+def _enforce_claude_mapping_bounds(result: Any) -> Any:
+    """Reject Claude JSON that breaks limits stripped from the request schema.
+
+    The shared parser does not check ``confidence`` 0–1 or array lengths.
+    Other providers still send ``minimum``, ``maximum``, and ``maxItems``, so
+    their APIs reject those violations. Claude cannot send those keywords, so
+    the same limits are checked here. A violation uses the existing Claude
+    error path (abstain, no extra retry). Values are not clamped or truncated:
+    rewriting a confidence above 1 into 1 would turn an invalid score into a
+    passing one.
+    """
+    if not isinstance(result, dict):
+        return result
+    confidence = result.get("confidence")
+    if not isinstance(confidence, bool) and isinstance(confidence, (int, float)):
+        bounds = MAPPING_SCHEMA["properties"]["confidence"]
+        minimum = bounds["minimum"]
+        maximum = bounds["maximum"]
+        if (
+            not math.isfinite(float(confidence))
+            or confidence < minimum
+            or confidence > maximum
+        ):
+            raise ValueError("Claude confidence 超出 0 到 1")
+    for key, prop in MAPPING_SCHEMA["properties"].items():
+        if not isinstance(prop, dict) or "maxItems" not in prop:
+            continue
+        value = result.get(key)
+        limit = int(prop["maxItems"])
+        if isinstance(value, list) and len(value) > limit:
+            raise ValueError(f"Claude {key} 超過 {limit} 項")
+    return result
 
 
 def _redact_secret(text: str, secret: str) -> str:
@@ -6331,9 +6412,12 @@ class SkuMappingService:
     def _request_claude_structured_ai(self, api_key: str, model_name: str, model: Dict[str, Any], candidates: List[Dict[str, Any]], force_match: bool = False) -> Dict[str, Any]:
         """Call Anthropic Messages API with the same prompt and JSON schema.
 
-        JSON parse failures, HTTP errors, and timeouts follow the DeepSeek
-        path: one request, no extra retry, timeout 120s, then an abstain
-        warning. The API key is redacted from any warning text.
+        JSON parse failures, HTTP errors, timeouts, and local bound violations
+        (confidence outside 0–1, or an array longer than the shared schema's
+        maxItems) follow the DeepSeek path: one request, no extra retry,
+        timeout 120s, then an abstain warning. The API key is redacted from
+        any warning text. The request schema is a Claude-only copy; the
+        shared mapping schema is not modified.
         """
         request_payload = {
             "model": model_name,
@@ -6348,7 +6432,7 @@ class SkuMappingService:
             "output_config": {
                 "format": {
                     "type": "json_schema",
-                    "schema": _mapping_response_schema(force_match),
+                    "schema": _claude_mapping_schema(force_match),
                 }
             },
         }
@@ -6369,6 +6453,7 @@ class SkuMappingService:
             if not text:
                 raise ValueError("Claude 沒有回傳 JSON")
             result = json.loads(text)
+            result = _enforce_claude_mapping_bounds(result)
             result = self._validate_ai_selection(result, candidates)
             result["source"] = "claude"
             result["provider"] = "claude"
