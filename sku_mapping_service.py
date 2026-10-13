@@ -368,12 +368,12 @@ def _enforce_claude_mapping_bounds(result: Any) -> Any:
     """Reject Claude JSON that breaks limits stripped from the request schema.
 
     The shared parser does not check ``confidence`` 0–1 or array lengths.
-    Other providers still send ``minimum``, ``maximum``, and ``maxItems``, so
-    their APIs reject those violations. Claude cannot send those keywords, so
-    the same limits are checked here. A violation uses the existing Claude
-    error path (abstain, no extra retry). Values are not clamped or truncated:
-    rewriting a confidence above 1 into 1 would turn an invalid score into a
-    passing one.
+    Only OpenAI and Grok strict JSON Schema have the API enforce these limits;
+    Gemini's schema omits them and DeepSeek only embeds the schema in the
+    prompt. Claude cannot send those keywords, so the same limits are checked
+    here. A violation uses the existing Claude error path (abstain, no extra
+    retry). Values are not clamped or truncated: rewriting a confidence above
+    1 into 1 would turn an invalid score into a passing one.
     """
     if not isinstance(result, dict):
         return result
