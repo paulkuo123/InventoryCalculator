@@ -185,7 +185,7 @@ Script: `.cursor/skills/verify-inventory-calculator/scripts/control-inventory` (
 | `control-inventory screenshot <path> --out FILE [--wait SEL]` | One-off page capture |
 | `control-inventory cleanup` | Tear down the recorded pid; keep evidence |
 
-Forbidden unless the user explicitly asked for a live Shopee/1688 proof (the helper refuses these selectors without `--i-approve-live`, and the built-in recipes never pass that flag): `#searchButton`, `#oneClickUpdateButton`, `#cookieImportButton`, `#shopeeProductsImportButton`, `#openBatchRestockButton`, `#adsExportButton`, `#adsAnalyzeButton`, `#importOrderButton`, `#previewButton`, `#applyButton`, `#scanAll`, `#scanVisiblePage`, `#batchApprove`, `#checkUrlHealth`, and the other ids listed in `FORBIDDEN_SELECTORS` inside the helper.
+Forbidden unless the user explicitly asked for a live Shopee/1688 proof (the helper refuses these selectors without `--i-approve-live`, and the built-in recipes never pass that flag): `#searchButton`, `#oneClickUpdateButton`, `#cookiePasteSubmit`, `#shopeeProductsImportButton`, `#openBatchRestockButton`, `#adsExportButton`, `#adsAnalyzeButton`, `#importOrderButton`, `#previewButton`, `#applyButton`, `#scanAll`, `#scanVisiblePage`, `#batchApprove`, `#checkUrlHealth`, and the other ids listed in `FORBIDDEN_SELECTORS` inside the helper.
 
 `GET /api/sku-mapping/summary` and `/queue` are allowed. Doctor records `golden_table.json` SHA-256 at launch and fails if it changes. Scan/approve POST paths stay forbidden without `--i-approve-live`.
 

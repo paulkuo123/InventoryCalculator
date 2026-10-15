@@ -211,7 +211,7 @@ python main.py
 ```
 執行後會自動開啟網頁介面。
 
-- 庫存首頁：可進行商品搜尋、庫存儀表板與補貨判讀
+- 庫存首頁：可進行商品搜尋、庫存儀表板與補貨判讀。首頁「一鍵更新全賣場庫存」會 `POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量；Cookie 先讀 `cookies.json`，接著 CDP `127.0.0.1:9239`，最後才開貼上對話框。
 - 廣告工作台：可進行 Shopee 廣告報表匯出與 AI 分析
 - 到貨入庫工作台：可匯入 1688 訂單、處理分批／不良品，並預覽蝦皮庫存更新
 
@@ -336,7 +336,7 @@ python3 ads_analysis.py --include-ai true
 ### 補貨提醒（非 Telegram）
 庭安已確認不再使用 Telegram。庫存／低水位提醒改走 **Grok Bot routines**，本系統不另建應用內推播頻道。
 
-- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`，沒帶旗標時是預設 `mac`）
+- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`，沒帶旗標時是預設 `mac`）。首頁「一鍵更新全賣場庫存」則 `POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量；搜尋與這次更新的 Cookie 檢查順序都是 `cookies.json`、CDP `127.0.0.1:9239`、貼上對話框。
 - 遠端盒每月庫存：`python3 crawler.py --browser-source remote`
 - 唯讀應補摘要：`python -m restock_loop scan`
 - 每月庫存分析：`python3 scripts/monthly_inventory_report.py`（只讀，寫到 `reports/monthly_inventory_YYYYMM/`；目錄裡已有月報檔時預設不覆寫，只有 `sources/` 不算）。例行任務改成跑這支再摘要，說明見 [`docs/monthly_inventory_report.md`](docs/monthly_inventory_report.md)
@@ -477,7 +477,7 @@ InventoryCalculator/
 ## 常見問題
 
 ### Cookies 設置失敗？
-確保您已登入蝦皮賣家中心，並使用 Cookie Editor 正確導出所有 cookies。
+確保您已登入蝦皮賣家中心，並使用 Cookie Editor 正確導出所有 cookies。搜尋與「一鍵更新全賣場庫存」（`POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量）會依序使用 `cookies.json`、CDP `127.0.0.1:9239`、貼上對話框。
 
 ### 爬蟲執行失敗？
 1. 檢查 `cookies.json` 是否存在且格式正確

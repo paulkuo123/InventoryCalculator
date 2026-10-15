@@ -542,7 +542,7 @@ def parse_multipart_form(content_type: str, body: bytes) -> Dict[str, Dict[str, 
     """Parse a browser FormData body. Values are bytes; text fields are also decoded."""
     match = re.search(r"boundary=([^;]+)", content_type or "", flags=re.IGNORECASE)
     if not match:
-        raise ExcelImportError("上傳格式不正確，請用表單重新選擇檔案。")
+        raise ExcelImportError("請求格式無效，請重試一鍵更新。")
     boundary = match.group(1).strip().strip('"').encode("utf-8", "replace")
     parts = body.split(b"--" + boundary)
     fields: Dict[str, Dict[str, Any]] = {}
