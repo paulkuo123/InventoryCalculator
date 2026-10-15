@@ -2635,7 +2635,7 @@ input:checked + .toggle-slider:before {
 /* Data import tools -------------------------------------------------------- */
 .inventory-home .home-tools {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-columns: minmax(0, 1fr);
     align-items: start;
     gap: 16px;
     margin-bottom: 16px;
@@ -2720,6 +2720,30 @@ input:checked + .toggle-slider:before {
 .inventory-home .personal-watchlist-status {
     min-height: 0;
     font-size: 13px;
+}
+
+.cookie-paste-body {
+    padding: 0 20px 20px;
+}
+
+.cookie-paste-body p {
+    margin: 0 0 12px;
+    color: #4b5563;
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+.cookie-paste-panel .cookie-import-textarea {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.cookie-paste-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    margin-top: 12px;
 }
 
 /* Dashboard ---------------------------------------------------------------- */

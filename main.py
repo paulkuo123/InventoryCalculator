@@ -35,7 +35,8 @@ from ads_analysis import (
     validate_reasoning_effort,
 )
 from config_loader import load_openai_api_key, load_openai_config_value
-from cookie_import import MAX_COOKIE_IMPORT_BYTES, save_shopee_cookies
+from cookie_import import MAX_COOKIE_IMPORT_BYTES
+from cookie_fallback import accept_pasted_cookies, ensure_shopee_cookies, public_cookie_status
 from shopee_products_import import (
     MAX_SHOPEE_PRODUCTS_IMPORT_BYTES,
     apply_shopee_products_import,
@@ -78,6 +79,22 @@ from restock_batch import (
     write_job_artifact,
     write_reports,
 )
+
+
+def _public_cookie_import(result):
+    """Import response: counts and domain names only."""
+    domains = []
+    for domain in result.get("domains") or []:
+        if isinstance(domain, str) and domain:
+            domains.append(domain)
+    return {
+        "status": "success",
+        "count": int(result.get("count") or 0),
+        "domains": domains,
+        "replacedExisting": bool(result.get("replacedExisting")),
+        "fileName": "cookies.json",
+        "source": "paste",
+    }
 
 
 def normalize_identifier(value):
@@ -807,11 +824,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 if content_length > MAX_COOKIE_IMPORT_BYTES + 100_000:
                     raise ValueError("Cookie 文字太大，請確認貼上的內容是否正確")
                 data = self._read_json_body()
-                result = save_shopee_cookies(
+                result = accept_pasted_cookies(
                     os.path.dirname(os.path.abspath(__file__)),
                     data.get("cookiesText", ""),
                 )
-                self._send_json_response(200, result)
+                self._send_json_response(200, _public_cookie_import(result))
             except ValueError as e:
                 self._send_json_response(400, {"status": "error", "message": str(e)})
             except OSError:
@@ -1422,8 +1439,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(body.encode('utf-8') if isinstance(body, str) else body)
 
     def _handle_search(self):
-        """Run the inventory crawler. Keyword or empty, there is no extra hint."""
+        """Run the inventory crawler after cookies are usable. Keyword or empty, there is no extra hint."""
         try:
+            ensured = self._ensure_web_cookies()
+            if ensured is None:
+                return
             query = urllib.parse.urlparse(self.path).query
             params = urllib.parse.parse_qs(query)
             keyword = params.get('keyword', [''])[0]
@@ -1433,6 +1453,30 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             self._send_json_response(200, result)
         except Exception as e:
             self._send_json_response(500, {"error": str(e)})
+
+    def _ensure_web_cookies(self):
+        """Shared cookie fallback for search and one-click update. None means the response was already sent."""
+        result = ensure_shopee_cookies(
+            os.path.dirname(os.path.abspath(__file__)),
+            interactive=True,
+        )
+        if result.needs_paste or not result.ok:
+            self._send_json_response(409, public_cookie_status(result))
+            return None
+        return result
+
+    def _discard_request_body(self):
+        """Drop an unread body so a cookie prompt does not leave the socket stuck."""
+        try:
+            length = int(self.headers.get('Content-Length', 0) or 0)
+        except (TypeError, ValueError):
+            return
+        remaining = length
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                break
+            remaining -= len(chunk)
 
     def _read_request_bytes(self, max_bytes):
         try:
@@ -1465,6 +1509,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
 
     def _handle_download_excel(self):
         try:
+            ensured = self._ensure_web_cookies()
+            if ensured is None:
+                self._discard_request_body()
+                return
             form = self._excel_form()
             result = download_and_import(
                 destination=self._shopee_products_path(),

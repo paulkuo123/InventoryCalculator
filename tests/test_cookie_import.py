@@ -10,8 +10,8 @@ from cookie_import import (
     atomic_write_secret_json,
     normalize_cookie_payload,
     payload_to_playwright_cookies,
+    parse_cookie_text,
     playwright_cookies_to_payload,
-    save_shopee_cookies,
     write_shopee_cookies,
 )
 
@@ -123,10 +123,10 @@ class CookieImportRejectsNonShopeeTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), original + "\n")
             self.assertFalse(leftover_tmps(temp_dir, "cookies.json"))
 
-    def test_save_shopee_cookies_rejects_header_paste_without_pairs(self):
+    def test_header_paste_without_pairs_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             with self.assertRaisesRegex(ValueError, "Cookie JSON 格式錯誤"):
-                save_shopee_cookies(temp_dir, "not-json-and-not-cookies")
+                parse_cookie_text("not-json-and-not-cookies")
             self.assertFalse((Path(temp_dir) / "cookies.json").exists())
 
 
@@ -173,10 +173,10 @@ class CookieImportAtomicWriteTests(unittest.TestCase):
             self.assertEqual(path.read_text(encoding="utf-8"), original)
             self.assertFalse(leftover_tmps(temp_dir, "cookies.json"))
 
-    def test_save_shopee_cookies_header_paste_still_writes_0600(self):
+    def test_header_paste_writes_0600(self):
         with tempfile.TemporaryDirectory() as temp_dir:
-            result = save_shopee_cookies(temp_dir, "SPC_EC=abc; SPC_F=1")
             path = Path(temp_dir) / "cookies.json"
+            result = write_shopee_cookies(path, parse_cookie_text("SPC_EC=abc; SPC_F=1"))
             self.assertEqual(result["count"], 2)
             self.assertEqual(secret_mode(path), 0o600)
             saved = json.loads(path.read_text(encoding="utf-8"))
