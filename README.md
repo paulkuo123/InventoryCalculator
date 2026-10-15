@@ -139,6 +139,8 @@ python3 crawler.py --browser-source remote
 4. 點擊「Export」輸出 JSON 格式
 5. 將內容複製並貼到 `cookies.json` 檔案（專案根目錄）
 
+Mac 有開、遠端盒賣家中心被登出時，可以把本機 Ego Lite（或 `--browser chrome`）的蝦皮登入 cookie 同步到盒上（不會印出 cookie 內容）：[`docs/mac_shopee_cookie_sync.md`](docs/mac_shopee_cookie_sync.md)。
+
 ### 設置 OpenAI API Key（廣告分析與 SKU mapping）
 OpenAI 設定建議使用專案本地設定檔，不要把 Key 寫進程式碼或提交到 Git。
 
@@ -426,7 +428,8 @@ InventoryCalculator/
 │   ├── restock_closed_loop_review.md   # Goal A：補貨閉環現況 vs 最終流程
 │   ├── monthly_inventory_report.md     # 每月庫存月報怎麼跑、讀哪些檔、寫出哪些報告
 │   ├── golden_batch_writer.md          # Golden 批次寫入的提案、簽核與還原說明
-│   └── golden_ai_automation_review.md  # Goal B：Golden AI；#41–#46 暫停中勿合
+│   ├── golden_ai_automation_review.md  # Goal B：Golden AI；#41–#46 暫停中勿合
+│   └── mac_shopee_cookie_sync.md       # Mac 有開時，把賣家中心 cookie 同步到遠端盒
 ├── tests/                  # unittest（含 reverse_audit 離線安全測試）
 ├── watchlists/             # 個人關注與排除清單
 ├── golden_table.json       # 已核准 mapping（納入 git）
