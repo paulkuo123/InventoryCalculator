@@ -600,7 +600,8 @@ class CookiePasteModalBrowserTests(unittest.TestCase):
             page.wait_for_selector("h1")
             self.assertEqual(page.locator("text=匯入蝦皮 Cookies").count(), 0)
             self.assertEqual(page.locator("#cookieImportButton").count(), 0)
-            self.assertTrue(page.locator("h3", has_text="匯入商品資料").is_visible())
+            self.assertEqual(page.locator("h3", has_text="匯入商品資料").count(), 0)
+            self.assertTrue(page.locator("#searchModeImport").is_visible())
             self.assertTrue(page.locator("#cookiePasteModal").is_hidden())
             save_screenshot(page, "homepage-no-cookies-card.png", full_page=True)
 

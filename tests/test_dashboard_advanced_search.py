@@ -57,6 +57,7 @@ def test_dashboard_follows_advanced_search():
         )
         
         # 使用頁面提供的 JSON 匯入流程載入測試資料
+        page.click('#searchModeImport')
         page.set_input_files('#shopeeProductsFile', fixture_path)
         page.click('#shopeeProductsImportButton')
         page.wait_for_function(

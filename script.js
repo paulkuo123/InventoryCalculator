@@ -151,8 +151,10 @@ document.addEventListener('DOMContentLoaded', function() {
     const shopeeProductsImportButton = document.getElementById('shopeeProductsImportButton');
     const shopeeProductsImportStatus = document.getElementById('shopeeProductsImportStatus');
     const searchModeKeyword = document.getElementById('searchModeKeyword');
+    const searchModeImport = document.getElementById('searchModeImport');
     const searchModeOneClick = document.getElementById('searchModeOneClick');
     const searchInputSlot = document.getElementById('searchInputSlot');
+    const importProductsSlot = document.getElementById('importProductsSlot');
     const oneClickSlot = document.getElementById('oneClickSlot');
     const oneClickUpdateButton = document.getElementById('oneClickUpdateButton');
     const batchRestockToolbar = document.getElementById('batchRestockToolbar');
@@ -300,6 +302,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 runOneClickUpdate();
             } else if (action === 'search') {
                 performSearch();
+                watchCrawlerRun();
             }
         } catch (error) {
             setCookiePasteStatus('Cookies 儲存失敗，請再試一次。', 'error');
@@ -322,9 +325,33 @@ document.addEventListener('DOMContentLoaded', function() {
         return Boolean(file && file.name.toLowerCase().endsWith('.json'));
     }
 
+    function homeRunInProgress() {
+        return Boolean(
+            window.homeActionBusy
+            || window.crawlerRunning
+            || window.oneClickUpdateRunning
+            || window.shopeeProductsImportRunning
+        );
+    }
+
+    function syncImportButtonEnabled() {
+        if (!shopeeProductsFile || !shopeeProductsImportButton) return;
+        if (homeRunInProgress()) {
+            shopeeProductsImportButton.disabled = true;
+            return;
+        }
+        const file = shopeeProductsFile.files[0];
+        shopeeProductsImportButton.disabled = !isShopeeProductsJsonFile(file)
+            || file.size > MAX_SHOPEE_PRODUCTS_IMPORT_BYTES;
+    }
+
     function updateShopeeProductsImportFile() {
         if (!shopeeProductsFile || !shopeeProductsImportButton) return;
         const file = shopeeProductsFile.files[0];
+        if (homeRunInProgress()) {
+            shopeeProductsImportButton.disabled = true;
+            return;
+        }
         shopeeProductsImportButton.disabled = !file;
         if (!file) {
             setShopeeProductsImportStatus('');
@@ -3277,6 +3304,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     async function importShopeeProducts() {
         if (!shopeeProductsFile || !shopeeProductsImportButton) return;
+        if (shopeeProductsImportButton.disabled || homeRunInProgress()) return;
         const file = shopeeProductsFile.files[0];
         if (!file) {
             setShopeeProductsImportStatus('請先選擇 shopee_products.json。', 'error');
@@ -3291,13 +3319,15 @@ document.addEventListener('DOMContentLoaded', function() {
             return;
         }
 
-        shopeeProductsImportButton.disabled = true;
+        window.shopeeProductsImportRunning = true;
+        setRunControlsBusy(true);
         setShopeeProductsImportStatus('正在驗證、合併並套用商品資料…', 'loading');
         try {
+            const payload = await file.text();
             const response = await fetch('/api/shopee-products/import', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: await file.text(),
+                body: payload,
             });
             const data = await response.json().catch(() => ({}));
             if (!response.ok || data.status !== 'success') {
@@ -3314,8 +3344,8 @@ document.addEventListener('DOMContentLoaded', function() {
         } catch (error) {
             setShopeeProductsImportStatus(error.message || '匯入商品資料失敗', 'error');
         } finally {
-            shopeeProductsImportButton.disabled = !isShopeeProductsJsonFile(shopeeProductsFile.files[0])
-                || shopeeProductsFile.files[0].size > MAX_SHOPEE_PRODUCTS_IMPORT_BYTES;
+            window.shopeeProductsImportRunning = false;
+            setRunControlsBusy(false);
         }
     }
 
@@ -3324,28 +3354,57 @@ document.addEventListener('DOMContentLoaded', function() {
         return inventoryMonthElement ? inventoryMonthElement.value : '4';
     }
 
-    function setOneClickBusy(busy) {
-        window.oneClickUpdateRunning = busy;
-        if (oneClickUpdateButton) oneClickUpdateButton.disabled = busy;
+    function setRunControlsBusy(busy) {
+        window.homeActionBusy = busy;
         if (searchModeKeyword) searchModeKeyword.disabled = busy;
+        if (searchModeImport) searchModeImport.disabled = busy;
         if (searchModeOneClick) searchModeOneClick.disabled = busy;
         if (searchButton) searchButton.disabled = busy;
+        if (oneClickUpdateButton) oneClickUpdateButton.disabled = busy;
+        if (shopeeProductsFile) shopeeProductsFile.disabled = busy;
+        if (!busy) syncImportButtonEnabled();
+        else if (shopeeProductsImportButton) shopeeProductsImportButton.disabled = true;
+    }
+
+    function setOneClickBusy(busy) {
+        window.oneClickUpdateRunning = busy;
+        setRunControlsBusy(busy);
     }
 
     function setSearchMode(mode) {
-        if (window.oneClickUpdateRunning) return;
+        if (homeRunInProgress()) return;
+        const keyword = mode === 'keyword';
+        const importMode = mode === 'import';
         const oneClick = mode === 'oneClick';
-        if (searchInputSlot) searchInputSlot.hidden = oneClick;
+        if (searchInputSlot) searchInputSlot.hidden = !keyword;
+        if (importProductsSlot) importProductsSlot.hidden = !importMode;
         if (oneClickSlot) oneClickSlot.hidden = !oneClick;
-        if (searchButton) searchButton.hidden = oneClick;
-        if (searchModeKeyword) {
-            searchModeKeyword.classList.toggle('is-active', !oneClick);
-            searchModeKeyword.setAttribute('aria-pressed', String(!oneClick));
-        }
-        if (searchModeOneClick) {
-            searchModeOneClick.classList.toggle('is-active', oneClick);
-            searchModeOneClick.setAttribute('aria-pressed', String(oneClick));
-        }
+        if (searchButton) searchButton.hidden = !keyword;
+        [
+            [searchModeKeyword, keyword],
+            [searchModeImport, importMode],
+            [searchModeOneClick, oneClick],
+        ].forEach(([button, active]) => {
+            if (!button) return;
+            button.classList.toggle('is-active', active);
+            button.setAttribute('aria-pressed', String(active));
+        });
+    }
+
+    function watchCrawlerRun() {
+        if (!window.crawlerRunning) return;
+        setRunControlsBusy(true);
+        const timer = setInterval(() => {
+            if (window.crawlerRunning) return;
+            clearInterval(timer);
+            setRunControlsBusy(false);
+        }, 16);
+    }
+
+    function startKeywordSearch() {
+        if (!searchButton || searchButton.disabled || searchButton.hidden || homeRunInProgress()) return;
+        performSearch();
+        watchCrawlerRun();
     }
 
     async function runOneClickUpdate() {
@@ -3488,8 +3547,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 綁定搜尋按鈕點擊事件
     searchButton.addEventListener('click', function() {
-        if (searchButton.disabled || window.oneClickUpdateRunning) return;
-        performSearch();
+        startKeywordSearch();
     });
     if (cookiePasteSubmit) {
         cookiePasteSubmit.addEventListener('click', submitCookiePaste);
@@ -3511,6 +3569,11 @@ document.addEventListener('DOMContentLoaded', function() {
     if (searchModeKeyword) {
         searchModeKeyword.addEventListener('click', function() {
             setSearchMode('keyword');
+        });
+    }
+    if (searchModeImport) {
+        searchModeImport.addEventListener('click', function() {
+            setSearchMode('import');
         });
     }
     if (searchModeOneClick) {
@@ -3557,7 +3620,7 @@ document.addEventListener('DOMContentLoaded', function() {
     searchInput.addEventListener('keypress', function(e) {
         if (e.key === 'Enter') {
             e.preventDefault(); // 防止表單提交
-            performSearch();
+            startKeywordSearch();
         }
     });
 });
