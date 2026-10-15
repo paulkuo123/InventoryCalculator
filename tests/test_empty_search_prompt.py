@@ -165,6 +165,8 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
             self.assertEqual(page.locator("#emptySearchPrompt").count(), 0)
 
             stored = page.evaluate("() => JSON.stringify(localStorage)")
+            keyword_slot_height = page.locator("#searchInputSlot").bounding_box()["height"]
+            keyword_month_y = page.locator("#inventoryMonth").bounding_box()["y"]
             box = page.locator("#searchModeOneClick .search-mode-new").bounding_box()
             self.assertIsNotNone(box)
             page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
@@ -194,6 +196,10 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
             self.assertTrue(one_click["searchHidden"])
             self.assertIn("新・採用 Excel，比整店爬蟲快", one_click["hint"])
             self.assertTrue(page.locator("#oneClickUpdateButton").is_enabled())
+            one_slot_height = page.locator("#oneClickSlot").bounding_box()["height"]
+            one_month_y = page.locator("#inventoryMonth").bounding_box()["y"]
+            self.assertAlmostEqual(keyword_slot_height, one_slot_height, delta=1)
+            self.assertAlmostEqual(keyword_month_y, one_month_y, delta=1)
 
             page.locator("#searchModeKeyword").click()
             page.wait_for_function(
@@ -265,11 +271,29 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
             page.locator("#oneClickUpdateButton").click()
             page.wait_for_function("window.__downloadStarted === true")
             self.assertTrue(page.locator("#oneClickUpdateButton").is_disabled())
+            self.assertTrue(page.locator("#searchModeKeyword").is_disabled())
+            self.assertTrue(page.locator("#searchModeOneClick").is_disabled())
+            self.assertTrue(page.locator("#searchButton").is_disabled())
             self.assertEqual(page.locator("#loading").evaluate("node => node.style.display"), "block")
+            calls_while_busy = page.evaluate("window.__searchCalls.length")
+            page.evaluate(
+                """() => {
+                    document.getElementById('searchModeKeyword').click();
+                    document.getElementById('searchButton').click();
+                }"""
+            )
+            self.assertEqual(
+                page.locator("#searchModeOneClick").get_attribute("aria-pressed"), "true"
+            )
+            self.assertTrue(page.locator("#searchInputSlot").evaluate("node => node.hidden"))
+            self.assertEqual(page.evaluate("window.__searchCalls.length"), calls_while_busy)
             page.evaluate("() => window.__releaseDownload()")
             page.wait_for_function(
                 "document.getElementById('oneClickUpdateButton').disabled === false"
             )
+            self.assertFalse(page.locator("#searchModeKeyword").is_disabled())
+            self.assertFalse(page.locator("#searchModeOneClick").is_disabled())
+            self.assertFalse(page.locator("#searchButton").is_disabled())
             self.assertEqual(page.locator("#loading").evaluate("node => node.style.display"), "none")
 
             reduced = browser.new_context(

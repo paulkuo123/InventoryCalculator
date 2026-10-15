@@ -1,8 +1,7 @@
 """Convert a Shopee「價格及庫存」workbook into shopee_products.json.
 
 The seller-center export keeps six explanation rows and starts data on row 7.
-Stock, names, and ids come from that file. Monthly sales reuse
-``parser.load_monthly_sales_file``. Images and cumulative sold counts are
+Stock, names, and ids come from that file. Images and cumulative sold counts are
 copied from the previous ``shopee_products.json``. 1688 mapping is not copied
 here; ``apply_shopee_products_import`` merges it from golden_table.
 
@@ -24,7 +23,6 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
 
-from parser import load_monthly_sales_file, monthly_sales_from_frame
 from shopee_products_import import (
     apply_shopee_products_import_unlocked,
     normalize_product_id,
@@ -413,30 +411,13 @@ def convert_upload(
     data: bytes,
     *,
     previous: Optional[Mapping[str, Any]] = None,
-    sales_filename: str = "",
-    sales_bytes: Optional[bytes] = None,
     inventory_month: int = 4,
 ) -> Dict[str, Any]:
-    sales = None
-    if sales_bytes:
-        sales = _sales_from_upload(sales_filename, sales_bytes)
     return convert_frames(
         frames_from_upload(filename, data),
         previous=previous,
-        sales=sales,
         inventory_month=inventory_month,
     )
-
-
-def _sales_from_upload(filename: str, data: bytes) -> Dict[str, Any]:
-    suffix = Path(filename or "parentskudetail.xlsx").suffix.lower()
-    if suffix != ".xlsx":
-        raise ExcelImportError("月銷量報表請上傳 xlsx（parentskudetail）。")
-    try:
-        frame = pd.read_excel(io.BytesIO(data), engine="calamine")
-    except Exception as exc:
-        raise ExcelImportError(f"讀取月銷量報表失敗：{exc}") from exc
-    return monthly_sales_from_frame(frame)
 
 
 def count_catalog(payload: Mapping[str, Any]) -> Tuple[int, int]:
@@ -557,69 +538,6 @@ def commit_converted_catalog(
     }
 
 
-def import_sales_bytes(
-    filename: str,
-    data: bytes,
-    *,
-    destination: Path,
-    golden_table: Mapping[str, Any],
-    sales_filename: str = "",
-    sales_bytes: Optional[bytes] = None,
-    inventory_month: int = 4,
-    previous: Optional[Mapping[str, Any]] = None,
-) -> Dict[str, Any]:
-    """Convert, guard, then commit through the shared Golden merge + atomic replace."""
-    destination = Path(destination)
-    with shopee_products_write_lock(destination):
-        if previous is None:
-            previous = load_previous_catalog(destination)
-        payload = convert_upload(
-            filename,
-            data,
-            previous=previous,
-            sales_filename=sales_filename,
-            sales_bytes=sales_bytes,
-            inventory_month=inventory_month,
-        )
-        guard = assert_reasonable_catalog(payload, destination)
-        merged, counts = apply_shopee_products_import_unlocked(
-            destination, payload, dict(golden_table or {})
-        )
-    return {
-        "status": "success",
-        "message": "已用價格及庫存 Excel 匯入並合併 shopee_products.json",
-        "products": merged,
-        **counts,
-        **guard,
-    }
-
-
-def import_sales_file(
-    path: Path,
-    *,
-    destination: Path,
-    golden_table: Mapping[str, Any],
-    sales_path: Optional[Path] = None,
-    inventory_month: int = 4,
-) -> Dict[str, Any]:
-    source = Path(path)
-    sales_bytes = None
-    sales_name = ""
-    if sales_path:
-        sales_file = Path(sales_path)
-        sales_bytes = sales_file.read_bytes()
-        sales_name = sales_file.name
-    return import_sales_bytes(
-        source.name,
-        source.read_bytes(),
-        destination=destination,
-        golden_table=golden_table,
-        sales_filename=sales_name,
-        sales_bytes=sales_bytes,
-        inventory_month=inventory_month,
-    )
-
-
 def parse_multipart_form(content_type: str, body: bytes) -> Dict[str, Dict[str, Any]]:
     """Parse a browser FormData body. Values are bytes; text fields are also decoded."""
     match = re.search(r"boundary=([^;]+)", content_type or "", flags=re.IGNORECASE)
@@ -652,8 +570,3 @@ def parse_multipart_form(content_type: str, body: bytes) -> Dict[str, Dict[str, 
             "text": content.decode("utf-8", "replace").strip(),
         }
     return fields
-
-
-def sales_from_path(path: Path) -> Dict[str, Any]:
-    """Public wrapper so callers can reuse the parentskudetail reader."""
-    return load_monthly_sales_file(path)

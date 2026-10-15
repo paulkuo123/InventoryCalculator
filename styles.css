@@ -2504,22 +2504,27 @@ input:checked + .toggle-slider:before {
 
 .inventory-home .one-click-slot {
     display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 4px;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    min-height: 40px;
 }
 
 .inventory-home #oneClickUpdateButton {
-    width: 100%;
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 180px;
     min-height: 40px;
 }
 
 .inventory-home .one-click-hint {
+    flex: 0 0 auto;
     margin: 0;
     color: #6b7280;
     font-size: 12px;
     font-weight: 500;
     line-height: 1.4;
+    white-space: nowrap;
 }
 
 .inventory-home input[type="text"] {

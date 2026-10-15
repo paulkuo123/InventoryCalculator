@@ -3294,7 +3294,16 @@ document.addEventListener('DOMContentLoaded', function() {
         return inventoryMonthElement ? inventoryMonthElement.value : '4';
     }
 
+    function setOneClickBusy(busy) {
+        window.oneClickUpdateRunning = busy;
+        if (oneClickUpdateButton) oneClickUpdateButton.disabled = busy;
+        if (searchModeKeyword) searchModeKeyword.disabled = busy;
+        if (searchModeOneClick) searchModeOneClick.disabled = busy;
+        if (searchButton) searchButton.disabled = busy;
+    }
+
     function setSearchMode(mode) {
+        if (window.oneClickUpdateRunning) return;
         const oneClick = mode === 'oneClick';
         if (searchInputSlot) searchInputSlot.hidden = oneClick;
         if (oneClickSlot) oneClickSlot.hidden = !oneClick;
@@ -3311,8 +3320,7 @@ document.addEventListener('DOMContentLoaded', function() {
 
     async function runOneClickUpdate() {
         if (!oneClickUpdateButton || oneClickUpdateButton.disabled) return;
-        oneClickUpdateButton.disabled = true;
-        window.oneClickUpdateRunning = true;
+        setOneClickBusy(true);
         const loading = document.getElementById('loading');
         if (loading) loading.style.display = 'block';
         const progressInterval = startProgressSimulation();
@@ -3337,9 +3345,8 @@ document.addEventListener('DOMContentLoaded', function() {
             clearInterval(progressInterval);
             alert(error.message || '一鍵更新失敗');
         } finally {
-            window.oneClickUpdateRunning = false;
+            setOneClickBusy(false);
             if (loading) loading.style.display = 'none';
-            if (oneClickUpdateButton) oneClickUpdateButton.disabled = false;
         }
     }
 
@@ -3436,7 +3443,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // 綁定搜尋按鈕點擊事件
-    searchButton.addEventListener('click', performSearch);
+    searchButton.addEventListener('click', function() {
+        if (searchButton.disabled || window.oneClickUpdateRunning) return;
+        performSearch();
+    });
     if (cookieImportButton) {
         cookieImportButton.addEventListener('click', importShopeeCookies);
     }

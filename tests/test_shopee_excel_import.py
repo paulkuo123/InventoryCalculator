@@ -22,9 +22,9 @@ from shopee_excel_import import (
     ExcelImportError,
     _apply_sales,
     build_products,
+    commit_converted_catalog,
     convert_upload,
     count_catalog,
-    import_sales_bytes,
     restock_like_full_shop_crawler,
     rows_from_frame,
 )
@@ -123,31 +123,41 @@ class ShopeeExcelImportTests(unittest.TestCase):
             "listed_sales.zip",
             LISTED_ZIP.read_bytes(),
             previous=previous,
-            sales_filename=SALES_XLSX.name,
-            sales_bytes=SALES_XLSX.read_bytes(),
             inventory_month=4,
         )
         product = products["900001"]
         self.assertEqual(product["商品名稱"], "假手機殼")
         self.assertEqual(product["商品圖片網址"], "https://old.example/case.jpg")
         self.assertEqual(product["已售出總數量"], "50")
-        self.assertEqual(product["總月銷量"], "12")
+        self.assertEqual(product["總月銷量"], "99")
         black = product["型號"][0]
         white = product["型號"][1]
         self.assertEqual(black["規格ID"], "800001")
         self.assertEqual(black["商品庫存"], "10")
-        self.assertEqual(black["月銷量"], "10")
+        self.assertEqual(black["月銷量"], "99")
         self.assertEqual(black["型號圖片網址"], "https://old.example/black.jpg")
         self.assertNotIn("1688_sku_name", black)
         self.assertEqual(
             black["建議補貨數量"],
-            ShopeeCrawler.calculate_restock_quantity(None, 40, 50, 10, 10, 4, 12),
+            ShopeeCrawler.calculate_restock_quantity(None, 40, 50, 99, 10, 4, 99),
         )
-        self.assertEqual(white["月銷量"], "2")
+        self.assertEqual(white["月銷量"], "0")
         self.assertEqual(white["商品庫存"], "2")
         self.assertTrue(products["900002"]["無規格"])
         self.assertEqual(products["900003"]["型號"][0]["商品庫存"], "8")
         self.assertEqual(count_catalog(products), (3, 3))
+
+    def test_manual_sales_upload_helpers_are_gone(self):
+        source = Path(__file__).resolve().parent.parent.joinpath("shopee_excel_import.py").read_text(encoding="utf-8")
+        for name in (
+            "def import_sales_bytes",
+            "def import_sales_file",
+            "def _sales_from_upload",
+            "def sales_from_path",
+            "sales_filename",
+            "sales_bytes",
+        ):
+            self.assertNotIn(name, source)
 
     def test_thresholds_are_named_constants(self):
         self.assertEqual(MIN_IMPORT_PRODUCT_COUNT, 1)
@@ -157,9 +167,9 @@ class ShopeeExcelImportTests(unittest.TestCase):
 
     def test_rejected_import_leaves_official_file_bytes_unchanged(self):
         cases = [
-            ("missing.xlsx", MISSING_STOCK.read_bytes(), None),
-            ("header_only.xlsx", HEADER_ONLY.read_bytes(), None),
-            ("listed_sales.zip", LISTED_ZIP.read_bytes(), SALES_XLSX.read_bytes()),
+            ("missing.xlsx", MISSING_STOCK.read_bytes()),
+            ("header_only.xlsx", HEADER_ONLY.read_bytes()),
+            ("listed_sales.zip", LISTED_ZIP.read_bytes()),
         ]
         existing = {
             str(index): {
@@ -173,7 +183,7 @@ class ShopeeExcelImportTests(unittest.TestCase):
             for index in range(10)
         }
         original = json.dumps(existing, ensure_ascii=False, indent=2) + "\n"
-        for filename, data, sales_bytes in cases:
+        for filename, data in cases:
             with self.subTest(filename=filename):
                 import tempfile
                 with tempfile.TemporaryDirectory() as temp_dir:
@@ -181,13 +191,11 @@ class ShopeeExcelImportTests(unittest.TestCase):
                     path.write_text(original, encoding="utf-8")
                     before = path.read_bytes()
                     with self.assertRaises(ExcelImportError):
-                        import_sales_bytes(
-                            filename,
-                            data,
-                            destination=path,
-                            golden_table={},
-                            sales_filename="parentskudetail_sample.xlsx",
-                            sales_bytes=sales_bytes,
+                        commit_converted_catalog(
+                            path,
+                            convert_upload(filename, data),
+                            {},
+                            message="rejected",
                         )
                     self.assertEqual(path.read_bytes(), before)
                     self.assertEqual(list(path.parent.glob(".*.tmp")), [])
@@ -199,11 +207,11 @@ class ShopeeExcelImportTests(unittest.TestCase):
             path.write_bytes(b"{")
             before = path.read_bytes()
             with self.assertRaises(ExcelImportError):
-                import_sales_bytes(
-                    "listed_sales.zip",
-                    LISTED_ZIP.read_bytes(),
-                    destination=path,
-                    golden_table={},
+                commit_converted_catalog(
+                    path,
+                    convert_upload("listed_sales.zip", LISTED_ZIP.read_bytes()),
+                    {},
+                    message="rejected",
                 )
             self.assertEqual(path.read_bytes(), before)
 
@@ -240,14 +248,16 @@ class ShopeeExcelImportTests(unittest.TestCase):
                     }],
                 }
             }
-            result = import_sales_bytes(
-                "listed_sales.zip",
-                LISTED_ZIP.read_bytes(),
-                destination=path,
-                golden_table=golden,
-                sales_filename=SALES_XLSX.name,
-                sales_bytes=SALES_XLSX.read_bytes(),
-                inventory_month=4,
+            result = commit_converted_catalog(
+                path,
+                convert_upload(
+                    "listed_sales.zip",
+                    LISTED_ZIP.read_bytes(),
+                    previous=previous,
+                    inventory_month=4,
+                ),
+                golden,
+                message="已用價格及庫存 Excel 匯入並合併 shopee_products.json",
             )
             written = json.loads(path.read_text(encoding="utf-8"))
             model = written["900001"]["型號"][0]
@@ -370,14 +380,19 @@ class ShopeeExcelImportTests(unittest.TestCase):
             self.assertTrue(holding.wait(2))
             outcome = {}
 
+            payload = convert_upload(
+                "listed_sales.zip",
+                LISTED_ZIP.read_bytes(),
+                inventory_month=4,
+            )
+
             def import_while_locked():
                 try:
-                    outcome["result"] = import_sales_bytes(
-                        "listed_sales.zip",
-                        LISTED_ZIP.read_bytes(),
-                        destination=path,
-                        golden_table={},
-                        inventory_month=4,
+                    outcome["result"] = commit_converted_catalog(
+                        path,
+                        payload,
+                        {},
+                        message="locked",
                     )
                 except Exception as exc:
                     outcome["error"] = exc
