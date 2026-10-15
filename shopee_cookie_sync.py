@@ -2,7 +2,7 @@
 """Push Mac Chrome Shopee cookies into the remote box's already-open seller Chrome.
 
 Mac side (``sync``) reads the default Chrome profile, keeps only ``shopee.tw``
-and ``*.shopee.tw`` cookies, and sends them over scp/ssh. Box side (``apply``)
+and ``*.shopee.tw`` cookies, and sends them over ssh (stdin, ``umask 077``). Box side (``apply``)
 imports them with Playwright ``connect_over_cdp`` — the same attach style as
 the seller-center crawler — checks the seller center, then deletes the file.
 
@@ -67,6 +67,7 @@ REASON_KEYCHAIN = "讀不到 Chrome Safe Storage，請在鑰匙圈視窗按允�
 REASON_NO_DB = "找不到 Chrome 預設 profile 的 Cookies"
 REASON_CHROME_DB = "讀不到 Chrome Cookies 資料庫"
 REASON_DECRYPT = "cookie 解密失敗"
+REASON_V11 = "不支援 v11 cookie 加密"
 REASON_SSH = "請用 --ssh 或環境變數 SHOPEE_COOKIE_SYNC_SSH 指定 box"
 REASON_REMOTE_DIR = "請用 --remote-dir 或環境變數 SHOPEE_COOKIE_SYNC_REMOTE_DIR 指定 box 上的專案目錄"
 
@@ -81,6 +82,7 @@ _FAIL_REASONS = frozenset({
     REASON_NO_DB,
     REASON_CHROME_DB,
     REASON_DECRYPT,
+    REASON_V11,
     REASON_SSH,
     REASON_REMOTE_DIR,
 })
@@ -166,10 +168,12 @@ def decrypt_chrome_cookie_value(
     *,
     strip_domain_hash: bool,
 ) -> str:
-    """Decrypt a Chrome ``v10`` cookie. Raises CookieSyncError with a fixed reason."""
+    """Decrypt a Chrome ``v10`` cookie. ``v11`` is rejected with a fixed reason."""
     if not isinstance(encrypted, (bytes, bytearray)) or not encrypted:
         raise CookieSyncError(REASON_DECRYPT)
     blob = bytes(encrypted)
+    if blob.startswith(b"v11"):
+        raise CookieSyncError(REASON_V11)
     if not blob.startswith(b"v10"):
         raise CookieSyncError(REASON_DECRYPT)
     blob = blob[3:]
@@ -462,7 +466,7 @@ def sync_to_box(
     endpoints: Sequence[str],
     remote_python: str = "python3",
 ) -> SyncResult:
-    """Write a mode-0600 staging file, scp it, and ssh the box-side apply command."""
+    """Write a mode-0600 staging file and ssh it to the box on stdin."""
     target = resolve_ssh_target(ssh_target, env={})
     directory = resolve_remote_dir(remote_dir, env={})
     filtered = [cookie for cookie in cookies if is_shopee_tw_host(cookie.get("domain"))]
@@ -477,11 +481,13 @@ def sync_to_box(
     remote = f"/tmp/shopee-seller-cookie-sync-{secrets.token_hex(8)}.json"
     try:
         atomic_write_secret_json(local, normalized)
-        uploaded = _run_quiet(runner, _scp_argv(target, local, remote))
+        payload = local.read_bytes()
+        uploaded = _run_quiet(
+            runner,
+            _ssh_argv(target, _remote_upload_command(remote)),
+            input_bytes=payload,
+        )
         if uploaded is None or uploaded.returncode != 0:
-            return SyncResult(False, count, REASON_TRANSFER)
-        chmod = _run_quiet(runner, _ssh_argv(target, "chmod 600 " + shlex.quote(remote)))
-        if chmod is None or chmod.returncode != 0:
             return SyncResult(False, count, REASON_TRANSFER)
         command = _remote_apply_command(directory, remote_python, remote, endpoints)
         completed = _run_quiet(runner, _ssh_argv(target, command))
@@ -633,16 +639,9 @@ def _remote_apply_command(
     ])
 
 
-def _scp_argv(ssh_target: str, local: Path, remote: str) -> List[str]:
-    return [
-        "scp",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "ConnectTimeout=20",
-        str(local),
-        f"{ssh_target}:{remote}",
-    ]
+def _remote_upload_command(remote_path: str) -> str:
+    """Create the remote file as mode 0600. Cookie bytes stay on stdin."""
+    return "umask 077; cat > " + shlex.quote(remote_path)
 
 
 def _ssh_argv(ssh_target: str, remote_command: str) -> List[str]:
@@ -657,9 +656,9 @@ def _ssh_argv(ssh_target: str, remote_command: str) -> List[str]:
     ]
 
 
-def _run_quiet(runner: Runner, argv: Sequence[str]) -> Any:
+def _run_quiet(runner: Runner, argv: Sequence[str], input_bytes: Optional[bytes] = None) -> Any:
     try:
-        return runner(list(argv))
+        return runner(list(argv), input_bytes=input_bytes)
     except Exception:
         return None
 
@@ -742,7 +741,9 @@ def _storage_cookie_from_row(row: sqlite3.Row, key: bytes, *, strip_domain_hash:
                 key,
                 strip_domain_hash=strip_domain_hash,
             )
-        except CookieSyncError:
+        except CookieSyncError as exc:
+            if exc.reason == REASON_V11:
+                raise
             return None
     cookie: Dict[str, Any] = {
         "name": name,

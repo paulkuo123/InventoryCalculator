@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import shlex
 import stat
 import sqlite3
 import tempfile
@@ -23,6 +24,7 @@ from shopee_cookie_sync import (
     REASON_REMOTE,
     REASON_SSH,
     REASON_TRANSFER,
+    REASON_V11,
     CookieSyncError,
     _CdpSession,
     _aes128_encrypt_block_for_tests,
@@ -57,6 +59,7 @@ def secret_mode(path):
 class FakeRunner:
     def __init__(self, apply_stdout=b"", apply_code=0, fail_on=None, stderr=b"", password=KEYCHAIN_SECRET):
         self.calls = []
+        self.stdins = []
         self.staged = b""
         self.local_mode = None
         self.local_path = None
@@ -69,18 +72,17 @@ class FakeRunner:
     def __call__(self, argv, input_bytes=None):
         argv = list(argv)
         self.calls.append(argv)
+        self.stdins.append(input_bytes)
         if argv[0] == "security":
             return SimpleNamespace(returncode=0, stdout=(self.password + "\n").encode(), stderr=b"")
-        if argv[0] == "scp":
-            local = Path(argv[-2])
-            self.local_path = local
-            self.staged = local.read_bytes()
-            self.local_mode = secret_mode(local)
-            code = 1 if self.fail_on == "scp" else 0
-            return SimpleNamespace(returncode=code, stdout=b"", stderr=self.stderr)
-        remote = argv[-1]
-        if argv[0] == "ssh" and remote.startswith("chmod"):
-            code = 1 if self.fail_on == "chmod" else 0
+        remote = argv[-1] if argv else ""
+        if argv[0] == "ssh" and "umask 077" in remote and "cat >" in remote:
+            staged = list(Path("/tmp").glob("shopee-seller-cookie-sync-*.json"))
+            if staged:
+                self.local_path = staged[0]
+                self.local_mode = secret_mode(self.local_path)
+            self.staged = input_bytes or b""
+            code = 1 if self.fail_on == "upload" else 0
             return SimpleNamespace(returncode=code, stdout=b"", stderr=self.stderr)
         if argv[0] == "ssh" and "shopee_cookie_sync.py" in remote:
             return SimpleNamespace(
@@ -230,6 +232,15 @@ class DecryptTests(unittest.TestCase):
             decrypt_chrome_cookie_value(blob, b"\x00" * 16, strip_domain_hash=False)
         self.assertEqual(caught.exception.reason, REASON_DECRYPT)
         self.assertNotIn(SHOPEE_SECRET, str(caught.exception))
+
+    def test_v11_prefix_is_rejected_without_leaking_cookie(self):
+        blob = b"v11" + SHOPEE_SECRET.encode()
+        with self.assertRaises(CookieSyncError) as caught:
+            decrypt_chrome_cookie_value(blob, b"\x00" * 16, strip_domain_hash=False)
+        self.assertEqual(caught.exception.reason, REASON_V11)
+        self.assertIn("v11", caught.exception.reason)
+        self.assertNotIn(SHOPEE_SECRET, str(caught.exception))
+        self.assertNotIn(SHOPEE_SECRET, caught.exception.reason)
 
     def test_unlisted_error_reason_is_replaced(self):
         err = CookieSyncError("value=" + SHOPEE_SECRET)
@@ -563,12 +574,37 @@ class SyncTransferTests(unittest.TestCase):
         self.assertNotIn(SHOPEE_SECRET, joined)
         self.assertNotIn(GOOGLE_SECRET, joined)
         self.assertIn("BatchMode=yes", joined)
-        self.assertIn("chmod 600 ", joined)
+        self.assertNotIn("scp", joined)
+        self.assertFalse(any(call[0] == "scp" for call in runner.calls))
+        upload = [
+            (call, data)
+            for call, data in zip(runner.calls, runner.stdins)
+            if call[0] == "ssh" and "cat >" in call[-1]
+        ]
+        self.assertEqual(len(upload), 1)
+        upload_argv, upload_stdin = upload[0]
+        self.assertIn("umask 077", upload_argv[-1])
+        self.assertTrue(upload_argv[-1].startswith("umask 077; cat > "))
+        self.assertNotIn(SHOPEE_SECRET, " ".join(upload_argv))
+        self.assertIsNotNone(upload_stdin)
+        self.assertIn(SHOPEE_SECRET.encode(), upload_stdin)
+        self.assertNotIn(GOOGLE_SECRET.encode(), upload_stdin)
+        self.assertEqual(upload_stdin, runner.staged)
+        remote_token = upload_argv[-1].split("cat > ", 1)[1]
+        self.assertEqual(upload_argv[-1], sync._remote_upload_command(remote_token))
         self.assertTrue(any(call[-1].startswith("rm -f ") for call in runner.calls if call[0] == "ssh"))
         self.assertIn("http://127.0.0.1:9235,http://127.0.0.1:9239", joined)
 
-    def test_scp_failure_still_deletes_local_and_remote(self):
-        runner = FakeRunner(fail_on="scp", stderr=SHOPEE_SECRET.encode())
+    def test_upload_command_quotes_the_remote_path(self):
+        nasty = "/tmp/a b;rm -rf /.json"
+        command = sync._remote_upload_command(nasty)
+        quoted = shlex.quote(nasty)
+        self.assertEqual(command, "umask 077; cat > " + quoted)
+        self.assertTrue(quoted.startswith("'") and quoted.endswith("'"))
+        self.assertEqual(shlex.split(command), ["umask", "077;", "cat", ">", nasty])
+
+    def test_upload_failure_still_deletes_local_and_remote(self):
+        runner = FakeRunner(fail_on="upload", stderr=SHOPEE_SECRET.encode())
         result = sync_to_box(
             self._cookies(),
             ssh_target="me@box",
@@ -579,6 +615,15 @@ class SyncTransferTests(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual(result.reason, REASON_TRANSFER)
         self.assertFalse(runner.local_path.exists())
+        self.assertFalse(any(call[0] == "scp" for call in runner.calls))
+        upload = [
+            (call, data)
+            for call, data in zip(runner.calls, runner.stdins)
+            if call[0] == "ssh" and "umask 077" in call[-1]
+        ]
+        self.assertEqual(len(upload), 1)
+        self.assertNotIn(SHOPEE_SECRET, " ".join(upload[0][0]))
+        self.assertIn(SHOPEE_SECRET.encode(), upload[0][1])
         self.assertTrue(any(call[-1].startswith("rm -f ") for call in runner.calls if call[0] == "ssh"))
         self.assertNotIn(SHOPEE_SECRET, format_public_result(result))
 

@@ -2,7 +2,7 @@
 
 遠端盒上的 Chrome 常常被登出。庭安的 Mac Chrome 有登入，但 Mac 多半關機，所以這不是排程，是 **Mac 有開的時候手動跑一行**。
 
-這支工具只讀 Mac Chrome 預設設定檔裡 `shopee.tw` 和 `*.shopee.tw` 的 cookie，用 `scp`／`ssh` 送到盒上，再由盒上**已經開著**的賣家中心 Chrome（CDP）匯入，打開賣家中心看有沒有登入。看完一定刪掉暫存檔。不會把 cookie 內容印出來，也不會改爬蟲、不會寫 `cookies.json`、不會關掉遠端 Chrome。
+這支工具只讀 Mac Chrome 預設設定檔裡 `shopee.tw` 和 `*.shopee.tw` 的 cookie，用 `ssh` 從標準輸入寫到盒上（遠端先 `umask 077`，檔案一建立就是權限 `600`），再由盒上**已經開著**的賣家中心 Chrome（CDP）匯入，打開賣家中心看有沒有登入。看完一定刪掉暫存檔。不會把 cookie 內容印出來，也不會改爬蟲、不會寫 `cookies.json`、不會關掉遠端 Chrome。
 
 ## 要先準備什麼
 
@@ -11,7 +11,7 @@
 ### Mac
 
 - Python 3（跟這個專案一樣）
-- 系統內建的 `security`（讀鑰匙圈）、`ssh`、`scp`
+- 系統內建的 `security`（讀鑰匙圈）、`ssh`
 - [Tailscale](https://tailscale.com/) 已連上，而且跟遠端盒在同一個 tailnet
 - Chrome 預設設定檔已經登入蝦皮賣家中心。Chrome 可以開著；程式只複製 Cookies 資料庫來讀，不會改原本的設定檔
 
@@ -128,6 +128,6 @@ cookie 筆數：12
 ## 安全
 
 - 只處理 `shopee.tw` 和 `*.shopee.tw`，其他網域不會送上盒
-- 暫存檔權限 `600`，用完就刪，失敗也刪
+- 暫存檔用 `ssh` 寫入，遠端先 `umask 077`，一建立就是權限 `600`；用完就刪，失敗也刪。cookie 只走標準輸入，不會放進命令參數
 - 不把 cookie 值印到終端
 - 這些暫存檔名已在 `.gitignore`，不要提交
