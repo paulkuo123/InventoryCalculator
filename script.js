@@ -142,10 +142,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const searchOptionProduct = document.getElementById('searchOptionProduct');
     const searchOptionModel = document.getElementById('searchOptionModel');
     const searchOptionBoth = document.getElementById('searchOptionBoth');
-    const cookieImportText = document.getElementById('cookieImportText');
-    const cookieImportButton = document.getElementById('cookieImportButton');
-    const cookieImportClearButton = document.getElementById('cookieImportClearButton');
-    const cookieImportStatus = document.getElementById('cookieImportStatus');
+    const cookiePasteModal = document.getElementById('cookiePasteModal');
+    const cookiePasteText = document.getElementById('cookiePasteText');
+    const cookiePasteSubmit = document.getElementById('cookiePasteSubmit');
+    const cookiePasteStatus = document.getElementById('cookiePasteStatus');
+    let pendingCookieResume = null;
     const shopeeProductsFile = document.getElementById('shopeeProductsFile');
     const shopeeProductsImportButton = document.getElementById('shopeeProductsImportButton');
     const shopeeProductsImportStatus = document.getElementById('shopeeProductsImportStatus');
@@ -241,10 +242,70 @@ document.addEventListener('DOMContentLoaded', function() {
             });
     }
 
-    function setCookieImportStatus(text, type = '') {
-        if (!cookieImportStatus) return;
-        cookieImportStatus.textContent = text || '';
-        cookieImportStatus.className = `cookie-import-status ${type}`.trim();
+    function isCookiesRequired(data) {
+        return Boolean(data && (data.code === 'COOKIES_REQUIRED' || data.status === 'cookies_required'));
+    }
+
+    function setCookiePasteStatus(text, type = '') {
+        if (!cookiePasteStatus) return;
+        cookiePasteStatus.textContent = text || '';
+        cookiePasteStatus.className = `cookie-import-status ${type}`.trim();
+    }
+
+    function showCookiePasteModal(action) {
+        pendingCookieResume = action;
+        if (!cookiePasteModal) return;
+        cookiePasteModal.classList.remove('hidden');
+        cookiePasteModal.removeAttribute('hidden');
+        setCookiePasteStatus('');
+        if (cookiePasteText) {
+            cookiePasteText.value = '';
+            cookiePasteText.focus();
+        }
+    }
+
+    function hideCookiePasteModal() {
+        pendingCookieResume = null;
+        if (!cookiePasteModal) return;
+        cookiePasteModal.classList.add('hidden');
+        cookiePasteModal.setAttribute('hidden', '');
+        if (cookiePasteText) cookiePasteText.value = '';
+        setCookiePasteStatus('');
+    }
+
+    async function submitCookiePaste() {
+        if (!cookiePasteText || !cookiePasteSubmit) return;
+        const cookiesText = cookiePasteText.value.trim();
+        if (!cookiesText) {
+            setCookiePasteStatus('請先貼上 Cookie JSON。', 'error');
+            cookiePasteText.focus();
+            return;
+        }
+        const action = pendingCookieResume;
+        cookiePasteSubmit.disabled = true;
+        setCookiePasteStatus('正在檢查並儲存...');
+        try {
+            const response = await fetch('/api/cookies/import', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cookiesText })
+            });
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok || data.status !== 'success') {
+                setCookiePasteStatus((data && data.message) || 'Cookies 無法使用，請再貼一次。', 'error');
+                return;
+            }
+            hideCookiePasteModal();
+            if (action === 'oneClick') {
+                runOneClickUpdate();
+            } else if (action === 'search') {
+                performSearch();
+            }
+        } catch (error) {
+            setCookiePasteStatus('Cookies 儲存失敗，請再試一次。', 'error');
+        } finally {
+            cookiePasteSubmit.disabled = false;
+        }
     }
 
     function setShopeeProductsImportStatus(text, type = '') {
@@ -466,37 +527,6 @@ document.addEventListener('DOMContentLoaded', function() {
                     || !selected.name.toLowerCase().endsWith('.json')
                     || selected.size > MAX_PERSONAL_WATCHLIST_BYTES;
             }
-        }
-    }
-
-    async function importShopeeCookies() {
-        if (!cookieImportText || !cookieImportButton) return;
-        const cookiesText = cookieImportText.value.trim();
-        if (!cookiesText) {
-            setCookieImportStatus('請先貼上 Cookie JSON。', 'error');
-            cookieImportText.focus();
-            return;
-        }
-
-        cookieImportButton.disabled = true;
-        setCookieImportStatus('正在驗證並儲存 Cookies...');
-        try {
-            const response = await fetch('/api/cookies/import', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ cookiesText })
-            });
-            const data = await response.json();
-            if (!response.ok || data.status !== 'success') {
-                throw new Error(data.message || 'Cookie 匯入失敗');
-            }
-            const domains = (data.domains || []).join('、');
-            setCookieImportStatus(`已儲存 ${data.count} 筆 Cookies（${domains}）。`, 'success');
-            cookieImportText.value = '';
-        } catch (error) {
-            setCookieImportStatus(error.message || 'Cookie 匯入失敗，請檢查貼上的內容。', 'error');
-        } finally {
-            cookieImportButton.disabled = false;
         }
     }
 
@@ -3333,6 +3363,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 body: form,
             });
             const data = await response.json().catch(() => null);
+            if (isCookiesRequired(data)) {
+                clearInterval(progressInterval);
+                if (loading) loading.style.display = 'none';
+                setOneClickBusy(false);
+                showCookiePasteModal('oneClick');
+                return;
+            }
             if (!response.ok || !data || data.status === 'error') {
                 throw new Error((data && data.message) || '一鍵更新失敗');
             }
@@ -3399,6 +3436,13 @@ document.addEventListener('DOMContentLoaded', function() {
                 return response.json();
             })
             .then(data => {
+                if (isCookiesRequired(data)) {
+                    clearInterval(progressInterval);
+                    if (loading) loading.style.display = 'none';
+                    window.crawlerRunning = false;
+                    showCookiePasteModal('search');
+                    return;
+                }
                 if (data && typeof data === 'object' && (data.error || data.status === 'error')) {
                     throw new Error(data.error || data.message || '爬蟲執行失敗');
                 }
@@ -3447,14 +3491,15 @@ document.addEventListener('DOMContentLoaded', function() {
         if (searchButton.disabled || window.oneClickUpdateRunning) return;
         performSearch();
     });
-    if (cookieImportButton) {
-        cookieImportButton.addEventListener('click', importShopeeCookies);
+    if (cookiePasteSubmit) {
+        cookiePasteSubmit.addEventListener('click', submitCookiePaste);
     }
-    if (cookieImportClearButton) {
-        cookieImportClearButton.addEventListener('click', () => {
-            if (cookieImportText) cookieImportText.value = '';
-            setCookieImportStatus('');
-            if (cookieImportText) cookieImportText.focus();
+    if (cookiePasteModal) {
+        cookiePasteModal.addEventListener('click', (event) => {
+            const target = event.target;
+            if (target && target.closest && target.closest('[data-cookie-paste-close]')) {
+                hideCookiePasteModal();
+            }
         });
     }
     if (shopeeProductsFile) {

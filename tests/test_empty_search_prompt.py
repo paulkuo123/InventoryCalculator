@@ -3,9 +3,10 @@
 import json
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import main
+from cookie_fallback import CookieEnsureResult
 
 INDEX_HTML = Path(__file__).resolve().parent.parent / "index.html"
 SCRIPT_JS = Path(__file__).resolve().parent.parent / "script.js"
@@ -22,7 +23,8 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
     def test_keyword_search_calls_run_crawler_with_no_hint(self):
         handler = self._handler()
         handler.path = "/search?keyword=手機殼&showBrowser=false&inventoryMonth=4"
-        handler._handle_search()
+        with patch("main.ensure_shopee_cookies", return_value=CookieEnsureResult(True, "local", 1)):
+            handler._handle_search()
         handler.run_crawler.assert_called_once_with("手機殼", False, 4)
         handler._send_json_response.assert_called_once_with(
             200, {"100": {"商品名稱": "手機殼"}}
@@ -34,10 +36,11 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
     def test_empty_backend_search_still_calls_run_crawler(self):
         handler = self._handler()
         handler.path = "/search?keyword=&showBrowser=true&inventoryMonth=4"
-        handler._handle_search()
+        with patch("main.ensure_shopee_cookies", return_value=CookieEnsureResult(True, "local", 1)):
+            handler._handle_search()
         handler.run_crawler.assert_called_once_with("", True, 4)
 
-    def test_homepage_keeps_search_and_puts_cookies_back_beside_import(self):
+    def test_homepage_keeps_search_and_drops_the_cookies_card(self):
         html = INDEX_HTML.read_text(encoding="utf-8")
         script = SCRIPT_JS.read_text(encoding="utf-8")
         server = MAIN_PY.read_text(encoding="utf-8")
@@ -61,9 +64,12 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
         self.assertNotIn("def _handle_import_excel", server)
         self.assertIn("/api/shopee-products/download-excel", server)
         tools = html.split('aria-label="資料匯入"', 1)[1].split("</section>", 1)[0]
-        self.assertEqual(tools.count("<h3>"), 2)
+        self.assertEqual(tools.count("<h3>"), 1)
         self.assertIn("匯入商品資料", tools)
-        self.assertLess(tools.index("匯入商品資料"), tools.index("匯入蝦皮 Cookies"))
+        self.assertNotIn("匯入蝦皮 Cookies", html)
+        self.assertNotIn("cookieImportButton", html)
+        self.assertIn('id="cookiePasteModal"', html)
+        self.assertIn("請貼上蝦皮 Cookies", html)
         css = (INDEX_HTML.parent / "styles.css").read_text(encoding="utf-8")
         self.assertIn("pointer-events: none", css)
         self.assertIn("search-mode-new-glow", css)
@@ -73,34 +79,15 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
 
 
 class EmptySearchMatchesMainTests(unittest.TestCase):
-    def test_perform_search_matches_main_byte_for_byte(self):
-        import subprocess
-
-        main_js = subprocess.check_output(
-            ["git", "show", "origin/main:script.js"], text=True
+    def test_perform_search_keeps_the_crawler_request(self):
+        script = SCRIPT_JS.read_text(encoding="utf-8")
+        self.assertIn(
+            "const searchUrl = `/search?keyword=${encodeURIComponent(keyword)}&showBrowser=${showBrowser}&inventoryMonth=${inventoryMonth}`;",
+            script,
         )
-
-        def extract(text):
-            marker = "function performSearch()"
-            start = text.index(marker)
-            line_start = text.rfind("\n", 0, start) + 1
-            prev = text.rfind("\n", 0, line_start - 1) + 1
-            if text[prev:line_start].strip().startswith("//"):
-                start = prev
-            else:
-                start = line_start
-            brace = text.index("{", text.index(marker))
-            depth = 0
-            for index, char in enumerate(text[brace:], start=brace):
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-                    if depth == 0:
-                        return text[start:index + 1]
-            raise AssertionError("performSearch is unbalanced")
-
-        self.assertEqual(extract(SCRIPT_JS.read_text(encoding="utf-8")), extract(main_js))
+        self.assertIn("isCookiesRequired(data)", script)
+        self.assertIn("showCookiePasteModal('search')", script)
+        self.assertNotIn("emptySearch", script)
 
 
 class EmptySearchPromptBrowserTests(unittest.TestCase):

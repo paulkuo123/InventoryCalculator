@@ -193,14 +193,14 @@ def write_shopee_cookies(path: Path, payload: Any) -> Dict[str, Any]:
     }
 
 
-def save_shopee_cookies(base_dir: str, cookie_text: str) -> Dict[str, Any]:
-    """Validate and atomically save cookies.json under ``base_dir``."""
+def parse_cookie_text(cookie_text: str) -> Any:
+    """Parse JSON or a ``name=value; ...`` header paste. Values stay in the result only."""
     if not isinstance(cookie_text, str) or not cookie_text.strip():
         raise ValueError("請先貼上 Cookie JSON 文字")
     if len(cookie_text.encode("utf-8")) > MAX_COOKIE_IMPORT_BYTES:
         raise ValueError("Cookie 文字太大，請確認貼上的內容是否正確")
     try:
-        payload = json.loads(cookie_text)
+        return json.loads(cookie_text)
     except json.JSONDecodeError as exc:
         # Also accept a browser request-header style paste:
         # ``name=value; another=value``.  It is scoped to Shopee TW because
@@ -223,6 +223,9 @@ def save_shopee_cookies(base_dir: str, cookie_text: str) -> Dict[str, Any]:
             })
         if not pairs:
             raise ValueError(f"Cookie JSON 格式錯誤（第 {exc.lineno} 行）") from None
-        payload = pairs
+        return pairs
 
-    return write_shopee_cookies(Path(base_dir) / "cookies.json", payload)
+
+def save_shopee_cookies(base_dir: str, cookie_text: str) -> Dict[str, Any]:
+    """Validate shape and atomically save cookies.json under ``base_dir``."""
+    return write_shopee_cookies(Path(base_dir) / "cookies.json", parse_cookie_text(cookie_text))
