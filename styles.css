@@ -2483,9 +2483,9 @@ input:checked + .toggle-slider:before {
 .inventory-home .one-click-slot {
     flex: 1 1 280px;
     min-width: 0;
-    height: 40px;
+    max-width: 100%;
     min-height: 40px;
-    max-height: 40px;
+    height: auto;
     box-sizing: border-box;
 }
 
@@ -2507,10 +2507,11 @@ input:checked + .toggle-slider:before {
     flex-direction: row;
     align-items: center;
     gap: 10px;
+    max-width: 100%;
 }
 
 .inventory-home .import-products-slot {
-    overflow: hidden;
+    flex-wrap: wrap;
 }
 
 .inventory-home .import-products-slot input[type="file"] {
@@ -2530,23 +2531,32 @@ input:checked + .toggle-slider:before {
     max-width: 100%;
 }
 
-.inventory-home .import-products-slot .shopee-products-import-status {
-    flex: 1 1 80px;
+.inventory-home .import-products-slot .shopee-products-import-status:empty {
+    display: none;
+}
+
+.inventory-home .import-products-slot .shopee-products-import-status:not(:empty) {
+    flex: 1 0 100%;
     min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: unset;
+    white-space: normal;
+    line-height: 1.45;
 }
 
 .inventory-home #oneClickUpdateButton {
     flex: 1 1 auto;
     width: auto;
     min-width: 180px;
+    max-width: 100%;
     min-height: 40px;
 }
 
 .inventory-home .one-click-hint {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     margin: 0;
     color: #6b7280;
     font-size: 12px;
@@ -3378,6 +3388,41 @@ input:checked + .toggle-slider:before {
     .inventory-home .search-container {
         flex-direction: column;
         align-items: stretch;
+        max-width: 100%;
+    }
+
+    /* Keyword mode keeps the search button on its own row. The other modes
+       reserve the same 38px row so switching does not change the card height.
+       The hidden attribute cannot be shown with visibility: it stays out of view. */
+    .inventory-home .search-container:has(#searchButton[hidden])::after {
+        content: "";
+        flex: 0 0 auto;
+        width: 100%;
+        height: 38px;
+    }
+
+    .inventory-home .search-input-slot,
+    .inventory-home .import-products-slot,
+    .inventory-home .one-click-slot {
+        /* One-click hint wraps onto a second line; keep the other slots as tall. */
+        min-height: calc(40px + 10px + 1.4em);
+        align-content: flex-start;
+    }
+
+    .inventory-home .one-click-slot {
+        flex-wrap: wrap;
+    }
+
+    .inventory-home .one-click-slot #oneClickUpdateButton {
+        flex: 1 1 100%;
+        width: auto;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .inventory-home .one-click-hint {
+        flex: 1 1 100%;
+        white-space: normal;
     }
 
     .inventory-home input[type="text"] {

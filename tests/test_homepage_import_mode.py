@@ -305,6 +305,101 @@ class HomepageImportModeBrowserTests(unittest.TestCase):
             self.assertIn("一鍵更新全賣場", labels)
             browser.close()
 
+    def test_narrow_modes_share_height_and_long_import_errors_wrap(self):
+        from playwright.sync_api import sync_playwright
+
+        long_error = (
+            "shopee_products.json 格式錯誤：缺少商品名稱、型號清單與規格 ID，"
+            "請改用賣家中心匯出的完整商品檔再試一次。"
+        )
+
+        def measure(page):
+            return page.evaluate(
+                """() => {
+                    const card = document.querySelector('.search-mode').closest('.card');
+                    const container = document.querySelector('.search-container');
+                    const doc = document.documentElement;
+                    return {
+                        card: card.getBoundingClientRect().height,
+                        container: container.getBoundingClientRect().height,
+                        docOverflow: doc.scrollWidth - doc.clientWidth,
+                    };
+                }"""
+            )
+
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.launch(args=["--no-sandbox"])
+            page = browser.new_page()
+            for width in (375, 640, 1440):
+                page.set_viewport_size({"width": width, "height": 1000})
+                page.goto(INDEX_HTML.as_uri())
+                page.wait_for_selector("#searchModeKeyword.is-active")
+                heights = {"keyword": measure(page)}
+                page.locator("#searchModeImport").click()
+                heights["import"] = measure(page)
+                page.locator("#searchModeOneClick").click()
+                heights["oneclick"] = measure(page)
+                self.assertAlmostEqual(
+                    heights["keyword"]["card"], heights["import"]["card"], delta=1,
+                    msg=width,
+                )
+                self.assertAlmostEqual(
+                    heights["keyword"]["card"], heights["oneclick"]["card"], delta=1,
+                    msg=width,
+                )
+                self.assertAlmostEqual(
+                    heights["keyword"]["container"], heights["import"]["container"], delta=1,
+                    msg=width,
+                )
+                self.assertAlmostEqual(
+                    heights["keyword"]["container"], heights["oneclick"]["container"], delta=1,
+                    msg=width,
+                )
+                self.assertLessEqual(heights["oneclick"]["docOverflow"], 1, msg=width)
+
+            page.set_viewport_size({"width": 375, "height": 1000})
+            page.locator("#searchModeImport").click()
+            page.locator("#shopeeProductsFile").set_input_files({
+                "name": "shopee_products.json",
+                "mimeType": "application/json",
+                "buffer": '{"100":{"商品名稱":"x","型號":[]}}'.encode("utf-8"),
+            })
+            page.evaluate(
+                """(message) => {
+                    window.fetch = async (input) => {
+                        if (String(input).includes('/api/shopee-products/import')) {
+                            return new Response(JSON.stringify({status: 'error', message}), {
+                                status: 400,
+                                headers: {'Content-Type': 'application/json'},
+                            });
+                        }
+                        return new Response('{}', {status: 200, headers: {'Content-Type': 'application/json'}});
+                    };
+                }""",
+                long_error,
+            )
+            page.locator("#shopeeProductsImportButton").click()
+            page.wait_for_function(
+                "document.getElementById('shopeeProductsImportStatus').textContent.includes('完整商品檔')"
+            )
+            shown = page.evaluate(
+                """() => {
+                    const status = document.getElementById('shopeeProductsImportStatus');
+                    const style = getComputedStyle(status);
+                    return {
+                        text: status.textContent,
+                        whiteSpace: style.whiteSpace,
+                        clipped: status.scrollHeight - status.clientHeight,
+                        overflow: status.scrollWidth - status.clientWidth,
+                    };
+                }"""
+            )
+            self.assertEqual(shown["text"], long_error)
+            self.assertEqual(shown["whiteSpace"], "normal")
+            self.assertLessEqual(shown["clipped"], 1)
+            self.assertLessEqual(shown["overflow"], 1)
+            browser.close()
+
 
 if __name__ == "__main__":
     unittest.main()
