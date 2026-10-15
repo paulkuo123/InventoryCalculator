@@ -1,4 +1,4 @@
-"""Empty-search hint stays in the browser. Keyword search still calls the crawler."""
+"""Empty search stays the full-shop crawler. Keyword search still calls it directly."""
 
 import io
 import json
@@ -67,12 +67,14 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
         self.assertIn('value="4" selected', html)
         self.assertIn("匯入並套用", html)
         self.assertIn("匯入蝦皮 Excel（新・較快）", html)
-        self.assertIn("新功能", html)
+        self.assertIn("一鍵更新全賣場庫存", html)
         self.assertIn("架上及已售完商品", html)
-        self.assertIn("function emptySearchNeedsPrompt(keyword)", script)
-        self.assertIn("if (String(keyword || '').trim()) return false;", script)
-        self.assertIn("if (emptySearchNeedsPrompt(keyword))", script)
-        self.assertIn("startInventorySearch(keyword)", script)
+        self.assertNotIn("新功能", html)
+        self.assertNotIn("emptySearchPrompt", html)
+        self.assertNotIn("excelMonthlySalesFile", html)
+        self.assertNotIn("emptySearch", script)
+        self.assertNotIn("monthlySalesFile", script)
+        self.assertNotIn("startInventorySearch", script)
 
     def test_import_excel_endpoint_merges_without_crawler(self):
         content_type, body = _multipart(
@@ -146,8 +148,39 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
             self.assertEqual(products_path.read_bytes(), before)
 
 
+class EmptySearchMatchesMainTests(unittest.TestCase):
+    def test_perform_search_matches_main_byte_for_byte(self):
+        import subprocess
+
+        main_js = subprocess.check_output(
+            ["git", "show", "origin/main:script.js"], text=True
+        )
+
+        def extract(text):
+            marker = "function performSearch()"
+            start = text.index(marker)
+            line_start = text.rfind("\n", 0, start) + 1
+            prev = text.rfind("\n", 0, line_start - 1) + 1
+            if text[prev:line_start].strip().startswith("//"):
+                start = prev
+            else:
+                start = line_start
+            brace = text.index("{", text.index(marker))
+            depth = 0
+            for index, char in enumerate(text[brace:], start=brace):
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        return text[start:index + 1]
+            raise AssertionError("performSearch is unbalanced")
+
+        self.assertEqual(extract(SCRIPT_JS.read_text(encoding="utf-8")), extract(main_js))
+
+
 class EmptySearchPromptBrowserTests(unittest.TestCase):
-    def test_keyword_does_not_prompt_and_empty_search_does(self):
+    def test_empty_and_keyword_search_go_straight_to_the_crawler(self):
         from playwright.sync_api import sync_playwright
 
         with sync_playwright() as playwright:
@@ -179,48 +212,35 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
                     };
                 }"""
             )
-            self.assertIn("新功能", page.locator("#excelImportCard").inner_text())
-            self.assertIn("架上及已售完商品", page.locator("#excelImportCard").inner_text())
+            card = page.locator("#excelImportCard").inner_text()
+            self.assertNotIn("新功能", card)
+            self.assertIn("架上及已售完商品", card)
+            self.assertIn("一鍵更新全賣場庫存", card)
+            self.assertEqual(page.locator("#excelMonthlySalesFile").count(), 0)
+            self.assertEqual(page.locator("#emptySearchPrompt").count(), 0)
             self.assertEqual(page.locator("#searchButton").inner_text().strip(), "搜尋")
             self.assertEqual(page.locator("#inventoryMonth").input_value(), "4")
 
             page.locator("#searchButton").click()
-            page.locator("#emptySearchPrompt").wait_for(state="visible")
-            self.assertIn("整店建議改用 Excel 匯入", page.locator("#emptySearchPrompt").inner_text())
-            self.assertEqual(
-                page.evaluate("window.__searchCalls.filter(url => url.includes('/search'))"),
-                [],
-            )
-
-            page.locator("#emptySearchPrompt").click(position={"x": 8, "y": 8})
-            self.assertTrue(page.locator("#emptySearchPrompt").is_hidden())
-            page.locator("#searchInput").fill("手機殼")
-            page.locator("#searchButton").click()
             page.wait_for_function(
                 "window.__searchCalls.some(url => url.includes('/search') && url.includes('keyword='))"
             )
-            self.assertTrue(page.locator("#emptySearchPrompt").is_hidden())
-            keyword_call = page.evaluate(
+            empty_call = page.evaluate(
                 "window.__searchCalls.find(url => url.includes('/search'))"
             )
-            self.assertIn("keyword=", keyword_call)
-            self.assertNotIn("keyword=&", keyword_call)
-            self.assertIn("%E6%89%8B%E6%A9%9F%E6%AE%BC", keyword_call)
+            self.assertIn("keyword=", empty_call)
+            self.assertIn("keyword=&", empty_call)
+            self.assertIn("inventoryMonth=4", empty_call)
 
-            page.evaluate("localStorage.removeItem('shopeeExcelImport.emptySearchHintDismissed')")
-            page.locator("#searchInput").fill("")
+            page.locator("#searchInput").fill("手機殼")
             page.locator("#searchButton").click()
-            page.locator("#emptySearchPrompt").wait_for(state="visible")
-            page.locator("#emptySearchDismiss").click()
-            self.assertTrue(page.locator("#emptySearchPrompt").is_hidden())
-            self.assertEqual(
-                page.evaluate("localStorage.getItem('shopeeExcelImport.emptySearchHintDismissed')"),
-                "1",
+            page.wait_for_function(
+                "window.__searchCalls.some(url => url.includes('%E6%89%8B%E6%A9%9F%E6%AE%BC'))"
             )
-            calls_before = page.evaluate("window.__searchCalls.length")
-            page.locator("#searchButton").click()
-            page.wait_for_function(f"window.__searchCalls.length > {calls_before}")
-            self.assertTrue(page.locator("#emptySearchPrompt").is_hidden())
+            keyword_call = page.evaluate(
+                "window.__searchCalls.find(url => url.includes('%E6%89%8B%E6%A9%9F%E6%AE%BC'))"
+            )
+            self.assertNotIn("keyword=&", keyword_call)
             browser.close()
 
 

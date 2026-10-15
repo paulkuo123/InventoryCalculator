@@ -3,25 +3,32 @@
 import io
 import json
 import os
+import tempfile
+import threading
 import unittest
 import zipfile
+from copy import deepcopy
 from pathlib import Path
 
 import pandas as pd
 
 from crawler import ShopeeCrawler
+from parser import load_monthly_sales_file
 from shopee_excel_import import (
     MIN_IMPORT_MODEL_COUNT,
     MIN_IMPORT_PRODUCT_COUNT,
     MIN_RATIO_VS_EXISTING_MODELS,
     MIN_RATIO_VS_EXISTING_PRODUCTS,
     ExcelImportError,
+    _apply_sales,
     build_products,
     convert_upload,
     count_catalog,
     import_sales_bytes,
+    restock_like_full_shop_crawler,
     rows_from_frame,
 )
+from shopee_products_import import shopee_products_write_lock, without_crawl_metadata
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "shopee_mass_update"
 LISTED_ZIP = FIXTURE_DIR / "listed_sales.zip"
@@ -261,6 +268,132 @@ class ShopeeExcelImportTests(unittest.TestCase):
         product_count, model_count = count_catalog(products)
         self.assertEqual(product_count, 352)
         self.assertEqual(model_count, 5852)
+
+    def test_fixture_restock_matches_full_shop_crawler_save(self):
+        previous = {
+            "900001": {
+                "商品名稱": "舊名",
+                "商品圖片網址": "https://old.example/case.jpg",
+                "已售出總數量": "50",
+                "型號": [
+                    {
+                        "規格ID": "800001",
+                        "型號名稱": "黑色",
+                        "型號圖片網址": "https://old.example/black.jpg",
+                        "已售出數量": "40",
+                        "商品庫存": "1",
+                        "月銷量": "99",
+                    },
+                    {
+                        "規格ID": "800002",
+                        "型號名稱": "白色",
+                        "已售出數量": "10",
+                        "商品庫存": "1",
+                    },
+                ],
+            }
+        }
+        products = convert_upload(
+            "listed_sales.zip",
+            LISTED_ZIP.read_bytes(),
+            previous=previous,
+            inventory_month=4,
+        )
+        for product in products.values():
+            for model in product.get("型號") or []:
+                model["月銷量"] = "0"
+        _apply_sales(products, load_monthly_sales_file(SALES_XLSX))
+        products["900001"]["型號"][1]["商品庫存"] = "0"
+
+        via_pipeline = restock_like_full_shop_crawler(products, 4)
+        crawler = object.__new__(ShopeeCrawler)
+        crawler.inventory_month = 4
+        crawler.crawl_page_logs = []
+        crawler.crawl_count_check = None
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "crawler.json"
+            crawler.output_path = str(output)
+            crawler.save_to_file(deepcopy(products))
+            via_crawler = without_crawl_metadata(json.loads(output.read_text(encoding="utf-8")))
+
+        def view(catalog):
+            return {
+                product_id: {
+                    "總月銷量": product.get("總月銷量"),
+                    "總建議補貨數量": product.get("總建議補貨數量"),
+                    "已售出總數量": product.get("已售出總數量"),
+                    "型號": [
+                        {
+                            "規格ID": model.get("規格ID"),
+                            "月銷量": model.get("月銷量"),
+                            "商品庫存": model.get("商品庫存"),
+                            "已售出數量": model.get("已售出數量"),
+                            "建議補貨數量": model.get("建議補貨數量"),
+                        }
+                        for model in product.get("型號") or []
+                    ],
+                }
+                for product_id, product in catalog.items()
+            }
+
+        self.assertEqual(view(via_pipeline), view(via_crawler))
+        self.assertEqual(list(via_pipeline), list(via_crawler))
+        black = via_pipeline["900001"]["型號"][0]
+        white = via_pipeline["900001"]["型號"][1]
+        self.assertEqual(black["月銷量"], "10")
+        self.assertEqual(white["月銷量"], "2")
+        self.assertEqual(white["商品庫存"], "0")
+        self.assertEqual(
+            black["建議補貨數量"],
+            ShopeeCrawler.calculate_restock_quantity(None, 40, 50, 10, 10, 4, 12),
+        )
+        self.assertEqual(
+            white["建議補貨數量"],
+            ShopeeCrawler.calculate_restock_quantity(None, 10, 50, 2, 0, 4, 12),
+        )
+
+    def test_concurrent_imports_wait_for_the_write_lock(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "shopee_products.json"
+            path.write_text("{}\n", encoding="utf-8")
+            before = path.read_bytes()
+            release = threading.Event()
+            holding = threading.Event()
+
+            def hold_lock():
+                with shopee_products_write_lock(path):
+                    holding.set()
+                    self.assertTrue(release.wait(5))
+
+            holder = threading.Thread(target=hold_lock)
+            holder.start()
+            self.assertTrue(holding.wait(2))
+            outcome = {}
+
+            def import_while_locked():
+                try:
+                    outcome["result"] = import_sales_bytes(
+                        "listed_sales.zip",
+                        LISTED_ZIP.read_bytes(),
+                        destination=path,
+                        golden_table={},
+                        inventory_month=4,
+                    )
+                except Exception as exc:
+                    outcome["error"] = exc
+
+            worker = threading.Thread(target=import_while_locked)
+            worker.start()
+            worker.join(0.4)
+            self.assertTrue(worker.is_alive())
+            self.assertEqual(path.read_bytes(), before)
+            release.set()
+            worker.join(5)
+            holder.join(5)
+            self.assertFalse(worker.is_alive())
+            self.assertIn("result", outcome)
+            self.assertEqual(outcome["result"]["status"], "success")
+            self.assertNotEqual(path.read_bytes(), before)
 
 
 if __name__ == "__main__":

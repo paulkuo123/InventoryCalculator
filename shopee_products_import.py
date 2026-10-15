@@ -1,12 +1,14 @@
 """Validation and safe replacement helpers for shopee_products.json."""
 
+import fcntl
 import json
 import os
 import re
 import tempfile
+from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterator, List, Tuple
 
 
 MAX_SHOPEE_PRODUCTS_IMPORT_BYTES = 20 * 1024 * 1024
@@ -215,6 +217,35 @@ def replace_shopee_products(path: Path, payload: Any) -> Dict[str, int]:
     return summary
 
 
+@contextmanager
+def shopee_products_write_lock(path: Path) -> Iterator[None]:
+    """Serialize writers of one shopee_products.json, including other processes.
+
+    The lock is an exclusive flock on a sibling ``*.lock`` file. A second
+    importer waits; it does not pass the size check against a stale snapshot.
+    """
+    destination = Path(path)
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = destination.with_name(destination.name + ".lock")
+    handle = open(lock_path, "a", encoding="utf-8")
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def apply_shopee_products_import_unlocked(
+    path: Path, payload: Any, golden_table: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    """Validate, merge Golden mappings, then atomically replace. Caller holds the lock."""
+    validate_shopee_products(payload)
+    merged, match_counts = merge_shopee_products_with_golden(payload, golden_table or {})
+    summary = replace_shopee_products(path, merged)
+    return merged, {**match_counts, **summary}
+
+
 def apply_shopee_products_import(
     path: Path, payload: Any, golden_table: Dict[str, Any]
 ) -> Tuple[Dict[str, Any], Dict[str, int]]:
@@ -222,7 +253,5 @@ def apply_shopee_products_import(
 
     JSON import and the Excel converter both commit through this function.
     """
-    validate_shopee_products(payload)
-    merged, match_counts = merge_shopee_products_with_golden(payload, golden_table or {})
-    summary = replace_shopee_products(path, merged)
-    return merged, {**match_counts, **summary}
+    with shopee_products_write_lock(path):
+        return apply_shopee_products_import_unlocked(path, payload, golden_table)

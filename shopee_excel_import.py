@@ -17,6 +17,7 @@ import io
 import json
 import math
 import re
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -25,8 +26,9 @@ import pandas as pd
 
 from parser import load_monthly_sales_file, monthly_sales_from_frame
 from shopee_products_import import (
-    apply_shopee_products_import,
+    apply_shopee_products_import_unlocked,
     normalize_product_id,
+    shopee_products_write_lock,
     without_crawl_metadata,
 )
 
@@ -506,6 +508,55 @@ def load_previous_catalog(path: Path) -> Dict[str, Any]:
     return dict(existing or {})
 
 
+def restock_like_full_shop_crawler(
+    products: Mapping[str, Any], inventory_month: int
+) -> Dict[str, Any]:
+    """Run ``ShopeeCrawler.save_to_file`` and return the catalog it would save.
+
+    Suggested restock, totals, and sort order come from that method. Crawl
+    metadata keys are removed so the import writer stores products only.
+    """
+    from copy import deepcopy
+
+    from crawler import ShopeeCrawler
+
+    crawler = object.__new__(ShopeeCrawler)
+    crawler.inventory_month = inventory_month
+    crawler.crawl_page_logs = []
+    crawler.crawl_count_check = None
+    snapshot = deepcopy(dict(products))
+    with tempfile.TemporaryDirectory(prefix="shopee-restock-") as temp_dir:
+        output = Path(temp_dir) / "shopee_products.json"
+        crawler.output_path = str(output)
+        crawler.save_to_file(snapshot)
+        saved = json.loads(output.read_text(encoding="utf-8"))
+    cleaned = without_crawl_metadata(saved)
+    return cleaned if isinstance(cleaned, dict) else {}
+
+
+def commit_converted_catalog(
+    destination: Path,
+    payload: Mapping[str, Any],
+    golden_table: Mapping[str, Any],
+    *,
+    message: str,
+) -> Dict[str, Any]:
+    """Ratio-check and commit while holding the products write lock."""
+    destination = Path(destination)
+    with shopee_products_write_lock(destination):
+        guard = assert_reasonable_catalog(payload, destination)
+        merged, counts = apply_shopee_products_import_unlocked(
+            destination, dict(payload), dict(golden_table or {})
+        )
+    return {
+        "status": "success",
+        "message": message,
+        "products": merged,
+        **counts,
+        **guard,
+    }
+
+
 def import_sales_bytes(
     filename: str,
     data: bytes,
@@ -519,18 +570,21 @@ def import_sales_bytes(
 ) -> Dict[str, Any]:
     """Convert, guard, then commit through the shared Golden merge + atomic replace."""
     destination = Path(destination)
-    if previous is None:
-        previous = load_previous_catalog(destination)
-    payload = convert_upload(
-        filename,
-        data,
-        previous=previous,
-        sales_filename=sales_filename,
-        sales_bytes=sales_bytes,
-        inventory_month=inventory_month,
-    )
-    guard = assert_reasonable_catalog(payload, destination)
-    merged, counts = apply_shopee_products_import(destination, payload, dict(golden_table or {}))
+    with shopee_products_write_lock(destination):
+        if previous is None:
+            previous = load_previous_catalog(destination)
+        payload = convert_upload(
+            filename,
+            data,
+            previous=previous,
+            sales_filename=sales_filename,
+            sales_bytes=sales_bytes,
+            inventory_month=inventory_month,
+        )
+        guard = assert_reasonable_catalog(payload, destination)
+        merged, counts = apply_shopee_products_import_unlocked(
+            destination, payload, dict(golden_table or {})
+        )
     return {
         "status": "success",
         "message": "已用價格及庫存 Excel 匯入並合併 shopee_products.json",

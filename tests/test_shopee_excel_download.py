@@ -226,12 +226,67 @@ class MassUpdateDownloadTests(unittest.TestCase):
                     page=FakePage(),
                     max_polls=5,
                     poll_seconds=0,
+                    sales_fetcher=lambda catalog: catalog,
                 )
             written = json.loads(destination.read_text(encoding="utf-8"))
             self.assertNotEqual(destination.read_bytes(), before)
             self.assertEqual(written["900001"]["型號"][0]["1688_sku_name"], "金黑")
             self.assertEqual(result["sourceProductCount"], 3)
             self.assertIn("無規格", written["900002"])
+
+    def test_monthly_sales_failure_does_not_write_official_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "shopee_products.json"
+            destination.write_text('{"keep": true}\n', encoding="utf-8")
+            before = destination.read_bytes()
+
+            def fail(_catalog):
+                raise RuntimeError("數據中心逾時")
+
+            with self.assertRaises(MassUpdateError) as caught:
+                download_and_import(
+                    destination=destination,
+                    golden_table={},
+                    page=FakePage(),
+                    max_polls=5,
+                    poll_seconds=0,
+                    sales_fetcher=fail,
+                )
+            self.assertIn("月銷量抓取失敗", str(caught.exception))
+            self.assertEqual(destination.read_bytes(), before)
+            self.assertFalse(list(Path(temp_dir).glob("shopee_products.json.tmp")))
+
+    def test_one_click_calls_get_monthly_sales_on_the_same_page(self):
+        from crawler import ShopeeCrawler
+
+        seen = {}
+        raw_page = object()
+        page = FakePage()
+        page.page = raw_page
+
+        def fake_get_monthly_sales(self, keyword):
+            seen["keyword"] = keyword
+            seen["page"] = self.page
+            seen["fail_closed"] = self.monthly_sales_fail_closed
+            seen["catalog"] = self.products_data
+            return self.products_data
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "shopee_products.json"
+            destination.write_text("{}\n", encoding="utf-8")
+            with patch.object(ShopeeCrawler, "get_monthly_sales", fake_get_monthly_sales):
+                download_and_import(
+                    destination=destination,
+                    golden_table={},
+                    page=page,
+                    max_polls=5,
+                    poll_seconds=0,
+                )
+        self.assertEqual(seen["keyword"], "")
+        self.assertIs(seen["page"], raw_page)
+        self.assertTrue(seen["fail_closed"])
+        self.assertIn("900001", seen["catalog"])
+        self.assertEqual(seen["catalog"]["900001"]["型號"][0]["月銷量"], "0")
 
 
 if __name__ == "__main__":

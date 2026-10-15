@@ -150,14 +150,9 @@ document.addEventListener('DOMContentLoaded', function() {
     const shopeeProductsImportButton = document.getElementById('shopeeProductsImportButton');
     const shopeeProductsImportStatus = document.getElementById('shopeeProductsImportStatus');
     const excelSalesFile = document.getElementById('excelSalesFile');
-    const excelMonthlySalesFile = document.getElementById('excelMonthlySalesFile');
     const excelImportButton = document.getElementById('excelImportButton');
     const excelDownloadButton = document.getElementById('excelDownloadButton');
     const excelImportStatus = document.getElementById('excelImportStatus');
-    const emptySearchPrompt = document.getElementById('emptySearchPrompt');
-    const emptySearchContinue = document.getElementById('emptySearchContinue');
-    const emptySearchDismiss = document.getElementById('emptySearchDismiss');
-    const EMPTY_SEARCH_HINT_KEY = 'shopeeExcelImport.emptySearchHintDismissed';
     const batchRestockToolbar = document.getElementById('batchRestockToolbar');
     const batchRestockToolbarSummary = document.getElementById('batchRestockToolbarSummary');
     const openBatchRestockButton = document.getElementById('openBatchRestockButton');
@@ -261,32 +256,6 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!excelImportStatus) return;
         excelImportStatus.textContent = text || '';
         excelImportStatus.className = `shopee-products-import-status ${type}`.trim();
-    }
-
-    function emptySearchNeedsPrompt(keyword) {
-        if (String(keyword || '').trim()) return false;
-        try {
-            return localStorage.getItem(EMPTY_SEARCH_HINT_KEY) !== '1';
-        } catch (error) {
-            return true;
-        }
-    }
-
-    function showEmptySearchPrompt() {
-        if (emptySearchPrompt) emptySearchPrompt.hidden = false;
-    }
-
-    function hideEmptySearchPrompt() {
-        if (emptySearchPrompt) emptySearchPrompt.hidden = true;
-    }
-
-    function dismissEmptySearchPrompt() {
-        try {
-            localStorage.setItem(EMPTY_SEARCH_HINT_KEY, '1');
-        } catch (error) {
-            // The browser can refuse storage. The dialog still closes.
-        }
-        hideEmptySearchPrompt();
     }
 
     function formatImportFileSize(bytes) {
@@ -3336,9 +3305,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             form.append('salesFile', file);
         }
-        const monthly = excelMonthlySalesFile && excelMonthlySalesFile.files[0];
-        if (monthly) form.append('monthlySalesFile', monthly);
-        setExcelImportStatus(includeSalesFile ? '正在匯入 Excel…' : '正在從賣家中心下載價格及庫存…', 'loading');
+        setExcelImportStatus(includeSalesFile ? '正在匯入 Excel…' : '正在下載價格及庫存，並抓取月銷量…', 'loading');
         if (excelImportButton) excelImportButton.disabled = true;
         if (excelDownloadButton) excelDownloadButton.disabled = true;
         try {
@@ -3372,20 +3339,14 @@ document.addEventListener('DOMContentLoaded', function() {
 
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
+        
         const searchInput = document.getElementById('searchInput');
         if (!searchInput) {
             console.error('找不到搜尋輸入框元素');
             return;
         }
+        
         const keyword = searchInput.value.trim();
-        if (emptySearchNeedsPrompt(keyword)) {
-            showEmptySearchPrompt();
-            return;
-        }
-        startInventorySearch(keyword);
-    }
-
-    function startInventorySearch(keyword) {
         const headlessModeElement = document.getElementById('headlessMode');
         const inventoryMonthElement = document.getElementById('inventoryMonth');
         
@@ -3494,20 +3455,6 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (excelDownloadButton) {
         excelDownloadButton.addEventListener('click', downloadExcelSales);
-    }
-    if (emptySearchContinue) {
-        emptySearchContinue.addEventListener('click', function() {
-            hideEmptySearchPrompt();
-            startInventorySearch(searchInput ? searchInput.value.trim() : '');
-        });
-    }
-    if (emptySearchDismiss) {
-        emptySearchDismiss.addEventListener('click', dismissEmptySearchPrompt);
-    }
-    if (emptySearchPrompt) {
-        emptySearchPrompt.addEventListener('click', function(event) {
-            if (event.target === emptySearchPrompt) hideEmptySearchPrompt();
-        });
     }
     if (personalWatchlistFile) {
         personalWatchlistFile.addEventListener('change', updatePersonalWatchlistFile);

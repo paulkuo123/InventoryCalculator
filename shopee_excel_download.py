@@ -21,7 +21,7 @@ import json
 import tempfile
 import time
 from pathlib import Path
-from typing import Any, List, Mapping, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from ads_session import (
     BROWSER_SOURCE_REMOTE,
@@ -29,7 +29,12 @@ from ads_session import (
     normalize_browser_source,
 )
 from shopee_cookie_sync import connect_seller_chrome, resolve_seller_cdp_endpoints
-from shopee_excel_import import import_sales_file
+from shopee_excel_import import (
+    commit_converted_catalog,
+    convert_upload,
+    load_previous_catalog,
+    restock_like_full_shop_crawler,
+)
 
 MASS_UPDATE_URL = "https://seller.shopee.tw/portal/product-mass/mass-update"
 
@@ -307,20 +312,56 @@ class PlaywrightMassUpdatePage:
         return target
 
 
+def _clear_monthly_sales(products: Dict[str, Any]) -> None:
+    """Drop copied monthly sales so the data-centre fetch is the only source."""
+    for product in products.values():
+        if not isinstance(product, dict):
+            continue
+        product["總月銷量"] = "0"
+        product["總建議補貨數量"] = 0
+        for model in product.get("型號") or []:
+            if isinstance(model, dict):
+                model["月銷量"] = "0"
+                model["建議補貨數量"] = 0
+
+
+def fetch_monthly_sales_on_page(page: Any, products: Dict[str, Any], inventory_month: int) -> Dict[str, Any]:
+    """Call ``ShopeeCrawler.get_monthly_sales`` on the download page.
+
+    Full-shop crawl passes an empty keyword. ``monthly_sales_fail_closed``
+    makes a data-centre error raise instead of saving zeros over the shop.
+    """
+    from crawler import ShopeeCrawler
+    from pw_adapter import PlaywrightDriver
+
+    raw_page = getattr(page, "page", None)
+    if raw_page is None:
+        raise MassUpdateError("沒有可共用的賣家中心頁面，已停止，沒有寫入正式檔。")
+    crawler = object.__new__(ShopeeCrawler)
+    crawler.page = raw_page
+    crawler.driver = PlaywrightDriver(raw_page)
+    crawler.products_data = products
+    crawler.inventory_month = inventory_month
+    crawler.monthly_sales_fail_closed = True
+    crawler.search_keyword = ""
+    crawler.get_monthly_sales("")
+    return products
+
+
 def download_and_import(
     *,
     destination: Path,
     golden_table: Mapping[str, Any],
     inventory_month: int = 4,
-    sales_path: Optional[Path] = None,
     cdp_endpoint: str = "",
     browser_source: str = BROWSER_SOURCE_REMOTE,
     page: Any = None,
     env: Optional[Mapping[str, str]] = None,
     max_polls: int = DEFAULT_MAX_POLLS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
+    sales_fetcher: Any = None,
 ) -> Dict[str, Any]:
-    """Download the zip, then commit it with the Excel importer."""
+    """Download the zip, fill monthly sales, then commit. No write if sales fail."""
     source = normalize_browser_source(browser_source)
     if source != BROWSER_SOURCE_REMOTE:
         raise MassUpdateBlocked(
@@ -339,12 +380,32 @@ def download_and_import(
                 max_polls=max_polls,
                 poll_seconds=poll_seconds,
             )
-            return import_sales_file(
-                zip_path,
-                destination=Path(destination),
-                golden_table=golden_table,
-                sales_path=Path(sales_path) if sales_path else None,
+            destination = Path(destination)
+            previous = load_previous_catalog(destination)
+            payload = convert_upload(
+                zip_path.name,
+                zip_path.read_bytes(),
+                previous=previous,
                 inventory_month=inventory_month,
+            )
+            _clear_monthly_sales(payload)
+            fetch = sales_fetcher or (
+                lambda catalog: fetch_monthly_sales_on_page(page, catalog, inventory_month)
+            )
+            try:
+                fetched = fetch(payload)
+            except MassUpdateError:
+                raise
+            except Exception as exc:
+                raise MassUpdateError(f"月銷量抓取失敗，沒有寫入正式檔：{exc}") from exc
+            if not isinstance(fetched, dict):
+                raise MassUpdateError("月銷量抓取沒有回傳商品資料，沒有寫入正式檔。")
+            restocked = restock_like_full_shop_crawler(fetched, inventory_month)
+            return commit_converted_catalog(
+                destination,
+                restocked,
+                golden_table,
+                message="已用價格及庫存 Excel 與數據中心月銷量更新 shopee_products.json",
             )
     finally:
         if session is not None:
@@ -367,7 +428,6 @@ def build_argument_parser() -> argparse.ArgumentParser:
         help="CDP URL or port. Default SHOPEE_SELLER_CDP, else 9235 then 9239.",
     )
     parser.add_argument("--inventory-month", type=int, default=4, help="Restock horizon in months.")
-    parser.add_argument("--monthly-sales", default="", help="Optional parentskudetail xlsx.")
     parser.add_argument("--output", default="shopee_products.json", help="Official products file.")
     parser.add_argument("--golden-table", default="golden_table.json", help="Golden table JSON.")
     return parser
@@ -384,7 +444,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             destination=Path(args.output),
             golden_table=golden_table if isinstance(golden_table, dict) else {},
             inventory_month=args.inventory_month,
-            sales_path=Path(args.monthly_sales) if args.monthly_sales else None,
             cdp_endpoint=args.cdp_endpoint,
             browser_source=args.browser_source,
         )

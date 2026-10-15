@@ -1474,17 +1474,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             sales = form.get('salesFile') or {}
             if not sales.get('data'):
                 raise ExcelImportError("請先選擇價格及庫存的 zip 或 xlsx。")
-            monthly = form.get('monthlySalesFile') or {}
-            monthly_bytes = monthly.get('data') or None
-            if monthly_bytes == b'':
-                monthly_bytes = None
             result = import_sales_bytes(
                 sales.get('filename') or 'sales.xlsx',
                 sales.get('data') or b'',
                 destination=self._shopee_products_path(),
                 golden_table=self._load_json_file(self._golden_table_path()),
-                sales_filename=monthly.get('filename') or '',
-                sales_bytes=monthly_bytes,
                 inventory_month=self._inventory_month_from_form(form),
             )
             self._send_json_response(200, result)
@@ -1513,26 +1507,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def _handle_download_excel(self):
         try:
             form = self._excel_form()
-            monthly = form.get('monthlySalesFile') or {}
-            sales_path = None
-            if monthly.get('data'):
-                handle = tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False)
-                handle.write(monthly['data'])
-                handle.close()
-                sales_path = Path(handle.name)
-            try:
-                result = download_and_import(
-                    destination=self._shopee_products_path(),
-                    golden_table=self._load_json_file(self._golden_table_path()),
-                    inventory_month=self._inventory_month_from_form(form),
-                    sales_path=sales_path,
-                )
-            finally:
-                if sales_path is not None:
-                    try:
-                        os.unlink(sales_path)
-                    except OSError:
-                        pass
+            result = download_and_import(
+                destination=self._shopee_products_path(),
+                golden_table=self._load_json_file(self._golden_table_path()),
+                inventory_month=self._inventory_month_from_form(form),
+            )
             self._send_json_response(200, result)
         except MassUpdateBlocked as exc:
             self._send_json_response(409, {"status": "error", "message": str(exc), "code": exc.code})
@@ -1541,16 +1520,16 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         except FileNotFoundError as exc:
             self._send_json_response(404, {"status": "error", "message": str(exc)})
         except OSError:
-            logger.exception("自動下載後寫入 shopee_products.json 失敗")
+            logger.exception("一鍵更新後寫入 shopee_products.json 失敗")
             self._send_json_response(500, {
                 "status": "error",
                 "message": "shopee_products.json 寫入失敗，原檔未完成替換",
             })
         except Exception as exc:
-            logger.exception("自動下載價格及庫存失敗: %s", exc)
+            logger.exception("一鍵更新全賣場庫存失敗: %s", exc)
             self._send_json_response(500, {
                 "status": "error",
-                "message": "自動下載失敗，沒有改到正式商品檔",
+                "message": "一鍵更新失敗，沒有改到正式商品檔",
             })
 
     def _read_json_body(self, max_bytes=None):
