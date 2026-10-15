@@ -384,6 +384,73 @@ button {
 .shopee-products-import-status.error { color: #c62828; }
 .shopee-products-import-status.loading { color: #2563c7; }
 
+.new-feature-badge {
+    display: inline-flex;
+    align-items: center;
+    margin-left: 6px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #d32f2f;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1.4;
+    vertical-align: middle;
+}
+
+.excel-import-card {
+    border-color: rgba(46, 125, 50, 0.28);
+}
+
+.excel-file-field {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: #374151;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.empty-search-prompt {
+    position: fixed;
+    inset: 0;
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+    background: rgba(17, 24, 39, 0.45);
+}
+
+.empty-search-prompt[hidden] {
+    display: none !important;
+}
+
+.empty-search-prompt-card {
+    width: min(520px, 100%);
+    padding: 20px;
+    border-radius: 12px;
+    background: #fff;
+    box-shadow: 0 16px 40px rgba(17, 24, 39, 0.2);
+}
+
+.empty-search-prompt-card h3 {
+    margin: 0 0 8px;
+}
+
+.empty-search-prompt-card p {
+    margin: 0;
+    color: #374151;
+    line-height: 1.6;
+}
+
+.empty-search-prompt-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
+}
+
 .personal-watchlist-card {
     background: linear-gradient(180deg, #f7fbff 0%, #ffffff 100%);
     border: 1px solid rgba(37, 99, 199, 0.18);

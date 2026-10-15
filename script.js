@@ -149,6 +149,15 @@ document.addEventListener('DOMContentLoaded', function() {
     const shopeeProductsFile = document.getElementById('shopeeProductsFile');
     const shopeeProductsImportButton = document.getElementById('shopeeProductsImportButton');
     const shopeeProductsImportStatus = document.getElementById('shopeeProductsImportStatus');
+    const excelSalesFile = document.getElementById('excelSalesFile');
+    const excelMonthlySalesFile = document.getElementById('excelMonthlySalesFile');
+    const excelImportButton = document.getElementById('excelImportButton');
+    const excelDownloadButton = document.getElementById('excelDownloadButton');
+    const excelImportStatus = document.getElementById('excelImportStatus');
+    const emptySearchPrompt = document.getElementById('emptySearchPrompt');
+    const emptySearchContinue = document.getElementById('emptySearchContinue');
+    const emptySearchDismiss = document.getElementById('emptySearchDismiss');
+    const EMPTY_SEARCH_HINT_KEY = 'shopeeExcelImport.emptySearchHintDismissed';
     const batchRestockToolbar = document.getElementById('batchRestockToolbar');
     const batchRestockToolbarSummary = document.getElementById('batchRestockToolbarSummary');
     const openBatchRestockButton = document.getElementById('openBatchRestockButton');
@@ -246,6 +255,38 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!shopeeProductsImportStatus) return;
         shopeeProductsImportStatus.textContent = text || '';
         shopeeProductsImportStatus.className = `shopee-products-import-status ${type}`.trim();
+    }
+
+    function setExcelImportStatus(text, type = '') {
+        if (!excelImportStatus) return;
+        excelImportStatus.textContent = text || '';
+        excelImportStatus.className = `shopee-products-import-status ${type}`.trim();
+    }
+
+    function emptySearchNeedsPrompt(keyword) {
+        if (String(keyword || '').trim()) return false;
+        try {
+            return localStorage.getItem(EMPTY_SEARCH_HINT_KEY) !== '1';
+        } catch (error) {
+            return true;
+        }
+    }
+
+    function showEmptySearchPrompt() {
+        if (emptySearchPrompt) emptySearchPrompt.hidden = false;
+    }
+
+    function hideEmptySearchPrompt() {
+        if (emptySearchPrompt) emptySearchPrompt.hidden = true;
+    }
+
+    function dismissEmptySearchPrompt() {
+        try {
+            localStorage.setItem(EMPTY_SEARCH_HINT_KEY, '1');
+        } catch (error) {
+            // The browser can refuse storage. The dialog still closes.
+        }
+        hideEmptySearchPrompt();
     }
 
     function formatImportFileSize(bytes) {
@@ -3274,16 +3315,77 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function selectedInventoryMonth() {
+        const inventoryMonthElement = document.getElementById('inventoryMonth');
+        return inventoryMonthElement ? inventoryMonthElement.value : '4';
+    }
+
+    function updateExcelImportFile() {
+        const file = excelSalesFile && excelSalesFile.files[0];
+        if (excelImportButton) excelImportButton.disabled = !file;
+    }
+
+    async function postExcelForm(url, includeSalesFile) {
+        const form = new FormData();
+        form.append('inventoryMonth', selectedInventoryMonth());
+        if (includeSalesFile) {
+            const file = excelSalesFile && excelSalesFile.files[0];
+            if (!file) {
+                setExcelImportStatus('請先選擇價格及庫存的 zip 或 xlsx。', 'error');
+                return null;
+            }
+            form.append('salesFile', file);
+        }
+        const monthly = excelMonthlySalesFile && excelMonthlySalesFile.files[0];
+        if (monthly) form.append('monthlySalesFile', monthly);
+        setExcelImportStatus(includeSalesFile ? '正在匯入 Excel…' : '正在從賣家中心下載價格及庫存…', 'loading');
+        if (excelImportButton) excelImportButton.disabled = true;
+        if (excelDownloadButton) excelDownloadButton.disabled = true;
+        try {
+            const response = await fetch(url, { method: 'POST', body: form });
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data || data.status === 'error') {
+                throw new Error((data && data.message) || '匯入失敗');
+            }
+            await applyCrawlerSuccessResults(data.products);
+            setExcelImportStatus(
+                `匯入成功：${data.sourceProductCount || 0} 個商品、${data.sourceModelCount || 0} 個型號。`,
+                'success'
+            );
+            return data;
+        } catch (error) {
+            setExcelImportStatus(error.message || '匯入失敗', 'error');
+            return null;
+        } finally {
+            if (excelDownloadButton) excelDownloadButton.disabled = false;
+            updateExcelImportFile();
+        }
+    }
+
+    function importExcelSales() {
+        return postExcelForm('/api/shopee-products/import-excel', true);
+    }
+
+    function downloadExcelSales() {
+        return postExcelForm('/api/shopee-products/download-excel', false);
+    }
+
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
-        
         const searchInput = document.getElementById('searchInput');
         if (!searchInput) {
             console.error('找不到搜尋輸入框元素');
             return;
         }
-        
         const keyword = searchInput.value.trim();
+        if (emptySearchNeedsPrompt(keyword)) {
+            showEmptySearchPrompt();
+            return;
+        }
+        startInventorySearch(keyword);
+    }
+
+    function startInventorySearch(keyword) {
         const headlessModeElement = document.getElementById('headlessMode');
         const inventoryMonthElement = document.getElementById('inventoryMonth');
         
@@ -3383,6 +3485,29 @@ document.addEventListener('DOMContentLoaded', function() {
     }
     if (shopeeProductsImportButton) {
         shopeeProductsImportButton.addEventListener('click', importShopeeProducts);
+    }
+    if (excelSalesFile) {
+        excelSalesFile.addEventListener('change', updateExcelImportFile);
+    }
+    if (excelImportButton) {
+        excelImportButton.addEventListener('click', importExcelSales);
+    }
+    if (excelDownloadButton) {
+        excelDownloadButton.addEventListener('click', downloadExcelSales);
+    }
+    if (emptySearchContinue) {
+        emptySearchContinue.addEventListener('click', function() {
+            hideEmptySearchPrompt();
+            startInventorySearch(searchInput ? searchInput.value.trim() : '');
+        });
+    }
+    if (emptySearchDismiss) {
+        emptySearchDismiss.addEventListener('click', dismissEmptySearchPrompt);
+    }
+    if (emptySearchPrompt) {
+        emptySearchPrompt.addEventListener('click', function(event) {
+            if (event.target === emptySearchPrompt) hideEmptySearchPrompt();
+        });
     }
     if (personalWatchlistFile) {
         personalWatchlistFile.addEventListener('change', updatePersonalWatchlistFile);

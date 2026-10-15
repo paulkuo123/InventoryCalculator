@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>莉莉安蝦皮庫存管理系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=20261004-home-ui">
+    <link rel="stylesheet" href="styles.css?v=20261015-excel-import">
 </head>
 <body class="inventory-home">
     <header>
@@ -103,6 +103,38 @@
                         匯入並套用
                     </button>
                     <span id="shopeeProductsImportStatus" class="shopee-products-import-status" role="status" aria-live="polite"></span>
+                </div>
+            </div>
+
+            <div class="card cookie-import-card excel-import-card" id="excelImportCard">
+                <div class="cookie-import-header">
+                    <div>
+                        <h3>
+                            <i class="fas fa-file-excel"></i>
+                            匯入蝦皮 Excel（新・較快）
+                            <span class="new-feature-badge">新功能</span>
+                        </h3>
+                        <p>到賣家中心下載「價格及庫存」時，商品狀態要選「架上及已售完商品」。上傳 zip 或 xlsx 就會轉成現在的商品檔。月銷量報表可以另外附上，沒有也能匯。自動下載只會下載，不會按上傳或更新。</p>
+                    </div>
+                </div>
+                <div class="shopee-products-import-actions excel-import-actions">
+                    <label class="excel-file-field">
+                        <span>價格及庫存檔</span>
+                        <input id="excelSalesFile" type="file" accept=".zip,.xlsx,application/zip,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+                    </label>
+                    <label class="excel-file-field">
+                        <span>月銷量報表（選填）</span>
+                        <input id="excelMonthlySalesFile" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+                    </label>
+                    <button id="excelImportButton" class="btn-secondary" type="button" disabled>
+                        <i class="fas fa-file-import"></i>
+                        匯入 Excel
+                    </button>
+                    <button id="excelDownloadButton" class="btn-outline" type="button">
+                        <i class="fas fa-download"></i>
+                        自動下載並匯入
+                    </button>
+                    <span id="excelImportStatus" class="shopee-products-import-status" role="status" aria-live="polite"></span>
                 </div>
             </div>
 
@@ -320,6 +352,17 @@
 
     <section id="restockOperationStatus" class="restock-operation-status" aria-live="polite" hidden></section>
 
-    <script src="script.js?v=20261004-golden-sync"></script>
+    <div id="emptySearchPrompt" class="empty-search-prompt" hidden>
+        <div class="empty-search-prompt-card" role="dialog" aria-modal="true" aria-labelledby="emptySearchPromptTitle">
+            <h3 id="emptySearchPromptTitle">整店建議改用 Excel 匯入</h3>
+            <p>留空搜尋會把整店爬一輪，比較慢，也比較容易漏抓。用賣家中心下載的價格及庫存 Excel 會比較快。下載時商品狀態要選「架上及已售完商品」。</p>
+            <div class="empty-search-prompt-actions">
+                <button id="emptySearchContinue" class="btn-secondary" type="button">照舊跑爬蟲</button>
+                <button id="emptySearchDismiss" class="btn-outline" type="button">不再提示</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js?v=20261015-excel-import"></script>
 </body>
 </html>

@@ -213,3 +213,16 @@ def replace_shopee_products(path: Path, payload: Any) -> Dict[str, int]:
     summary = validate_shopee_products(payload)
     atomic_write_json(path, payload)
     return summary
+
+
+def apply_shopee_products_import(
+    path: Path, payload: Any, golden_table: Dict[str, Any]
+) -> Tuple[Dict[str, Any], Dict[str, int]]:
+    """Validate, merge Golden mappings, then atomically replace the official file.
+
+    JSON import and the Excel converter both commit through this function.
+    """
+    validate_shopee_products(payload)
+    merged, match_counts = merge_shopee_products_with_golden(payload, golden_table or {})
+    summary = replace_shopee_products(path, merged)
+    return merged, {**match_counts, **summary}
