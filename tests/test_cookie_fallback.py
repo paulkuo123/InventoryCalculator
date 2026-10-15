@@ -7,6 +7,7 @@ import os
 import stat
 import tempfile
 import unittest
+import urllib.error
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from types import SimpleNamespace
@@ -22,8 +23,10 @@ from cookie_fallback import (
     accept_pasted_cookies,
     connect_cdp_websocket,
     ensure_shopee_cookies,
+    probe_seller_cookies,
     public_cookie_status,
     read_shopee_cookies_from_cdp,
+    _probe_response_ok,
 )
 from cookie_import import os as cookie_import_os
 
@@ -31,7 +34,7 @@ from cookie_import import os as cookie_import_os
 SECRET = "spc-secret-do-not-leak-9f3c2a"
 OTHER_SECRET = "cdp-secret-do-not-leak-77ab"
 ROOT = Path(__file__).resolve().parent.parent
-SCREENSHOT_DIR = Path("/opt/cursor/artifacts/screenshots")
+SCREENSHOT_ENV = "COOKIE_FALLBACK_SCREENSHOT_DIR"
 
 
 def shopee_cookie(value=SECRET, **overrides):
@@ -55,6 +58,16 @@ def secret_mode(path):
 
 def leftover_tmps(directory):
     return list(Path(directory).glob(".cookies.json.*.tmp"))
+
+
+def save_screenshot(target, name, **kwargs):
+    """Save only when COOKIE_FALLBACK_SCREENSHOT_DIR is set. Otherwise skip."""
+    raw = os.environ.get(SCREENSHOT_ENV, "").strip()
+    if not raw:
+        return
+    directory = Path(raw)
+    directory.mkdir(parents=True, exist_ok=True)
+    target.screenshot(path=str(directory / name), **kwargs)
 
 
 class _CaptureHandler(logging.Handler):
@@ -486,11 +499,96 @@ class CookieFallbackWebHandlerTests(unittest.TestCase):
         self.assertNotIn("value", payload)
 
 
+class _FakeShopResponse:
+    def __init__(self, status, body):
+        self.status = status
+        self._body = body if isinstance(body, bytes) else body.encode("utf-8")
+
+    def read(self, _limit=None):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+
+class _FakeShopOpener:
+    def __init__(self, result):
+        self.result = result
+        self.calls = 0
+
+    def open(self, request, timeout=None):
+        self.calls += 1
+        if isinstance(self.result, Exception):
+            raise self.result
+        return self.result
+
+
+class ShopInfoProbeTests(unittest.TestCase):
+    def test_http_200_code_0_with_data_is_valid(self):
+        body = json.dumps({
+            "code": 0,
+            "message": "success",
+            "data": {"shop_id": 1, "name": "shop"},
+        })
+        self.assertTrue(_probe_response_ok(200, body))
+
+    def test_http_403_errcode_is_invalid_and_does_not_crash(self):
+        body = json.dumps({"errcode": 2, "message": "token not found"}).encode("utf-8")
+        self.assertFalse(_probe_response_ok(403, body))
+        error = urllib.error.HTTPError(
+            "https://seller.shopee.tw/api/v3/general/get_shop_info",
+            403,
+            "Forbidden",
+            hdrs=None,
+            fp=io.BytesIO(body),
+        )
+        opener = _FakeShopOpener(error)
+        try:
+            valid = probe_seller_cookies([shopee_cookie()], opener=opener)
+        except Exception as exc:
+            self.fail(f"403 probe crashed: {exc}")
+        self.assertFalse(valid)
+        self.assertEqual(opener.calls, 1)
+        logs = _CaptureHandler()
+        logger = logging.getLogger("cookie_fallback")
+        logger.addHandler(logs)
+        try:
+            again = probe_seller_cookies([shopee_cookie()], opener=_FakeShopOpener(urllib.error.HTTPError(
+                "https://seller.shopee.tw/api/v3/general/get_shop_info",
+                403,
+                "Forbidden",
+                hdrs=None,
+                fp=io.BytesIO(body),
+            )))
+        finally:
+            logger.removeHandler(logs)
+        self.assertFalse(again)
+        self.assertNotIn(SECRET, "\n".join(logs.lines))
+
+    def test_code_0_without_shop_data_is_invalid(self):
+        self.assertFalse(_probe_response_ok(200, json.dumps({
+            "code": 0,
+            "message": "success",
+            "data": {},
+        })))
+        self.assertFalse(_probe_response_ok(200, json.dumps({
+            "code": 0,
+            "message": "success",
+        })))
+        self.assertFalse(_probe_response_ok(200, json.dumps({
+            "errcode": 0,
+            "message": "success",
+            "data": {"shop_id": 1},
+        })))
+
+
 class CookiePasteModalBrowserTests(unittest.TestCase):
     def test_homepage_has_no_cookies_card_and_paste_modal_resumes_search(self):
         from playwright.sync_api import sync_playwright
 
-        SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
         index = ROOT / "index.html"
         product = {"1": {"商品名稱": "測試", "型號": [], "總月銷量": "0", "已售出總數量": "0", "商品圖片網址": ""}}
 
@@ -504,7 +602,7 @@ class CookiePasteModalBrowserTests(unittest.TestCase):
             self.assertEqual(page.locator("#cookieImportButton").count(), 0)
             self.assertTrue(page.locator("h3", has_text="匯入商品資料").is_visible())
             self.assertTrue(page.locator("#cookiePasteModal").is_hidden())
-            page.screenshot(path=str(SCREENSHOT_DIR / "homepage-no-cookies-card.png"), full_page=True)
+            save_screenshot(page, "homepage-no-cookies-card.png", full_page=True)
 
             page.evaluate(
                 """(product) => {
@@ -543,7 +641,7 @@ class CookiePasteModalBrowserTests(unittest.TestCase):
             page.locator("#searchButton").click()
             page.wait_for_selector("#cookiePasteModal:not(.hidden)")
             self.assertTrue(page.locator("#cookiePasteTitle").is_visible())
-            page.locator("#cookiePasteModal").screenshot(path=str(SCREENSHOT_DIR / "cookie-paste-modal.png"))
+            save_screenshot(page.locator("#cookiePasteModal"), "cookie-paste-modal.png")
 
             page.locator("#cookiePasteText").fill(json.dumps([shopee_cookie("bad-cookie")]))
             page.locator("#cookiePasteSubmit").click()

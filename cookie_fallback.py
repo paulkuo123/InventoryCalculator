@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import logging
+import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
@@ -107,29 +108,48 @@ def _load_local_cookies(path: Path) -> Optional[List[Dict[str, Any]]]:
     return shopee
 
 
-def _probe_response_ok(status: int, body: Any) -> bool:
-    if status != 200:
-        return False
+def _json_object(body: Any) -> Optional[Dict[str, Any]]:
     if isinstance(body, bytes):
         text = body.decode("utf-8", "replace")
     elif isinstance(body, str):
         text = body
     else:
-        return False
+        return None
     stripped = text.lstrip()
     if not stripped or stripped[:1] == "<":
-        return False
+        return None
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
-        return False
+        return None
     if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def _probe_response_ok(status: int, body: Any) -> bool:
+    """Valid only for HTTP 200, integer code 0, and a non-empty data object.
+
+    Expired cookies come back as HTTP 403 ``{"errcode": 2, ...}``. That is
+    invalid, not an exception.
+    """
+    if status != 200:
         return False
-    code = payload.get("code", payload.get("errcode", payload.get("error")))
-    return code in (0, "0")
+    payload = _json_object(body)
+    if payload is None:
+        return False
+    code = payload.get("code")
+    if type(code) is not int or code != 0:
+        return False
+    data = payload.get("data")
+    return isinstance(data, dict) and len(data) > 0
 
 
-def probe_seller_cookies(cookies: Sequence[Mapping[str, Any]]) -> bool:
+def probe_seller_cookies(
+    cookies: Sequence[Mapping[str, Any]],
+    *,
+    opener: Any = None,
+) -> bool:
     """One read-only GET. The cookie header is never logged."""
     header = _cookie_header(cookies)
     if not header:
@@ -143,11 +163,19 @@ def probe_seller_cookies(cookies: Sequence[Mapping[str, Any]]) -> bool:
         },
         method="GET",
     )
-    opener = urllib.request.build_opener(_NoRedirect())
+    client = opener if opener is not None else urllib.request.build_opener(_NoRedirect())
     try:
-        with opener.open(request, timeout=_PROBE_TIMEOUT_SECONDS) as response:
+        with client.open(request, timeout=_PROBE_TIMEOUT_SECONDS) as response:
             status = int(getattr(response, "status", 0) or 0)
             body = response.read(65536)
+    except urllib.error.HTTPError as exc:
+        status = int(getattr(exc, "code", 0) or 0)
+        try:
+            body = exc.read(65536)
+        except Exception:
+            body = b""
+        logger.info("seller cookie probe rejected status=%s", status)
+        return _probe_response_ok(status, body or b"")
     except Exception:
         logger.info("seller cookie probe failed")
         return False

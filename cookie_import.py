@@ -224,8 +224,3 @@ def parse_cookie_text(cookie_text: str) -> Any:
         if not pairs:
             raise ValueError(f"Cookie JSON 格式錯誤（第 {exc.lineno} 行）") from None
         return pairs
-
-
-def save_shopee_cookies(base_dir: str, cookie_text: str) -> Dict[str, Any]:
-    """Validate shape and atomically save cookies.json under ``base_dir``."""
-    return write_shopee_cookies(Path(base_dir) / "cookies.json", parse_cookie_text(cookie_text))

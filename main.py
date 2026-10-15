@@ -97,10 +97,6 @@ def _public_cookie_import(result):
     }
 
 
-def _public_error_text(exc):
-    return str(exc or "")
-
-
 def normalize_identifier(value):
     """將 Excel 讀出的 ID 正規化成不帶 .0 的字串。"""
     text = str(value).strip()
@@ -1456,7 +1452,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             result = self.run_crawler(keyword, show_browser, inventory_month)
             self._send_json_response(200, result)
         except Exception as e:
-            self._send_json_response(500, {"error": _public_error_text(e)})
+            self._send_json_response(500, {"error": str(e)})
 
     def _ensure_web_cookies(self):
         """Shared cookie fallback for search and one-click update. None means the response was already sent."""
