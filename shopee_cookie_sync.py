@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Push Mac Chrome Shopee cookies into the remote box's already-open seller Chrome.
+"""Push Mac browser Shopee cookies into the remote box's already-open seller Chrome.
 
-Mac side (``sync``) reads the default Chrome profile, keeps only ``shopee.tw``
-and ``*.shopee.tw`` cookies, and sends them over ssh (stdin, ``umask 077``). Box side (``apply``)
-imports them with Playwright ``connect_over_cdp`` — the same attach style as
-the seller-center crawler — checks the seller center, then deletes the file.
+Mac side (``sync``) reads the default Ego Lite profile (or Chrome with
+``--browser chrome``), keeps only ``shopee.tw`` and ``*.shopee.tw`` cookies,
+and sends them over ssh (stdin, ``umask 077``). Box side (``apply``) imports
+them with Playwright ``connect_over_cdp`` — the same attach style as the
+seller-center crawler — checks the seller center, then deletes the file.
 
 Cookie values are never printed. Operator output is a count plus success or
 failure. The Tailscale address is not built in; pass ``--ssh`` or
@@ -46,6 +47,13 @@ SELLER_CDP_ENV = "SHOPEE_SELLER_CDP"
 SSH_TARGET_ENV = "SHOPEE_COOKIE_SYNC_SSH"
 REMOTE_DIR_ENV = "SHOPEE_COOKIE_SYNC_REMOTE_DIR"
 CHROME_COOKIES_ENV = "SHOPEE_CHROME_COOKIES_DB"
+BROWSER_ENV = "SHOPEE_COOKIE_SYNC_BROWSER"
+COOKIE_DB_ENV = "SHOPEE_COOKIE_DB"
+KEYCHAIN_SERVICE_ENV = "SHOPEE_COOKIE_SYNC_KEYCHAIN_SERVICE"
+KEYCHAIN_ACCOUNT_ENV = "SHOPEE_COOKIE_SYNC_KEYCHAIN_ACCOUNT"
+BROWSER_CHROME = "chrome"
+BROWSER_EGOLITE = "egolite"
+DEFAULT_BROWSER = BROWSER_EGOLITE
 
 SELLER_CENTER_URL = "https://seller.shopee.tw/portal/product/list/live/all"
 
@@ -63,8 +71,9 @@ REASON_NO_COOKIES = "沒有 shopee.tw 的 cookie"
 REASON_BAD_FILE = "暫存檔無法讀取"
 REASON_TRANSFER = "傳到 box 失敗"
 REASON_REMOTE = "box 端執行失敗"
-REASON_KEYCHAIN = "讀不到 Chrome Safe Storage，請在鑰匙圈視窗按允許"
-REASON_NO_DB = "找不到 Chrome 預設 profile 的 Cookies"
+REASON_KEYCHAIN = "讀不到瀏覽器 Safe Storage，請在鑰匙圈視窗按允許"
+REASON_NO_DB = "找不到瀏覽器預設 profile 的 Cookies"
+REASON_BROWSER = "請用 --browser chrome 或 egolite"
 REASON_CHROME_DB = "讀不到 Chrome Cookies 資料庫"
 REASON_DECRYPT = "cookie 解密失敗"
 REASON_V11 = "不支援 v11 cookie 加密"
@@ -80,6 +89,7 @@ _FAIL_REASONS = frozenset({
     REASON_REMOTE,
     REASON_KEYCHAIN,
     REASON_NO_DB,
+    REASON_BROWSER,
     REASON_CHROME_DB,
     REASON_DECRYPT,
     REASON_V11,
@@ -201,21 +211,98 @@ def chrome_expires_to_unix(expires_utc: object) -> int:
     return seconds if seconds > 0 else 0
 
 
-def default_chrome_cookie_db_candidates(home: Optional[Path] = None) -> List[Path]:
-    root = (home or Path.home()) / "Library/Application Support/Google/Chrome/Default"
+@dataclass(frozen=True)
+class BrowserCookieSource:
+    """Where a Chromium browser keeps its Safe Storage item and cookie DB.
+
+    Ego Lite path and keychain labels come from SweetCookieKit's catalog, not
+    from Citro Labs. The cookie encryption prefix (v10 or v11) is unconfirmed.
+    """
+
+    keychain_service: str
+    keychain_account: str
+    support_dir: str
+
+
+# support_dir is relative to ~/Library/Application Support, then /Default.
+BROWSER_SOURCES = {
+    BROWSER_EGOLITE: BrowserCookieSource(
+        "ego safe storage",
+        "ego",
+        "Citro Labs/ego lite",
+    ),
+    BROWSER_CHROME: BrowserCookieSource(
+        "Chrome Safe Storage",
+        "Chrome",
+        "Google/Chrome",
+    ),
+}
+
+
+def resolve_browser(cli_value: str = "", env: Optional[Mapping[str, str]] = None) -> str:
+    env_map = env if env is not None else os.environ
+    text = str(cli_value or env_map.get(BROWSER_ENV, "") or "").strip().lower()
+    if not text:
+        return DEFAULT_BROWSER
+    if text not in BROWSER_SOURCES:
+        raise CookieSyncError(REASON_BROWSER)
+    return text
+
+
+def default_cookie_db_candidates(browser: str, home: Optional[Path] = None) -> List[Path]:
+    source = BROWSER_SOURCES[resolve_browser(browser, env={})]
+    root = (home or Path.home()) / "Library/Application Support" / source.support_dir / "Default"
     return [root / "Network" / "Cookies", root / "Cookies"]
 
 
-def resolve_chrome_cookie_db(explicit: str = "", *, home: Optional[Path] = None) -> Path:
+def resolve_cookie_db(
+    explicit: str = "",
+    *,
+    browser: str,
+    home: Optional[Path] = None,
+) -> Path:
     if explicit and str(explicit).strip():
         path = Path(explicit).expanduser()
         if not path.is_file():
             raise CookieSyncError(REASON_NO_DB)
         return path
-    for candidate in default_chrome_cookie_db_candidates(home):
+    for candidate in default_cookie_db_candidates(browser, home):
         if candidate.is_file():
             return candidate
     raise CookieSyncError(REASON_NO_DB)
+
+
+def _clean_keychain_label(value: str) -> str:
+    text = str(value or "").strip()
+    if not text or any(ch in text for ch in "\r\n\0"):
+        raise CookieSyncError(REASON_KEYCHAIN)
+    return text
+
+
+def resolve_keychain_service(
+    cli_value: str = "",
+    *,
+    browser: str,
+    env: Optional[Mapping[str, str]] = None,
+) -> str:
+    env_map = env if env is not None else os.environ
+    text = str(cli_value or env_map.get(KEYCHAIN_SERVICE_ENV, "") or "").strip()
+    if text:
+        return _clean_keychain_label(text)
+    return BROWSER_SOURCES[resolve_browser(browser, env={})].keychain_service
+
+
+def resolve_keychain_account(
+    cli_value: str = "",
+    *,
+    browser: str,
+    env: Optional[Mapping[str, str]] = None,
+) -> str:
+    env_map = env if env is not None else os.environ
+    text = str(cli_value or env_map.get(KEYCHAIN_ACCOUNT_ENV, "") or "").strip()
+    if text:
+        return _clean_keychain_label(text)
+    return BROWSER_SOURCES[resolve_browser(browser, env={})].keychain_account
 
 
 def resolve_seller_cdp_endpoints(
@@ -255,16 +342,16 @@ def resolve_remote_dir(cli_value: str = "", env: Optional[Mapping[str, str]] = N
     return text
 
 
-def read_chrome_safe_storage_password(runner: Runner) -> str:
-    """Ask macOS Keychain for Chrome Safe Storage. The password is not printed."""
+def read_safe_storage_password(runner: Runner, *, service: str, account: str) -> str:
+    """Ask macOS Keychain for the browser Safe Storage password. It is not printed."""
     result = runner([
         "security",
         "find-generic-password",
         "-w",
         "-a",
-        "Chrome",
+        account,
         "-s",
-        "Chrome Safe Storage",
+        service,
     ])
     if getattr(result, "returncode", 1) != 0:
         raise CookieSyncError(REASON_KEYCHAIN)
@@ -581,9 +668,20 @@ def main(
 
 
 def _cmd_sync(args: argparse.Namespace, env: Mapping[str, str], runner: Runner, home: Optional[Path]) -> SyncResult:
-    explicit = str(args.chrome_cookies or env.get(CHROME_COOKIES_ENV, "") or "")
-    db_path = resolve_chrome_cookie_db(explicit, home=home)
-    password = read_chrome_safe_storage_password(runner)
+    browser = resolve_browser(str(args.browser or ""), env)
+    explicit = str(
+        args.cookie_db
+        or args.chrome_cookies
+        or env.get(COOKIE_DB_ENV, "")
+        or env.get(CHROME_COOKIES_ENV, "")
+        or ""
+    )
+    db_path = resolve_cookie_db(explicit, browser=browser, home=home)
+    password = read_safe_storage_password(
+        runner,
+        service=resolve_keychain_service(str(args.keychain_service or ""), browser=browser, env=env),
+        account=resolve_keychain_account(str(args.keychain_account or ""), browser=browser, env=env),
+    )
     cookies = load_chrome_shopee_cookies(db_path, password)
     endpoints = resolve_seller_cdp_endpoints(args.cdp, env)
     return sync_to_box(
@@ -598,15 +696,19 @@ def _cmd_sync(args: argparse.Namespace, env: Mapping[str, str], runner: Runner, 
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Sync Shopee seller-center cookies from Mac Chrome into the remote box Chrome."
+        description="Sync Shopee seller-center cookies from Mac Ego Lite or Chrome into the remote box Chrome."
     )
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sync = sub.add_parser("sync", help="Mac: read Chrome cookies and push them to the box")
+    sync = sub.add_parser("sync", help="Mac: read browser cookies and push them to the box")
     sync.add_argument("--ssh", default="", help="user@host, or set SHOPEE_COOKIE_SYNC_SSH")
     sync.add_argument("--remote-dir", default="", help="Absolute repo path on the box")
     sync.add_argument("--cdp", default="", help="CDP port or URL list. Default 9235,9239")
-    sync.add_argument("--chrome-cookies", default="", help="Override the Chrome Cookies DB path")
+    sync.add_argument("--browser", default="", help="chrome or egolite. Default egolite")
+    sync.add_argument("--cookie-db", default="", help="Override the Cookies DB path")
+    sync.add_argument("--chrome-cookies", default="", help="Same as --cookie-db")
+    sync.add_argument("--keychain-service", default="", help="Override the Safe Storage keychain service")
+    sync.add_argument("--keychain-account", default="", help="Override the Safe Storage keychain account")
     sync.add_argument("--remote-python", default="python3")
 
     apply = sub.add_parser("apply", help="Box: import a cookie file over CDP and delete it")

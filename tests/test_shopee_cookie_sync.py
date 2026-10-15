@@ -14,6 +14,7 @@ import shopee_cookie_sync as sync
 from cookie_import import write_shopee_cookies
 from shopee_cookie_sync import (
     REASON_BAD_FILE,
+    REASON_BROWSER,
     REASON_CDP_DOWN,
     REASON_DECRYPT,
     REASON_KEYCHAIN,
@@ -36,7 +37,10 @@ from shopee_cookie_sync import (
     is_shopee_tw_host,
     load_chrome_shopee_cookies,
     main,
-    resolve_chrome_cookie_db,
+    resolve_browser,
+    resolve_cookie_db,
+    resolve_keychain_account,
+    resolve_keychain_service,
     resolve_seller_cdp_endpoints,
     resolve_ssh_target,
     sync_to_box,
@@ -345,12 +349,12 @@ class ChromeDbTests(unittest.TestCase):
         network.write_text("network", encoding="utf-8")
         legacy.parent.mkdir(parents=True, exist_ok=True)
         legacy.write_text("legacy", encoding="utf-8")
-        self.assertEqual(resolve_chrome_cookie_db(home=home), network)
+        self.assertEqual(resolve_cookie_db("", browser="chrome", home=home), network)
         network.unlink()
-        self.assertEqual(resolve_chrome_cookie_db(home=home), legacy)
+        self.assertEqual(resolve_cookie_db("", browser="chrome", home=home), legacy)
         legacy.unlink()
         with self.assertRaises(CookieSyncError) as caught:
-            resolve_chrome_cookie_db(home=home)
+            resolve_cookie_db("", browser="chrome", home=home)
         self.assertEqual(caught.exception.reason, REASON_NO_DB)
 
 
@@ -754,9 +758,9 @@ class CliTests(unittest.TestCase):
                     "find-generic-password",
                     "-w",
                     "-a",
-                    "Chrome",
+                    "ego",
                     "-s",
-                    "Chrome Safe Storage",
+                    "ego safe storage",
                 ]],
             )
 
@@ -779,9 +783,125 @@ class CliTests(unittest.TestCase):
             return SimpleNamespace(returncode=1, stdout=b"", stderr=SHOPEE_SECRET.encode())
 
         with self.assertRaises(CookieSyncError) as caught:
-            sync.read_chrome_safe_storage_password(runner)
+            sync.read_safe_storage_password(
+                runner,
+                service="ego safe storage",
+                account="ego",
+            )
         self.assertEqual(caught.exception.reason, REASON_KEYCHAIN)
         self.assertNotIn(SHOPEE_SECRET, str(caught.exception))
+        self.assertNotIn(KEYCHAIN_SECRET, str(caught.exception))
+
+
+class BrowserSourceTests(unittest.TestCase):
+    def test_default_browser_is_egolite(self):
+        self.assertEqual(resolve_browser("", env={}), "egolite")
+        self.assertEqual(resolve_browser("", env={"SHOPEE_COOKIE_SYNC_BROWSER": "chrome"}), "chrome")
+        self.assertEqual(resolve_browser("EGOLITE", env={"SHOPEE_COOKIE_SYNC_BROWSER": "chrome"}), "egolite")
+
+    def test_unknown_browser_uses_a_fixed_message(self):
+        with self.assertRaises(CookieSyncError) as caught:
+            resolve_browser(SHOPEE_SECRET, env={})
+        self.assertEqual(caught.exception.reason, REASON_BROWSER)
+        self.assertNotIn(SHOPEE_SECRET, str(caught.exception))
+        stdout = io.StringIO()
+        with patch("subprocess.run", side_effect=AssertionError("subprocess")):
+            with patch("sys.stdout", stdout):
+                code = main(
+                    ["sync", "--browser", SHOPEE_SECRET, "--ssh", "me@box", "--remote-dir", "/tmp/x"],
+                    env={},
+                    runner=FakeRunner(),
+                )
+        printed = stdout.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn(REASON_BROWSER, printed)
+        self.assertNotIn(SHOPEE_SECRET, printed)
+
+    def test_egolite_candidates_prefer_network_cookies(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            home = Path(temp_dir)
+            network = home / "Library/Application Support/Citro Labs/ego lite/Default/Network/Cookies"
+            legacy = home / "Library/Application Support/Citro Labs/ego lite/Default/Cookies"
+            network.parent.mkdir(parents=True)
+            network.write_bytes(b"network")
+            legacy.write_bytes(b"legacy")
+            self.assertEqual(resolve_cookie_db("", browser="egolite", home=home), network)
+            network.unlink()
+            self.assertEqual(resolve_cookie_db("", browser="egolite", home=home), legacy)
+
+    def test_cookie_db_override_and_keychain_labels_are_not_printed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "Cookies"
+            db.write_bytes(b"x")
+            self.assertEqual(
+                resolve_cookie_db(str(db), browser="egolite", home=Path(temp_dir)),
+                db,
+            )
+            self.assertEqual(
+                resolve_keychain_service("", browser="egolite", env={}),
+                "ego safe storage",
+            )
+            self.assertEqual(resolve_keychain_account("", browser="chrome", env={}), "Chrome")
+            self.assertEqual(
+                resolve_keychain_service("Custom Safe Storage", browser="egolite", env={}),
+                "Custom Safe Storage",
+            )
+            with self.assertRaises(CookieSyncError) as caught:
+                resolve_keychain_service("bad\n" + SHOPEE_SECRET, browser="egolite", env={})
+            self.assertEqual(caught.exception.reason, REASON_KEYCHAIN)
+            self.assertNotIn(SHOPEE_SECRET, str(caught.exception))
+
+    def test_cli_chrome_and_keychain_override_do_not_print_secrets(self):
+        key = derive_chrome_safe_storage_key(KEYCHAIN_SECRET)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            db = Path(temp_dir) / "Cookies"
+            build_cookie_db(db, [encrypted_row(".shopee.tw", "SPC_EC", SHOPEE_SECRET, key)])
+            runner = FakeRunner(
+                apply_stdout=format_public_result(
+                    sync.SyncResult(True, 1, REASON_LOGIN_OK, "http://127.0.0.1:9235")
+                ).encode(),
+                password=KEYCHAIN_SECRET,
+            )
+            stdout = io.StringIO()
+            with patch("subprocess.run", side_effect=AssertionError("subprocess")):
+                with patch("sys.stdout", stdout):
+                    code = main(
+                        [
+                            "sync",
+                            "--browser",
+                            "chrome",
+                            "--ssh",
+                            "me@box",
+                            "--remote-dir",
+                            "/tmp/InventoryCalculator",
+                            "--cookie-db",
+                            str(db),
+                            "--keychain-service",
+                            "Chrome Safe Storage",
+                            "--keychain-account",
+                            "Chrome",
+                        ],
+                        env={},
+                        runner=runner,
+                        connect=lambda _endpoint: (_ for _ in ()).throw(AssertionError("cdp")),
+                    )
+            printed = stdout.getvalue()
+            self.assertEqual(code, 0)
+            self.assertNotIn(SHOPEE_SECRET, printed)
+            self.assertNotIn(KEYCHAIN_SECRET, printed)
+            security_calls = [call for call in runner.calls if call[0] == "security"]
+            self.assertEqual(
+                security_calls,
+                [[
+                    "security",
+                    "find-generic-password",
+                    "-w",
+                    "-a",
+                    "Chrome",
+                    "-s",
+                    "Chrome Safe Storage",
+                ]],
+            )
 
 
 class GitignoreTests(unittest.TestCase):

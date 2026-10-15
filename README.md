@@ -139,7 +139,7 @@ python3 crawler.py --browser-source remote
 4. 點擊「Export」輸出 JSON 格式
 5. 將內容複製並貼到 `cookies.json` 檔案（專案根目錄）
 
-Mac 有開、遠端盒賣家中心被登出時，可以把本機 Chrome 的蝦皮登入 cookie 同步到盒上（不會印出 cookie 內容）：[`docs/mac_shopee_cookie_sync.md`](docs/mac_shopee_cookie_sync.md)。
+Mac 有開、遠端盒賣家中心被登出時，可以把本機 Ego Lite（或 `--browser chrome`）的蝦皮登入 cookie 同步到盒上（不會印出 cookie 內容）：[`docs/mac_shopee_cookie_sync.md`](docs/mac_shopee_cookie_sync.md)。
 
 ### 設置 OpenAI API Key（廣告分析與 SKU mapping）
 OpenAI 設定建議使用專案本地設定檔，不要把 Key 寫進程式碼或提交到 Git。
