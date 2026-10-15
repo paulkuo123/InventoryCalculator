@@ -2417,6 +2417,7 @@ input:checked + .toggle-slider:before {
     letter-spacing: 0.01em;
     box-shadow: none;
     white-space: nowrap;
+    transition: none;
 }
 
 .inventory-home .container .search-mode button.search-mode-option:hover:not(.is-active),

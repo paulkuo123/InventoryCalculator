@@ -168,6 +168,7 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
             box = page.locator("#searchModeOneClick .search-mode-new").bounding_box()
             self.assertIsNotNone(box)
             page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.mouse.move(0, 0)
             page.wait_for_function(
                 "document.getElementById('searchModeOneClick').getAttribute('aria-pressed') === 'true'"
             )
@@ -270,6 +271,18 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
                 "document.getElementById('oneClickUpdateButton').disabled === false"
             )
             self.assertEqual(page.locator("#loading").evaluate("node => node.style.display"), "none")
+
+            reduced = browser.new_context(
+                reduced_motion="reduce", viewport={"width": 1440, "height": 900}
+            )
+            reduced_page = reduced.new_page()
+            reduced_page.goto(INDEX_HTML.as_uri())
+            reduced_page.wait_for_selector("#searchModeOneClick .search-mode-new")
+            animation = reduced_page.locator(".search-mode-new").evaluate(
+                "node => getComputedStyle(node).animationName"
+            )
+            self.assertEqual(animation, "none")
+            reduced.close()
             browser.close()
 
 
