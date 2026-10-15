@@ -366,14 +366,6 @@ button {
     color: #c62828;
 }
 
-.shopee-products-import-actions {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 12px;
-}
-
 .shopee-products-import-status {
     min-height: 22px;
     color: var(--dark-gray);
@@ -425,11 +417,6 @@ button {
     .cookie-import-actions {
         align-items: stretch;
         flex-wrap: wrap;
-    }
-
-    .shopee-products-import-actions {
-        align-items: stretch;
-        flex-direction: column;
     }
 
     .personal-watchlist-actions {
@@ -2388,9 +2375,12 @@ input:checked + .toggle-slider:before {
 
 /* Form controls ------------------------------------------------------------ */
 .inventory-home .search-mode {
-    display: inline-flex;
+    display: flex;
     flex-wrap: wrap;
     align-items: stretch;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     margin: 0 0 14px;
     padding: 5px;
     border: 1px solid #d5dbe3;
@@ -2405,6 +2395,9 @@ input:checked + .toggle-slider:before {
     align-items: center;
     justify-content: center;
     gap: 8px;
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
     min-height: 46px;
     padding: 10px 18px;
     border: 0;
@@ -2486,12 +2479,18 @@ input:checked + .toggle-slider:before {
 }
 
 .inventory-home .search-input-slot,
+.inventory-home .import-products-slot,
 .inventory-home .one-click-slot {
     flex: 1 1 280px;
-    min-width: 240px;
+    min-width: 0;
+    max-width: 100%;
+    min-height: 40px;
+    height: auto;
+    box-sizing: border-box;
 }
 
 .inventory-home .search-input-slot[hidden],
+.inventory-home .import-products-slot[hidden],
 .inventory-home .one-click-slot[hidden],
 .inventory-home #searchButton[hidden] {
     display: none !important;
@@ -2502,23 +2501,62 @@ input:checked + .toggle-slider:before {
     min-width: 0;
 }
 
+.inventory-home .import-products-slot,
 .inventory-home .one-click-slot {
     display: flex;
     flex-direction: row;
     align-items: center;
     gap: 10px;
+    max-width: 100%;
+}
+
+.inventory-home .import-products-slot {
+    flex-wrap: wrap;
+}
+
+.inventory-home .import-products-slot input[type="file"] {
+    flex: 1 1 140px;
+    width: auto;
+    min-width: 0;
+    height: 32px;
+    margin: 0;
+}
+
+.inventory-home #shopeeProductsImportButton {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 0;
+    height: 40px;
     min-height: 40px;
+    max-width: 100%;
+}
+
+.inventory-home .import-products-slot .shopee-products-import-status:empty {
+    display: none;
+}
+
+.inventory-home .import-products-slot .shopee-products-import-status:not(:empty) {
+    flex: 1 0 100%;
+    min-width: 0;
+    max-width: 100%;
+    overflow: visible;
+    text-overflow: unset;
+    white-space: normal;
+    line-height: 1.45;
 }
 
 .inventory-home #oneClickUpdateButton {
     flex: 1 1 auto;
     width: auto;
     min-width: 180px;
+    max-width: 100%;
     min-height: 40px;
 }
 
 .inventory-home .one-click-hint {
-    flex: 0 0 auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 100%;
     margin: 0;
     color: #6b7280;
     font-size: 12px;
@@ -2633,18 +2671,6 @@ input:checked + .toggle-slider:before {
 }
 
 /* Data import tools -------------------------------------------------------- */
-.inventory-home .home-tools {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: start;
-    gap: 16px;
-    margin-bottom: 16px;
-}
-
-.inventory-home .home-tools .card {
-    margin-bottom: 0;
-}
-
 .inventory-home .cookie-import-card,
 .inventory-home .personal-watchlist-card {
     background: var(--home-surface);
@@ -2705,7 +2731,6 @@ input:checked + .toggle-slider:before {
 }
 
 .inventory-home .cookie-import-actions,
-.inventory-home .shopee-products-import-actions,
 .inventory-home .personal-watchlist-actions {
     gap: 10px;
     margin-top: 12px;
@@ -3306,8 +3331,10 @@ input:checked + .toggle-slider:before {
 
     .inventory-home #searchInput,
     .inventory-home .search-input-slot,
+    .inventory-home .import-products-slot,
     .inventory-home .one-click-slot {
         flex-basis: 100%;
+        min-width: 0;
     }
 
     .inventory-home .dashboard-content {
@@ -3316,10 +3343,6 @@ input:checked + .toggle-slider:before {
 }
 
 @media (max-width: 900px) {
-    .inventory-home .home-tools {
-        grid-template-columns: 1fr;
-    }
-
     .inventory-home .dashboard-metrics {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
@@ -3365,6 +3388,41 @@ input:checked + .toggle-slider:before {
     .inventory-home .search-container {
         flex-direction: column;
         align-items: stretch;
+        max-width: 100%;
+    }
+
+    /* Keyword mode keeps the search button on its own row. The other modes
+       reserve the same 38px row so switching does not change the card height.
+       The hidden attribute cannot be shown with visibility: it stays out of view. */
+    .inventory-home .search-container:has(#searchButton[hidden])::after {
+        content: "";
+        flex: 0 0 auto;
+        width: 100%;
+        height: 38px;
+    }
+
+    .inventory-home .search-input-slot,
+    .inventory-home .import-products-slot,
+    .inventory-home .one-click-slot {
+        /* One-click hint wraps onto a second line; keep the other slots as tall. */
+        min-height: calc(40px + 10px + 1.4em);
+        align-content: flex-start;
+    }
+
+    .inventory-home .one-click-slot {
+        flex-wrap: wrap;
+    }
+
+    .inventory-home .one-click-slot #oneClickUpdateButton {
+        flex: 1 1 100%;
+        width: auto;
+        min-width: 0;
+        max-width: 100%;
+    }
+
+    .inventory-home .one-click-hint {
+        flex: 1 1 100%;
+        white-space: normal;
     }
 
     .inventory-home input[type="text"] {
@@ -3402,6 +3460,17 @@ input:checked + .toggle-slider:before {
     .inventory-home .product-list th,
     .inventory-home .product-list td {
         padding: 12px;
+    }
+}
+
+@media (max-width: 640px) {
+    .inventory-home .container .search-mode button.search-mode-option {
+        flex: 1 1 calc(50% - 5px);
+        padding: 8px 10px;
+        font-size: 14px;
+        white-space: normal;
+        text-align: center;
+        line-height: 1.3;
     }
 }
 

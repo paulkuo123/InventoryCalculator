@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>莉莉安蝦皮庫存管理系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=20261015-cookie-fallback">
+    <link rel="stylesheet" href="styles.css?v=20261015-import-wrap">
 </head>
 <body class="inventory-home">
     <header>
@@ -52,11 +52,20 @@
         <div class="card">
             <div class="search-mode" role="group" aria-label="更新方式">
                 <button type="button" id="searchModeKeyword" class="search-mode-option is-active" aria-pressed="true">關鍵字搜尋</button>
+                <button type="button" id="searchModeImport" class="search-mode-option" aria-pressed="false">匯入現有商品資料</button>
                 <button type="button" id="searchModeOneClick" class="search-mode-option" aria-pressed="false" title="新功能：採用 Excel，比整店爬蟲快">一鍵更新全賣場<span class="search-mode-new" aria-hidden="true">NEW</span></button>
             </div>
             <div class="search-container">
                 <div class="search-input-slot" id="searchInputSlot">
                     <input type="text" id="searchInput" placeholder="輸入商品關鍵字（留空搜尋全部商品）" aria-label="商品關鍵字">
+                </div>
+                <div class="import-products-slot" id="importProductsSlot" hidden>
+                    <input id="shopeeProductsFile" type="file" accept=".json,application/json" aria-label="選擇 shopee_products.json">
+                    <button id="shopeeProductsImportButton" class="btn-secondary" type="button" disabled>
+                        <i class="fas fa-file-import"></i>
+                        匯入並套用
+                    </button>
+                    <span id="shopeeProductsImportStatus" class="shopee-products-import-status" role="status" aria-live="polite"></span>
                 </div>
                 <div class="one-click-slot" id="oneClickSlot" hidden>
                     <button id="oneClickUpdateButton" class="btn-primary" type="button">
@@ -100,25 +109,6 @@
                 </button>
             </div>
         </div>
-
-        <section class="home-tools" aria-label="資料匯入">
-            <div class="card cookie-import-card shopee-products-import-card">
-                <div class="cookie-import-header">
-                    <div>
-                        <h3><i class="fas fa-file-import"></i> 匯入商品資料</h3>
-                        <p>選擇 <code>shopee_products.json</code> 後按「匯入並套用」。觀察清單請在下方另外匯入。</p>
-                    </div>
-                </div>
-                <div class="shopee-products-import-actions">
-                    <input id="shopeeProductsFile" type="file" accept=".json,application/json">
-                    <button id="shopeeProductsImportButton" class="btn-secondary" type="button" disabled>
-                        <i class="fas fa-file-import"></i>
-                        匯入並套用
-                    </button>
-                    <span id="shopeeProductsImportStatus" class="shopee-products-import-status" role="status" aria-live="polite"></span>
-                </div>
-            </div>
-        </section>
 
         <!-- 庫存健康儀表板 (Dashboard Summary) -->
         <div class="card dashboard-summary" id="dashboardSummary">
@@ -331,6 +321,6 @@
         </div>
     </div>
 
-    <script src="script.js?v=20261015-cookie-fallback"></script>
+    <script src="script.js?v=20261015-import-mode"></script>
 </body>
 </html>

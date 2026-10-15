@@ -60,6 +60,7 @@ class ManualWatchlistBrowserTests(unittest.TestCase):
                 self.assertEqual(page.evaluate("localStorage.getItem('inventoryPersonalWatchlistIds')"), '["100"]')
 
                 def import_products():
+                    page.locator('#searchModeImport').click()
                     page.locator('#shopeeProductsFile').set_input_files({
                         'name': 'shopee_products.json', 'mimeType': 'application/json',
                         'buffer': json.dumps(products).encode(),
