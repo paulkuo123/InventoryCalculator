@@ -38,10 +38,18 @@ from config_loader import load_openai_api_key, load_openai_config_value
 from cookie_import import MAX_COOKIE_IMPORT_BYTES, save_shopee_cookies
 from shopee_products_import import (
     MAX_SHOPEE_PRODUCTS_IMPORT_BYTES,
-    merge_shopee_products_with_golden,
-    replace_shopee_products,
-    validate_shopee_products,
+    apply_shopee_products_import,
     without_crawl_metadata,
+)
+from shopee_excel_import import (
+    MAX_EXCEL_IMPORT_BYTES,
+    ExcelImportError,
+    parse_multipart_form,
+)
+from shopee_excel_download import (
+    MassUpdateBlocked,
+    MassUpdateError,
+    download_and_import,
 )
 from sku_mapping_service import MappingConflict, SkuMappingService, golden_repair_requested, prune_golden_table_backups
 from golden_table_io import GOLDEN_TABLE_LOCK, apply_unreviewed_mapping_edit, write_json_atomic
@@ -591,24 +599,10 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 })
             return
 
-        # 處理搜尋請求
+        # 處理搜尋請求。關鍵字搜尋與留空爬蟲都直接跑 crawler，提示只在瀏覽器。
         if self.path.startswith('/search'):
-            try:
-                # 解析查詢參數
-                query = urllib.parse.urlparse(self.path).query
-                params = urllib.parse.parse_qs(query)
-                keyword = params.get('keyword', [''])[0]
-                showBrowser = params.get('showBrowser',
-                                         ['false'])[0].lower() == 'true'
-                inventoryMonth = int(params.get('inventoryMonth', ['4'])[0])
-
-                # 執行爬蟲並獲取結果，無論關鍵字是否為空
-                result = self.run_crawler(keyword, showBrowser, inventoryMonth)
-                self._send_json_response(200, result)
-                return
-            except Exception as e:
-                self._send_json_response(500, {"error": str(e)})
-                return
+            self._handle_search()
+            return
 
         if self.path.startswith('/export_ads'):
             try:
@@ -767,15 +761,17 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         request_path = urllib.parse.urlparse(self.path).path
 
+        if request_path == '/api/shopee-products/download-excel':
+            self._handle_download_excel()
+            return
+
         if request_path == '/api/shopee-products/import':
             try:
                 data = self._read_json_body(MAX_SHOPEE_PRODUCTS_IMPORT_BYTES)
-                validate_shopee_products(data)
                 golden_table = self._load_json_file(self._golden_table_path())
-                merged_products, match_counts = merge_shopee_products_with_golden(
-                    data, golden_table
+                merged_products, match_counts = apply_shopee_products_import(
+                    self._shopee_products_path(), data, golden_table
                 )
-                replace_shopee_products(self._shopee_products_path(), merged_products)
                 self._send_json_response(200, {
                     "status": "success",
                     "message": "已匯入並合併最新 shopee_products.json；未執行 crawler",
@@ -1424,6 +1420,76 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
         self.wfile.write(body.encode('utf-8') if isinstance(body, str) else body)
+
+    def _handle_search(self):
+        """Run the inventory crawler. Keyword or empty, there is no extra hint."""
+        try:
+            query = urllib.parse.urlparse(self.path).query
+            params = urllib.parse.parse_qs(query)
+            keyword = params.get('keyword', [''])[0]
+            show_browser = params.get('showBrowser', ['false'])[0].lower() == 'true'
+            inventory_month = int(params.get('inventoryMonth', ['4'])[0])
+            result = self.run_crawler(keyword, show_browser, inventory_month)
+            self._send_json_response(200, result)
+        except Exception as e:
+            self._send_json_response(500, {"error": str(e)})
+
+    def _read_request_bytes(self, max_bytes):
+        try:
+            content_length = int(self.headers.get('Content-Length', 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("請求內容長度無效") from exc
+        if content_length > max_bytes:
+            raise ValueError(f"匯入檔案過大，限制為 {max_bytes // (1024 * 1024)} MB")
+        payload = self.rfile.read(content_length)
+        if len(payload) != content_length:
+            raise ValueError("請求內容不完整")
+        return payload
+
+    def _excel_form(self):
+        content_type = self.headers.get('Content-Type', '')
+        body = self._read_request_bytes(MAX_EXCEL_IMPORT_BYTES)
+        if 'multipart/form-data' not in content_type.lower():
+            raise ExcelImportError("請用表單上傳價格及庫存檔。")
+        return parse_multipart_form(content_type, body)
+
+    def _inventory_month_from_form(self, form):
+        raw = (form.get('inventoryMonth') or {}).get('text') or '4'
+        try:
+            month = int(str(raw).strip() or '4')
+        except ValueError as exc:
+            raise ExcelImportError("庫存月份不正確。") from exc
+        if month <= 0:
+            raise ExcelImportError("庫存月份必須大於 0。")
+        return month
+
+    def _handle_download_excel(self):
+        try:
+            form = self._excel_form()
+            result = download_and_import(
+                destination=self._shopee_products_path(),
+                golden_table=self._load_json_file(self._golden_table_path()),
+                inventory_month=self._inventory_month_from_form(form),
+            )
+            self._send_json_response(200, result)
+        except MassUpdateBlocked as exc:
+            self._send_json_response(409, {"status": "error", "message": str(exc), "code": exc.code})
+        except (MassUpdateError, ExcelImportError, ValueError) as exc:
+            self._send_json_response(400, {"status": "error", "message": str(exc)})
+        except FileNotFoundError as exc:
+            self._send_json_response(404, {"status": "error", "message": str(exc)})
+        except OSError:
+            logger.exception("一鍵更新後寫入 shopee_products.json 失敗")
+            self._send_json_response(500, {
+                "status": "error",
+                "message": "shopee_products.json 寫入失敗，原檔未完成替換",
+            })
+        except Exception as exc:
+            logger.exception("一鍵更新全賣場庫存失敗: %s", exc)
+            self._send_json_response(500, {
+                "status": "error",
+                "message": "一鍵更新失敗，沒有改到正式商品檔",
+            })
 
     def _read_json_body(self, max_bytes=None):
         try:

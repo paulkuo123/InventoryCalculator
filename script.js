@@ -149,6 +149,11 @@ document.addEventListener('DOMContentLoaded', function() {
     const shopeeProductsFile = document.getElementById('shopeeProductsFile');
     const shopeeProductsImportButton = document.getElementById('shopeeProductsImportButton');
     const shopeeProductsImportStatus = document.getElementById('shopeeProductsImportStatus');
+    const searchModeKeyword = document.getElementById('searchModeKeyword');
+    const searchModeOneClick = document.getElementById('searchModeOneClick');
+    const searchInputSlot = document.getElementById('searchInputSlot');
+    const oneClickSlot = document.getElementById('oneClickSlot');
+    const oneClickUpdateButton = document.getElementById('oneClickUpdateButton');
     const batchRestockToolbar = document.getElementById('batchRestockToolbar');
     const batchRestockToolbarSummary = document.getElementById('batchRestockToolbarSummary');
     const openBatchRestockButton = document.getElementById('openBatchRestockButton');
@@ -2393,6 +2398,16 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // 修改狀態消息更新邏輯，加入爬取月銷量的階段
     function updateStatusMessage(progress) {
+        if (window.oneClickUpdateRunning) {
+            if (progress < 40) {
+                statusMessage.textContent = '正在下載價格及庫存...';
+            } else if (progress < 75) {
+                statusMessage.textContent = '正在抓取月銷量...';
+            } else {
+                statusMessage.textContent = '正在計算建議補貨...';
+            }
+            return;
+        }
         if (progress < 15) {
             statusMessage.textContent = '正在載入頁面...';
         } else if (progress < 30) {
@@ -3274,6 +3289,67 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
 
+    function selectedInventoryMonth() {
+        const inventoryMonthElement = document.getElementById('inventoryMonth');
+        return inventoryMonthElement ? inventoryMonthElement.value : '4';
+    }
+
+    function setOneClickBusy(busy) {
+        window.oneClickUpdateRunning = busy;
+        if (oneClickUpdateButton) oneClickUpdateButton.disabled = busy;
+        if (searchModeKeyword) searchModeKeyword.disabled = busy;
+        if (searchModeOneClick) searchModeOneClick.disabled = busy;
+        if (searchButton) searchButton.disabled = busy;
+    }
+
+    function setSearchMode(mode) {
+        if (window.oneClickUpdateRunning) return;
+        const oneClick = mode === 'oneClick';
+        if (searchInputSlot) searchInputSlot.hidden = oneClick;
+        if (oneClickSlot) oneClickSlot.hidden = !oneClick;
+        if (searchButton) searchButton.hidden = oneClick;
+        if (searchModeKeyword) {
+            searchModeKeyword.classList.toggle('is-active', !oneClick);
+            searchModeKeyword.setAttribute('aria-pressed', String(!oneClick));
+        }
+        if (searchModeOneClick) {
+            searchModeOneClick.classList.toggle('is-active', oneClick);
+            searchModeOneClick.setAttribute('aria-pressed', String(oneClick));
+        }
+    }
+
+    async function runOneClickUpdate() {
+        if (!oneClickUpdateButton || oneClickUpdateButton.disabled) return;
+        setOneClickBusy(true);
+        const loading = document.getElementById('loading');
+        if (loading) loading.style.display = 'block';
+        const progressInterval = startProgressSimulation();
+        if (statusMessage) statusMessage.textContent = '正在下載價格及庫存...';
+        try {
+            const form = new FormData();
+            form.append('inventoryMonth', selectedInventoryMonth());
+            const response = await fetch('/api/shopee-products/download-excel', {
+                method: 'POST',
+                body: form,
+            });
+            const data = await response.json().catch(() => null);
+            if (!response.ok || !data || data.status === 'error') {
+                throw new Error((data && data.message) || '一鍵更新失敗');
+            }
+            clearInterval(progressInterval);
+            if (progressBar) progressBar.style.width = '100%';
+            if (progressText) progressText.textContent = '100%';
+            if (statusMessage) statusMessage.textContent = '更新完成！';
+            await applyCrawlerSuccessResults(data.products);
+        } catch (error) {
+            clearInterval(progressInterval);
+            alert(error.message || '一鍵更新失敗');
+        } finally {
+            setOneClickBusy(false);
+            if (loading) loading.style.display = 'none';
+        }
+    }
+
     // 修改 performSearch 函數，保存最後的搜尋結果並顯示進階搜尋區塊
     function performSearch() {
         
@@ -3367,7 +3443,10 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // 綁定搜尋按鈕點擊事件
-    searchButton.addEventListener('click', performSearch);
+    searchButton.addEventListener('click', function() {
+        if (searchButton.disabled || window.oneClickUpdateRunning) return;
+        performSearch();
+    });
     if (cookieImportButton) {
         cookieImportButton.addEventListener('click', importShopeeCookies);
     }
@@ -3384,6 +3463,20 @@ document.addEventListener('DOMContentLoaded', function() {
     if (shopeeProductsImportButton) {
         shopeeProductsImportButton.addEventListener('click', importShopeeProducts);
     }
+    if (searchModeKeyword) {
+        searchModeKeyword.addEventListener('click', function() {
+            setSearchMode('keyword');
+        });
+    }
+    if (searchModeOneClick) {
+        searchModeOneClick.addEventListener('click', function() {
+            setSearchMode('oneClick');
+        });
+    }
+    if (oneClickUpdateButton) {
+        oneClickUpdateButton.addEventListener('click', runOneClickUpdate);
+    }
+    setSearchMode('keyword');
     if (personalWatchlistFile) {
         personalWatchlistFile.addEventListener('change', updatePersonalWatchlistFile);
     }

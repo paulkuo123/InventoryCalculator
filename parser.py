@@ -23,6 +23,76 @@ def str_val(val, default=""):
             return str(int(val))
     return str(val).strip()
 
+
+def monthly_sales_from_frame(df_sales):
+    """Read a 數據中心 parentskudetail sheet.
+
+    ``商品規格 == "-"`` is the product total. Other rows are per-model
+    ``商品件數 (可出貨訂單)``.
+    """
+    product_totals = {}
+    model_sales = {}
+    product_names = {}
+    for _, row in df_sales.iterrows():
+        product_id = str_val(row.get("商品 ID"))
+        if not product_id or product_id in {"nan", "商品 ID"}:
+            continue
+        variation_name = str_val(row.get("商品規格"))
+        monthly_sales = str_val(row.get("商品件數 (可出貨訂單)"), default="0")
+        if monthly_sales == "-":
+            monthly_sales = "0"
+        product_names.setdefault(product_id, str_val(row.get("商品名稱")))
+        if variation_name == "-":
+            product_totals[product_id] = monthly_sales
+        else:
+            model_sales.setdefault(product_id, {})[variation_name] = monthly_sales
+    return {
+        "product_totals": product_totals,
+        "model_sales": model_sales,
+        "product_names": product_names,
+    }
+
+
+def load_monthly_sales_file(path):
+    """Load one parentskudetail workbook. Same reader ``parser.main`` uses."""
+    frame = pd.read_excel(path, engine="calamine")
+    return monthly_sales_from_frame(frame)
+
+
+def apply_parsed_monthly_sales(products, model_index, sales):
+    """Merge monthly sales into the legacy parser product dicts."""
+    for product_id, product_name in sales["product_names"].items():
+        if product_id not in products:
+            products[product_id] = {
+                "商品名稱": product_name,
+                "已售出總數量": "0",
+                "商品圖片網址": "",
+                "型號": [],
+                "總月銷量": "0",
+            }
+            model_index[product_id] = {}
+    for product_id, total in sales["product_totals"].items():
+        if product_id in products:
+            products[product_id]["總月銷量"] = total
+    for product_id, by_name in sales["model_sales"].items():
+        if product_id not in products:
+            continue
+        for variation_name, monthly_sales in by_name.items():
+            if variation_name in model_index[product_id]:
+                model_index[product_id][variation_name]["月銷量"] = monthly_sales
+                continue
+            model_data = {
+                "型號名稱": variation_name,
+                "已售出數量": "0",
+                "商品庫存": "0",
+                "商品選項 ID": "",
+                "型號圖片網址": "",
+                "月銷量": monthly_sales,
+            }
+            products[product_id]["型號"].append(model_data)
+            model_index[product_id][variation_name] = model_data
+
+
 def main():
     base_dir = "data"
     output_file = "shopee_products.json"
@@ -98,47 +168,8 @@ def main():
     sales_files = sorted(glob.glob(os.path.join(base_dir, "parentskudetail*.xlsx")))
     if sales_files:
         try:
-            df_sales = pd.read_excel(sales_files[0], engine="calamine")
-            for _, row in df_sales.iterrows():
-                p_id = str_val(row.get("商品 ID"))
-                if not p_id or p_id == "nan" or p_id == "商品 ID":
-                    continue
-
-                v_name = str_val(row.get("商品規格"))
-                monthly_sales = str_val(row.get("商品件數 (可出貨訂單)"), default="0")
-                if monthly_sales == "-":
-                    monthly_sales = "0"
-
-                # If product doesn't exist in stock files, initialize it
-                if p_id not in products:
-                    p_name = str_val(row.get("商品名稱"))
-                    products[p_id] = {
-                        "商品名稱": p_name,
-                        "已售出總數量": "0",
-                        "商品圖片網址": "",
-                        "型號": [],
-                        "總月銷量": "0"
-                    }
-                    model_index[p_id] = {}
-
-                if v_name == "-":
-                    # Total monthly sales for the product
-                    products[p_id]["總月銷量"] = monthly_sales
-                else:
-                    if v_name in model_index[p_id]:
-                        model_index[p_id][v_name]["月銷量"] = monthly_sales
-                    else:
-                        # Model doesn't exist, create it
-                        model_data = {
-                            "型號名稱": v_name,
-                            "已售出數量": "0",
-                            "商品庫存": "0",
-                            "商品選項 ID": "",
-                            "型號圖片網址": "",
-                            "月銷量": monthly_sales
-                        }
-                        products[p_id]["型號"].append(model_data)
-                        model_index[p_id][v_name] = model_data
+            sales = load_monthly_sales_file(sales_files[0])
+            apply_parsed_monthly_sales(products, model_index, sales)
         except Exception as e:
             message = f"Error parsing sales file {sales_files[0]}: {e}"
             parse_errors.append(message)

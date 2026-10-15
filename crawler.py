@@ -1944,6 +1944,10 @@ class ShopeeCrawler:
             print(f"爬取月銷量失敗: {e}")
             import traceback
             traceback.print_exc()
+            # Full-shop crawl still saves stock when the data centre fails.
+            # One-click update sets monthly_sales_fail_closed and must not write.
+            if getattr(self, "monthly_sales_fail_closed", False):
+                raise RuntimeError(f"月銷量抓取失敗：{e}") from e
             return self.products_data
     def extract_monthly_sales_data(self):
         """

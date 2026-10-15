@@ -36,6 +36,7 @@ _handoff/
 *.kb-isolated.db
 .qwen/
 shopee_products.json
+shopee_products.json.lock
 procurement.db
 procurement.db-*
 進貨紀錄.txt

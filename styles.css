@@ -2387,10 +2387,144 @@ input:checked + .toggle-slider:before {
 }
 
 /* Form controls ------------------------------------------------------------ */
+.inventory-home .search-mode {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    margin: 0 0 14px;
+    padding: 5px;
+    border: 1px solid #d5dbe3;
+    border-radius: 14px;
+    background: #e7ebf0;
+    gap: 5px;
+    box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.inventory-home .container .search-mode button.search-mode-option {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 46px;
+    padding: 10px 18px;
+    border: 0;
+    border-radius: 11px;
+    background: transparent;
+    color: #374151;
+    font-size: 16px;
+    font-weight: 700;
+    line-height: 1.2;
+    letter-spacing: 0.01em;
+    box-shadow: none;
+    white-space: nowrap;
+    transition: none;
+}
+
+.inventory-home .container .search-mode button.search-mode-option:hover:not(.is-active),
+.inventory-home .container .search-mode button.search-mode-option:focus-visible:not(.is-active) {
+    background: rgba(255, 255, 255, 0.72);
+    color: #111827;
+}
+
+.inventory-home .container .search-mode button.search-mode-option.is-active {
+    background: var(--home-accent);
+    color: #fff;
+    box-shadow: 0 6px 16px rgba(238, 77, 45, 0.34);
+}
+
+.inventory-home .container .search-mode button.search-mode-option.is-active:hover,
+.inventory-home .container .search-mode button.search-mode-option.is-active:focus-visible {
+    background: var(--home-accent-hover);
+    color: #fff;
+}
+
+.inventory-home .search-mode-new {
+    pointer-events: none;
+    display: inline-flex;
+    align-items: center;
+    flex: 0 0 auto;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #fff4e5;
+    color: #c2410c;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    line-height: 1.45;
+    box-shadow: 0 0 8px rgba(251, 146, 60, 0.28);
+    animation: search-mode-new-glow 2.4s ease-in-out infinite;
+}
+
+.inventory-home .container .search-mode button.search-mode-option.is-active .search-mode-new {
+    background: #fff;
+    color: var(--home-accent);
+    animation-name: search-mode-new-glow-on;
+}
+
+@keyframes search-mode-new-glow {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(234, 88, 12, 0);
+    }
+    50% {
+        box-shadow: 0 0 10px 2px rgba(251, 146, 60, 0.55);
+    }
+}
+
+@keyframes search-mode-new-glow-on {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
+    }
+    50% {
+        box-shadow: 0 0 10px 1px rgba(255, 255, 255, 0.85);
+    }
+}
+
 .inventory-home .search-container {
     gap: 10px;
     margin: 0;
     align-items: center;
+}
+
+.inventory-home .search-input-slot,
+.inventory-home .one-click-slot {
+    flex: 1 1 280px;
+    min-width: 240px;
+}
+
+.inventory-home .search-input-slot[hidden],
+.inventory-home .one-click-slot[hidden],
+.inventory-home #searchButton[hidden] {
+    display: none !important;
+}
+
+.inventory-home .search-input-slot input[type="text"] {
+    width: 100%;
+    min-width: 0;
+}
+
+.inventory-home .one-click-slot {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 10px;
+    min-height: 40px;
+}
+
+.inventory-home #oneClickUpdateButton {
+    flex: 1 1 auto;
+    width: auto;
+    min-width: 180px;
+    min-height: 40px;
+}
+
+.inventory-home .one-click-hint {
+    flex: 0 0 auto;
+    margin: 0;
+    color: #6b7280;
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 1.4;
+    white-space: nowrap;
 }
 
 .inventory-home input[type="text"] {
@@ -3146,7 +3280,9 @@ input:checked + .toggle-slider:before {
         flex-wrap: wrap;
     }
 
-    .inventory-home #searchInput {
+    .inventory-home #searchInput,
+    .inventory-home .search-input-slot,
+    .inventory-home .one-click-slot {
         flex-basis: 100%;
     }
 
@@ -3273,5 +3409,9 @@ input:checked + .toggle-slider:before {
         animation-iteration-count: 1 !important;
         scroll-behavior: auto !important;
         transition-duration: 0.01ms !important;
+    }
+
+    .inventory-home .search-mode-new {
+        animation: none;
     }
 }

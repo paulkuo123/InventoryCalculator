@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>莉莉安蝦皮庫存管理系統</title>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    <link rel="stylesheet" href="styles.css?v=20261004-home-ui">
+    <link rel="stylesheet" href="styles.css?v=20261015-toggle-lock">
 </head>
 <body class="inventory-home">
     <header>
@@ -50,8 +50,21 @@
 
     <div class="container">
         <div class="card">
+            <div class="search-mode" role="group" aria-label="更新方式">
+                <button type="button" id="searchModeKeyword" class="search-mode-option is-active" aria-pressed="true">關鍵字搜尋</button>
+                <button type="button" id="searchModeOneClick" class="search-mode-option" aria-pressed="false" title="新功能：採用 Excel，比整店爬蟲快">一鍵更新全賣場<span class="search-mode-new" aria-hidden="true">NEW</span></button>
+            </div>
             <div class="search-container">
-                <input type="text" id="searchInput" placeholder="輸入商品關鍵字（留空搜尋全部商品）" aria-label="商品關鍵字">
+                <div class="search-input-slot" id="searchInputSlot">
+                    <input type="text" id="searchInput" placeholder="輸入商品關鍵字（留空搜尋全部商品）" aria-label="商品關鍵字">
+                </div>
+                <div class="one-click-slot" id="oneClickSlot" hidden>
+                    <button id="oneClickUpdateButton" class="btn-primary" type="button">
+                        <i class="fas fa-arrows-rotate"></i>
+                        一鍵更新全賣場庫存
+                    </button>
+                    <p class="one-click-hint">新・採用 Excel，比整店爬蟲快</p>
+                </div>
                 <div class="headless-option">
                     <label class="toggle-switch">
                         <input type="checkbox" id="headlessMode" checked>
@@ -320,6 +333,6 @@
 
     <section id="restockOperationStatus" class="restock-operation-status" aria-live="polite" hidden></section>
 
-    <script src="script.js?v=20261004-golden-sync"></script>
+    <script src="script.js?v=20261015-toggle-lock"></script>
 </body>
 </html>
