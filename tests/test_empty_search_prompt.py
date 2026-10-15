@@ -1,38 +1,15 @@
-"""Empty search stays the full-shop crawler. Keyword search still calls it directly."""
+"""Empty search stays the full-shop crawler. The homepage toggle does not change it."""
 
-import io
 import json
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
 import main
-from shopee_excel_import import parse_multipart_form
 
-FIXTURE_ZIP = (
-    Path(__file__).resolve().parent / "fixtures" / "shopee_mass_update" / "listed_sales.zip"
-)
 INDEX_HTML = Path(__file__).resolve().parent.parent / "index.html"
 SCRIPT_JS = Path(__file__).resolve().parent.parent / "script.js"
-
-
-def _multipart(fields, files):
-    boundary = "----exceltest"
-    chunks = []
-    for name, value in fields.items():
-        chunks.append(
-            f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode()
-        )
-    for name, (filename, payload) in files.items():
-        chunks.append(
-            (
-                f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"; '
-                f'filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'
-            ).encode() + payload + b"\r\n"
-        )
-    chunks.append(f"--{boundary}--\r\n".encode())
-    return f"multipart/form-data; boundary={boundary}", b"".join(chunks)
+MAIN_PY = Path(__file__).resolve().parent.parent / "main.py"
 
 
 class EmptySearchAndExcelApiTests(unittest.TestCase):
@@ -60,92 +37,39 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
         handler._handle_search()
         handler.run_crawler.assert_called_once_with("", True, 4)
 
-    def test_homepage_copy_keeps_existing_search_and_adds_excel_card(self):
+    def test_homepage_keeps_search_and_puts_cookies_back_beside_import(self):
         html = INDEX_HTML.read_text(encoding="utf-8")
         script = SCRIPT_JS.read_text(encoding="utf-8")
+        server = MAIN_PY.read_text(encoding="utf-8")
         self.assertRegex(html, r'id="searchButton"[\s\S]*?搜尋\s*</button>')
         self.assertIn('value="4" selected', html)
         self.assertIn("匯入並套用", html)
-        self.assertIn("匯入蝦皮 Excel（新・較快）", html)
+        self.assertIn("關鍵字搜尋", html)
+        self.assertIn("一鍵更新全賣場", html)
         self.assertIn("一鍵更新全賣場庫存", html)
-        self.assertIn("架上及已售完商品", html)
-        self.assertNotIn("新功能", html)
-        self.assertNotIn("emptySearchPrompt", html)
-        self.assertNotIn("excelMonthlySalesFile", html)
+        self.assertIn("新・採用 Excel，比整店爬蟲快", html)
+        self.assertIn('title="新功能：採用 Excel，比整店爬蟲快"', html)
+        self.assertIn('class="search-mode-new"', html)
+        self.assertIn(">NEW<", html)
+        self.assertNotIn("one-click-new", html)
+        self.assertNotIn("匯入蝦皮 Excel", html)
+        self.assertNotIn("excelImportCard", html)
+        self.assertNotIn("excelSalesFile", html)
         self.assertNotIn("emptySearch", script)
-        self.assertNotIn("monthlySalesFile", script)
-        self.assertNotIn("startInventorySearch", script)
-
-    def test_import_excel_endpoint_merges_without_crawler(self):
-        content_type, body = _multipart(
-            {"inventoryMonth": "4"},
-            {"salesFile": ("listed_sales.zip", FIXTURE_ZIP.read_bytes())},
-        )
-        parsed = parse_multipart_form(content_type, body)
-        self.assertEqual(parsed["salesFile"]["filename"], "listed_sales.zip")
-        self.assertEqual(parsed["inventoryMonth"]["text"], "4")
-
-        with tempfile.TemporaryDirectory() as temp_dir:
-            root = Path(temp_dir)
-            products_path = root / "shopee_products.json"
-            golden_path = root / "golden_table.json"
-            products_path.write_text('{"keep": true}\n', encoding="utf-8")
-            before = products_path.read_bytes()
-            golden_path.write_text(json.dumps({
-                "900001": {
-                    "商品名稱": "Golden",
-                    "型號": [{
-                        "規格ID": "800001",
-                        "型號名稱": "黑色",
-                        "1688_sku_name": "金黑",
-                    }],
-                }
-            }), encoding="utf-8")
-            handler = self._handler()
-            handler.headers = {
-                "Content-Type": content_type,
-                "Content-Length": str(len(body)),
-            }
-            handler.rfile = io.BytesIO(body)
-            handler._shopee_products_path = lambda: products_path
-            handler._golden_table_path = lambda: golden_path
-            handler._load_json_file = lambda path: json.loads(Path(path).read_text(encoding="utf-8"))
-            handler._handle_import_excel()
-            handler.run_crawler.assert_not_called()
-            status, payload = handler._send_json_response.call_args.args
-            self.assertEqual(status, 200)
-            self.assertEqual(payload["status"], "success")
-            self.assertEqual(
-                payload["products"]["900001"]["型號"][0]["1688_sku_name"],
-                "金黑",
-            )
-            self.assertNotEqual(products_path.read_bytes(), before)
-
-    def test_bad_excel_endpoint_keeps_official_bytes(self):
-        content_type, body = _multipart(
-            {"inventoryMonth": "4"},
-            {"salesFile": ("missing_stock_column.xlsx", (
-                Path(__file__).resolve().parent / "fixtures" / "shopee_mass_update" / "missing_stock_column.xlsx"
-            ).read_bytes())},
-        )
-        with tempfile.TemporaryDirectory() as temp_dir:
-            products_path = Path(temp_dir) / "shopee_products.json"
-            products_path.write_text('{"keep": true}\n', encoding="utf-8")
-            before = products_path.read_bytes()
-            handler = self._handler()
-            handler.headers = {
-                "Content-Type": content_type,
-                "Content-Length": str(len(body)),
-            }
-            handler.rfile = io.BytesIO(body)
-            handler._shopee_products_path = lambda: products_path
-            handler._golden_table_path = lambda: Path(temp_dir) / "missing.json"
-            handler._load_json_file = lambda path: {}
-            handler._handle_import_excel()
-            status, payload = handler._send_json_response.call_args.args
-            self.assertEqual(status, 400)
-            self.assertIn("缺少必要欄位", payload["message"])
-            self.assertEqual(products_path.read_bytes(), before)
+        self.assertNotIn("import-excel", script)
+        self.assertNotIn("/api/shopee-products/import-excel", server)
+        self.assertNotIn("def _handle_import_excel", server)
+        self.assertIn("/api/shopee-products/download-excel", server)
+        tools = html.split('aria-label="資料匯入"', 1)[1].split("</section>", 1)[0]
+        self.assertEqual(tools.count("<h3>"), 2)
+        self.assertIn("匯入商品資料", tools)
+        self.assertLess(tools.index("匯入商品資料"), tools.index("匯入蝦皮 Cookies"))
+        css = (INDEX_HTML.parent / "styles.css").read_text(encoding="utf-8")
+        self.assertIn("pointer-events: none", css)
+        self.assertIn("search-mode-new-glow", css)
+        self.assertIn("prefers-reduced-motion: reduce", css)
+        mode = script.split("function setSearchMode", 1)[1].split("async function runOneClickUpdate", 1)[0]
+        self.assertNotIn("localStorage", mode)
 
 
 class EmptySearchMatchesMainTests(unittest.TestCase):
@@ -180,46 +104,143 @@ class EmptySearchMatchesMainTests(unittest.TestCase):
 
 
 class EmptySearchPromptBrowserTests(unittest.TestCase):
-    def test_empty_and_keyword_search_go_straight_to_the_crawler(self):
+    def test_toggle_defaults_to_keyword_and_search_still_hits_the_crawler(self):
         from playwright.sync_api import sync_playwright
+
+        product = {
+            "1": {
+                "商品名稱": "測試",
+                "型號": [],
+                "總月銷量": "0",
+                "已售出總數量": "0",
+                "商品圖片網址": "",
+            }
+        }
 
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(args=["--no-sandbox"])
-            page = browser.new_page()
+            page = browser.new_page(viewport={"width": 1440, "height": 900})
             page.on("dialog", lambda dialog: dialog.dismiss())
             page.goto(INDEX_HTML.as_uri())
-            page.evaluate(
+            page.wait_for_selector("#searchModeKeyword.is-active")
+
+            state = page.evaluate(
                 """() => {
-                    window.__searchCalls = [];
-                    window.fetch = async (input) => {
-                        const url = String(input);
-                        window.__searchCalls.push(url);
-                        if (url.includes('/search')) {
-                            return new Response(JSON.stringify({
-                                "1": {
-                                    "商品名稱": "測試",
-                                    "型號": [],
-                                    "總月銷量": "0",
-                                    "已售出總數量": "0",
-                                    "商品圖片網址": ""
-                                }
-                            }), {status: 200, headers: {"Content-Type": "application/json"}});
-                        }
-                        return new Response("{}", {
-                            status: 200,
-                            headers: {"Content-Type": "application/json"}
-                        });
+                    const keyword = document.getElementById('searchModeKeyword');
+                    const oneClick = document.getElementById('searchModeOneClick');
+                    const pill = oneClick.querySelector('.search-mode-new');
+                    const keywordStyle = getComputedStyle(keyword);
+                    const trackStyle = getComputedStyle(document.querySelector('.search-mode'));
+                    return {
+                        keywordPressed: keyword.getAttribute('aria-pressed'),
+                        onePressed: oneClick.getAttribute('aria-pressed'),
+                        title: oneClick.getAttribute('title'),
+                        pillText: pill.textContent,
+                        pillPointer: getComputedStyle(pill).pointerEvents,
+                        keywordBg: keywordStyle.backgroundColor,
+                        keywordColor: keywordStyle.color,
+                        keywordHeight: keyword.getBoundingClientRect().height,
+                        trackBg: trackStyle.backgroundColor,
+                        inputHidden: document.getElementById('searchInputSlot').hidden,
+                        oneHidden: document.getElementById('oneClickSlot').hidden,
+                        searchHidden: document.getElementById('searchButton').hidden,
                     };
                 }"""
             )
-            card = page.locator("#excelImportCard").inner_text()
-            self.assertNotIn("新功能", card)
-            self.assertIn("架上及已售完商品", card)
-            self.assertIn("一鍵更新全賣場庫存", card)
-            self.assertEqual(page.locator("#excelMonthlySalesFile").count(), 0)
-            self.assertEqual(page.locator("#emptySearchPrompt").count(), 0)
+            self.assertEqual(state["keywordPressed"], "true")
+            self.assertEqual(state["onePressed"], "false")
+            self.assertEqual(state["title"], "新功能：採用 Excel，比整店爬蟲快")
+            self.assertEqual(state["pillText"], "NEW")
+            self.assertEqual(state["pillPointer"], "none")
+            self.assertEqual(state["keywordBg"], "rgb(238, 77, 45)")
+            self.assertEqual(state["keywordColor"], "rgb(255, 255, 255)")
+            self.assertGreaterEqual(state["keywordHeight"], 44)
+            self.assertNotEqual(state["trackBg"], "rgba(0, 0, 0, 0)")
+            self.assertFalse(state["inputHidden"])
+            self.assertTrue(state["oneHidden"])
+            self.assertFalse(state["searchHidden"])
             self.assertEqual(page.locator("#searchButton").inner_text().strip(), "搜尋")
             self.assertEqual(page.locator("#inventoryMonth").input_value(), "4")
+            self.assertEqual(page.locator("#excelImportCard").count(), 0)
+            self.assertEqual(page.locator("#emptySearchPrompt").count(), 0)
+
+            stored = page.evaluate("() => JSON.stringify(localStorage)")
+            box = page.locator("#searchModeOneClick .search-mode-new").bounding_box()
+            self.assertIsNotNone(box)
+            page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+            page.wait_for_function(
+                "document.getElementById('searchModeOneClick').getAttribute('aria-pressed') === 'true'"
+            )
+            self.assertEqual(page.evaluate("() => JSON.stringify(localStorage)"), stored)
+            one_click = page.evaluate(
+                """() => {
+                    const button = document.getElementById('searchModeOneClick');
+                    const style = getComputedStyle(button);
+                    return {
+                        bg: style.backgroundColor,
+                        color: style.color,
+                        inputHidden: document.getElementById('searchInputSlot').hidden,
+                        oneHidden: document.getElementById('oneClickSlot').hidden,
+                        searchHidden: document.getElementById('searchButton').hidden,
+                        hint: document.querySelector('.one-click-hint').textContent,
+                    };
+                }"""
+            )
+            self.assertEqual(one_click["bg"], "rgb(238, 77, 45)")
+            self.assertEqual(one_click["color"], "rgb(255, 255, 255)")
+            self.assertTrue(one_click["inputHidden"])
+            self.assertFalse(one_click["oneHidden"])
+            self.assertTrue(one_click["searchHidden"])
+            self.assertIn("新・採用 Excel，比整店爬蟲快", one_click["hint"])
+            self.assertTrue(page.locator("#oneClickUpdateButton").is_enabled())
+
+            page.locator("#searchModeKeyword").click()
+            page.wait_for_function(
+                "document.getElementById('searchModeKeyword').getAttribute('aria-pressed') === 'true'"
+            )
+            page.locator("#searchModeOneClick").click()
+            page.reload()
+            page.wait_for_selector("#searchModeKeyword.is-active")
+            self.assertEqual(
+                page.locator("#searchModeKeyword").get_attribute("aria-pressed"), "true"
+            )
+            self.assertEqual(
+                page.locator("#searchModeOneClick").get_attribute("aria-pressed"), "false"
+            )
+            self.assertTrue(page.locator("#searchInput").is_visible())
+            self.assertTrue(page.locator("#oneClickSlot").is_hidden())
+
+            page.evaluate(
+                """(product) => {
+                    window.__searchCalls = [];
+                    window.__downloadStarted = false;
+                    window.__releaseDownload = null;
+                    window.fetch = async (input) => {
+                        const url = String(input);
+                        window.__searchCalls.push(url);
+                        if (url.includes('download-excel')) {
+                            window.__downloadStarted = true;
+                            return new Promise((resolve) => {
+                                window.__releaseDownload = () => resolve(new Response(
+                                    JSON.stringify({status: 'success', products: product}),
+                                    {status: 200, headers: {'Content-Type': 'application/json'}}
+                                ));
+                            });
+                        }
+                        if (url.includes('/search')) {
+                            return new Response(JSON.stringify(product), {
+                                status: 200,
+                                headers: {'Content-Type': 'application/json'}
+                            });
+                        }
+                        return new Response('{}', {
+                            status: 200,
+                            headers: {'Content-Type': 'application/json'}
+                        });
+                    };
+                }""",
+                product,
+            )
 
             page.locator("#searchButton").click()
             page.wait_for_function(
@@ -228,19 +249,27 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
             empty_call = page.evaluate(
                 "window.__searchCalls.find(url => url.includes('/search'))"
             )
-            self.assertIn("keyword=", empty_call)
             self.assertIn("keyword=&", empty_call)
             self.assertIn("inventoryMonth=4", empty_call)
+            page.wait_for_function("window.crawlerRunning === false")
 
             page.locator("#searchInput").fill("手機殼")
             page.locator("#searchButton").click()
             page.wait_for_function(
                 "window.__searchCalls.some(url => url.includes('%E6%89%8B%E6%A9%9F%E6%AE%BC'))"
             )
-            keyword_call = page.evaluate(
-                "window.__searchCalls.find(url => url.includes('%E6%89%8B%E6%A9%9F%E6%AE%BC'))"
+            page.wait_for_function("window.crawlerRunning === false")
+
+            page.locator("#searchModeOneClick").click()
+            page.locator("#oneClickUpdateButton").click()
+            page.wait_for_function("window.__downloadStarted === true")
+            self.assertTrue(page.locator("#oneClickUpdateButton").is_disabled())
+            self.assertEqual(page.locator("#loading").evaluate("node => node.style.display"), "block")
+            page.evaluate("() => window.__releaseDownload()")
+            page.wait_for_function(
+                "document.getElementById('oneClickUpdateButton').disabled === false"
             )
-            self.assertNotIn("keyword=&", keyword_call)
+            self.assertEqual(page.locator("#loading").evaluate("node => node.style.display"), "none")
             browser.close()
 
 

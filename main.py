@@ -44,7 +44,6 @@ from shopee_products_import import (
 from shopee_excel_import import (
     MAX_EXCEL_IMPORT_BYTES,
     ExcelImportError,
-    import_sales_bytes,
     parse_multipart_form,
 )
 from shopee_excel_download import (
@@ -762,10 +761,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         request_path = urllib.parse.urlparse(self.path).path
 
-        if request_path == '/api/shopee-products/import-excel':
-            self._handle_import_excel()
-            return
-
         if request_path == '/api/shopee-products/download-excel':
             self._handle_download_excel()
             return
@@ -1467,42 +1462,6 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         if month <= 0:
             raise ExcelImportError("庫存月份必須大於 0。")
         return month
-
-    def _handle_import_excel(self):
-        try:
-            form = self._excel_form()
-            sales = form.get('salesFile') or {}
-            if not sales.get('data'):
-                raise ExcelImportError("請先選擇價格及庫存的 zip 或 xlsx。")
-            result = import_sales_bytes(
-                sales.get('filename') or 'sales.xlsx',
-                sales.get('data') or b'',
-                destination=self._shopee_products_path(),
-                golden_table=self._load_json_file(self._golden_table_path()),
-                inventory_month=self._inventory_month_from_form(form),
-            )
-            self._send_json_response(200, result)
-        except json.JSONDecodeError:
-            self._send_json_response(400, {
-                "status": "error",
-                "message": "現有商品檔不是有效的 JSON，已停止匯入。",
-            })
-        except (ExcelImportError, ValueError) as exc:
-            self._send_json_response(400, {"status": "error", "message": str(exc)})
-        except FileNotFoundError as exc:
-            self._send_json_response(404, {"status": "error", "message": str(exc)})
-        except OSError:
-            logger.exception("寫入 shopee_products.json 失敗")
-            self._send_json_response(500, {
-                "status": "error",
-                "message": "shopee_products.json 寫入失敗，原檔未完成替換",
-            })
-        except Exception as exc:
-            logger.exception("匯入價格及庫存 Excel 失敗: %s", exc)
-            self._send_json_response(500, {
-                "status": "error",
-                "message": "匯入價格及庫存 Excel 失敗，請檢查檔案或伺服器日誌",
-            })
 
     def _handle_download_excel(self):
         try:
