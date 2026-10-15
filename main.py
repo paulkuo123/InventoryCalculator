@@ -1494,7 +1494,7 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         content_type = self.headers.get('Content-Type', '')
         body = self._read_request_bytes(MAX_EXCEL_IMPORT_BYTES)
         if 'multipart/form-data' not in content_type.lower():
-            raise ExcelImportError("請用表單上傳價格及庫存檔。")
+            raise ExcelImportError("請求格式無效，請重試一鍵更新。")
         return parse_multipart_form(content_type, body)
 
     def _inventory_month_from_form(self, form):

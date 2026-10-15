@@ -78,7 +78,7 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
         self.assertNotIn("localStorage", mode)
 
 
-class EmptySearchMatchesMainTests(unittest.TestCase):
+class KeywordSearchStillHitsSearchAndChainsCookieReloginTests(unittest.TestCase):
     def test_perform_search_keeps_the_crawler_request(self):
         script = SCRIPT_JS.read_text(encoding="utf-8")
         self.assertIn(

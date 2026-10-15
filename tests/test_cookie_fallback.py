@@ -456,6 +456,40 @@ class CookieFallbackWebHandlerTests(unittest.TestCase):
         self.assertEqual(status, 409)
         self.assertEqual(payload["status"], "cookies_required")
 
+    def test_download_excel_success_passes_month_and_returns_json(self):
+        boundary = "----downloadexcel"
+        body = (
+            f"--{boundary}\r\n"
+            'Content-Disposition: form-data; name="inventoryMonth"\r\n'
+            "\r\n"
+            "7\r\n"
+            f"--{boundary}--\r\n"
+        ).encode("utf-8")
+        handler = self._handler()
+        handler.headers = _Headers({
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Content-Length": str(len(body)),
+        })
+        handler.rfile = io.BytesIO(body)
+        result = {
+            "status": "success",
+            "message": "已更新",
+            "products": {"1": {"商品名稱": "殼"}},
+        }
+        with patch(
+            "main.ensure_shopee_cookies",
+            return_value=CookieEnsureResult(True, "local", 2),
+        ), patch.object(handler, "_load_json_file", return_value={}), patch(
+            "main.download_and_import", return_value=result
+        ) as download, patch(
+            "urllib.request.urlopen",
+            side_effect=AssertionError("network"),
+        ):
+            handler._handle_download_excel()
+        download.assert_called_once()
+        self.assertEqual(download.call_args.kwargs["inventory_month"], 7)
+        handler._send_json_response.assert_called_once_with(200, result)
+
     def test_import_rejects_invalid_paste_without_echoing_values(self):
         handler = self._handler()
         body = json.dumps({"cookiesText": json.dumps([shopee_cookie(SECRET)])}).encode("utf-8")
