@@ -71,13 +71,18 @@ class ListingPage:
 
 
 class ListingDriver:
-    def __init__(self, pages, on_next=None, next_selector="class"):
+    def __init__(self, pages, on_next=None, next_selector="class", row_reveal=None, disabled_next_reads=0):
         self.pages = pages
         self.index = 0
         self.on_next = on_next
         self.next_selector = next_selector
         self.honor_page_button = False
         self.page_button_clicks = []
+        self.row_reveal = list(row_reveal) if row_reveal else None
+        self._reveal_index = 0
+        self.row_counts_seen = []
+        self.disabled_next_reads = int(disabled_next_reads or 0)
+        self._next_reads = 0
 
     def _page(self):
         return self.pages[self.index]
@@ -86,6 +91,8 @@ class ListingDriver:
         page = self._page()
         value = str(value)
         if by == By.XPATH and self._matches_next_selector(value):
+            if value == "//button[contains(@class, 'eds-pager__button-next')]":
+                self._next_reads += 1
             return [self._next_button(page)]
         if by == By.XPATH and "eds-pager__page-indicator" in value:
             return [FakeElement(text=page.indicator)]
@@ -98,9 +105,9 @@ class ListingDriver:
         if by == By.XPATH:
             return []
         if by == By.CLASS_NAME and value == "eds-table__row":
-            return list(page.rows)
+            return self._visible_rows(page)
         if by == By.CSS_SELECTOR and "eds-table__row" in value:
-            return list(page.rows)
+            return self._visible_rows(page)
         if by == By.TAG_NAME and value == "body":
             return [FakeElement(text=page.body_text)]
         return []
@@ -123,10 +130,26 @@ class ListingDriver:
             return "@role='button'" in value and "下一頁" in value
         return "eds-pager__button-next" in value
 
+    def _visible_rows(self, page):
+        rows = list(page.rows)
+        plan = self.row_reveal
+        if not plan or self.index != 0:
+            return rows
+        step = min(self._reveal_index, len(plan) - 1)
+        count = plan[step]
+        self._reveal_index += 1
+        self.row_counts_seen.append(count)
+        return rows[:count]
+
     def _next_button(self, page):
         class_name = "eds-pager__button-next"
         attrs = {}
-        if not page.next_enabled:
+        forced_disabled = (
+            self.disabled_next_reads > 0
+            and page.next_enabled
+            and self._next_reads <= self.disabled_next_reads
+        )
+        if (not page.next_enabled) or forced_disabled:
             class_name += " disabled"
             attrs["disabled"] = "true"
         return FakeElement(class_name=class_name, attrs=attrs, on_click=self._click_next)
@@ -956,6 +979,111 @@ class ListingIntegrityTests(unittest.TestCase):
                 crawler.get_all_products_info()
         self.assertEqual(len(crawler.products_data), 11)
 
+    def test_partial_rows_wait_until_the_page_size_is_stable(self):
+        """列數先少於 12，連續兩次沒變也不算整頁；補滿 12 且再一次沒變才讀。"""
+        ids = [str(400000 + index) for index in range(24)]
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = ListingDriver(
+            [
+                ListingPage(
+                    indicator="",
+                    rows=shop_rows(ids[:12]),
+                    body_text="架上商品(24)",
+                    next_enabled=True,
+                ),
+                ListingPage(
+                    indicator="",
+                    rows=shop_rows(ids[12:]),
+                    body_text="架上商品(24)",
+                    next_enabled=False,
+                ),
+            ],
+            on_next=advance,
+            row_reveal=[4, 4, 4, 12],
+        )
+        crawler = make_crawler(driver, "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(crawler.crawl_page_logs[0]["成功"], 12)
+        self.assertEqual(crawler.crawl_page_logs[0]["商品列數"], 12)
+        self.assertIn(4, driver.row_counts_seen)
+        self.assertIn(12, driver.row_counts_seen)
+        self.assertLess(driver.row_counts_seen.index(4), driver.row_counts_seen.index(12))
+        self.assertIn("商品列已穩定：12 列，已達每頁 12 列。", stdout.getvalue())
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_falsely_disabled_next_is_rechecked_against_the_listed_total(self):
+        """下一頁先顯示停用，但架上商品(24) 還有第 2 頁。再確認後按鈕恢復就繼續。"""
+        ids = [str(410000 + index) for index in range(24)]
+
+        def advance(driver):
+            driver.index += 1
+
+        pages = [
+            ListingPage("", shop_rows(ids[:12]), "架上商品(24)", next_enabled=True),
+            ListingPage("", shop_rows(ids[12:]), "架上商品(24)", next_enabled=False),
+        ]
+        driver = ListingDriver(pages, on_next=advance, disabled_next_reads=1)
+        crawler = make_crawler(driver, "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual([entry["頁碼"] for entry in crawler.crawl_page_logs], [1, 2])
+        self.assertIn("應有 2 頁", message)
+        self.assertIn("再確認後下一頁按鈕可以點", message)
+        self.assertEqual(crawler.crawl_count_check["collected"], 24)
+
+        stuck = ListingDriver(
+            [ListingPage("", shop_rows(ids[:12]), "架上商品(24)", next_enabled=False)],
+        )
+        crawler = make_crawler(stuck, "unused.json")
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        error = str(caught.exception)
+        self.assertIn("應有 2 頁", error)
+        self.assertIn("已收集 12，頁面顯示 24", error)
+        self.assertIn("這還不是最後一頁", error)
+        self.assertEqual(list(crawler.products_data), ids[:12])
+
+    def test_delayed_sold_count_is_reread_before_it_is_invalid(self):
+        row = product_row("15848359384", "登山扣 掛鉤", models=[model_row(spec_id="1")])
+        row.sales_reads = 0
+        row.sales_delay = 2
+        original = row.find_element
+
+        def find_element(by, value):
+            if by == By.CLASS_NAME and value == "list-view-sales":
+                row.sales_reads += 1
+                if row.sales_reads <= row.sales_delay:
+                    raise NoSuchElementException(value)
+            return original(by, value)
+
+        row.find_element = find_element
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=[row],
+            body_text="架上商品(1)",
+            next_enabled=False,
+        )
+        crawler = make_crawler(ListingDriver([page]), "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        self.assertEqual(row.sales_reads, 3)
+        self.assertIn("15848359384", crawler.products_data)
+        self.assertEqual(crawler.products_data["15848359384"]["已售出總數量"], "4")
+        self.assertEqual(crawler.crawl_page_logs[0]["無效"], 0)
+        self.assertIn("第 3 次讀到已售出總數量", stdout.getvalue())
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
 
 class ListingTab:
     def __init__(self, driver):
@@ -1092,9 +1220,9 @@ class ListingTabRefreshTests(unittest.TestCase):
         crawler.page = ListingTab(driver)
         return crawler
 
-    def test_refresh_interval_defaults_to_eight_pages(self):
+    def test_refresh_interval_defaults_to_fifteen_pages(self):
         args = build_crawler_argument_parser().parse_args([])
-        self.assertEqual(args.listing_page_refresh_interval, 8)
+        self.assertEqual(args.listing_page_refresh_interval, 15)
         args = build_crawler_argument_parser().parse_args([
             "--listing-page-refresh-interval", "5",
         ])
