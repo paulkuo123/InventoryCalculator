@@ -1115,6 +1115,80 @@ class ListingIntegrityTests(unittest.TestCase):
         self.assertEqual(crawler.crawl_invalid_rows[0]["畫面文字"], 
                          "登山扣 掛鉤 商品 ID: 15848359384 SPC_F=(已省略)")
 
+    def test_search_rank_lowered_without_sold_total_is_unknown_not_invalid(self):
+        lowered = product_row(
+            "15848359384",
+            "登山扣 掛鉤",
+            include_sales=False,
+            variation=False,
+        )
+        lowered.text = (
+            "搜尋排序降低 隔日到貨 登山扣 掛鉤 商品 ID: 15848359384 "
+            "商品搜尋排序降低前往編輯!"
+        )
+        still_missing = product_row(
+            "222",
+            "普通商品",
+            include_sales=False,
+            variation=False,
+        )
+        kept = product_row(
+            "333",
+            "有銷量",
+            sales="已售出 4",
+            variation=False,
+        )
+        kept.text = "有銷量 商品搜尋排序降低 已售出 4"
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=[lowered, kept],
+            body_text="架上商品(2) 2 件商品",
+            next_enabled=False,
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "shopee_products.json"
+            crawler = make_crawler(ListingDriver([page]), str(output_path))
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                crawler.get_all_products_info()
+                crawler.save_to_file(crawler.products_data)
+            message = stdout.getvalue()
+            saved = json.loads(output_path.read_text(encoding="utf-8"))
+
+        self.assertIn("15848359384", crawler.products_data)
+        self.assertIsNone(crawler.products_data["15848359384"]["已售出總數量"])
+        self.assertIsNone(saved["15848359384"]["已售出總數量"])
+        self.assertNotEqual(saved["15848359384"]["已售出總數量"], 0)
+        self.assertNotEqual(saved["15848359384"]["已售出總數量"], "0")
+        self.assertEqual(saved["333"]["已售出總數量"], "4")
+        self.assertEqual(crawler.crawl_invalid_rows, [])
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertIn("商品搜尋排序降低", message)
+        self.assertIn("記為未知", message)
+        self.assertIn("不寫成 0", message)
+        self.assertNotIn("secretvalue", message)
+        suggestion = ShopeeCrawler.calculate_restock_quantity(
+            None, 1, None, 10, 5, 4, 10,
+        )
+        self.assertNotEqual(suggestion, 0)
+
+        other = ListingPage(
+            indicator="1 / 1",
+            rows=[still_missing],
+            body_text="架上商品(1)",
+            next_enabled=False,
+        )
+        crawler = make_crawler(ListingDriver([other]), "unused.json")
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        self.assertIn("缺少已售出總數量", str(caught.exception))
+        self.assertNotIn("222", crawler.products_data)
+        self.assertNotEqual(
+            crawler.crawl_invalid_rows[0].get("畫面文字"),
+            None,
+        )
+
 
 class ListingTab:
     def __init__(self, driver):
@@ -1362,10 +1436,13 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertEqual(list(crawler.products_data), ids)
         self.assertEqual(len(crawler.context.opened), 1)
         self.assertTrue(first_tab.closed)
+        refresh_visits = crawler.context.opened[0].visits
         self.assertEqual(
-            crawler.context.opened[0].visits,
-            ["https://seller.shopee.tw/portal/product/list/live/all?operationSortBy=modified_time&page=3"],
+            refresh_visits[0],
+            "https://seller.shopee.tw/portal/product/list/live/all?operationSortBy=modified_time&page=3",
         )
+        self.assertIn("page=4", refresh_visits[1])
+        self.assertTrue(all("page=1" not in visit for visit in refresh_visits))
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
         self.assertEqual(crawler.crawl_count_check["expected"], 4)
         self.assertEqual([entry["頁碼"] for entry in crawler.crawl_page_logs], [1, 2, 3, 4])
@@ -1374,14 +1451,23 @@ class ListingTabRefreshTests(unittest.TestCase):
         ids = ["101", "102", "103", "104"]
 
         def advance(driver):
-            if getattr(driver, "crash_armed", False) and driver.index == 1:
-                driver.crash_armed = False
-                raise RuntimeError("Page.evaluate: Target crashed")
             driver.index += 1
 
         driver = ListingDriver(listing_pages(ids), on_next=advance)
         driver.crash_armed = True
         crawler = self._crawler(driver, interval=100)
+
+        class _CrashOnPageThree(ListingTab):
+            def goto(self, url, wait_until=None, timeout=None):
+                if (
+                    getattr(self.driver, "crash_armed", False)
+                    and re.search(r"[?&]page=3(?:&|$)", url)
+                ):
+                    self.driver.crash_armed = False
+                    raise RuntimeError("Page.evaluate: Target crashed")
+                return super().goto(url, wait_until=wait_until, timeout=timeout)
+
+        crawler.page = _CrashOnPageThree(driver)
         with redirect_stdout(io.StringIO()):
             crawler.get_all_products_info()
 
@@ -1440,11 +1526,14 @@ class ListingTabRefreshTests(unittest.TestCase):
         crawler.my_products_url = "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup"
         with redirect_stdout(io.StringIO()):
             crawler.get_all_products_info()
+        refresh_visits = crawler.context.opened[0].visits
         self.assertEqual(
-            crawler.context.opened[0].visits,
-            ["https://seller.shopee.tw/portal/product/list/live/all"
-             "?keyword=cup&operationSortBy=modified_time&page=3"],
+            refresh_visits[0],
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?keyword=cup&operationSortBy=modified_time&page=3",
         )
+        self.assertIn("keyword=cup", refresh_visits[1])
+        self.assertIn("page=4", refresh_visits[1])
         self.assertEqual(list(crawler.products_data), ids)
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
 
@@ -1503,9 +1592,9 @@ class ListingTabRefreshTests(unittest.TestCase):
             crawler.get_all_products_info()
         visits = crawler.context.opened[0].visits
         self.assertEqual(
-            visits,
-            ["https://seller.shopee.tw/portal/product/list/live/all"
-             "?operationSortBy=modified_time&page=3"],
+            visits[0],
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?operationSortBy=modified_time&page=3",
         )
         self.assertIn(3, driver.page_button_clicks)
         self.assertEqual(list(crawler.products_data), ids)
@@ -1593,10 +1682,10 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertTrue(driver.sort_menu_open)
         self.assertEqual(driver.sort_mode, "modified_time")
         visits = crawler.context.opened[0].visits
-        self.assertEqual(len(visits), 1)
         self.assertIn("operationSortBy=modified_time", visits[0])
         self.assertIn("page=3", visits[0])
         self.assertNotIn("page=1", visits[0])
+        self.assertTrue(all("page=1" not in visit for visit in visits))
 
     def test_target_crash_without_a_new_tab_still_fails_the_integrity_check(self):
         ids = ["101", "102", "103", "104"]
@@ -1617,6 +1706,68 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertIn("Target crashed", str(caught.exception))
         self.assertEqual(set(crawler.products_data), {"101", "102"})
         self.assertIsNone(crawler.crawl_count_check)
+
+    def test_every_page_opens_by_url_when_next_does_not_change_the_list(self):
+        ids = ["101", "102", "103", "104"]
+        clicks = []
+
+        def stuck_next(driver):
+            clicks.append(driver.index)
+
+        driver = ListingDriver(listing_pages(ids), on_next=stuck_next)
+        crawler = self._crawler(driver, interval=100)
+        crawler.my_products_url = (
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?operationSortBy=recommend_v2&size=12"
+        )
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(clicks, [])
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertIn("第 2 頁改開網址", message)
+        self.assertIn("page=2 打開了還沒收過的商品", message)
+        visits = crawler.page.visits
+        self.assertIn(
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?size=12&operationSortBy=modified_time&page=2",
+            visits,
+        )
+        self.assertIn(
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?size=12&operationSortBy=modified_time&page=4",
+            visits,
+        )
+        self.assertNotIn(
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?size=12&operationSortBy=modified_time&page=5",
+            visits,
+        )
+
+    def test_url_that_stays_on_the_same_page_falls_back_to_the_next_button(self):
+        ids = ["101", "102", "103"]
+
+        class _StuckUrlTab(ListingTab):
+            def goto(self, url, wait_until=None, timeout=None):
+                self.visits.append(url)
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        crawler = self._crawler(driver, interval=100)
+        crawler.page = _StuckUrlTab(driver)
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertIn("沒有換成新商品，清單仍停在這一頁。改按下一頁。", message)
+        self.assertIn("operationSortBy=modified_time", crawler.page.visits[1])
+        self.assertIn("page=2", crawler.page.visits[1])
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
 
 
 if __name__ == "__main__":

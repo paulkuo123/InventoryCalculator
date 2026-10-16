@@ -57,6 +57,8 @@ SALES_REREAD_WAIT_SECONDS = 0.4
 # 讀不到才用這個已確認的 modified_time。
 UNSTABLE_LISTING_SORTS = frozenset({"", "recommend", "recommend_v2"})
 CONFIRMED_STABLE_LISTING_SORT = "modified_time"
+# 這一列被賣家中心標成搜尋排序降低時，畫面上沒有已售出欄位。
+SEARCH_RANK_LOWERED_MARKER = "商品搜尋排序降低"
 # (畫面上的文字, 這個文字對應的已確認參數；None 表示必須從選項或網址讀)
 STABLE_SORT_OPTION_LABELS = (
     ("建立時間", None),
@@ -660,13 +662,15 @@ class ShopeeCrawler:
             int: 建議補貨數量（如果不需要補貨則為 0 或負數）
         """
         try:
-            # 如果總銷量為 0，無法計算
-            if total_sold == 0:
+            # None 是未知，不是 0。不拿 0 去推歷史佔比，只按月銷量算。
+            unknown_total = total_sold is None
+            if not unknown_total and total_sold == 0:
                 return 0
 
             effective_monthly_sales = monthly_sales
             if (
-                current_inventory == 0
+                not unknown_total
+                and current_inventory == 0
                 and product_sold > 0
                 and total_sold > 0
                 and total_monthly_sales > 0
@@ -735,12 +739,20 @@ class ShopeeCrawler:
             # 將總月銷量添加到商品數據中
             product_info["總月銷量"] = str(total_monthly_sales)
 
-            # 計算並添加建議補貨數量到每個型號
-            total_sold = self._parse_number_text(
-                product_info.get("已售出總數量", "0"),
-                preferred_label="已售出"
-            )
-            product_info["已售出總數量"] = str(total_sold)
+            # 計算並添加建議補貨數量到每個型號。未知的已售出維持 None，不寫成 0。
+            raw_sold = product_info.get("已售出總數量", "0")
+            if raw_sold is None:
+                print(
+                    f"警告: 商品 {product_id} 的已售出總數量未知，"
+                    "檔案裡保留未知，不寫成 0。"
+                )
+                total_sold = None
+            else:
+                total_sold = self._parse_number_text(
+                    raw_sold,
+                    preferred_label="已售出"
+                )
+                product_info["已售出總數量"] = str(total_sold)
             expected_months = self.inventory_month or 4
             
             if "型號" in product_info and isinstance(product_info["型號"], list):
@@ -2783,6 +2795,8 @@ class ShopeeCrawler:
         essential_fields = ['商品ID', '商品名稱', '已售出總數量']
         for field in essential_fields:
             value = product_info.get(field, "未找到")
+            if field == "已售出總數量" and value is None:
+                continue
             if value == "未找到" or not str(value).strip():
                 print(f"商品無效：缺少或無效的 {field}")
                 return False
@@ -3208,7 +3222,18 @@ class ShopeeCrawler:
                 raw_text = ""
                 if "缺少已售出總數量" in gaps:
                     raw_text = self._row_visible_text(product_row)
-                    print(f"讀不到已售出總數量，這一列畫面上的文字：{raw_text}")
+                    if SEARCH_RANK_LOWERED_MARKER in raw_text:
+                        product_info["已售出總數量"] = None
+                        gaps = [
+                            gap for gap in gaps if gap != "缺少已售出總數量"
+                        ]
+                        print(
+                            f"警告：商品 {product_id} 顯示「{SEARCH_RANK_LOWERED_MARKER}」，"
+                            "畫面上沒有已售出總數量，記為未知，不計入無效列。"
+                            f"這一列畫面上的文字：{raw_text}"
+                        )
+                    else:
+                        print(f"讀不到已售出總數量，這一列畫面上的文字：{raw_text}")
                 if gaps:
                     invalid_count += 1
                     self._note_invalid_row(
@@ -3705,6 +3730,65 @@ class ShopeeCrawler:
             print("networkidle 等待超時，繼續核對這一頁的商品 ID")
         self._resume_listing_on_page(target_page)
 
+    def _goto_listing_url(self, page_number):
+        """Open page=N with the fixed sort. Returns False when this tab cannot navigate."""
+        page = getattr(self, "page", None)
+        if page is None or not callable(getattr(page, "goto", None)):
+            return False
+        url = self._listing_resume_url(page_number)
+        print(
+            f"第 {int(page_number)} 頁改開網址"
+            f"（operationSortBy={self._stable_listing_sort()}，page={int(page_number)}）。"
+        )
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            print("networkidle 等待超時，繼續核對這一頁的商品 ID")
+        self._remember_listing_location(page)
+        return True
+
+    def _advance_listing_page(self, current_page):
+        """下一頁以 page=N 為主。網址沒有打開新商品時才按下一頁。"""
+        if self._collected_reaches_listed_total():
+            return False
+        target = int(current_page) + 1
+        before = self._snapshot_listing_page()
+        try:
+            opened = self._goto_listing_url(target)
+        except Exception as error:
+            if _is_target_crashed(error):
+                raise
+            print(f"網址跳到第 {target} 頁失敗：{error}。改按下一頁。")
+            opened = False
+        if opened:
+            self._wait_for_stable_listing_rows(target)
+            landed = self._wait_for_uncollected_listing_page()
+            if landed:
+                print(
+                    f"page={target} 打開了還沒收過的商品"
+                    f"（第一個 {landed[0]}，最後一個 {landed[-1]}）。"
+                )
+                return True
+            after = self._snapshot_listing_page()
+            moved = self._edges_changed(
+                tuple(before.get("edges") or ()),
+                tuple(after.get("edges") or ()),
+            )
+            if moved:
+                print(
+                    f"page={target} 沒有打開新商品（與已收過的商品 ID 有重疊）。"
+                    "不在這一頁按下一頁，改點頁碼或從第 1 頁往下翻。"
+                )
+                if target > 1 and self._click_numbered_listing_page(target):
+                    return True
+                self._walk_listing_to_page(target)
+                return True
+            print(
+                f"page={target} 沒有換成新商品，清單仍停在這一頁。改按下一頁。"
+            )
+        return self.go_to_next_page()
+
     def get_all_products_info(self):
         try:
             page = 1
@@ -3781,8 +3865,8 @@ class ShopeeCrawler:
                     self._collect_current_listing_page(page)
                     pages_on_tab += 1
 
-                    # 檢查下一頁
-                    has_next_page = self.go_to_next_page()
+                    # 下一頁以網址 page=N 為主。沒有打開新商品才按下一頁。
+                    has_next_page = self._advance_listing_page(page)
                     if has_next_page:
                         page += 1
                         time.sleep(1)

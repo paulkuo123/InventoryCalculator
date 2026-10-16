@@ -66,6 +66,13 @@ class GoldenImportTest(unittest.TestCase):
         self.assertEqual([row["productId"] for row in result], ["p1"])
         self.assertEqual(result[0]["modelCount"], 2)
 
+    def test_unknown_sold_total_is_not_rewritten_as_zero(self):
+        product = dict(self.product)
+        product["已售出總數量"] = None
+        result = source_product_candidates({"p1": product}, {})
+        self.assertIsNone(result[0]["sold"])
+        self.assertNotEqual(result[0]["sold"], "0")
+
     def test_preview_keeps_manual_candidates_when_rules_do_not_match(self):
         models = preview_models(self.product, self.snapshot, FakeMappingService())
         self.assertEqual(len(models), 2)

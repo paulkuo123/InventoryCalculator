@@ -147,6 +147,20 @@ class ShopeeExcelImportTests(unittest.TestCase):
         self.assertEqual(products["900003"]["型號"][0]["商品庫存"], "8")
         self.assertEqual(count_catalog(products), (3, 3))
 
+    def test_unknown_previous_sold_total_stays_unknown(self):
+        products = build_products(
+            [{
+                "商品ID": "15848359384",
+                "商品名稱": "登山扣 掛鉤",
+                "商品選項ID": "",
+                "商品規格名稱": "",
+                "庫存": 3,
+            }],
+            previous={"15848359384": {"商品名稱": "登山扣 掛鉤", "已售出總數量": None, "型號": []}},
+        )
+        self.assertIsNone(products["15848359384"]["已售出總數量"])
+        self.assertNotEqual(products["15848359384"]["已售出總數量"], "0")
+
     def test_manual_sales_upload_helpers_are_gone(self):
         source = Path(__file__).resolve().parent.parent.joinpath("shopee_excel_import.py").read_text(encoding="utf-8")
         for name in (
