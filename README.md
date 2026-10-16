@@ -309,7 +309,7 @@ python3 ads_analysis.py --include-ai true
 規則、指標定義與 prompt 規格見 [`docs/ads_analysis_rules.md`](docs/ads_analysis_rules.md)、[`docs/ads_metrics_dictionary.md`](docs/ads_metrics_dictionary.md)、[`docs/ads_report_prompt_spec.md`](docs/ads_report_prompt_spec.md)。
 
 預設行為：
-1. 讀取 `ads_exports/` 中各視窗最新一份 CSV
+1. 讀取 `ads_exports/` 中各視窗的匯出檔。副檔名是 `.csv` 的會計入該視窗；檔名是 `.xlsx`、但位元組是 CSV 文字的也會計入。真正的 ZIP／PK xlsx 會略過。同一視窗兩者都有時，保留 `.csv`（`prefer_export_path`，見 `ads_session.py` 與 `ads_analysis.py`）
 2. 使用昨天 / 最近一週（week_01）/ 過去一個月做即時判讀
 3. 使用過去 4 週滾動近 7 天窗口做趨勢分析
 4. 再統一產出 HTML / Markdown / JSON 報告
@@ -486,8 +486,8 @@ InventoryCalculator/
 
 ### 廣告匯出 / 分析目前的 scenario 是什麼？
 - `/ads.html` 匯出（或 `crawler.py --mode ads-export`）：準備完整分析資料集，依序匯出「過去一個月、昨天、近第 1 週到近第 4 週」，共 6 份
-- `/ads.html` 分析（或 `ads_analysis.py`）：不再重新抓 Shopee 後台，而是直接讀取 `ads_exports/` 內各視窗最新一份 CSV
-- 若同一視窗下載多次，分析器只會取該視窗最新一份，不會把舊檔全部混在一起算
+- `/ads.html` 分析（或 `ads_analysis.py`）：不再重新抓 Shopee 後台，而是直接讀取 `ads_exports/`。檔名是 `.xlsx`、但位元組是 CSV 文字的匯出，仍算該視窗的一份；真正的 ZIP／PK xlsx 會略過
+- 同一視窗只採用一份，不會把多份混在一起算。若同時有 `.csv` 與「檔名 `.xlsx`、內容為 CSV 文字」的檔案，`prefer_export_path`（`ads_session.py`、`ads_analysis.py`）會保留 `.csv`
 
 ### 廣告分析沒有使用 OpenAI？
 1. 先執行 `python3 setup_openai_key.py`
