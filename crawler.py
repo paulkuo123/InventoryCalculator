@@ -47,9 +47,16 @@ DEFAULT_TREND_EXPORT_WEEKS = 4
 PAGE_CHANGE_TIMEOUT_SECONDS = 15
 PAGE_CHANGE_POLL_SECONDS = 0.25
 LISTING_PAGE_SIZE = 12
-LISTING_REFRESH_INTERVAL = 15
+# page=N 已經能續頁，不必為了少走路而把同一個分頁留太久。
+# 第八輪 renderer 約 1.5–1.8GB 被 OOM 殺掉，預設改成 8 頁就換分頁。
+LISTING_REFRESH_INTERVAL = 8
 SALES_REREAD_ATTEMPTS = 3
 SALES_REREAD_WAIT_SECONDS = 0.4
+LISTING_TOTAL_REREAD_ATTEMPTS = 3
+_AUXILIARY_LISTING_ROW_RE = re.compile(
+    r"header|thead|placeholder|measure|fixed|recommend|promo|boost|campaign|banner",
+    re.IGNORECASE,
+)
 # 賣家中心清單預設 operationSortBy=recommend_v2，翻頁時商品會換頁。
 # 公開的 seller.shopee.tw 清單網址另外出現過 operationSortBy=modified_time
 # （幫助中心文章說可以改「以最近排序」）。建立時間、商品 ID 的參數沒有在
@@ -86,6 +93,29 @@ def _is_target_crashed(error) -> bool:
             return True
         current = getattr(current, "__cause__", None)
     return False
+
+
+def _is_renderer_timeout(error) -> bool:
+    """evaluate 或導頁逾時。OOM 殺掉 renderer 時常只剩逾時，沒有 Target crashed。"""
+    seen = []
+    current = error
+    while current is not None and current not in seen:
+        seen.append(current)
+        if "timeout" in type(current).__name__.lower():
+            return True
+        text = str(current).lower()
+        if "timeout" in text or "timed out" in text or "逾時" in text:
+            return True
+        current = getattr(current, "__cause__", None)
+    return False
+
+
+class ListingRendererStalled(RuntimeError):
+    """分頁凍住或被系統殺掉：畫面不換，而且這還不是最後一頁。"""
+
+    def __init__(self, target_page, message):
+        self.target_page = int(target_page)
+        super().__init__(message)
 
 
 # 「架上商品(352)」以及分頁標籤把數字拆開的「架上商品 352」「架上商品\n352」。
@@ -2271,13 +2301,54 @@ class ShopeeCrawler:
                 rows = []
         return list(rows or [])
 
+    def _listing_row_is_auxiliary(self, row):
+        """表頭、固定欄複本、推薦或活動列不是這一頁的商品。
+
+        賣家中心的表頭和左右固定欄會再畫一排 eds-table__row。
+        第一頁有時還多一列推薦或活動商品，所以 12 筆會變成 13 個商品 ID。
+        同一頁裡同一個商品 ID 只算一次。
+        """
+        class_name = ""
+        try:
+            class_name = str(row.get_attribute("class") or "")
+        except Exception:
+            class_name = ""
+        class_name = f"{class_name} {getattr(row, 'class_name', '')}"
+        if _AUXILIARY_LISTING_ROW_RE.search(class_name):
+            return True
+        script = getattr(getattr(self, "driver", None), "execute_script", None)
+        if not callable(script):
+            return False
+        try:
+            flag = script(
+                """
+                const el = arguments[0];
+                if (!el || !el.closest) return false;
+                return !!el.closest(
+                    ".eds-table__header, .eds-table__header-wrapper, thead, " +
+                    ".eds-table__fixed, .eds-table__fixed-left, .eds-table__fixed-right, " +
+                    "[class*='recommend'], [class*='promo'], [class*='boost'], " +
+                    "[class*='campaign'], [class*='banner']"
+                );
+                """,
+                row,
+            )
+        except Exception:
+            return False
+        return bool(flag)
+
     def _ordered_product_ids(self):
-        """Document order. The first and last IDs are what a next click must change."""
+        """Document order, one ID each. Header, promo, and fixed-column copies are skipped."""
         product_ids = []
+        seen = set()
         for row in self._listing_rows():
+            if self._listing_row_is_auxiliary(row):
+                continue
             product_id = self._row_product_id(row)
-            if product_id:
-                product_ids.append(str(product_id))
+            if not product_id or product_id in seen:
+                continue
+            seen.add(str(product_id))
+            product_ids.append(str(product_id))
         return tuple(product_ids)
 
     def _read_row_fingerprint(self):
@@ -2407,7 +2478,7 @@ class ShopeeCrawler:
 
     def _ensure_collected_count_matches_page(self):
         collected = len(getattr(self, "products_data", {}) or {})
-        tab_total, list_total = split_listed_product_counts(self._read_listing_count_text())
+        tab_total, list_total = self._read_listing_totals_with_retry()
         keyword = str(getattr(self, "search_keyword", "") or "").strip()
         if tab_total is not None and list_total is not None and tab_total != list_total:
             print(
@@ -2501,13 +2572,36 @@ class ShopeeCrawler:
         else:
             print("看不出每頁固定筆數，沒有做頁數範圍檢查。這不是總數核對。")
 
+    def _listing_total_parts(self):
+        return split_listed_product_counts(self._read_listing_count_text())
+
+    def _keyword_store_total_only(self):
+        """有關鍵字、只有全店架上商品總數、沒有篩選後件數。可以結束翻頁，但不能記成已核對。"""
+        tab_total, list_total = self._listing_total_parts()
+        keyword = str(getattr(self, "search_keyword", "") or "").strip()
+        return bool(keyword) and tab_total is not None and list_total is None
+
+    def _read_listing_totals_with_retry(self):
+        """架上商品總數一時讀不到就再讀。仍沒有就維持未知，呼叫端不可以記成已核對。"""
+        last = (None, None)
+        attempts = LISTING_TOTAL_REREAD_ATTEMPTS
+        for attempt in range(1, attempts + 1):
+            last = self._listing_total_parts()
+            if last[0] is not None or last[1] is not None:
+                return last
+            if attempt < attempts:
+                print(f"讀不到架上商品總數，第 {attempt} 次，稍後重讀。")
+                time.sleep(self._sales_reread_wait())
+        print("重讀後仍讀不到架上商品總數，不能把數量記成已核對。")
+        return last
+
     def _listed_total_for_completion(self):
         """拿來判斷「收集筆數已經到頁面總數」的數字。
 
         有清單件數就用清單件數。沒有清單件數時，只有沒在搜尋關鍵字才用架上商品總數。
-        關鍵字結果不能拿全店總數來提前結束。
+        關鍵字結果不能拿全店總數來提前結束。讀不到總數時回傳 None，不是已核對。
         """
-        tab_total, list_total = split_listed_product_counts(self._read_listing_count_text())
+        tab_total, list_total = self._listing_total_parts()
         keyword = str(getattr(self, "search_keyword", "") or "").strip()
         if list_total is not None:
             return list_total
@@ -2648,13 +2742,17 @@ class ShopeeCrawler:
             time.sleep(poll)
 
     def _next_button_matches_end(self, page_number):
-        """停用的下一頁只有在收集數已滿，或頁碼已到應有頁數時，才算最後一頁。"""
+        """停用的下一頁只有在收集數已滿，或頁碼已到應有頁數時，才算最後一頁。
+
+        讀不到總數時不是最後一頁，也不能說與頁數一致。
+        """
         total = self._listed_total_for_completion()
         collected = len(getattr(self, "products_data", {}) or {})
         if total is not None and collected >= int(total):
             return True
         if total is None:
-            return True
+            # 完全讀不到總數不是最後一頁。關鍵字只有全店總數時可以停，但不會記成已核對。
+            return self._keyword_store_total_only()
         expected = self._expected_listing_pages(total)
         if (
             expected is not None
@@ -2666,6 +2764,17 @@ class ShopeeCrawler:
 
     def _recover_untrusted_next_button(self, page_number, status):
         """A disabled or missing next button is re-checked when the total says more pages remain."""
+        if self._next_button_matches_end(page_number):
+            return None
+        collected = len(getattr(self, "products_data", {}) or {})
+        if self._listed_total_for_completion() is None and not self._keyword_store_total_only():
+            self._read_listing_totals_with_retry()
+            if self._listed_total_for_completion() is None and not self._keyword_store_total_only():
+                raise CrawlIntegrityError(
+                    "讀不到架上商品總數，不能把缺少或停用的下一頁按鈕當成最後一頁，"
+                    "也不能把數量記成已核對。"
+                    f"已收集 {collected}。"
+                )
         if self._next_button_matches_end(page_number):
             return None
         total = self._listed_total_for_completion()
@@ -2725,7 +2834,12 @@ class ShopeeCrawler:
                     return False
                 next_button = self._recover_untrusted_next_button(page_number, status)
                 if next_button is None:
-                    if status == "disabled":
+                    if self._keyword_store_total_only():
+                        print(
+                            "關鍵字結果沒有篩選後件數。下一頁按鈕已停用或找不到，"
+                            "先結束翻頁。數量不會記成已核對。"
+                        )
+                    elif status == "disabled":
                         print("下一頁按鈕已停用，且與架上商品的頁數一致，視為最後一頁")
                     else:
                         print("未找到下一頁按鈕，且與架上商品的頁數一致，視為最後一頁")
@@ -2765,9 +2879,11 @@ class ShopeeCrawler:
             self._remember_full_listing_page_size(before)
             return True
 
-        except CrawlIntegrityError:
+        except (CrawlIntegrityError, ListingRendererStalled):
             raise
         except Exception as e:
+            if _is_target_crashed(e) or _is_renderer_timeout(e):
+                raise
             print(f"嘗試跳轉到下一頁時出錯: {e}")
             import traceback
             traceback.print_exc()
@@ -3188,12 +3304,14 @@ class ShopeeCrawler:
         return gaps
 
     def _collect_current_listing_page(self, page_number):
-        all_rows = self.driver.find_elements(By.CLASS_NAME, "eds-table__row")
-        dom_row_count = len(all_rows)
+        raw_rows = self._listing_rows()
+        dom_row_count = len(raw_rows)
+        all_rows = [row for row in raw_rows if not self._listing_row_is_auxiliary(row)]
         success_count = 0
         skipped_count = 0
         invalid_count = 0
         page_product_ids = []
+        seen_on_page = set()
         print(f"找到 {dom_row_count} 個潛在商品行")
 
         for index, product_row in enumerate(all_rows, 1):
@@ -3202,6 +3320,12 @@ class ShopeeCrawler:
             if not product_id and not has_variation:
                 skipped_count += 1
                 continue
+            if product_id and product_id in seen_on_page:
+                skipped_count += 1
+                print(f"這一頁的商品 ID {product_id} 重複，只算一次")
+                continue
+            if product_id:
+                seen_on_page.add(product_id)
             print(f"\n處理第 {index}/{dom_row_count} 個商品列")
             if product_id:
                 page_product_ids.append(product_id)
@@ -3715,8 +3839,9 @@ class ShopeeCrawler:
             if callable(close):
                 try:
                     close()
+                    print("已關閉舊的清單分頁。")
                 except Exception:
-                    pass
+                    print("舊的清單分頁沒關掉，繼續用新分頁。")
         resume_url = self._listing_resume_url(target_page)
         print(
             f"新分頁先開清單第 {int(target_page)} 頁（page={int(target_page)}），"
@@ -3740,13 +3865,55 @@ class ShopeeCrawler:
             f"第 {int(page_number)} 頁改開網址"
             f"（operationSortBy={self._stable_listing_sort()}，page={int(page_number)}）。"
         )
-        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        except Exception as error:
+            if _is_target_crashed(error) or _is_renderer_timeout(error):
+                raise ListingRendererStalled(
+                    page_number,
+                    f"開第 {int(page_number)} 頁逾時或分頁沒有反應：{error}",
+                ) from error
+            raise
         try:
             page.wait_for_load_state("networkidle", timeout=15000)
-        except Exception:
+        except Exception as error:
+            if _is_target_crashed(error):
+                raise ListingRendererStalled(
+                    page_number,
+                    f"開第 {int(page_number)} 頁時分頁沒有反應：{error}",
+                ) from error
             print("networkidle 等待超時，繼續核對這一頁的商品 ID")
         self._remember_listing_location(page)
         return True
+
+    def _raise_if_listing_renderer_stalled(self, target_page, status):
+        """網址沒換、下一頁又不能點，而且收集數還沒到總數：這是死掉的分頁，不是最後一頁。"""
+        collected = len(getattr(self, "products_data", {}) or {})
+        self._read_listing_totals_with_retry()
+        total = self._listed_total_for_completion()
+        keyword_only = self._keyword_store_total_only()
+        if total is not None and collected >= int(total):
+            return False
+        if keyword_only and status == "disabled":
+            return False
+        if status == "ready":
+            return False
+        if total is None and not keyword_only:
+            detail = (
+                f"讀不到架上商品總數，已收集 {collected}，"
+                "不會把數量記成已核對。"
+            )
+        else:
+            detail = (
+                f"已收集 {collected}，頁面顯示 {total}，"
+                "還沒到總數。"
+            )
+        state = "找不到下一頁按鈕" if status == "missing" else "下一頁按鈕不能用"
+        raise ListingRendererStalled(
+            target_page,
+            f"page={int(target_page)} 沒有換成新商品，而且{state}。"
+            f"{detail}這不是最後一頁，換新分頁後從這一頁繼續。",
+        )
 
     def _advance_listing_page(self, current_page):
         """下一頁以 page=N 為主。網址沒有打開新商品時才按下一頁。"""
@@ -3756,9 +3923,14 @@ class ShopeeCrawler:
         before = self._snapshot_listing_page()
         try:
             opened = self._goto_listing_url(target)
+        except ListingRendererStalled:
+            raise
         except Exception as error:
-            if _is_target_crashed(error):
-                raise
+            if _is_target_crashed(error) or _is_renderer_timeout(error):
+                raise ListingRendererStalled(
+                    target,
+                    f"開第 {target} 頁逾時或分頁沒有反應：{error}",
+                ) from error
             print(f"網址跳到第 {target} 頁失敗：{error}。改按下一頁。")
             opened = False
         if opened:
@@ -3784,10 +3956,48 @@ class ShopeeCrawler:
                     return True
                 self._walk_listing_to_page(target)
                 return True
-            print(
-                f"page={target} 沒有換成新商品，清單仍停在這一頁。改按下一頁。"
-            )
+            _button, status = self._locate_next_page_button()
+            if status == "ready":
+                print(f"page={target} 沒有換成新商品，清單仍停在這一頁。改按下一頁。")
+            elif self._raise_if_listing_renderer_stalled(target, status):
+                return False
+            else:
+                print(f"page={target} 沒有換成新商品，清單仍停在這一頁。")
         return self.go_to_next_page()
+
+    def _install_listing_resource_block(self):
+        """清單爬蟲不要下載圖片、字型、影音，避免 renderer 撐到被系統殺掉。"""
+        if getattr(self, "_listing_routes_installed", False):
+            return
+        context = getattr(self, "context", None)
+        route = getattr(context, "route", None)
+        if not callable(route):
+            return
+
+        def handle(playwright_route):
+            request = getattr(playwright_route, "request", None)
+            resource = getattr(request, "resource_type", "")
+            if callable(resource):
+                try:
+                    resource = resource()
+                except Exception:
+                    resource = ""
+            if str(resource or "") in {"image", "media", "font"}:
+                abort = getattr(playwright_route, "abort", None)
+                if callable(abort):
+                    abort()
+                return
+            continue_ = getattr(playwright_route, "continue_", None)
+            if callable(continue_):
+                continue_()
+
+        try:
+            route("**/*", handle)
+        except Exception as error:
+            print(f"沒有擋下清單的圖片、字型和影音：{error}")
+            return
+        self._listing_routes_installed = True
+        print("清單爬蟲已擋下圖片、字型和影音。")
 
     def get_all_products_info(self):
         try:
@@ -3800,6 +4010,7 @@ class ShopeeCrawler:
             seen_pages = set()
             self._listing_fingerprints = []
             pages_on_tab = 0
+            self._install_listing_resource_block()
             self._apply_stable_listing_sort()
 
             while has_next_page:
@@ -3873,17 +4084,42 @@ class ShopeeCrawler:
                     else:
                         print("已到達最後一頁")
                 except Exception as error:
-                    if not _is_target_crashed(error):
+                    stalled = error if isinstance(error, ListingRendererStalled) else None
+                    timed_out = _is_renderer_timeout(error)
+                    if stalled is None and not _is_target_crashed(error) and not timed_out:
                         raise
-                    if not self._allow_listing_crash_recovery(page):
+                    resume_at = stalled.target_page if stalled is not None else page
+                    if not self._allow_listing_crash_recovery(resume_at):
+                        if stalled is not None or timed_out:
+                            raise CrawlIntegrityError(
+                                f"第 {resume_at} 頁分頁沒有反應，這不是最後一頁。"
+                                f"已收集 {len(self.products_data)}。"
+                                "讀不到架上商品總數時不會把數量記成已核對。"
+                                f"{error}"
+                            ) from error
                         raise
-                    self._rollback_listing_page_attempt(
-                        page, seen_pages, attempt_fingerprint)
-                    print(
-                        f"第 {page} 頁分頁當掉（Target crashed），換新分頁後從這一頁繼續。"
-                        f"已保留 {len(self.products_data)} 個商品。"
-                    )
-                    self._open_fresh_listing_page(page, seen_pages)
+                    if stalled is None:
+                        self._rollback_listing_page_attempt(
+                            page, seen_pages, attempt_fingerprint)
+                        print(
+                            f"第 {page} 頁分頁當掉或逾時，換新分頁後從這一頁繼續。"
+                            f"已保留 {len(self.products_data)} 個商品。"
+                        )
+                    else:
+                        print(
+                            f"第 {resume_at} 頁分頁沒有反應（不是最後一頁），"
+                            "換新分頁後從這一頁繼續。"
+                            f"已保留 {len(self.products_data)} 個商品。"
+                        )
+                        page = resume_at
+                    try:
+                        self._open_fresh_listing_page(page, seen_pages)
+                    except ListingRendererStalled as again:
+                        raise CrawlIntegrityError(
+                            f"換新分頁後第 {again.target_page} 頁仍然沒有反應。"
+                            f"已收集 {len(self.products_data)}，這不是最後一頁，"
+                            "不會把數量記成已核對。"
+                        ) from again
                     pages_on_tab = 0
                     continue
 
@@ -3941,7 +4177,7 @@ def build_crawler_argument_parser():
     parser.add_argument('--listing-page-refresh-interval',
                         type=int,
                         default=LISTING_REFRESH_INTERVAL,
-                        help='商品清單每抓幾頁就換一個新分頁，避免分頁越用越肥。預設 15。')
+                        help='商品清單每抓幾頁就換一個新分頁，避免分頁越用越肥。預設 8。')
     return parser
 
 
