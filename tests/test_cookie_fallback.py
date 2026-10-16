@@ -29,6 +29,7 @@ from cookie_fallback import (
     _probe_response_ok,
 )
 from cookie_import import os as cookie_import_os
+from tests.playwright_browser import launch_chromium
 
 
 SECRET = "spc-secret-do-not-leak-9f3c2a"
@@ -627,7 +628,7 @@ class CookiePasteModalBrowserTests(unittest.TestCase):
         product = {"1": {"商品名稱": "測試", "型號": [], "總月銷量": "0", "已售出總數量": "0", "商品圖片網址": ""}}
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(args=["--no-sandbox"])
+            browser = launch_chromium(playwright, args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             page.on("dialog", lambda dialog: dialog.dismiss())
             page.goto(index.as_uri())

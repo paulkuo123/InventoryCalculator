@@ -24,24 +24,49 @@ def str_val(val, default=""):
     return str(val).strip()
 
 
+def _compact_header(name):
+    """Drop every whitespace character so ``商品 ID`` and ``商品ID`` match."""
+    return "".join(str(name).split())
+
+
+def _compact_column_index(frame):
+    found = {}
+    for name in frame.columns:
+        found.setdefault(_compact_header(name), name)
+    return found
+
+
+def _sales_value(row, columns, header, default=""):
+    if header in row.index:
+        return str_val(row.get(header), default=default)
+    source = columns.get(_compact_header(header))
+    if source is None:
+        return str_val(None, default=default)
+    return str_val(row.get(source), default=default)
+
+
 def monthly_sales_from_frame(df_sales):
     """Read a 數據中心 parentskudetail sheet.
 
     ``商品規格 == "-"`` is the product total. Other rows are per-model
     ``商品件數 (可出貨訂單)``.
+
+    Headers are matched with all whitespace removed, so a Data Centre
+    export that writes ``商品ID`` parses the same as ``商品 ID``.
     """
+    columns = _compact_column_index(df_sales)
     product_totals = {}
     model_sales = {}
     product_names = {}
     for _, row in df_sales.iterrows():
-        product_id = str_val(row.get("商品 ID"))
+        product_id = _sales_value(row, columns, "商品 ID")
         if not product_id or product_id in {"nan", "商品 ID"}:
             continue
-        variation_name = str_val(row.get("商品規格"))
-        monthly_sales = str_val(row.get("商品件數 (可出貨訂單)"), default="0")
+        variation_name = _sales_value(row, columns, "商品規格")
+        monthly_sales = _sales_value(row, columns, "商品件數 (可出貨訂單)", default="0")
         if monthly_sales == "-":
             monthly_sales = "0"
-        product_names.setdefault(product_id, str_val(row.get("商品名稱")))
+        product_names.setdefault(product_id, _sales_value(row, columns, "商品名稱"))
         if variation_name == "-":
             product_totals[product_id] = monthly_sales
         else:

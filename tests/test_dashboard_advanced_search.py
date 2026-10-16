@@ -11,6 +11,8 @@ import os
 import re
 from playwright.sync_api import sync_playwright
 
+from tests.playwright_browser import launch_chromium
+
 
 def test_dashboard_follows_advanced_search():
     """測試 Dashboard 統計數據隨進階搜尋和 filterMode 更新。"""
@@ -23,7 +25,7 @@ def test_dashboard_follows_advanced_search():
         test_data = json.load(f)
     
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        browser = launch_chromium(p)
         page = browser.new_page()
         
         # 載入頁面

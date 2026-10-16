@@ -7,6 +7,7 @@ from unittest.mock import Mock, patch
 
 import main
 from cookie_fallback import CookieEnsureResult
+from tests.playwright_browser import launch_chromium
 
 INDEX_HTML = Path(__file__).resolve().parent.parent / "index.html"
 SCRIPT_JS = Path(__file__).resolve().parent.parent / "script.js"
@@ -109,7 +110,7 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
         }
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(args=["--no-sandbox"])
+            browser = launch_chromium(playwright, args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             page.on("dialog", lambda dialog: dialog.dismiss())
             page.goto(INDEX_HTML.as_uri())
