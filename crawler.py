@@ -50,6 +50,25 @@ LISTING_PAGE_SIZE = 12
 LISTING_REFRESH_INTERVAL = 15
 SALES_REREAD_ATTEMPTS = 3
 SALES_REREAD_WAIT_SECONDS = 0.4
+# 賣家中心清單預設 operationSortBy=recommend_v2，翻頁時商品會換頁。
+# 公開的 seller.shopee.tw 清單網址另外出現過 operationSortBy=modified_time
+# （幫助中心文章說可以改「以最近排序」）。建立時間、商品 ID 的參數沒有在
+# 公開網址或這個專案的測試資料裡出現，所以選單讀得到就用選單上的值，
+# 讀不到才用這個已確認的 modified_time。
+UNSTABLE_LISTING_SORTS = frozenset({"", "recommend", "recommend_v2"})
+CONFIRMED_STABLE_LISTING_SORT = "modified_time"
+# (畫面上的文字, 這個文字對應的已確認參數；None 表示必須從選項或網址讀)
+STABLE_SORT_OPTION_LABELS = (
+    ("建立時間", None),
+    ("創建時間", None),
+    ("上架時間", None),
+    ("商品 ID", None),
+    ("商品ID", None),
+    ("最近更新", CONFIRMED_STABLE_LISTING_SORT),
+    ("更新時間", CONFIRMED_STABLE_LISTING_SORT),
+    ("以最近排序", CONFIRMED_STABLE_LISTING_SORT),
+    ("最近", CONFIRMED_STABLE_LISTING_SORT),
+)
 
 
 class CrawlIntegrityError(RuntimeError):
@@ -112,6 +131,19 @@ def mode_for_replaced_output(output_path):
     current_umask = os.umask(0)
     os.umask(current_umask)
     return stat.S_IMODE(0o666 & ~current_umask)
+
+
+def public_listing_row_text(text):
+    """列的可見文字。cookie、token 這類欄位不寫進 log。"""
+    collapsed = " ".join(str(text or "").split())
+    collapsed = re.sub(
+        r"(?i)\b(cookie|spc_[a-z0-9_]+|shopee_token|authorization)\b\s*[:=]\s*\S+",
+        lambda match: f"{match.group(1)}=(已省略)",
+        collapsed,
+    )
+    if len(collapsed) > 500:
+        collapsed = collapsed[:500] + "…"
+    return collapsed
 
 
 def parse_listed_product_total(text):
@@ -858,9 +890,10 @@ class ShopeeCrawler:
             self.load_cookies()
             print("已載入 Cookies")
 
-            # 重新加載頁面，使 Cookies 生效
-            self.page.goto(self.my_products_url, wait_until="domcontentloaded")
-            print("正在前往賣家中心商品列表")
+            # 重新加載頁面，使 Cookies 生效。第一次就帶穩定排序，避免推薦排序。
+            listing_url = self._listing_resume_url(1)
+            self.page.goto(listing_url, wait_until="domcontentloaded")
+            print(f"正在前往賣家中心商品列表（穩定排序 {self._stable_listing_sort()}）")
 
             # 等待登入成功跳轉（等待 URL 包含 portal/product 或 seller.shopee.tw）
             try:
@@ -926,8 +959,12 @@ class ShopeeCrawler:
             raise RuntimeError(reason)
 
     def _ensure_remote_seller_session(self):
-        target = self._seller_center_url()
-        print(f"遠端 CDP 工作階段：前往賣家中心（不載入 cookies.json）{safe_url_for_log(target)}")
+        target = self._listing_resume_url(1)
+        print(
+            "遠端 CDP 工作階段：前往賣家中心"
+            f"（不載入 cookies.json，穩定排序 {self._stable_listing_sort()}）"
+            f"{safe_url_for_log(target)}"
+        )
         try:
             self.page.goto(target, wait_until="domcontentloaded", timeout=30000)
         except Exception as e:
@@ -3168,9 +3205,14 @@ class ShopeeCrawler:
                 product_name = ""
                 if isinstance(product_info, dict):
                     product_name = str(product_info.get("商品名稱") or "")
+                raw_text = ""
+                if "缺少已售出總數量" in gaps:
+                    raw_text = self._row_visible_text(product_row)
+                    print(f"讀不到已售出總數量，這一列畫面上的文字：{raw_text}")
                 if gaps:
                     invalid_count += 1
-                    self._note_invalid_row(page_number, product_id, product_name, gaps)
+                    self._note_invalid_row(
+                        page_number, product_id, product_name, gaps, raw_text=raw_text)
                     print(f"商品資訊無效，跳過：{'、'.join(gaps)}")
                     continue
                 if product_info and self.is_valid_product(product_info):
@@ -3218,15 +3260,27 @@ class ShopeeCrawler:
         )
         return entry
 
-    def _note_invalid_row(self, page_number, product_id, product_name, gaps):
+    def _row_visible_text(self, row):
+        raw = getattr(row, "text", "")
+        if callable(raw):
+            try:
+                raw = raw()
+            except Exception:
+                raw = ""
+        return public_listing_row_text(raw)
+
+    def _note_invalid_row(self, page_number, product_id, product_name, gaps, raw_text=""):
         if not isinstance(getattr(self, "crawl_invalid_rows", None), list):
             self.crawl_invalid_rows = []
-        self.crawl_invalid_rows.append({
+        entry = {
             "頁碼": page_number,
             "商品ID": product_id,
             "商品名稱": product_name or "（沒有名稱）",
             "問題": list(gaps),
-        })
+        }
+        if raw_text:
+            entry["畫面文字"] = raw_text
+        self.crawl_invalid_rows.append(entry)
 
     def _raise_if_rows_are_incomplete(self):
         rows = list(getattr(self, "crawl_invalid_rows", None) or [])
@@ -3242,6 +3296,8 @@ class ShopeeCrawler:
                     f"- 第 {row['頁碼']} 頁，商品 ID {row['商品ID']}，"
                     f"名稱 {row['商品名稱']}，{'、'.join(row['問題'])}"
                 )
+                shown = str(row.get("畫面文字") or "").strip()
+                lines.append(f"  畫面文字：{shown or '（空白）'}")
         if others:
             lines.append(f"其他讀不完整的列共 {len(others)} 列：")
             for row in others:
@@ -3295,6 +3351,134 @@ class ShopeeCrawler:
                 row for row in rows if row.get("頁碼") != page_number
             ]
 
+    def _sort_on_url(self, url):
+        values = parse_qs(urlparse(str(url or "")).query).get("operationSortBy") or []
+        return str(values[0]).strip() if values else ""
+
+    def _stable_listing_sort(self):
+        chosen = str(getattr(self, "_listing_sort", "") or "").strip()
+        if chosen and chosen not in UNSTABLE_LISTING_SORTS:
+            return chosen
+        current = self._sort_on_url(self._listing_url_base())
+        if current and current not in UNSTABLE_LISTING_SORTS:
+            return current
+        return CONFIRMED_STABLE_LISTING_SORT
+
+    def _option_visible_text(self, element):
+        raw = getattr(element, "text", "")
+        if callable(raw):
+            try:
+                raw = raw()
+            except Exception:
+                raw = ""
+        return public_listing_row_text(raw)
+
+    def _sort_value_from_option(self, element, known):
+        for attr in ("data-sort", "data-value", "value"):
+            try:
+                raw = str(element.get_attribute(attr) or "").strip()
+            except Exception:
+                raw = ""
+            if raw and raw not in UNSTABLE_LISTING_SORTS and re.fullmatch(r"[A-Za-z0-9_]+", raw):
+                return raw
+        return known if known and known not in UNSTABLE_LISTING_SORTS else None
+
+    def _find_sort_option(self, label):
+        selector = (
+            "//*[(@role='option' or @role='menuitem' or self::li or self::button or @data-sort)"
+            f" and contains(normalize-space(.), '{label}')]"
+        )
+        try:
+            elements = self.driver.find_elements(By.XPATH, selector)
+        except Exception:
+            elements = []
+        for element in elements or []:
+            text = self._option_visible_text(element)
+            if label in text and len(text) <= 40:
+                return element
+        return None
+
+    def _open_sort_dropdown_if_needed(self):
+        for _label, _known in STABLE_SORT_OPTION_LABELS:
+            if self._find_sort_option(_label) is not None:
+                return
+        selector = (
+            "//button[contains(normalize-space(.), '推薦') or contains(normalize-space(.), '排序')]"
+        )
+        try:
+            triggers = self.driver.find_elements(By.XPATH, selector)
+        except Exception:
+            triggers = []
+        for trigger in triggers or []:
+            text = self._option_visible_text(trigger)
+            if len(text) > 20 or ("推薦" not in text and "排序" not in text):
+                continue
+            try:
+                trigger.click()
+                print(f"已打開清單排序選單（{text}）。")
+            except Exception as error:
+                if _is_target_crashed(error):
+                    raise
+                print(f"清單排序選單沒點開：{error}")
+            return
+
+    def _choose_sort_from_dropdown(self):
+        """建立時間或商品 ID 優先。選單沒有可確認的值就回傳 None。"""
+        self._open_sort_dropdown_if_needed()
+        for label, known in STABLE_SORT_OPTION_LABELS:
+            option = self._find_sort_option(label)
+            if option is None:
+                continue
+            value = self._sort_value_from_option(option, known)
+            try:
+                option.click()
+                print(f"已點清單排序「{label}」。")
+            except Exception as error:
+                if _is_target_crashed(error):
+                    raise
+                print(f"清單排序「{label}」沒點到：{error}")
+            self._remember_listing_location()
+            from_url = self._sort_on_url(getattr(getattr(self, "page", None), "url", "") or "")
+            if not from_url:
+                from_url = self._sort_on_url(self._listing_url_base())
+            if from_url and from_url not in UNSTABLE_LISTING_SORTS:
+                return from_url
+            if value:
+                return value
+        return None
+
+    def _apply_stable_listing_sort(self):
+        """第 1 頁之前就把清單改成不會在翻頁時換位的排序。"""
+        page = getattr(self, "page", None)
+        chosen = None
+        if page is not None and self.driver is not None:
+            try:
+                chosen = self._choose_sort_from_dropdown()
+            except Exception as error:
+                if _is_target_crashed(error):
+                    raise
+                print(f"讀清單排序選單時出錯：{error}")
+                chosen = None
+        if not chosen:
+            chosen = CONFIRMED_STABLE_LISTING_SORT
+            print(
+                "排序選單沒有可確認的建立時間或商品 ID，"
+                f"改用已在賣家中心網址出現過的 operationSortBy={chosen}。"
+            )
+        else:
+            print(f"清單改用穩定排序 operationSortBy={chosen}。")
+        self._listing_sort = chosen
+        if page is None or not callable(getattr(page, "goto", None)):
+            return
+        url = self._listing_resume_url(1)
+        print(f"第 1 頁改開穩定排序：{url}")
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            print("networkidle 等待超時，繼續用這個排序讀第 1 頁")
+        self._remember_listing_location(page)
+
     def _product_list_url(self):
         url = str(getattr(self, "my_products_url", "") or "").strip()
         if url:
@@ -3327,13 +3511,14 @@ class ShopeeCrawler:
         return self._product_list_url()
 
     def _listing_resume_url(self, page_number):
-        """Listing URL for page N. Other query params (sort, size) stay put."""
+        """page=N，並強制穩定排序。關鍵字、每頁筆數等其他參數留著。"""
         parts = urlparse(self._listing_url_base())
         pairs = [
             (key, value)
             for key, value in parse_qsl(parts.query, keep_blank_values=True)
-            if key != "page"
+            if key not in {"page", "operationSortBy"}
         ]
+        pairs.append(("operationSortBy", self._stable_listing_sort()))
         pairs.append(("page", str(int(page_number))))
         return urlunparse((
             parts.scheme,
@@ -3510,7 +3695,8 @@ class ShopeeCrawler:
         resume_url = self._listing_resume_url(target_page)
         print(
             f"新分頁先開清單第 {int(target_page)} 頁（page={int(target_page)}），"
-            "並保留原本的排序與每頁筆數。這次跳頁還要跟全部已收商品比對。"
+            f"排序固定為 operationSortBy={self._stable_listing_sort()}，"
+            "每頁筆數沿用原本的參數。這次跳頁還要跟全部已收商品比對。"
         )
         self.page.goto(resume_url, wait_until="domcontentloaded", timeout=30000)
         try:
@@ -3530,6 +3716,7 @@ class ShopeeCrawler:
             seen_pages = set()
             self._listing_fingerprints = []
             pages_on_tab = 0
+            self._apply_stable_listing_sort()
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")

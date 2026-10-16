@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 import crawler as crawler_module
 from crawler import (
@@ -658,6 +659,7 @@ class ListingIntegrityTests(unittest.TestCase):
             self.assertNotIn("111", crawler.products_data)
             self.assertNotIn("222", crawler.products_data)
             self.assertEqual(crawler.crawl_page_logs[0]["無效"], 2)
+            self.assertIn("畫面文字：", str(caught.exception))
             self.assertEqual(output_path.read_text(encoding="utf-8"), '{"old": true}\n')
             for product in crawler.products_data.values():
                 self.assertNotEqual(product.get("商品名稱"), "無規格")
@@ -1084,6 +1086,35 @@ class ListingIntegrityTests(unittest.TestCase):
         self.assertIn("第 3 次讀到已售出總數量", stdout.getvalue())
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
 
+    def test_missing_sold_total_logs_the_row_text_and_does_not_invent_a_number(self):
+        row = product_row(
+            "15848359384",
+            "登山扣 掛鉤",
+            include_sales=False,
+            models=[model_row(spec_id="1")],
+        )
+        row.text = "登山扣 掛鉤 商品 ID: 15848359384 SPC_F=secretvalue"
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=[row],
+            body_text="架上商品(1)",
+            next_enabled=False,
+        )
+        crawler = make_crawler(ListingDriver([page]), "unused.json")
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("15848359384", message)
+        self.assertIn("缺少已售出總數量", message)
+        self.assertIn("沒有改成 0", message)
+        self.assertIn("畫面文字：", message)
+        self.assertIn("SPC_F=(已省略)", message)
+        self.assertNotIn("secretvalue", message)
+        self.assertNotIn("15848359384", crawler.products_data)
+        self.assertEqual(crawler.crawl_invalid_rows[0]["畫面文字"], 
+                         "登山扣 掛鉤 商品 ID: 15848359384 SPC_F=(已省略)")
+
 
 class ListingTab:
     def __init__(self, driver):
@@ -1184,6 +1215,94 @@ class _FreezeTab(ListingTab):
         self.driver.freeze_next = True
 
 
+class _RecommendReorderDriver(ListingDriver):
+    """推薦排序會把商品換頁；改成穩定排序後同一頁的商品不再變。"""
+
+    def __init__(self, stable_pages, recommend_pages, on_next):
+        super().__init__(stable_pages, on_next=on_next)
+        self.recommend_pages = recommend_pages
+        self.sort_mode = "recommend_v2"
+        self.sort_menu_open = False
+        self.sort_clicks = []
+        self.current_url = (
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?operationSortBy=recommend_v2&size=12"
+        )
+        self._sort_option = None
+        self._sort_trigger = None
+
+    def _page(self):
+        pages = self.recommend_pages if self.sort_mode in {"", "recommend", "recommend_v2"} else self.pages
+        if not pages:
+            return super()._page()
+        return pages[min(self.index, len(pages) - 1)]
+
+    def find_elements(self, by, value):
+        value = str(value)
+        if by == By.XPATH and "@data-sort" in value:
+            if "最近更新" in value and self.sort_menu_open:
+                return [self._ensure_option()]
+            return []
+        if by == By.XPATH and "contains(normalize-space(.), '推薦')" in value:
+            return [self._ensure_trigger()]
+        return super().find_elements(by, value)
+
+    def _ensure_trigger(self):
+        if self._sort_trigger is None:
+            driver = self
+
+            def click():
+                driver.sort_menu_open = True
+
+            self._sort_trigger = FakeElement(text="推薦排序", on_click=click)
+        return self._sort_trigger
+
+    def _ensure_option(self):
+        if self._sort_option is None:
+            driver = self
+
+            def click():
+                driver.sort_clicks.append("最近更新")
+                driver.sort_mode = "modified_time"
+                driver.current_url = (
+                    "https://seller.shopee.tw/portal/product/list/live/all"
+                    "?operationSortBy=modified_time&size=12&page=1"
+                )
+
+            self._sort_option = FakeElement(
+                text="最近更新",
+                attrs={"data-sort": "modified_time"},
+                on_click=click,
+            )
+        return self._sort_option
+
+
+class _SortAwareTab(ListingTab):
+    @property
+    def url(self):
+        return self.driver.current_url
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self.visits.append(url)
+        self.driver.current_url = url
+        sort = (parse_qs(urlparse(url).query).get("operationSortBy") or [""])[0]
+        if sort:
+            self.driver.sort_mode = sort
+        page_count = len(self.driver.pages or [])
+        match = re.search(r"[?&]page=(\d+)", url)
+        if match and page_count:
+            self.driver.index = min(max(int(match.group(1)) - 1, 0), page_count - 1)
+        else:
+            self.driver.index = 0
+
+
+class _SortAwareContext(ListingContext):
+    def new_page(self):
+        tab = _SortAwareTab(self.driver)
+        self.opened.append(tab)
+        return tab
+
+
 class _FreezeContext(ListingContext):
     def new_page(self):
         tab = _FreezeTab(self.driver)
@@ -1245,7 +1364,7 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertTrue(first_tab.closed)
         self.assertEqual(
             crawler.context.opened[0].visits,
-            ["https://seller.shopee.tw/portal/product/list/live/all?page=3"],
+            ["https://seller.shopee.tw/portal/product/list/live/all?operationSortBy=modified_time&page=3"],
         )
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
         self.assertEqual(crawler.crawl_count_check["expected"], 4)
@@ -1284,19 +1403,22 @@ class ListingTabRefreshTests(unittest.TestCase):
         crawler.my_products_url = "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup"
         self.assertEqual(
             crawler._listing_resume_url(24),
-            "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=24",
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?keyword=cup&operationSortBy=modified_time&page=24",
         )
         crawler.my_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
         self.assertEqual(
             crawler._listing_resume_url(9),
-            "https://seller.shopee.tw/portal/product/list/live/all?page=9",
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?operationSortBy=modified_time&page=9",
         )
         crawler.my_products_url = (
             "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=3"
         )
         self.assertEqual(
             crawler._listing_resume_url(24),
-            "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=24",
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?keyword=cup&operationSortBy=modified_time&page=24",
         )
         crawler._listing_live_url = (
             "https://seller.shopee.tw/portal/product/list/live/all"
@@ -1305,7 +1427,7 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertEqual(
             crawler._listing_resume_url(8),
             "https://seller.shopee.tw/portal/product/list/live/all"
-            "?operationSortBy=recommend_v2&size=12&page=8",
+            "?size=12&operationSortBy=modified_time&page=8",
         )
 
         ids = ["101", "102", "103", "104"]
@@ -1320,7 +1442,8 @@ class ListingTabRefreshTests(unittest.TestCase):
             crawler.get_all_products_info()
         self.assertEqual(
             crawler.context.opened[0].visits,
-            ["https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=3"],
+            ["https://seller.shopee.tw/portal/product/list/live/all"
+             "?keyword=cup&operationSortBy=modified_time&page=3"],
         )
         self.assertEqual(list(crawler.products_data), ids)
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
@@ -1379,7 +1502,11 @@ class ListingTabRefreshTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             crawler.get_all_products_info()
         visits = crawler.context.opened[0].visits
-        self.assertEqual(visits, ["https://seller.shopee.tw/portal/product/list/live/all?page=3"])
+        self.assertEqual(
+            visits,
+            ["https://seller.shopee.tw/portal/product/list/live/all"
+             "?operationSortBy=modified_time&page=3"],
+        )
         self.assertIn(3, driver.page_button_clicks)
         self.assertEqual(list(crawler.products_data), ids)
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
@@ -1431,6 +1558,45 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertIn("不會把已收過的頁再收一次", message)
         self.assertEqual(list(crawler.products_data), ["101", "102"])
         self.assertIn("page=3", crawler.context.opened[0].visits[0])
+
+    def test_recommendation_sort_reorders_until_the_fixed_sort_is_selected(self):
+        ids = ["101", "102", "103", "104"]
+        recommend = [
+            ListingPage("", shop_rows(["101"]), "架上商品(4)", next_enabled=True),
+            ListingPage("", shop_rows(["102"]), "架上商品(4)", next_enabled=True),
+            ListingPage("", shop_rows(["102"]), "架上商品(4)", next_enabled=True),
+            ListingPage("", shop_rows(["104"]), "架上商品(4)", next_enabled=False),
+        ]
+        self.assertEqual(
+            [row.find_element(By.CLASS_NAME, "item-id").text for row in recommend[2].rows],
+            ["商品 ID: 102"],
+        )
+        self.assertNotIn("103", recommend[2].rows[0].text)
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = _RecommendReorderDriver(listing_pages(ids), recommend, advance)
+        crawler = self._crawler(driver, interval=2)
+        crawler.page = _SortAwareTab(driver)
+        crawler.context = _SortAwareContext(driver)
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(sum(entry["跳過"] for entry in crawler.crawl_page_logs), 0)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["expected"], 4)
+        self.assertIn("operationSortBy=modified_time", message)
+        self.assertEqual(driver.sort_clicks, ["最近更新"])
+        self.assertTrue(driver.sort_menu_open)
+        self.assertEqual(driver.sort_mode, "modified_time")
+        visits = crawler.context.opened[0].visits
+        self.assertEqual(len(visits), 1)
+        self.assertIn("operationSortBy=modified_time", visits[0])
+        self.assertIn("page=3", visits[0])
+        self.assertNotIn("page=1", visits[0])
 
     def test_target_crash_without_a_new_tab_still_fails_the_integrity_check(self):
         ids = ["101", "102", "103", "104"]
