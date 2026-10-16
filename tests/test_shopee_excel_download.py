@@ -3,8 +3,10 @@
 import json
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
+from zoneinfo import ZoneInfo
 
 from shopee_excel_download import (
     ALLOWED_CLICK_LABELS,
@@ -19,8 +21,10 @@ from shopee_excel_download import (
     click_allowed,
     download_and_import,
     main,
+    record_state,
     resolve_seller_cdp_endpoints,
     run_mass_update_download,
+    wait_for_generated_record,
 )
 
 FIXTURE_ZIP = (
@@ -41,8 +45,11 @@ class FakePage:
         self.saved_hrefs = []
         self.click_details = []
         self.file_download_clicks = 0
+        self.form_ready = False
+        self.events = []
 
     def goto(self, url):
+        self.events.append("goto")
         self.visited = url
         if self.scenario == "login":
             self.url = "https://accounts.shopee.tw/seller/login"
@@ -65,7 +72,13 @@ class FakePage:
     def body_text(self):
         return self.text
 
+    def wait_for_download_form(self):
+        self.events.append("wait-form")
+        self.form_ready = True
+
     def click_label(self, label, *, expect_download=False, prefer_last=False):
+        if label == "價格及庫存" and not self.form_ready:
+            raise MassUpdateError("畫面上找不到「價格及庫存」，已停止。")
         self.clicks.append(label)
         self.click_details.append({
             "label": label,
@@ -78,44 +91,29 @@ class FakePage:
         if label == "下載":
             self.generated = True
 
-    def list_records(self):
-        old = {
-            "id": "old",
-            "status": "完成",
-            "text": "價格及庫存 完成",
-            "download_href": "https://seller.example/old.zip",
+    def _history_row(self, kind, status, href):
+        stamp = "20000101000000" if kind == "old" else "20991231235959"
+        name = f"mass_update_sales_info_1_{stamp}.zip"
+        return {
+            "id": kind,
+            "status": status,
+            "text": f"{name} {status}",
+            "download_href": href,
         }
+
+    def list_records(self):
+        old = self._history_row("old", "已處理", "https://seller.example/old.zip")
         if not self.generated:
             return [old]
         self.polls += 1
         if self.scenario == "fail":
-            return [old, {
-                "id": "new",
-                "status": "失敗",
-                "text": "價格及庫存 失敗",
-                "download_href": "",
-            }]
+            return [old, self._history_row("new", "失敗", "")]
         if self.scenario == "pending":
-            return [old, {
-                "id": "new",
-                "status": "產生中",
-                "text": "價格及庫存 產生中",
-                "download_href": "",
-            }]
+            return [old, self._history_row("new", "產生中", "")]
         if self.polls == 1:
-            return [old, {
-                "id": "new",
-                "status": "產生中",
-                "text": "價格及庫存 產生中",
-                "download_href": "",
-            }]
+            return [old, self._history_row("new", "產生中", "")]
         href = "" if self.scenario == "reload" else "https://seller.example/new.zip"
-        return [old, {
-            "id": "new",
-            "status": "完成",
-            "text": "價格及庫存 完成",
-            "download_href": href,
-        }]
+        return [old, self._history_row("new", "已處理", href)]
 
     def wait(self, seconds):
         return None
@@ -155,6 +153,7 @@ class MassUpdateDownloadTests(unittest.TestCase):
             )
             self.assertTrue(saved.exists())
         self.assertEqual(page.visited, MASS_UPDATE_URL)
+        self.assertEqual(page.events[:2], ["goto", "wait-form"])
         self.assertEqual(
             page.clicks,
             ["價格及庫存", "所有商品", "架上及已售完商品", "下載"],
@@ -204,6 +203,45 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertEqual(page.file_download_clicks, 0)
         self.assertFalse(page.armed)
         self.assertEqual(page.clicks.count("下載"), 1)
+
+    def test_processed_status_is_done_and_processing_is_not(self):
+        self.assertEqual(record_state({"status": "已處理", "text": ""}), "done")
+        self.assertEqual(record_state({"status": "處理中", "text": ""}), "pending")
+
+    def test_picks_newest_filename_at_or_after_start_not_the_last_row(self):
+        started = datetime(2026, 10, 17, 0, 10, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+        newest = _history("mass_update_sales_info_168917920_20261017001028.zip", "已處理", "https://seller.example/new.zip")
+        older_same_run = _history("mass_update_sales_info_168917920_20261017001000.zip", "已處理", "https://seller.example/mid.zip")
+        previous_day = _history("mass_update_sales_info_168917920_20261016225238.zip", "已處理", "https://seller.example/old.zip")
+        same_second = _history("mass_update_sales_info_1_20261017001000.zip", "已處理", "https://seller.example/same.zip")
+        page = HistoryPage([newest, older_same_run, previous_day])
+        chosen = wait_for_generated_record(page, started, max_polls=1, poll_seconds=0)
+        self.assertEqual(chosen["download_href"], "https://seller.example/new.zip")
+
+        exact = HistoryPage([same_second, previous_day])
+        chosen = wait_for_generated_record(
+            exact,
+            datetime(2026, 10, 17, 0, 10, 0, tzinfo=ZoneInfo("Asia/Taipei")),
+            max_polls=1,
+            poll_seconds=0,
+        )
+        self.assertEqual(chosen["download_href"], "https://seller.example/same.zip")
+
+    def test_newer_pending_file_is_not_replaced_by_an_older_done_row(self):
+        started = datetime(2026, 10, 17, 0, 10, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+        pending = _history("mass_update_sales_info_168917920_20261017001028.zip", "處理中", "")
+        older_done = _history("mass_update_sales_info_168917920_20261017001005.zip", "已處理", "https://seller.example/old-done.zip")
+        page = HistoryPage([pending, older_done])
+        with self.assertRaises(MassUpdateError) as caught:
+            wait_for_generated_record(page, started, max_polls=1, poll_seconds=0)
+        self.assertIn("還沒完成", str(caught.exception))
+
+    def test_form_wait_uses_networkidle_when_the_label_never_appears(self):
+        page = FormWaitPage(label_ready=False)
+        PlaywrightMassUpdatePage(page).wait_for_download_form(timeout_ms=1234)
+        self.assertEqual(page.events[0][:2], ("wait-label", "價格及庫存"))
+        self.assertEqual(page.events[0][2], 1234)
+        self.assertEqual(page.events[1], ("networkidle", 1234))
 
     def test_timeout_does_not_import(self):
         page = FakePage(scenario="pending")
@@ -309,6 +347,60 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertTrue(seen["fail_closed"])
         self.assertIn("900001", seen["catalog"])
         self.assertEqual(seen["catalog"]["900001"]["型號"][0]["月銷量"], "0")
+
+
+def _history(filename, status, href):
+    return {
+        "id": filename,
+        "status": status,
+        "text": f"{filename} {status}",
+        "download_href": href,
+    }
+
+
+class HistoryPage:
+    def __init__(self, records):
+        self.records = records
+        self.url = MASS_UPDATE_URL
+
+    def current_url(self):
+        return self.url
+
+    def body_text(self):
+        return "價格及庫存"
+
+    def list_records(self):
+        return list(self.records)
+
+    def wait(self, seconds):
+        return None
+
+
+class _FormLocator:
+    def __init__(self, page, text):
+        self.page = page
+        self.text = text
+
+    @property
+    def first(self):
+        return self
+
+    def wait_for(self, state=None, timeout=None):
+        self.page.events.append(("wait-label", self.text, timeout, state))
+        if not self.page.label_ready:
+            raise TimeoutError("價格及庫存")
+
+
+class FormWaitPage:
+    def __init__(self, label_ready):
+        self.label_ready = label_ready
+        self.events = []
+
+    def get_by_text(self, text, exact=False):
+        return _FormLocator(self, text)
+
+    def wait_for_load_state(self, state, timeout=None):
+        self.events.append((state, timeout))
 
 
 class StubDownload:

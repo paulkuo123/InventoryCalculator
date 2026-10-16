@@ -25,8 +25,10 @@ import sys
 import json
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Sequence
+from zoneinfo import ZoneInfo
 
 from ads_session import (
     BROWSER_SOURCE_REMOTE,
@@ -56,9 +58,12 @@ _PREFER_LAST_LABELS = frozenset({"架上及已售完商品"})
 _LABEL_ROLES = ("button", "tab", "option", "menuitem", "radio")
 FORBIDDEN_CLICK_RE = re.compile(r"上傳|儲存|更新")
 _SLIDER_RE = re.compile(r"滑塊|向右滑動|拖動滑塊", re.IGNORECASE)
-_DONE_RE = re.compile(r"完成|成功|可下載")
+_DONE_RE = re.compile(r"完成|成功|可下載|已處理")
 _FAILED_RE = re.compile(r"失敗|錯誤")
 _PENDING_RE = re.compile(r"產生中|處理中|排隊|進行中|等待")
+_FILE_STAMP_RE = re.compile(r"mass_update_sales_info_\d+_(\d{14})")
+_TAIPEI = ZoneInfo("Asia/Taipei")
+DEFAULT_FORM_WAIT_MS = 20000
 # 上方產生報表的「下載」。歷史列的「下載」在 tr 裡，不能算進來。
 _GENERATE_DOWNLOAD_BUTTON = (
     "xpath=//button[contains(normalize-space(.), '下載') and not(ancestor::tr)]"
@@ -119,14 +124,6 @@ def assert_session_clear(page: Any) -> None:
     raise MassUpdateBlocked("SESSION", blocker)
 
 
-def record_signature(record: Mapping[str, Any]) -> str:
-    return "|".join([
-        str(record.get("id") or ""),
-        str(record.get("status") or ""),
-        str(record.get("text") or ""),
-    ])
-
-
 def record_state(record: Mapping[str, Any]) -> str:
     text = f"{record.get('status') or ''} {record.get('text') or ''}"
     if _FAILED_RE.search(text):
@@ -138,6 +135,32 @@ def record_state(record: Mapping[str, Any]) -> str:
     return "pending"
 
 
+def _as_taipei(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=_TAIPEI)
+    else:
+        moment = moment.astimezone(_TAIPEI)
+    return moment.replace(microsecond=0)
+
+
+def taipei_now() -> datetime:
+    return _as_taipei(datetime.now(_TAIPEI))
+
+
+def record_filename_timestamp(record: Mapping[str, Any]) -> Optional[datetime]:
+    """Filename clock ``YYYYMMDDHHMMSS`` is Asia/Taipei, not row order."""
+    text = " ".join([
+        str(record.get("text") or ""),
+        str(record.get("status") or ""),
+        str(record.get("download_href") or ""),
+    ])
+    match = _FILE_STAMP_RE.search(text)
+    if not match:
+        return None
+    stamp = datetime.strptime(match.group(1), "%Y%m%d%H%M%S")
+    return stamp.replace(tzinfo=_TAIPEI)
+
+
 def _wait(page: Any, seconds: float) -> None:
     waiter = getattr(page, "wait", None)
     if callable(waiter):
@@ -147,33 +170,45 @@ def _wait(page: Any, seconds: float) -> None:
         time.sleep(seconds)
 
 
+def _records_since(records: Sequence[Mapping[str, Any]], started_at: datetime):
+    """Rows whose filename time is at or after the generate click. Newest last."""
+    started = _as_taipei(started_at)
+    matched = []
+    for record in records:
+        stamp = record_filename_timestamp(record)
+        if stamp is None or stamp < started:
+            continue
+        matched.append((stamp, record))
+    matched.sort(key=lambda item: item[0])
+    return matched
+
+
 def wait_for_generated_record(
     page: Any,
-    before: set,
+    started_at: datetime,
     *,
     max_polls: int = DEFAULT_MAX_POLLS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
 ) -> Mapping[str, Any]:
-    """Poll the history table until the new row finishes or fails."""
-    last_pending = None
+    """Poll until the file generated at or after ``started_at`` is ready.
+
+    New history rows are inserted at the top, so the last row is the oldest.
+    Choose by the ``YYYYMMDDHHMMSS`` in the filename, and take the newest.
+    """
     for _ in range(max_polls):
         assert_session_clear(page)
-        changed = [
-            record for record in page.list_records()
-            if record_signature(record) not in before
-        ]
-        done = [record for record in changed if record_state(record) == "done"]
-        failed = [record for record in changed if record_state(record) == "failed"]
-        pending = [record for record in changed if record_state(record) == "pending"]
-        if done:
-            return done[-1]
-        if failed and not pending:
-            detail = str(failed[-1].get("text") or failed[-1].get("status") or "").strip()
-            message = "報表產生失敗，沒有下載，也沒有匯入。"
-            if detail:
-                message = f"{message}（{detail}）"
-            raise MassUpdateError(message)
-        last_pending = pending[-1] if pending else last_pending
+        matched = _records_since(page.list_records(), started_at)
+        if matched:
+            _stamp, record = matched[-1]
+            state = record_state(record)
+            if state == "done":
+                return record
+            if state == "failed":
+                detail = str(record.get("text") or record.get("status") or "").strip()
+                message = "報表產生失敗，沒有下載，也沒有匯入。"
+                if detail:
+                    message = f"{message}（{detail}）"
+                raise MassUpdateError(message)
         _wait(page, poll_seconds)
     raise MassUpdateError("報表還沒完成，已停止等待，沒有下載，也沒有匯入。")
 
@@ -204,6 +239,7 @@ def run_mass_update_download(
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     page.goto(MASS_UPDATE_URL)
+    page.wait_for_download_form()
     assert_session_clear(page)
     click_allowed(page, "價格及庫存")
     assert_session_clear(page)
@@ -211,11 +247,11 @@ def run_mass_update_download(
     assert_session_clear(page)
     click_allowed(page, "架上及已售完商品")
     assert_session_clear(page)
-    before = {record_signature(record) for record in page.list_records()}
+    started_at = taipei_now()
     click_allowed(page, "下載", expect_download=False)
     record = wait_for_generated_record(
         page,
-        before,
+        started_at,
         max_polls=max_polls,
         poll_seconds=poll_seconds,
     )
@@ -256,6 +292,21 @@ class PlaywrightMassUpdatePage:
 
     def goto(self, url: str) -> None:
         self.page.goto(url, wait_until="domcontentloaded")
+
+    def wait_for_download_form(self, timeout_ms: int = DEFAULT_FORM_WAIT_MS) -> None:
+        """Wait until「價格及庫存」is visible, or until networkidle, before clicking."""
+        try:
+            self.page.get_by_text("價格及庫存", exact=True).first.wait_for(
+                state="visible",
+                timeout=timeout_ms,
+            )
+            return
+        except Exception:
+            pass
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=timeout_ms)
+        except Exception:
+            pass
 
     def current_url(self) -> str:
         return self.page.url or ""

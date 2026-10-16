@@ -52,6 +52,17 @@ class CrawlIntegrityError(RuntimeError):
     """清單抓取無法證明完整：換頁失敗、中途出錯、無效列，或數量對不上。"""
 
 
+def _is_target_crashed(error) -> bool:
+    seen = []
+    current = error
+    while current is not None and current not in seen:
+        seen.append(current)
+        if "target crashed" in str(current).lower():
+            return True
+        current = getattr(current, "__cause__", None)
+    return False
+
+
 # 「架上商品(352)」以及分頁標籤把數字拆開的「架上商品 352」「架上商品\n352」。
 _TAB_TOTAL_RE = re.compile(
     r"架上商品\s*(?:[（(]\s*(\d+)\s*[）)]|(\d+))"
@@ -128,7 +139,8 @@ class ShopeeCrawler:
                  inventory_month=4,
                  browser_source=BROWSER_SOURCE_MAC,
                  cdp_endpoint=None,
-                 ads_export_dir=None):
+                 ads_export_dir=None,
+                 listing_page_refresh_interval=8):
         self.shopee_url = shopee_url
         self.cookies_path = cookies_path
         self.my_products_url = my_products_url
@@ -141,6 +153,7 @@ class ShopeeCrawler:
         self.products_data = {}
         self.crawl_page_logs = []
         self.listing_full_page_size = None
+        self.listing_page_refresh_interval = listing_page_refresh_interval
         self._log_browser_source()
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
@@ -449,6 +462,8 @@ class ShopeeCrawler:
             return expand_buttons
 
         except Exception as e:
+            if _is_target_crashed(e):
+                raise
             print(f"尋找展開按鈕時發生錯誤: {e}")
             return []
 
@@ -2523,6 +2538,8 @@ class ShopeeCrawler:
                 print("嘗試直接點擊下一頁按鈕")
                 next_button.click()
             except Exception as click_error:
+                if _is_target_crashed(click_error):
+                    raise
                 print(f"直接點擊失敗: {click_error}，嘗試使用 JavaScript 點擊")
                 # 如果直接點擊失敗，使用 JavaScript 點擊
                 self.driver.execute_script("arguments[0].click();",
@@ -3054,6 +3071,91 @@ class ShopeeCrawler:
                 )
         raise CrawlIntegrityError("\n".join(lines))
 
+    def _listing_refresh_interval(self):
+        raw = getattr(self, "listing_page_refresh_interval", 8)
+        try:
+            value = int(raw)
+        except (TypeError, ValueError):
+            return 8
+        return value if value > 0 else 0
+
+    def _can_open_fresh_listing_page(self):
+        context = getattr(self, "context", None)
+        return callable(getattr(context, "new_page", None))
+
+    def _should_refresh_listing_tab(self, pages_on_tab):
+        interval = self._listing_refresh_interval()
+        return bool(interval) and pages_on_tab >= interval and self._can_open_fresh_listing_page()
+
+    def _allow_listing_crash_recovery(self, page_number):
+        if not self._can_open_fresh_listing_page():
+            return False
+        counts = getattr(self, "_listing_crash_recoveries", None)
+        if not isinstance(counts, dict):
+            counts = {}
+            self._listing_crash_recoveries = counts
+        used = int(counts.get(page_number, 0))
+        if used >= 1:
+            return False
+        counts[page_number] = used + 1
+        return True
+
+    def _rollback_listing_page_attempt(self, page_number, seen_pages, fingerprint):
+        if fingerprint:
+            seen_pages.discard(fingerprint)
+        logs = getattr(self, "crawl_page_logs", None)
+        if isinstance(logs, list) and logs and logs[-1].get("頁碼") == page_number:
+            logs.pop()
+        rows = getattr(self, "crawl_invalid_rows", None)
+        if isinstance(rows, list):
+            self.crawl_invalid_rows = [
+                row for row in rows if row.get("頁碼") != page_number
+            ]
+
+    def _product_list_url(self):
+        url = str(getattr(self, "my_products_url", "") or "").strip()
+        if url:
+            return url
+        return "https://seller.shopee.tw/portal/product/list/live/all"
+
+    def _advance_listing_to_page(self, target_page):
+        target = int(target_page)
+        for _ in range(max(target - 1, 0)):
+            moved = self.go_to_next_page(confirm_change=True)
+            if not moved:
+                raise CrawlIntegrityError(
+                    f"換新分頁後無法回到第 {target} 頁，已停止，不會把這次結果存成正式檔。"
+                )
+
+    def _open_fresh_listing_page(self, target_page):
+        """Close the tired tab, open another, and land on the same listing page."""
+        if not self._can_open_fresh_listing_page():
+            raise CrawlIntegrityError(
+                "分頁當掉後沒有辦法另開新分頁，已停止，不會把這次結果存成正式檔。"
+            )
+        old_page = getattr(self, "page", None)
+        new_page = self.context.new_page()
+        self.page = new_page
+        self._owns_page = True
+        adopt = getattr(new_page, "adopt_listing_driver", None)
+        if callable(adopt):
+            self.driver = adopt(getattr(self, "driver", None))
+        else:
+            self.driver = PlaywrightDriver(new_page)
+        if old_page is not None and old_page is not new_page:
+            close = getattr(old_page, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        self.page.goto(self._product_list_url(), wait_until="domcontentloaded", timeout=30000)
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            print("networkidle 等待超時，繼續從商品清單往下翻")
+        self._advance_listing_to_page(target_page)
+
     def get_all_products_info(self):
         try:
             page = 1
@@ -3063,56 +3165,86 @@ class ShopeeCrawler:
             self.crawl_invalid_rows = []
             self.crawl_count_check = None
             seen_pages = set()
+            pages_on_tab = 0
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
-
-                # 等待頁面基本載入
-                try:
-                    WebDriverWait(self.driver, 10).until(
-                        EC.presence_of_element_located(
-                            (By.CLASS_NAME, 'eds-table__row')))
-                    print("頁面已加載")
-                except:
-                    print("等待頁面加載超時，嘗試繼續處理")
-
-                # ── 關鍵步驟 1：先捲動頁面，觸發 lazy load 載入所有商品行 ──
-                self.scroll_to_load_all_rows()
-
-                # ── 關鍵步驟 2：點擊「展開更多型號」按鈕，顯示隱藏的型號列 ──
-                # 注意：商品列表頁面使用 product-more-models__content 內的按鈕，
-                # 而非 el-table__expand-icon（後者只在數據中心頁面出現）
-                try:
-                    more_buttons = self.find_more_items_buttons()
-                    if more_buttons:
-                        self.click_matched_buttons(more_buttons)
-                        time.sleep(0.3)  # 全部展開後再讓頁面短暫穩定，保留原有節奏
-                    else:
-                        print("沒有找到「展開更多型號」按鈕，跳過此步驟")
-                except Exception as e:
-                    print(f"展開更多型號失敗，繼續處理: {e}")
-
-                # ── 關鍵步驟 3：再次捲動以載入展開後才出現的子型號行 ──
-                self.scroll_to_load_all_rows()
-
-                fingerprint = tuple(self._snapshot_listing_page().get("rows") or ())
-                if fingerprint and fingerprint in seen_pages:
-                    raise CrawlIntegrityError(
-                        "翻頁後又回到已經收過的同一批商品，但下一頁按鈕沒有停用。"
-                        "已停止，不會把這次結果存成正式檔。"
+                if self._should_refresh_listing_tab(pages_on_tab):
+                    print(
+                        f"已連續使用同一個分頁 {pages_on_tab} 頁，"
+                        f"換新分頁後從第 {page} 頁繼續。"
                     )
-                if fingerprint:
-                    seen_pages.add(fingerprint)
+                    self._open_fresh_listing_page(page)
+                    pages_on_tab = 0
+                attempt_fingerprint = None
+                try:
 
-                self._collect_current_listing_page(page)
+                    # 等待頁面基本載入
+                    try:
+                        WebDriverWait(self.driver, 10).until(
+                            EC.presence_of_element_located(
+                                (By.CLASS_NAME, 'eds-table__row')))
+                        print("頁面已加載")
+                    except Exception as wait_error:
+                        if _is_target_crashed(wait_error):
+                            raise
+                        print("等待頁面加載超時，嘗試繼續處理")
 
-                # 檢查下一頁
-                has_next_page = self.go_to_next_page()
-                if has_next_page:
-                    page += 1
-                    time.sleep(1)
-                else:
-                    print("已到達最後一頁")
+                    # ── 關鍵步驟 1：先捲動頁面，觸發 lazy load 載入所有商品行 ──
+                    self.scroll_to_load_all_rows()
+
+                    # ── 關鍵步驟 2：點擊「展開更多型號」按鈕，顯示隱藏的型號列 ──
+                    # 注意：商品列表頁面使用 product-more-models__content 內的按鈕，
+                    # 而非 el-table__expand-icon（後者只在數據中心頁面出現）
+                    try:
+                        more_buttons = self.find_more_items_buttons()
+                        if more_buttons:
+                            self.click_matched_buttons(more_buttons)
+                            time.sleep(0.3)  # 全部展開後再讓頁面短暫穩定，保留原有節奏
+                        else:
+                            print("沒有找到「展開更多型號」按鈕，跳過此步驟")
+                    except Exception as e:
+                        if _is_target_crashed(e):
+                            raise
+                        print(f"展開更多型號失敗，繼續處理: {e}")
+
+                    # ── 關鍵步驟 3：再次捲動以載入展開後才出現的子型號行 ──
+                    self.scroll_to_load_all_rows()
+
+                    fingerprint = tuple(self._snapshot_listing_page().get("rows") or ())
+                    if fingerprint and fingerprint in seen_pages:
+                        raise CrawlIntegrityError(
+                            "翻頁後又回到已經收過的同一批商品，但下一頁按鈕沒有停用。"
+                            "已停止，不會把這次結果存成正式檔。"
+                        )
+                    if fingerprint:
+                        seen_pages.add(fingerprint)
+                    attempt_fingerprint = fingerprint
+
+                    self._collect_current_listing_page(page)
+                    pages_on_tab += 1
+
+                    # 檢查下一頁
+                    has_next_page = self.go_to_next_page()
+                    if has_next_page:
+                        page += 1
+                        time.sleep(1)
+                    else:
+                        print("已到達最後一頁")
+                except Exception as error:
+                    if not _is_target_crashed(error):
+                        raise
+                    if not self._allow_listing_crash_recovery(page):
+                        raise
+                    self._rollback_listing_page_attempt(
+                        page, seen_pages, attempt_fingerprint)
+                    print(
+                        f"第 {page} 頁分頁當掉（Target crashed），換新分頁後從這一頁繼續。"
+                        f"已保留 {len(self.products_data)} 個商品。"
+                    )
+                    self._open_fresh_listing_page(page)
+                    pages_on_tab = 0
+                    continue
 
             self._raise_if_rows_are_incomplete()
             self._ensure_collected_count_matches_page()
@@ -3165,6 +3297,10 @@ def build_crawler_argument_parser():
     parser.add_argument('--ads-export-dir',
                         default='',
                         help='廣告 CSV 下載目錄（週報請指向 reports/ads_weekly/YYYYMMDD/ads_exports）')
+    parser.add_argument('--listing-page-refresh-interval',
+                        type=int,
+                        default=8,
+                        help='商品清單每抓幾頁就換一個新分頁，避免分頁越用越肥。預設 8。')
     return parser
 
 
@@ -3198,7 +3334,8 @@ def main():
                                 inventory_month=args.inventory_month,
                                 browser_source=args.browser_source,
                                 cdp_endpoint=args.cdp_endpoint or None,
-                                ads_export_dir=args.ads_export_dir or None)
+                                ads_export_dir=args.ads_export_dir or None,
+                                listing_page_refresh_interval=args.listing_page_refresh_interval)
 
         # 運行指定流程
         if args.mode == 'ads-export':

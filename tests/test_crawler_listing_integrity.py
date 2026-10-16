@@ -930,5 +930,142 @@ class ListingIntegrityTests(unittest.TestCase):
         self.assertEqual(len(crawler.products_data), 11)
 
 
+class ListingTab:
+    def __init__(self, driver):
+        self.driver = driver
+        self.closed = False
+        self.visits = []
+
+    def close(self):
+        self.closed = True
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self.visits.append(url)
+        self.driver.index = 0
+
+    def wait_for_load_state(self, state, timeout=None):
+        return None
+
+    def adopt_listing_driver(self, current):
+        return self.driver
+
+
+class ListingContext:
+    def __init__(self, driver):
+        self.driver = driver
+        self.opened = []
+
+    def new_page(self):
+        tab = ListingTab(self.driver)
+        self.opened.append(tab)
+        return tab
+
+
+def listing_pages(product_ids):
+    pages = []
+    total = len(product_ids)
+    for index, product_id in enumerate(product_ids):
+        pages.append(ListingPage(
+            indicator=f"{index + 1} / {total}",
+            rows=shop_rows([product_id]),
+            body_text=f"架上商品({total})",
+            next_enabled=index != total - 1,
+        ))
+    return pages
+
+
+class ListingTabRefreshTests(unittest.TestCase):
+    def setUp(self):
+        self._sleep = crawler_module.time.sleep
+        crawler_module.time.sleep = lambda *_args, **_kwargs: None
+
+    def tearDown(self):
+        crawler_module.time.sleep = self._sleep
+
+    def _crawler(self, driver, interval):
+        crawler = make_crawler(driver, "unused.json")
+        crawler.listing_page_refresh_interval = interval
+        crawler.my_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
+        crawler.context = ListingContext(driver)
+        crawler.page = ListingTab(driver)
+        return crawler
+
+    def test_refresh_interval_defaults_to_eight_pages(self):
+        args = build_crawler_argument_parser().parse_args([])
+        self.assertEqual(args.listing_page_refresh_interval, 8)
+        args = build_crawler_argument_parser().parse_args([
+            "--listing-page-refresh-interval", "5",
+        ])
+        self.assertEqual(args.listing_page_refresh_interval, 5)
+
+    def test_fresh_page_every_n_pages_still_collects_each_product_once(self):
+        ids = ["101", "102", "103", "104"]
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        crawler = self._crawler(driver, interval=2)
+        first_tab = crawler.page
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(len(crawler.context.opened), 1)
+        self.assertTrue(first_tab.closed)
+        self.assertEqual(
+            crawler.context.opened[0].visits,
+            ["https://seller.shopee.tw/portal/product/list/live/all"],
+        )
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["expected"], 4)
+        self.assertEqual([entry["頁碼"] for entry in crawler.crawl_page_logs], [1, 2, 3, 4])
+
+    def test_target_crash_reopens_and_dedupes_the_interrupted_page(self):
+        ids = ["101", "102", "103", "104"]
+
+        def advance(driver):
+            if getattr(driver, "crash_armed", False) and driver.index == 1:
+                driver.crash_armed = False
+                raise RuntimeError("Page.evaluate: Target crashed")
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        driver.crash_armed = True
+        crawler = self._crawler(driver, interval=100)
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(len(set(crawler.products_data)), 4)
+        self.assertEqual(len(crawler.context.opened), 1)
+        page_two = [entry for entry in crawler.crawl_page_logs if entry["頁碼"] == 2]
+        self.assertEqual(len(page_two), 1)
+        self.assertEqual(page_two[0]["成功"], 0)
+        self.assertEqual(page_two[0]["跳過"], 1)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["expected"], 4)
+
+    def test_target_crash_without_a_new_tab_still_fails_the_integrity_check(self):
+        ids = ["101", "102", "103", "104"]
+
+        def advance(driver):
+            if getattr(driver, "crash_armed", False) and driver.index == 1:
+                driver.crash_armed = False
+                raise RuntimeError("Page.evaluate: Target crashed")
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        driver.crash_armed = True
+        crawler = make_crawler(driver, "unused.json")
+        crawler.listing_page_refresh_interval = 8
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        self.assertIn("Target crashed", str(caught.exception))
+        self.assertEqual(set(crawler.products_data), {"101", "102"})
+        self.assertIsNone(crawler.crawl_count_check)
+
+
 if __name__ == "__main__":
     unittest.main()
