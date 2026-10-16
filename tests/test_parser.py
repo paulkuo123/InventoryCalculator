@@ -87,6 +87,23 @@ class ParserTests(unittest.TestCase):
                 frame = pd.DataFrame(rows, columns=headers)
                 self.assertEqual(parser.monthly_sales_from_frame(frame), expected)
 
+    def test_repeated_sales_header_ignores_whitespace(self):
+        rows = [
+            ["1001", "測試商品", "-", "4"],
+            ["商品ID", "不該出現", "-", "9"],
+            ["商品  ID", "也不該出現", "-", "8"],
+            [" 商品ID ", "前後空白表頭", "-", "7"],
+            ["1002", "另一商品", "均碼", "1"],
+        ]
+        frame = pd.DataFrame(
+            rows,
+            columns=["商品 ID", "商品名稱", "商品規格", "商品件數 (可出貨訂單)"],
+        )
+        parsed = parser.monthly_sales_from_frame(frame)
+        self.assertEqual(parsed["product_totals"], {"1001": "4"})
+        self.assertEqual(parsed["model_sales"], {"1002": {"均碼": "1"}})
+        self.assertEqual(parsed["product_names"], {"1001": "測試商品", "1002": "另一商品"})
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -249,6 +249,11 @@ def analyze_ads_reports(
 
 
 def validate_fresh_exports(ads_export_dir: str) -> Dict[str, str]:
+    """Require this run's yesterday / week_01 / past_month exports.
+
+    CSV text that Shopee saved with a ``.xlsx`` name counts as that window.
+    Real xlsx workbooks (ZIP/PK) are ignored, same as before.
+    """
     windows = collect_export_windows(Path(ads_export_dir))
     missing = missing_required_windows(windows.keys())
     if missing:

@@ -51,16 +51,18 @@ def monthly_sales_from_frame(df_sales):
     ``商品規格 == "-"`` is the product total. Other rows are per-model
     ``商品件數 (可出貨訂單)``.
 
-    Headers are matched with all whitespace removed, so a Data Centre
-    export that writes ``商品ID`` parses the same as ``商品 ID``.
+    Headers and repeated header rows are matched with all whitespace
+    removed, so a Data Centre export that writes ``商品ID`` parses the
+    same as ``商品 ID``.
     """
     columns = _compact_column_index(df_sales)
+    repeated_product_headers = {"nan", _compact_header("商品 ID")}
     product_totals = {}
     model_sales = {}
     product_names = {}
     for _, row in df_sales.iterrows():
         product_id = _sales_value(row, columns, "商品 ID")
-        if not product_id or product_id in {"nan", "商品 ID"}:
+        if not product_id or _compact_header(product_id) in repeated_product_headers:
             continue
         variation_name = _sales_value(row, columns, "商品規格")
         monthly_sales = _sales_value(row, columns, "商品件數 (可出貨訂單)", default="0")

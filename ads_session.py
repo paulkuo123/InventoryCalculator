@@ -5,6 +5,8 @@ Never log cookie values or other secrets.
 """
 from __future__ import annotations
 
+import csv
+import io
 import os
 import re
 from datetime import datetime
@@ -206,16 +208,79 @@ def detect_window_key_from_name(file_name: str) -> str:
     return "unknown"
 
 
+# ZIP local / empty / spanned headers. Real xlsx workbooks start with one of these.
+_ZIP_SIGNATURES = (b"PK\x03\x04", b"PK\x05\x06", b"PK\x07\x08")
+
+
+def is_text_csv_export(path: Path) -> bool:
+    """True when the file is CSV text, including CSV bytes saved with a .xlsx name.
+
+    A real xlsx workbook is a ZIP and starts with a PK signature; those return
+    False and are not parsed as CSV. Detection uses the CSV reader's decode
+    (UTF-8 with an optional BOM) plus a comma-separated row.
+    """
+    path = Path(path)
+    if not path.is_file():
+        return False
+    try:
+        with path.open("rb") as handle:
+            signature = handle.read(4)
+            if not signature or signature.startswith(_ZIP_SIGNATURES):
+                return False
+            blob = signature + handle.read()
+    except OSError:
+        return False
+    if b"\x00" in blob:
+        return False
+    try:
+        text = blob.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return False
+    if "," not in text:
+        return False
+    try:
+        rows = list(csv.reader(io.StringIO(text)))
+    except csv.Error:
+        return False
+    return any(len(row) >= 2 and any(cell.strip() for cell in row) for row in rows)
+
+
+def prefer_export_path(current: str, candidate: str) -> str:
+    """Keep an existing .csv when a later file is only CSV text named .xlsx."""
+    if Path(current).suffix.lower() == ".csv" and Path(candidate).suffix.lower() != ".csv":
+        return current
+    return candidate
+
+
+def _path_is_export_csv(path: Path) -> bool:
+    if not path.is_file():
+        return False
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
+        return True
+    if suffix == ".xlsx":
+        return is_text_csv_export(path)
+    return False
+
+
 def collect_export_windows(export_dir: Path) -> Dict[str, str]:
+    """Map each ads window to the export that fills it.
+
+    ``.csv`` files count as before. A ``.xlsx`` file counts only when
+    ``is_text_csv_export`` says the bytes are CSV text. Real xlsx workbooks
+    stay out of the map, so they still surface as ``MISSING_WINDOWS``.
+    """
     latest: Dict[str, str] = {}
     if not export_dir.is_dir():
         return latest
     for path in sorted(export_dir.iterdir()):
-        if path.suffix.lower() != ".csv":
+        if not _path_is_export_csv(path):
             continue
         window_key = detect_window_key_from_name(path.name)
-        if window_key != "unknown":
-            latest[window_key] = str(path)
+        if window_key == "unknown":
+            continue
+        chosen = latest.get(window_key)
+        latest[window_key] = str(path) if chosen is None else prefer_export_path(chosen, str(path))
     return latest
 
 
