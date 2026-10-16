@@ -4,7 +4,7 @@ import json
 from calendar import monthrange
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-from urllib.parse import parse_qs, urlencode, urlparse
+from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 import re
 import stat
 import sys
@@ -2205,8 +2205,7 @@ class ShopeeCrawler:
                 parts.append(text)
         return " | ".join(parts)
 
-    def _read_row_fingerprint(self):
-        """商品 ID 集合。順序變動不算換頁；沒有商品 ID 時才退回列文字。"""
+    def _listing_rows(self):
         try:
             rows = self.driver.find_elements(
                 By.CSS_SELECTOR, ".eds-table__row, .el-table__row")
@@ -2217,25 +2216,50 @@ class ShopeeCrawler:
                 rows = self.driver.find_elements(By.CLASS_NAME, "eds-table__row")
             except Exception:
                 rows = []
+        return list(rows or [])
+
+    def _ordered_product_ids(self):
+        """Document order. The first and last IDs are what a next click must change."""
         product_ids = []
-        fallback = []
-        for row in rows:
+        for row in self._listing_rows():
             product_id = self._row_product_id(row)
             if product_id:
-                product_ids.append(product_id)
-                continue
+                product_ids.append(str(product_id))
+        return tuple(product_ids)
+
+    def _read_row_fingerprint(self):
+        """商品 ID 集合。順序變動不算換頁；沒有商品 ID 時才退回列文字。"""
+        ordered = self._ordered_product_ids()
+        if ordered:
+            return tuple(sorted(set(ordered)))
+        fallback = []
+        for row in self._listing_rows():
             text = " ".join(str(getattr(row, "text", "") or "").split())
             if text:
                 fallback.append(text[:180])
-        if product_ids:
-            return tuple(sorted(set(product_ids)))
         return tuple(fallback)
 
     def _snapshot_listing_page(self):
+        ordered = self._ordered_product_ids()
+        if ordered:
+            rows = tuple(sorted(set(ordered)))
+            edges = (ordered[0], ordered[-1])
+        else:
+            rows = self._read_row_fingerprint()
+            edges = ()
         return {
             "indicator": self._read_page_indicator(),
-            "rows": self._read_row_fingerprint(),
+            "rows": rows,
+            "edges": edges,
         }
+
+    def _edges_changed(self, before_edges, after_edges):
+        """True only when the first or last product ID actually changed."""
+        before_edges = tuple(before_edges or ())
+        after_edges = tuple(after_edges or ())
+        if not before_edges or not after_edges:
+            return False
+        return before_edges[0] != after_edges[0] or before_edges[-1] != after_edges[-1]
 
     def _listing_page_changed(self, before, after):
         """有舊商品列時，必須看到商品 ID 換掉才算換頁。
@@ -2256,20 +2280,31 @@ class ShopeeCrawler:
         return indicator_changed or rows_changed
 
     def _wait_for_listing_page_change(self, before):
+        """After a next click, wait until the first or last product ID changes.
+
+        An unreadable page number is not a change. A row whose text flickers
+        but keeps the same edge product IDs is not a change either. Timing out
+        fails the crawl instead of reading the same products again.
+        """
         timeout = self._page_change_timeout()
         poll = self._page_change_poll()
         deadline = time.monotonic() + max(timeout, 0)
+        before_edges = tuple((before or {}).get("edges") or ())
         while True:
             after = self._snapshot_listing_page()
-            if self._listing_page_changed(before, after):
-                indicator = after.get("indicator") or "（沒有頁碼）"
-                print(f"已確認頁面更新，目前頁碼：{indicator}")
+            after_edges = tuple(after.get("edges") or ())
+            if self._edges_changed(before_edges, after_edges):
+                print(
+                    "已確認商品清單換成下一頁"
+                    f"（第一個 {after_edges[0]}，最後一個 {after_edges[-1]}）"
+                )
                 return after
             if time.monotonic() >= deadline:
-                indicator = (before or {}).get("indicator") or "（沒有頁碼）"
+                shown = "、".join(before_edges) if before_edges else "（讀不到商品 ID）"
                 raise CrawlIntegrityError(
-                    "翻頁後頁面沒有換成下一頁：頁碼與商品列都還是上一頁的內容"
-                    f"（頁碼「{indicator}」）。已等待 {timeout:g} 秒，停止抓取，避免把舊頁再讀一次。"
+                    "翻頁後商品清單沒有換：第一個或最後一個商品 ID 仍與上一頁相同"
+                    f"（上一頁 {shown}）。已等待 {timeout:g} 秒。"
+                    "已停止，不會把同一頁再收一次。"
                 )
             time.sleep(poll)
 
@@ -2495,7 +2530,7 @@ class ShopeeCrawler:
 
         最後一頁只看兩個訊號：下一頁按鈕已停用，或已收集筆數達到頁面顯示的總數。
         讀不到頁碼、頁碼顯示 1/1、這一頁列數比前面少，都不會當成最後一頁。
-        confirm_change 為真時，會等到商品列真的換了才返回；逾時則失敗。
+        confirm_change 為真時，會等到第一個或最後一個商品 ID 換了才返回；逾時則失敗。
         數據中心月銷量傳 confirm_change=False，不拿商品清單總數提前結束。
         :return: 如果成功點擊下一頁則返回 True，否則返回 False
         """
@@ -2550,7 +2585,7 @@ class ShopeeCrawler:
                 time.sleep(1.5)
                 return True
 
-            print("等待商品列實際換頁...")
+            print("等待第一個或最後一個商品 ID 換成下一頁...")
             self._wait_for_listing_page_change(before)
             self._remember_full_listing_page_size(before)
             return True
@@ -3103,6 +3138,9 @@ class ShopeeCrawler:
     def _rollback_listing_page_attempt(self, page_number, seen_pages, fingerprint):
         if fingerprint:
             seen_pages.discard(fingerprint)
+        stack = getattr(self, "_listing_fingerprints", None)
+        if isinstance(stack, list) and fingerprint and stack and stack[-1] == fingerprint:
+            stack.pop()
         logs = getattr(self, "crawl_page_logs", None)
         if isinstance(logs, list) and logs and logs[-1].get("頁碼") == page_number:
             logs.pop()
@@ -3118,17 +3156,92 @@ class ShopeeCrawler:
             return url
         return "https://seller.shopee.tw/portal/product/list/live/all"
 
-    def _advance_listing_to_page(self, target_page):
-        target = int(target_page)
-        for _ in range(max(target - 1, 0)):
-            moved = self.go_to_next_page(confirm_change=True)
-            if not moved:
-                raise CrawlIntegrityError(
-                    f"換新分頁後無法回到第 {target} 頁，已停止，不會把這次結果存成正式檔。"
-                )
+    def _previous_listing_fingerprint(self):
+        stack = getattr(self, "_listing_fingerprints", None)
+        if not stack:
+            return ()
+        return tuple(stack[-1])
 
-    def _open_fresh_listing_page(self, target_page):
-        """Close the tired tab, open another, and land on the same listing page."""
+    def _listing_resume_url(self, page_number):
+        """Listing URL for page N. A URL that already has a query uses ``&page=``."""
+        parts = urlparse(self._product_list_url())
+        pairs = [
+            (key, value)
+            for key, value in parse_qsl(parts.query, keep_blank_values=True)
+            if key != "page"
+        ]
+        pairs.append(("page", str(int(page_number))))
+        return urlunparse((
+            parts.scheme,
+            parts.netloc,
+            parts.path,
+            parts.params,
+            urlencode(pairs),
+            parts.fragment,
+        ))
+
+    def _assert_resumed_listing_page(self, target_page, seen_pages):
+        """The new tab must land on different product IDs than the previous page.
+
+        Clicking next on a fresh tab does not move this Seller Centre pager, and
+        the page number stays unreadable. Opening ``page=N`` directly still has
+        to prove the product IDs changed. The same IDs, or a page already
+        collected, fail instead of being read again.
+        """
+        timeout = self._page_change_timeout()
+        poll = self._page_change_poll()
+        deadline = time.monotonic() + max(timeout, 0)
+        previous = tuple(self._previous_listing_fingerprint())
+        seen = seen_pages if isinstance(seen_pages, set) else set()
+        page_number = int(target_page)
+        last_ids = ()
+        while True:
+            landed = self._ordered_product_ids()
+            if landed:
+                last_ids = landed
+                landed_key = tuple(sorted(set(landed)))
+                same_previous = bool(previous) and landed_key == previous
+                already = landed_key in seen
+                if not same_previous and not already:
+                    if previous:
+                        print(
+                            f"新分頁已停在第 {page_number} 頁，商品與上一頁不同"
+                            f"（第一個 {landed[0]}，最後一個 {landed[-1]}）。"
+                        )
+                    else:
+                        print(
+                            f"新分頁已停在第 {page_number} 頁"
+                            f"（第一個 {landed[0]}，最後一個 {landed[-1]}）。"
+                        )
+                    return
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(poll)
+        if not last_ids:
+            raise CrawlIntegrityError(
+                f"新分頁直接開了第 {page_number} 頁，但讀不到商品 ID。"
+                "已停止，不會從第 1 頁再收一次。"
+            )
+        landed_key = tuple(sorted(set(last_ids)))
+        if previous and landed_key == previous:
+            raise CrawlIntegrityError(
+                f"新分頁直接開了第 {page_number} 頁，但商品 ID 與上一頁相同"
+                f"（第一個 {last_ids[0]}，最後一個 {last_ids[-1]}）。"
+                "已停止，不會把同一頁再收一次。"
+            )
+        if landed_key in seen:
+            raise CrawlIntegrityError(
+                f"新分頁直接開了第 {page_number} 頁，但商品 ID 是已經收過的那一頁"
+                f"（第一個 {last_ids[0]}，最後一個 {last_ids[-1]}）。"
+                "已停止，不會把同一頁再收一次。"
+            )
+        raise CrawlIntegrityError(
+            f"新分頁直接開了第 {page_number} 頁，商品清單沒有換成這一頁。"
+            "已停止，不會把同一頁再收一次。"
+        )
+
+    def _open_fresh_listing_page(self, target_page, seen_pages=None):
+        """Close the tired tab and open the listing URL at page N. Do not click next."""
         if not self._can_open_fresh_listing_page():
             raise CrawlIntegrityError(
                 "分頁當掉後沒有辦法另開新分頁，已停止，不會把這次結果存成正式檔。"
@@ -3149,12 +3262,17 @@ class ShopeeCrawler:
                     close()
                 except Exception:
                     pass
-        self.page.goto(self._product_list_url(), wait_until="domcontentloaded", timeout=30000)
+        resume_url = self._listing_resume_url(target_page)
+        print(
+            f"新分頁直接開啟清單第 {int(target_page)} 頁（page={int(target_page)}），"
+            "不再從第 1 頁連按下一頁。"
+        )
+        self.page.goto(resume_url, wait_until="domcontentloaded", timeout=30000)
         try:
             self.page.wait_for_load_state("networkidle", timeout=15000)
         except Exception:
-            print("networkidle 等待超時，繼續從商品清單往下翻")
-        self._advance_listing_to_page(target_page)
+            print("networkidle 等待超時，繼續核對這一頁的商品 ID")
+        self._assert_resumed_listing_page(target_page, seen_pages)
 
     def get_all_products_info(self):
         try:
@@ -3165,6 +3283,7 @@ class ShopeeCrawler:
             self.crawl_invalid_rows = []
             self.crawl_count_check = None
             seen_pages = set()
+            self._listing_fingerprints = []
             pages_on_tab = 0
 
             while has_next_page:
@@ -3174,7 +3293,7 @@ class ShopeeCrawler:
                         f"已連續使用同一個分頁 {pages_on_tab} 頁，"
                         f"換新分頁後從第 {page} 頁繼續。"
                     )
-                    self._open_fresh_listing_page(page)
+                    self._open_fresh_listing_page(page, seen_pages)
                     pages_on_tab = 0
                 attempt_fingerprint = None
                 try:
@@ -3219,6 +3338,7 @@ class ShopeeCrawler:
                         )
                     if fingerprint:
                         seen_pages.add(fingerprint)
+                        self._listing_fingerprints.append(fingerprint)
                     attempt_fingerprint = fingerprint
 
                     self._collect_current_listing_page(page)
@@ -3242,7 +3362,7 @@ class ShopeeCrawler:
                         f"第 {page} 頁分頁當掉（Target crashed），換新分頁後從這一頁繼續。"
                         f"已保留 {len(self.products_data)} 個商品。"
                     )
-                    self._open_fresh_listing_page(page)
+                    self._open_fresh_listing_page(page, seen_pages)
                     pages_on_tab = 0
                     continue
 

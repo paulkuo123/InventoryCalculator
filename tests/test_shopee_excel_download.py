@@ -17,11 +17,14 @@ from shopee_excel_download import (
     MassUpdateSafetyError,
     PlaywrightMassUpdatePage,
     _GENERATE_DOWNLOAD_BUTTON,
+    _ROW_DOWNLOAD_SELECTORS,
     build_argument_parser,
     click_allowed,
     download_and_import,
+    download_record,
     main,
-    record_state,
+    record_file_token,
+    record_has_download_button,
     resolve_seller_cdp_endpoints,
     run_mass_update_download,
     wait_for_generated_record,
@@ -45,6 +48,7 @@ class FakePage:
         self.saved_hrefs = []
         self.click_details = []
         self.file_download_clicks = 0
+        self.downloaded_rows = []
         self.form_ready = False
         self.events = []
 
@@ -91,35 +95,52 @@ class FakePage:
         if label == "下載":
             self.generated = True
 
-    def _history_row(self, kind, status, href):
+    def _header_row(self):
+        # 「已處理」只在表頭。資料列沒有狀態字，也沒有 href。
+        return {
+            "id": "header",
+            "text": "日期 類型 檔名 商品數 已處理",
+            "download_href": "",
+            "has_download_button": False,
+        }
+
+    def _history_row(self, kind, *, button, failed=False):
         stamp = "20000101000000" if kind == "old" else "20991231235959"
-        name = f"mass_update_sales_info_1_{stamp}.zip"
+        name = f"mass_update_sales_info_1_{stamp}"
+        date = "2000-01-01 00:00:00" if kind == "old" else "2099-12-31 23:59:59"
+        text = f"{date} 價格及庫存 {name} 352"
+        if failed:
+            text = f"{text} 失敗"
         return {
             "id": kind,
-            "status": status,
-            "text": f"{name} {status}",
-            "download_href": href,
+            "text": text,
+            "download_href": "",
+            "has_download_button": button,
         }
 
     def list_records(self):
-        old = self._history_row("old", "已處理", "https://seller.example/old.zip")
+        header = self._header_row()
+        old = self._history_row("old", button=True)
         if not self.generated:
-            return [old]
+            return [header, old]
         self.polls += 1
         if self.scenario == "fail":
-            return [old, self._history_row("new", "失敗", "")]
-        if self.scenario == "pending":
-            return [old, self._history_row("new", "產生中", "")]
-        if self.polls == 1:
-            return [old, self._history_row("new", "產生中", "")]
-        href = "" if self.scenario == "reload" else "https://seller.example/new.zip"
-        return [old, self._history_row("new", "已處理", href)]
+            return [header, old, self._history_row("new", button=False, failed=True)]
+        if self.scenario == "pending" or self.polls == 1:
+            return [header, old, self._history_row("new", button=False)]
+        return [header, old, self._history_row("new", button=True)]
+
+    def click_record_download(self, record):
+        self.events.append(("row-download", record.get("id")))
+        self.downloaded_rows.append(record.get("id"))
+        self.file_download_clicks += 1
 
     def wait(self, seconds):
         return None
 
     def arm_beforeunload_accept(self):
         self.armed = True
+        self.events.append("arm")
 
     def save_href(self, href, dest_dir):
         self.saved_hrefs.append(href)
@@ -145,7 +166,7 @@ class MassUpdateDownloadTests(unittest.TestCase):
                 click_allowed(page, label)
         self.assertEqual(page.clicks, [])
 
-    def test_download_clicks_only_allowlisted_labels_and_uses_href(self):
+    def test_download_clicks_only_allowlisted_labels_and_the_new_row_button(self):
         page = FakePage()
         with tempfile.TemporaryDirectory() as temp_dir:
             saved = run_mass_update_download(
@@ -163,9 +184,14 @@ class MassUpdateDownloadTests(unittest.TestCase):
         generate = next(item for item in page.click_details if item["label"] == "下載")
         self.assertTrue(listed["prefer_last"])
         self.assertFalse(generate["expect_download"])
-        self.assertEqual(page.saved_hrefs, ["https://seller.example/new.zip"])
-        self.assertEqual(page.file_download_clicks, 0)
-        self.assertFalse(page.armed)
+        self.assertEqual(page.saved_hrefs, [])
+        self.assertEqual(page.downloaded_rows, ["new"])
+        self.assertEqual(page.file_download_clicks, 1)
+        self.assertLess(page.events.index("arm"), page.events.index(("row-download", "new")))
+        chosen = page.list_records()[-1]
+        self.assertNotIn("已處理", chosen["text"])
+        self.assertFalse(chosen["download_href"])
+        self.assertTrue(chosen["has_download_button"])
 
     def test_reload_dialog_path_arms_beforeunload_before_download_click(self):
         page = FakePage(scenario="reload")
@@ -175,7 +201,9 @@ class MassUpdateDownloadTests(unittest.TestCase):
             )
             self.assertTrue(saved.exists())
         self.assertTrue(page.armed)
-        self.assertEqual(page.clicks[-1], "下載")
+        self.assertEqual(page.downloaded_rows, ["new"])
+        self.assertEqual(page.saved_hrefs, [])
+        self.assertLess(page.events.index("arm"), page.events.index(("row-download", "new")))
         self.assertNotIn("上傳", page.clicks)
         self.assertNotIn("儲存", page.clicks)
         self.assertNotIn("更新", page.clicks)
@@ -204,37 +232,86 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertFalse(page.armed)
         self.assertEqual(page.clicks.count("下載"), 1)
 
-    def test_processed_status_is_done_and_processing_is_not(self):
-        self.assertEqual(record_state({"status": "已處理", "text": ""}), "done")
-        self.assertEqual(record_state({"status": "處理中", "text": ""}), "pending")
+    def test_header_status_is_ignored_and_the_row_button_means_ready(self):
+        started = datetime(2026, 10, 17, 0, 47, 42, tzinfo=ZoneInfo("Asia/Taipei"))
+        header = _header_row()
+        ready = _history("mass_update_sales_info_168917920_20261017004811", button=True)
+        self.assertIn("已處理", header["text"])
+        self.assertFalse(record_has_download_button(header))
+        self.assertNotIn("已處理", ready["text"])
+        self.assertFalse(ready["download_href"])
+        self.assertTrue(record_has_download_button(ready))
+        self.assertEqual(record_file_token(ready), "mass_update_sales_info_168917920_20261017004811")
+        chosen = wait_for_generated_record(
+            HistoryPage([header, ready]), started, max_polls=1, poll_seconds=0,
+        )
+        self.assertEqual(chosen["id"], ready["id"])
+
+        status_only = _history("mass_update_sales_info_168917920_20261017004812", button=False)
+        status_only["text"] = f"{status_only['text']} 已處理"
+        status_only["status"] = "已處理"
+        with self.assertRaises(MassUpdateError) as caught:
+            wait_for_generated_record(
+                HistoryPage([header, ready, status_only]),
+                started,
+                max_polls=1,
+                poll_seconds=0,
+            )
+        self.assertIn("還沒完成", str(caught.exception))
 
     def test_picks_newest_filename_at_or_after_start_not_the_last_row(self):
         started = datetime(2026, 10, 17, 0, 10, 0, tzinfo=ZoneInfo("Asia/Taipei"))
-        newest = _history("mass_update_sales_info_168917920_20261017001028.zip", "已處理", "https://seller.example/new.zip")
-        older_same_run = _history("mass_update_sales_info_168917920_20261017001000.zip", "已處理", "https://seller.example/mid.zip")
-        previous_day = _history("mass_update_sales_info_168917920_20261016225238.zip", "已處理", "https://seller.example/old.zip")
-        same_second = _history("mass_update_sales_info_1_20261017001000.zip", "已處理", "https://seller.example/same.zip")
-        page = HistoryPage([newest, older_same_run, previous_day])
+        newest = _history("mass_update_sales_info_168917920_20261017001028", button=True)
+        older_same_run = _history("mass_update_sales_info_168917920_20261017001000", button=True)
+        previous_day = _history("mass_update_sales_info_168917920_20261016225238", button=True)
+        same_second = _history("mass_update_sales_info_1_20261017001000", button=True)
+        page = HistoryPage([_header_row(), newest, older_same_run, previous_day])
         chosen = wait_for_generated_record(page, started, max_polls=1, poll_seconds=0)
-        self.assertEqual(chosen["download_href"], "https://seller.example/new.zip")
+        self.assertEqual(chosen["id"], newest["id"])
+        self.assertFalse(chosen["download_href"])
 
-        exact = HistoryPage([same_second, previous_day])
+        exact = HistoryPage([_header_row(), same_second, previous_day])
         chosen = wait_for_generated_record(
             exact,
             datetime(2026, 10, 17, 0, 10, 0, tzinfo=ZoneInfo("Asia/Taipei")),
             max_polls=1,
             poll_seconds=0,
         )
-        self.assertEqual(chosen["download_href"], "https://seller.example/same.zip")
+        self.assertEqual(chosen["id"], same_second["id"])
 
-    def test_newer_pending_file_is_not_replaced_by_an_older_done_row(self):
+    def test_newer_row_without_a_button_is_not_replaced_by_an_older_ready_row(self):
         started = datetime(2026, 10, 17, 0, 10, 0, tzinfo=ZoneInfo("Asia/Taipei"))
-        pending = _history("mass_update_sales_info_168917920_20261017001028.zip", "處理中", "")
-        older_done = _history("mass_update_sales_info_168917920_20261017001005.zip", "已處理", "https://seller.example/old-done.zip")
-        page = HistoryPage([pending, older_done])
+        pending = _history("mass_update_sales_info_168917920_20261017001028", button=False)
+        older_done = _history("mass_update_sales_info_168917920_20261017001005", button=True)
+        page = HistoryPage([_header_row(), pending, older_done])
         with self.assertRaises(MassUpdateError) as caught:
             wait_for_generated_record(page, started, max_polls=1, poll_seconds=0)
         self.assertIn("還沒完成", str(caught.exception))
+
+    def test_real_href_is_saved_without_clicking_the_row_button(self):
+        record = _history(
+            "mass_update_sales_info_1_20991231235959",
+            button=True,
+            href="https://seller.example/new.zip",
+        )
+        page = HistoryPage([record])
+        page.clicked = []
+
+        def save_href(href, dest_dir):
+            page.clicked.append(href)
+            target = Path(dest_dir) / "mass_update_sales_info.zip"
+            target.write_bytes(FIXTURE_ZIP.read_bytes())
+            return target
+
+        def click_record_download(_record):
+            raise AssertionError("有連結時不該再點列上的下載")
+
+        page.save_href = save_href
+        page.click_record_download = click_record_download
+        with tempfile.TemporaryDirectory() as temp_dir:
+            saved = download_record(page, record, Path(temp_dir))
+            self.assertTrue(saved.exists())
+        self.assertEqual(page.clicked, ["https://seller.example/new.zip"])
 
     def test_form_wait_uses_networkidle_when_the_label_never_appears(self):
         page = FormWaitPage(label_ready=False)
@@ -349,12 +426,22 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertEqual(seen["catalog"]["900001"]["型號"][0]["月銷量"], "0")
 
 
-def _history(filename, status, href):
+def _header_row():
     return {
-        "id": filename,
-        "status": status,
-        "text": f"{filename} {status}",
+        "id": "header",
+        "text": "日期 類型 檔名 商品數 已處理",
+        "download_href": "",
+        "has_download_button": False,
+    }
+
+
+def _history(filename, *, button, href=""):
+    token = filename[:-4] if str(filename).endswith(".zip") else filename
+    return {
+        "id": token,
+        "text": f"2026-10-17 00:48:11 價格及庫存 {token} 352",
         "download_href": href,
+        "has_download_button": button,
     }
 
 
@@ -446,6 +533,10 @@ class StubLocator:
 
     def get_by_text(self, text, exact=False):
         key = f"{self.key}>text:{text}"
+        return StubLocator(self.owner, key, self.owner.counts.get(key, 0))
+
+    def locator(self, selector):
+        key = f"{self.key}>>{selector}"
         return StubLocator(self.owner, key, self.owner.counts.get(key, 0))
 
 
@@ -578,15 +669,23 @@ class MassUpdateSelectorTests(unittest.TestCase):
         self.assertEqual(page.clicked, ["locator:button:has-text('下載')"])
         self.assertFalse(page.expected_download)
 
-    def test_file_download_clicks_the_sales_info_row(self):
-        row = "locator:tr:has-text('mass_update_sales_info')"
+    def test_file_download_clicks_the_chosen_row_button(self):
+        filename = "mass_update_sales_info_168917920_20261017004811"
+        older = "mass_update_sales_info_168917920_20261016225238"
+        selector = _ROW_DOWNLOAD_SELECTORS[0]
+        row = f"locator:tr:has-text('{filename}')"
+        chosen = f"{row}>>{selector}"
+        older_row = f"locator:tr:has-text('{older}')>>{selector}"
         page = StubPlaywrightPage({
             row: 1,
-            f"{row}>text:下載": 1,
+            chosen: 1,
+            older_row: 1,
         })
-        PlaywrightMassUpdatePage(page).click_label("下載", expect_download=True)
-        self.assertEqual(page.clicked, [f"{row}>text:下載"])
+        record = _history(filename, button=True)
+        PlaywrightMassUpdatePage(page).click_record_download(record)
+        self.assertEqual(page.clicked, [chosen])
         self.assertTrue(page.expected_download)
+        self.assertNotIn(older, " ".join(page.clicked))
 
 
 if __name__ == "__main__":

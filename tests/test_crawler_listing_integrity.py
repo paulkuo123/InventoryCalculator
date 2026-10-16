@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import re
 import stat
 import tempfile
 import unittest
@@ -260,7 +261,7 @@ class ListingIntegrityTests(unittest.TestCase):
         driver = ListingDriver([page], on_next=lambda _driver: None)
         crawler = make_crawler(driver, output_path="unused.json")
 
-        with self.assertRaisesRegex(CrawlIntegrityError, "上一頁"):
+        with self.assertRaisesRegex(CrawlIntegrityError, "商品 ID"):
             crawler.get_all_products_info()
 
         self.assertEqual(list(crawler.products_data), ["111"])
@@ -281,7 +282,7 @@ class ListingIntegrityTests(unittest.TestCase):
         driver = ListingDriver([page], on_next=change_indicator_only)
         crawler = make_crawler(driver, output_path="unused.json")
 
-        with self.assertRaisesRegex(CrawlIntegrityError, "上一頁"):
+        with self.assertRaisesRegex(CrawlIntegrityError, "商品 ID"):
             crawler.go_to_next_page()
 
     def test_changed_rows_are_read_as_the_next_page(self):
@@ -941,7 +942,12 @@ class ListingTab:
 
     def goto(self, url, wait_until=None, timeout=None):
         self.visits.append(url)
-        self.driver.index = 0
+        match = re.search(r"[?&]page=(\d+)", url)
+        if match and self.driver.pages:
+            page_number = int(match.group(1))
+            self.driver.index = min(max(page_number - 1, 0), len(self.driver.pages) - 1)
+        else:
+            self.driver.index = 0
 
     def wait_for_load_state(self, state, timeout=None):
         return None
@@ -957,6 +963,38 @@ class ListingContext:
 
     def new_page(self):
         tab = ListingTab(self.driver)
+        self.opened.append(tab)
+        return tab
+
+
+class _IgnoredPageTab(ListingTab):
+    """A new tab that does not apply page=N. It always starts at page 1."""
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self.visits.append(url)
+        self.driver.index = 0
+
+
+class _StickyContext(ListingContext):
+    def new_page(self):
+        tab = _IgnoredPageTab(self.driver)
+        self.opened.append(tab)
+        return tab
+
+
+class _PreviousPageTab(ListingTab):
+    """Applies a page query, but lands one page earlier than requested."""
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self.visits.append(url)
+        match = re.search(r"[?&]page=(\d+)", url)
+        page_number = int(match.group(1)) if match else 1
+        self.driver.index = max(page_number - 2, 0)
+
+
+class _PreviousPageContext(ListingContext):
+    def new_page(self):
+        tab = _PreviousPageTab(self.driver)
         self.opened.append(tab)
         return tab
 
@@ -1015,7 +1053,7 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertTrue(first_tab.closed)
         self.assertEqual(
             crawler.context.opened[0].visits,
-            ["https://seller.shopee.tw/portal/product/list/live/all"],
+            ["https://seller.shopee.tw/portal/product/list/live/all?page=3"],
         )
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
         self.assertEqual(crawler.crawl_count_check["expected"], 4)
@@ -1045,6 +1083,106 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertEqual(page_two[0]["跳過"], 1)
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
         self.assertEqual(crawler.crawl_count_check["expected"], 4)
+        self.assertEqual(
+            crawler.context.opened[0].visits,
+            ["https://seller.shopee.tw/portal/product/list/live/all?page=2"],
+        )
+
+    def test_resume_url_uses_ampersand_when_the_listing_url_already_has_a_query(self):
+        crawler = ShopeeCrawler.__new__(ShopeeCrawler)
+        crawler.my_products_url = "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup"
+        self.assertEqual(
+            crawler._listing_resume_url(24),
+            "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=24",
+        )
+        crawler.my_products_url = "https://seller.shopee.tw/portal/product/list/live/all"
+        self.assertEqual(
+            crawler._listing_resume_url(9),
+            "https://seller.shopee.tw/portal/product/list/live/all?page=9",
+        )
+        crawler.my_products_url = (
+            "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=3"
+        )
+        self.assertEqual(
+            crawler._listing_resume_url(24),
+            "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=24",
+        )
+
+        ids = ["101", "102", "103", "104"]
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        crawler = self._crawler(driver, interval=2)
+        crawler.my_products_url = "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup"
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+        self.assertEqual(
+            crawler.context.opened[0].visits,
+            ["https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=3"],
+        )
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_ignored_next_fails_when_edge_product_ids_stay_the_same(self):
+        first = ListingPage(
+            indicator="",
+            rows=shop_rows(["111", "112", "113"]),
+            body_text="架上商品(6)",
+            next_enabled=True,
+        )
+        second = ListingPage(
+            indicator="",
+            rows=shop_rows(["211", "212", "213"]),
+            body_text="架上商品(6)",
+            next_enabled=False,
+        )
+        driver = ListingDriver([first, second], on_next=lambda _driver: None)
+        crawler = make_crawler(driver, "unused.json")
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("第一個或最後一個商品 ID", message)
+        self.assertIn("不會把同一頁再收一次", message)
+        self.assertEqual(list(crawler.products_data), ["111", "112", "113"])
+
+    def test_fresh_tab_that_ignores_page_query_does_not_recollect(self):
+        ids = ["101", "102", "103", "104"]
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        crawler = self._crawler(driver, interval=2)
+        crawler.context = _StickyContext(driver)
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("已經收過", message)
+        self.assertIn("不會把同一頁再收一次", message)
+        self.assertIn("page=3", crawler.context.opened[0].visits[0])
+        self.assertEqual(list(crawler.products_data), ["101", "102"])
+
+    def test_fresh_tab_that_lands_on_the_previous_page_fails(self):
+        ids = ["101", "102", "103", "104"]
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        crawler = self._crawler(driver, interval=2)
+        crawler.context = _PreviousPageContext(driver)
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("與上一頁相同", message)
+        self.assertIn("不會把同一頁再收一次", message)
+        self.assertIn("?page=3", crawler.context.opened[0].visits[0])
+        self.assertEqual(list(crawler.products_data), ["101", "102"])
 
     def test_target_crash_without_a_new_tab_still_fails_the_integrity_check(self):
         ids = ["101", "102", "103", "104"]

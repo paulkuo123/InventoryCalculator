@@ -58,15 +58,20 @@ _PREFER_LAST_LABELS = frozenset({"架上及已售完商品"})
 _LABEL_ROLES = ("button", "tab", "option", "menuitem", "radio")
 FORBIDDEN_CLICK_RE = re.compile(r"上傳|儲存|更新")
 _SLIDER_RE = re.compile(r"滑塊|向右滑動|拖動滑塊", re.IGNORECASE)
-_DONE_RE = re.compile(r"完成|成功|可下載|已處理")
 _FAILED_RE = re.compile(r"失敗|錯誤")
-_PENDING_RE = re.compile(r"產生中|處理中|排隊|進行中|等待")
 _FILE_STAMP_RE = re.compile(r"mass_update_sales_info_\d+_(\d{14})")
+_FILE_TOKEN_RE = re.compile(r"mass_update_sales_info_\d+_\d{14}")
 _TAIPEI = ZoneInfo("Asia/Taipei")
 DEFAULT_FORM_WAIT_MS = 20000
 # 上方產生報表的「下載」。歷史列的「下載」在 tr 裡，不能算進來。
 _GENERATE_DOWNLOAD_BUTTON = (
     "xpath=//button[contains(normalize-space(.), '下載') and not(ancestor::tr)]"
+)
+# 資料列裡的「下載」。實機列沒有 href，完成與否只看這個按鈕在不在。
+_ROW_DOWNLOAD_SELECTORS = (
+    "button:has-text('下載')",
+    "[role='button']:has-text('下載')",
+    "a:has-text('下載')",
 )
 
 DEFAULT_MAX_POLLS = 60
@@ -124,15 +129,27 @@ def assert_session_clear(page: Any) -> None:
     raise MassUpdateBlocked("SESSION", blocker)
 
 
-def record_state(record: Mapping[str, Any]) -> str:
-    text = f"{record.get('status') or ''} {record.get('text') or ''}"
-    if _FAILED_RE.search(text):
-        return "failed"
-    if _DONE_RE.search(text):
-        return "done"
-    if _PENDING_RE.search(text):
-        return "pending"
-    return "pending"
+def record_has_download_button(record: Mapping[str, Any]) -> bool:
+    """A history row is ready when it has its own「下載」 control.
+
+    「已處理」 is a column header on the live page, not text inside the data
+    row. Status words are not a completion signal.
+    """
+    return bool(record.get("has_download_button"))
+
+
+def record_failed(record: Mapping[str, Any]) -> bool:
+    """Failure is the row's own visible text, not a separate status column."""
+    return bool(_FAILED_RE.search(str(record.get("text") or "")))
+
+
+def record_file_token(record: Mapping[str, Any]) -> str:
+    text = " ".join([
+        str(record.get("text") or ""),
+        str(record.get("download_href") or ""),
+    ])
+    match = _FILE_TOKEN_RE.search(text)
+    return match.group(0) if match else ""
 
 
 def _as_taipei(moment: datetime) -> datetime:
@@ -190,36 +207,42 @@ def wait_for_generated_record(
     max_polls: int = DEFAULT_MAX_POLLS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
 ) -> Mapping[str, Any]:
-    """Poll until the file generated at or after ``started_at`` is ready.
+    """Poll until the newest file at or after ``started_at`` has a「下載」 button.
 
-    New history rows are inserted at the top, so the last row is the oldest.
-    Choose by the ``YYYYMMDDHHMMSS`` in the filename, and take the newest.
+    Data rows have the date, type, filename, count, and a button. They do not
+    carry a status word, and they do not have an href. 「已處理」 only appears
+    in the table header, so it is ignored. A newer filename that does not yet
+    have the button is still generating; do not download an older file instead.
     """
     for _ in range(max_polls):
         assert_session_clear(page)
         matched = _records_since(page.list_records(), started_at)
         if matched:
             _stamp, record = matched[-1]
-            state = record_state(record)
-            if state == "done":
-                return record
-            if state == "failed":
-                detail = str(record.get("text") or record.get("status") or "").strip()
+            if record_failed(record):
+                detail = str(record.get("text") or "").strip()
                 message = "報表產生失敗，沒有下載，也沒有匯入。"
                 if detail:
                     message = f"{message}（{detail}）"
                 raise MassUpdateError(message)
+            if record_has_download_button(record):
+                return record
         _wait(page, poll_seconds)
     raise MassUpdateError("報表還沒完成，已停止等待，沒有下載，也沒有匯入。")
 
 
 def download_record(page: Any, record: Mapping[str, Any], dest_dir: Path) -> Path:
-    """Prefer the file URL. Click「下載」only after beforeunload is accepted."""
+    """Save a real file URL when one exists. Otherwise click that row's button."""
     href = str(record.get("download_href") or "").strip()
     if href and not href.lower().startswith("javascript"):
         return page.save_href(href, dest_dir)
+    if not record_has_download_button(record):
+        raise MassUpdateError("這一列沒有「下載」按鈕，已停止，沒有下載。")
     page.arm_beforeunload_accept()
-    click_allowed(page, "下載", expect_download=True)
+    click_row = getattr(page, "click_record_download", None)
+    if not callable(click_row):
+        raise MassUpdateError("沒有辦法點這一列的「下載」，已停止。")
+    click_row(record)
     return page.take_download(dest_dir)
 
 
@@ -353,20 +376,30 @@ class PlaywrightMassUpdatePage:
             return button.first
         raise MassUpdateError("畫面上找不到「下載」按鈕，已停止。")
 
-    def _file_download_locator(self) -> Any:
-        """Download control on the new mass_update_sales_info row."""
-        row = self.page.locator("tr:has-text('mass_update_sales_info')")
-        if self._locator_count(row) > 0:
-            target = row.first.get_by_text("下載", exact=True)
-            if self._locator_count(target) > 0:
-                return target.first
-        text = self.page.get_by_text("下載", exact=True)
+    def _row_download_button(self, row: Any) -> Any:
+        for selector in _ROW_DOWNLOAD_SELECTORS:
+            button = row.locator(selector)
+            if self._locator_count(button) > 0:
+                return button.first
+        text = row.get_by_text("下載", exact=True)
         if self._locator_count(text) > 0:
-            return text.last
-        role = self.page.get_by_role("button", name="下載", exact=True)
-        if self._locator_count(role) > 0:
-            return role.last
-        raise MassUpdateError("畫面上找不到「下載」，已停止。")
+            return text.first
+        return None
+
+    def click_record_download(self, record: Mapping[str, Any]) -> None:
+        """Click「下載」 inside the chosen history row, not another row's button."""
+        token = record_file_token(record)
+        if not token:
+            raise MassUpdateError("這一列沒有檔名，無法點它的「下載」，已停止。")
+        row = self.page.locator(f"tr:has-text('{token}')")
+        if self._locator_count(row) <= 0:
+            raise MassUpdateError(f"畫面上找不到檔案「{token}」那一列，已停止。")
+        button = self._row_download_button(row.first)
+        if button is None:
+            raise MassUpdateError(f"檔案「{token}」那一列沒有「下載」按鈕，已停止。")
+        with self.page.expect_download() as download_info:
+            button.click()
+        self._download = download_info.value
 
     def click_label(
         self,
@@ -376,31 +409,31 @@ class PlaywrightMassUpdatePage:
         prefer_last: bool = False,
     ) -> None:
         if label == "下載" and expect_download:
-            locator = self._file_download_locator()
-        elif label == "下載":
+            raise MassUpdateError("下載檔案必須點該列的「下載」，不能點頁面上另一個「下載」。")
+        if label == "下載":
             locator = self._generate_download_locator()
         else:
             locator = self._visible_label_locator(label, prefer_last=prefer_last)
-        if expect_download:
-            with self.page.expect_download() as download_info:
-                locator.click()
-            self._download = download_info.value
-            return
         locator.click()
 
     def list_records(self) -> List[Dict[str, str]]:
         return list(self.page.evaluate(
             """() => {
                 const rows = [];
+                const isDownload = (el) => (el.innerText || '').replace(/\\s+/g, '').includes('下載');
                 document.querySelectorAll('tr').forEach((tr, index) => {
                     const text = (tr.innerText || '').trim();
                     if (!text) return;
                     const link = tr.querySelector('a[href]');
+                    let hasButton = false;
+                    tr.querySelectorAll('button, [role="button"], a').forEach((el) => {
+                        if (isDownload(el)) hasButton = true;
+                    });
                     rows.push({
                         id: tr.getAttribute('data-row-key') || String(index),
-                        status: text,
                         text,
-                        download_href: link ? link.href : ''
+                        download_href: link ? (link.href || '') : '',
+                        has_download_button: hasButton
                     });
                 });
                 return rows;
