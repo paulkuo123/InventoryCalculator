@@ -14,6 +14,7 @@ from shopee_excel_download import (
     MassUpdateError,
     MassUpdateSafetyError,
     PlaywrightMassUpdatePage,
+    _GENERATE_DOWNLOAD_BUTTON,
     build_argument_parser,
     click_allowed,
     download_and_import,
@@ -380,6 +381,73 @@ class StubPlaywrightPage:
         return StubExpect(self)
 
 
+class _NamedButton:
+    def __init__(self, owner, area):
+        self.owner = owner
+        self.area = area
+
+    def count(self):
+        return 1
+
+    @property
+    def first(self):
+        return self
+
+    def click(self):
+        self.owner.clicked.append(self.area)
+
+
+class _ButtonGroup:
+    def __init__(self, owner, buttons):
+        self.owner = owner
+        self.buttons = list(buttons)
+
+    def count(self):
+        return len(self.buttons)
+
+    @property
+    def first(self):
+        return self.buttons[0]
+
+    def click(self):
+        self.first.click()
+
+
+class GenerateAndHistoryPage:
+    """Generate-area「下載」plus older history-row download buttons.
+
+    A page-wide accessible name lists the history buttons first. The unscoped
+    ``button:has-text`` list does too. Only the generate-section locator is
+    the top button.
+    """
+
+    def __init__(self):
+        self.clicked = []
+        self.expected_download = False
+        self.generate = _NamedButton(self, "generate")
+        self.history = [
+            _NamedButton(self, "history-old"),
+            _NamedButton(self, "history-older"),
+        ]
+
+    def get_by_role(self, role, name=None, exact=False):
+        if role == "button" and name == "下載":
+            return _ButtonGroup(self, self.history + [self.generate])
+        return _ButtonGroup(self, [])
+
+    def locator(self, selector):
+        if selector == _GENERATE_DOWNLOAD_BUTTON:
+            return _ButtonGroup(self, [self.generate])
+        if selector == "button:has-text('下載')":
+            return _ButtonGroup(self, self.history + [self.generate])
+        if selector == "tr:has-text('mass_update_sales_info')":
+            return _ButtonGroup(self, self.history)
+        return _ButtonGroup(self, [])
+
+    def expect_download(self):
+        return StubExpect(self)
+
+
 class MassUpdateSelectorTests(unittest.TestCase):
     def test_exact_text_is_used_before_role(self):
         page = StubPlaywrightPage({"text:價格及庫存": 1, "role:button:價格及庫存": 1})
@@ -400,9 +468,16 @@ class MassUpdateSelectorTests(unittest.TestCase):
         self.assertEqual(page.clicked, ["text:架上及已售完商品"])
 
     def test_generate_download_uses_the_button_and_does_not_expect_a_file(self):
-        page = StubPlaywrightPage({"role:button:下載": 1})
+        key = f"locator:{_GENERATE_DOWNLOAD_BUTTON}"
+        page = StubPlaywrightPage({key: 1})
         PlaywrightMassUpdatePage(page).click_label("下載", expect_download=False)
-        self.assertEqual(page.clicked, ["role:button:下載"])
+        self.assertEqual(page.clicked, [key])
+        self.assertFalse(page.expected_download)
+
+    def test_generate_download_clicks_generate_area_not_history_rows(self):
+        page = GenerateAndHistoryPage()
+        PlaywrightMassUpdatePage(page).click_label("下載", expect_download=False)
+        self.assertEqual(page.clicked, ["generate"])
         self.assertFalse(page.expected_download)
 
     def test_generate_download_falls_back_to_button_has_text(self):

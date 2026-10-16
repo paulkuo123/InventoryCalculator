@@ -59,6 +59,10 @@ _SLIDER_RE = re.compile(r"滑塊|向右滑動|拖動滑塊", re.IGNORECASE)
 _DONE_RE = re.compile(r"完成|成功|可下載")
 _FAILED_RE = re.compile(r"失敗|錯誤")
 _PENDING_RE = re.compile(r"產生中|處理中|排隊|進行中|等待")
+# 上方產生報表的「下載」。歷史列的「下載」在 tr 裡，不能算進來。
+_GENERATE_DOWNLOAD_BUTTON = (
+    "xpath=//button[contains(normalize-space(.), '下載') and not(ancestor::tr)]"
+)
 
 DEFAULT_MAX_POLLS = 60
 DEFAULT_POLL_SECONDS = 2.0
@@ -283,10 +287,16 @@ class PlaywrightMassUpdatePage:
         raise MassUpdateError(f"畫面上找不到「{label}」，已停止。")
 
     def _generate_download_locator(self) -> Any:
-        """The page-level button that creates the report, not a history-row link."""
-        role = self.page.get_by_role("button", name="下載", exact=True)
-        if self._locator_count(role) > 0:
-            return role.first
+        """The top button that creates the report, never a history-row download.
+
+        A page-wide accessible name of「下載」also matches old files in the
+        table below. Keep the lookup outside those rows. If that scope
+        matches nothing, use the same first ``button:has-text('下載')`` as
+        the live download script.
+        """
+        scoped = self.page.locator(_GENERATE_DOWNLOAD_BUTTON)
+        if self._locator_count(scoped) > 0:
+            return scoped.first
         button = self.page.locator("button:has-text('下載')")
         if self._locator_count(button) > 0:
             return button.first
