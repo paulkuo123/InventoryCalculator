@@ -477,7 +477,7 @@ InventoryCalculator/
 ## 常見問題
 
 ### Cookies 設置失敗？
-確保您已登入蝦皮賣家中心，並使用 Cookie Editor 正確導出所有 cookies。搜尋與「一鍵更新全賣場庫存」（`POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量）會依序使用 `cookies.json`、CDP `127.0.0.1:9239`、貼上對話框。
+確保您已登入蝦皮賣家中心，並使用 Cookie Editor 正確導出所有 cookies。三層 Cookie 備援（`cookies.json` → CDP `127.0.0.1:9239` → 貼上對話框）只適用於網頁搜尋與「一鍵更新全賣場庫存」（`POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量），不適用於 CLI 爬蟲（`crawler.py`）。
 
 ### 爬蟲執行失敗？
 1. 檢查 `cookies.json` 是否存在且格式正確

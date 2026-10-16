@@ -5,6 +5,8 @@ import json
 import unittest
 from pathlib import Path
 
+from tests.playwright_browser import launch_chromium
+
 INDEX_HTML = Path(__file__).resolve().parent.parent / "index.html"
 SCRIPT_JS = Path(__file__).resolve().parent.parent / "script.js"
 STYLES_CSS = INDEX_HTML.parent / "styles.css"
@@ -95,7 +97,7 @@ class HomepageImportModeBrowserTests(unittest.TestCase):
         payload = json.dumps({"100": {"商品名稱": "匯入商品", "型號": []}}, ensure_ascii=False)
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(args=["--no-sandbox"])
+            browser = launch_chromium(playwright, args=["--no-sandbox"])
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             dialogs = []
             page.on("dialog", lambda dialog: dialogs.append(dialog.message) or dialog.dismiss())
@@ -328,7 +330,7 @@ class HomepageImportModeBrowserTests(unittest.TestCase):
             )
 
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(args=["--no-sandbox"])
+            browser = launch_chromium(playwright, args=["--no-sandbox"])
             page = browser.new_page()
             for width in (375, 640, 1440):
                 page.set_viewport_size({"width": width, "height": 1000})
