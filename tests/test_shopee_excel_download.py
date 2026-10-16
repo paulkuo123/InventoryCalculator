@@ -27,6 +27,7 @@ from shopee_excel_download import (
     record_has_download_button,
     resolve_seller_cdp_endpoints,
     run_mass_update_download,
+    saved_zip_name,
     wait_for_generated_record,
 )
 
@@ -51,6 +52,7 @@ class FakePage:
         self.downloaded_rows = []
         self.form_ready = False
         self.events = []
+        self.suggested_filename = "mass_update_sales_info_1_20991231235959.zip"
 
     def goto(self, url):
         self.events.append("goto")
@@ -142,16 +144,17 @@ class FakePage:
         self.armed = True
         self.events.append("arm")
 
-    def save_href(self, href, dest_dir):
+    def save_href(self, href, dest_dir, record=None):
         self.saved_hrefs.append(href)
-        target = Path(dest_dir) / "mass_update_sales_info.zip"
+        suggested = Path(str(href).split("?", 1)[0]).name
+        target = Path(dest_dir) / saved_zip_name(suggested, record)
         target.write_bytes(FIXTURE_ZIP.read_bytes())
         return target
 
-    def take_download(self, dest_dir):
+    def take_download(self, dest_dir, record=None):
         if not self.armed:
             raise RuntimeError("Reload site?")
-        target = Path(dest_dir) / "mass_update_sales_info.zip"
+        target = Path(dest_dir) / saved_zip_name(self.suggested_filename, record)
         target.write_bytes(FIXTURE_ZIP.read_bytes())
         return target
 
@@ -187,6 +190,7 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertEqual(page.saved_hrefs, [])
         self.assertEqual(page.downloaded_rows, ["new"])
         self.assertEqual(page.file_download_clicks, 1)
+        self.assertEqual(saved.name, "mass_update_sales_info_1_20991231235959.zip")
         self.assertLess(page.events.index("arm"), page.events.index(("row-download", "new")))
         chosen = page.list_records()[-1]
         self.assertNotIn("已處理", chosen["text"])
@@ -231,6 +235,32 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertEqual(page.file_download_clicks, 0)
         self.assertFalse(page.armed)
         self.assertEqual(page.clicks.count("下載"), 1)
+
+    def test_download_keeps_the_server_filename(self):
+        suggested = "mass_update_sales_info_168917920_20261017011724.zip"
+        record = _history("mass_update_sales_info_168917920_20261017011724", button=True)
+        self.assertEqual(saved_zip_name(suggested), suggested)
+        self.assertEqual(saved_zip_name(f"../{suggested}", record), suggested)
+        self.assertEqual(saved_zip_name("mass_update_sales_info.zip", record), suggested)
+        self.assertEqual(saved_zip_name("../../etc/passwd", record), suggested)
+
+        class _Download:
+            suggested_filename = suggested
+
+            def __init__(self):
+                self.saved_path = ""
+
+            def save_as(self, path):
+                self.saved_path = path
+                Path(path).write_bytes(FIXTURE_ZIP.read_bytes())
+
+        download = _Download()
+        page = PlaywrightMassUpdatePage(object())
+        page._download = download
+        with tempfile.TemporaryDirectory() as temp_dir:
+            saved = page.take_download(Path(temp_dir), record)
+            self.assertEqual(saved.name, suggested)
+            self.assertTrue(saved.exists())
 
     def test_header_status_is_ignored_and_the_row_button_means_ready(self):
         started = datetime(2026, 10, 17, 0, 47, 42, tzinfo=ZoneInfo("Asia/Taipei"))
@@ -297,9 +327,9 @@ class MassUpdateDownloadTests(unittest.TestCase):
         page = HistoryPage([record])
         page.clicked = []
 
-        def save_href(href, dest_dir):
+        def save_href(href, dest_dir, record=None):
             page.clicked.append(href)
-            target = Path(dest_dir) / "mass_update_sales_info.zip"
+            target = Path(dest_dir) / saved_zip_name(Path(str(href).split("?", 1)[0]).name, record)
             target.write_bytes(FIXTURE_ZIP.read_bytes())
             return target
 

@@ -3162,9 +3162,28 @@ class ShopeeCrawler:
             return ()
         return tuple(stack[-1])
 
+    def _remember_listing_location(self, page=None):
+        """Keep the live listing URL so a later page=N still has sort and page size."""
+        page = getattr(self, "page", None) if page is None else page
+        if page is None:
+            return
+        try:
+            url = str(getattr(page, "url", "") or "").strip()
+        except Exception:
+            return
+        if "portal/product" not in url:
+            return
+        self._listing_live_url = url
+
+    def _listing_url_base(self):
+        live = str(getattr(self, "_listing_live_url", "") or "").strip()
+        if "portal/product" in live:
+            return live
+        return self._product_list_url()
+
     def _listing_resume_url(self, page_number):
-        """Listing URL for page N. A URL that already has a query uses ``&page=``."""
-        parts = urlparse(self._product_list_url())
+        """Listing URL for page N. Other query params (sort, size) stay put."""
+        parts = urlparse(self._listing_url_base())
         pairs = [
             (key, value)
             for key, value in parse_qsl(parts.query, keep_blank_values=True)
@@ -3180,73 +3199,154 @@ class ShopeeCrawler:
             parts.fragment,
         ))
 
-    def _assert_resumed_listing_page(self, target_page, seen_pages):
-        """The new tab must land on different product IDs than the previous page.
+    def _collected_product_ids(self):
+        data = getattr(self, "products_data", None) or {}
+        if not isinstance(data, dict):
+            return set()
+        return {str(key) for key in data.keys() if str(key).strip()}
 
-        Clicking next on a fresh tab does not move this Seller Centre pager, and
-        the page number stays unreadable. Opening ``page=N`` directly still has
-        to prove the product IDs changed. The same IDs, or a page already
-        collected, fail instead of being read again.
+    def _page_overlaps_collected(self, product_ids):
+        """Any shared ID means this is not a new page. The previous page is not enough."""
+        collected = self._collected_product_ids()
+        if not collected:
+            return False
+        return any(str(product_id) in collected for product_id in (product_ids or ()))
+
+    def _wait_for_uncollected_listing_page(self):
+        """Poll until the visible products share nothing with what we already kept.
+
+        A URL jump is untrusted: page=N often reopens an earlier page. Overlap
+        with any collected ID rejects it, even when the set is not the previous page.
         """
         timeout = self._page_change_timeout()
         poll = self._page_change_poll()
         deadline = time.monotonic() + max(timeout, 0)
-        previous = tuple(self._previous_listing_fingerprint())
-        seen = seen_pages if isinstance(seen_pages, set) else set()
-        page_number = int(target_page)
-        last_ids = ()
         while True:
             landed = self._ordered_product_ids()
-            if landed:
-                last_ids = landed
-                landed_key = tuple(sorted(set(landed)))
-                same_previous = bool(previous) and landed_key == previous
-                already = landed_key in seen
-                if not same_previous and not already:
-                    if previous:
-                        print(
-                            f"新分頁已停在第 {page_number} 頁，商品與上一頁不同"
-                            f"（第一個 {landed[0]}，最後一個 {landed[-1]}）。"
-                        )
-                    else:
-                        print(
-                            f"新分頁已停在第 {page_number} 頁"
-                            f"（第一個 {landed[0]}，最後一個 {landed[-1]}）。"
-                        )
-                    return
+            if landed and not self._page_overlaps_collected(landed):
+                return landed
             if time.monotonic() >= deadline:
-                break
+                return ()
             time.sleep(poll)
-        if not last_ids:
-            raise CrawlIntegrityError(
-                f"新分頁直接開了第 {page_number} 頁，但讀不到商品 ID。"
-                "已停止，不會從第 1 頁再收一次。"
-            )
-        landed_key = tuple(sorted(set(last_ids)))
-        if previous and landed_key == previous:
-            raise CrawlIntegrityError(
-                f"新分頁直接開了第 {page_number} 頁，但商品 ID 與上一頁相同"
-                f"（第一個 {last_ids[0]}，最後一個 {last_ids[-1]}）。"
-                "已停止，不會把同一頁再收一次。"
-            )
-        if landed_key in seen:
-            raise CrawlIntegrityError(
-                f"新分頁直接開了第 {page_number} 頁，但商品 ID 是已經收過的那一頁"
-                f"（第一個 {last_ids[0]}，最後一個 {last_ids[-1]}）。"
-                "已停止，不會把同一頁再收一次。"
-            )
-        raise CrawlIntegrityError(
-            f"新分頁直接開了第 {page_number} 頁，商品清單沒有換成這一頁。"
-            "已停止，不會把同一頁再收一次。"
+
+    def _numbered_page_selectors(self, page_number):
+        number = str(int(page_number))
+        return [
+            (
+                "//*[contains(@class,'eds-pager') or contains(@class,'eds-pagination')]"
+                f"//button[normalize-space(.)='{number}' and not(contains(@class,'button-next'))"
+                " and not(contains(@class,'button-prev'))]"
+            ),
+            f"//button[@aria-label='第 {number} 頁' or @aria-label='第{number}頁']",
+            (
+                f"//*[@role='button' and normalize-space(.)='{number}'"
+                " and ancestor::*[contains(@class,'eds-pager') or contains(@class,'eds-pagination')]]"
+            ),
+        ]
+
+    def _find_numbered_page_button(self, page_number):
+        for selector in self._numbered_page_selectors(page_number):
+            try:
+                buttons = self.driver.find_elements(By.XPATH, selector)
+            except Exception:
+                buttons = []
+            for button in buttons or []:
+                try:
+                    disabled = self._next_button_is_disabled(button)
+                except Exception:
+                    disabled = False
+                if not disabled:
+                    return button
+        return None
+
+    def _click_numbered_listing_page(self, page_number):
+        """Click the pager's own page-N control. Missing or ignored means try the walk."""
+        button = self._find_numbered_page_button(page_number)
+        if button is None:
+            print(f"找不到第 {int(page_number)} 頁的頁碼按鈕。")
+            return False
+        before = self._snapshot_listing_page()
+        print(f"改點頁碼按鈕 {int(page_number)}。")
+        try:
+            button.click()
+        except Exception as error:
+            if _is_target_crashed(error):
+                raise
+            try:
+                self.driver.execute_script("arguments[0].click();", button)
+            except Exception as script_error:
+                if _is_target_crashed(script_error):
+                    raise
+                print(f"頁碼按鈕沒點到：{script_error}")
+                return False
+        try:
+            self._wait_for_listing_page_change(before)
+        except CrawlIntegrityError as error:
+            print(f"頁碼按鈕沒有換成另一批商品：{error}")
+            return False
+        landed = self._ordered_product_ids()
+        if not landed or self._page_overlaps_collected(landed):
+            shown = landed[0] if landed else "（沒有商品）"
+            print(f"頁碼按鈕打開的商品仍與已收過的重疊（第一個 {shown}）。")
+            return False
+        print(
+            f"頁碼 {int(page_number)} 的商品與已收過的不重複"
+            f"（第一個 {landed[0]}，最後一個 {landed[-1]}）。"
         )
+        return True
+
+    def _walk_listing_to_page(self, target_page):
+        """From page 1, click next until page N. Do not collect those pages again."""
+        target = int(target_page)
+        url = self._listing_resume_url(1)
+        print(f"從第 1 頁往下翻到第 {target} 頁，途中不重複收集已看過的頁。")
+        self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        try:
+            self.page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            print("networkidle 等待超時，繼續從第 1 頁往下翻")
+        for step in range(1, target):
+            try:
+                moved = self.go_to_next_page(confirm_change=True)
+            except CrawlIntegrityError as error:
+                raise CrawlIntegrityError(
+                    f"從第 1 頁往下翻到第 {target} 頁時，第 {step} 次下一頁沒有換成新商品。"
+                    f"{error} 頁碼網址和頁碼按鈕都沒有打開這一頁。"
+                    "已停止，不會把已收過的頁再收一次。"
+                ) from error
+            if not moved:
+                raise CrawlIntegrityError(
+                    f"從第 1 頁往下翻到第 {target} 頁失敗，停在第 {step} 頁。"
+                    "頁碼網址和頁碼按鈕都沒有打開新的商品。"
+                    "已停止，不會把已收過的頁再收一次。"
+                )
+
+    def _resume_listing_on_page(self, target_page):
+        """URL page=N is untrusted. Overlap with any collected ID rejects the jump."""
+        target = int(target_page)
+        landed = self._wait_for_uncollected_listing_page()
+        if landed:
+            print(
+                f"新分頁的 page={target} 打開了還沒收過的商品"
+                f"（第一個 {landed[0]}，最後一個 {landed[-1]}）。"
+            )
+            return
+        print(
+            f"page={target} 沒有打開新商品（與已收過的商品 ID 有重疊，或讀不到商品），"
+            "不信任這次網址跳頁。"
+        )
+        if target > 1 and self._click_numbered_listing_page(target):
+            return
+        self._walk_listing_to_page(target)
 
     def _open_fresh_listing_page(self, target_page, seen_pages=None):
-        """Close the tired tab and open the listing URL at page N. Do not click next."""
+        """Close the tired tab and resume at page N without trusting page= alone."""
         if not self._can_open_fresh_listing_page():
             raise CrawlIntegrityError(
                 "分頁當掉後沒有辦法另開新分頁，已停止，不會把這次結果存成正式檔。"
             )
         old_page = getattr(self, "page", None)
+        self._remember_listing_location(old_page)
         new_page = self.context.new_page()
         self.page = new_page
         self._owns_page = True
@@ -3264,15 +3364,15 @@ class ShopeeCrawler:
                     pass
         resume_url = self._listing_resume_url(target_page)
         print(
-            f"新分頁直接開啟清單第 {int(target_page)} 頁（page={int(target_page)}），"
-            "不再從第 1 頁連按下一頁。"
+            f"新分頁先開清單第 {int(target_page)} 頁（page={int(target_page)}），"
+            "並保留原本的排序與每頁筆數。這次跳頁還要跟全部已收商品比對。"
         )
         self.page.goto(resume_url, wait_until="domcontentloaded", timeout=30000)
         try:
             self.page.wait_for_load_state("networkidle", timeout=15000)
         except Exception:
             print("networkidle 等待超時，繼續核對這一頁的商品 ID")
-        self._assert_resumed_listing_page(target_page, seen_pages)
+        self._resume_listing_on_page(target_page)
 
     def get_all_products_info(self):
         try:
@@ -3288,6 +3388,7 @@ class ShopeeCrawler:
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
+                self._remember_listing_location()
                 if self._should_refresh_listing_tab(pages_on_tab):
                     print(
                         f"已連續使用同一個分頁 {pages_on_tab} 頁，"

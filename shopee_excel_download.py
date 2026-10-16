@@ -61,6 +61,7 @@ _SLIDER_RE = re.compile(r"滑塊|向右滑動|拖動滑塊", re.IGNORECASE)
 _FAILED_RE = re.compile(r"失敗|錯誤")
 _FILE_STAMP_RE = re.compile(r"mass_update_sales_info_\d+_(\d{14})")
 _FILE_TOKEN_RE = re.compile(r"mass_update_sales_info_\d+_\d{14}")
+_SERVER_ZIP_RE = re.compile(r"mass_update_sales_info_\d+_\d{14}\.zip\Z")
 _TAIPEI = ZoneInfo("Asia/Taipei")
 DEFAULT_FORM_WAIT_MS = 20000
 # 上方產生報表的「下載」。歷史列的「下載」在 tr 裡，不能算進來。
@@ -231,11 +232,22 @@ def wait_for_generated_record(
     raise MassUpdateError("報表還沒完成，已停止等待，沒有下載，也沒有匯入。")
 
 
+def saved_zip_name(suggested: str = "", record: Optional[Mapping[str, Any]] = None) -> str:
+    """Keep the server filename, for example mass_update_sales_info_<shop>_<stamp>.zip."""
+    candidate = Path(str(suggested or "").replace("\\", "/")).name.strip()
+    if _SERVER_ZIP_RE.fullmatch(candidate):
+        return candidate
+    token = record_file_token(record or {})
+    if token:
+        return f"{token}.zip"
+    return "mass_update_sales_info.zip"
+
+
 def download_record(page: Any, record: Mapping[str, Any], dest_dir: Path) -> Path:
     """Save a real file URL when one exists. Otherwise click that row's button."""
     href = str(record.get("download_href") or "").strip()
     if href and not href.lower().startswith("javascript"):
-        return page.save_href(href, dest_dir)
+        return page.save_href(href, dest_dir, record)
     if not record_has_download_button(record):
         raise MassUpdateError("這一列沒有「下載」按鈕，已停止，沒有下載。")
     page.arm_beforeunload_accept()
@@ -243,7 +255,7 @@ def download_record(page: Any, record: Mapping[str, Any], dest_dir: Path) -> Pat
     if not callable(click_row):
         raise MassUpdateError("沒有辦法點這一列的「下載」，已停止。")
     click_row(record)
-    return page.take_download(dest_dir)
+    return page.take_download(dest_dir, record)
 
 
 def run_mass_update_download(
@@ -465,19 +477,21 @@ class PlaywrightMassUpdatePage:
         except Exception:
             pass
 
-    def save_href(self, href: str, dest_dir: Path) -> Path:
+    def save_href(self, href: str, dest_dir: Path, record: Optional[Mapping[str, Any]] = None) -> Path:
         response = self.page.context.request.get(href)
         if not getattr(response, "ok", False):
             raise MassUpdateError("下載連結沒有成功，已停止，沒有改走上傳。")
-        target = Path(dest_dir) / "mass_update_sales_info.zip"
+        suggested = Path(str(href).split("?", 1)[0]).name
+        target = Path(dest_dir) / saved_zip_name(suggested, record)
         target.write_bytes(response.body())
         return target
 
-    def take_download(self, dest_dir: Path) -> Path:
+    def take_download(self, dest_dir: Path, record: Optional[Mapping[str, Any]] = None) -> Path:
         download = getattr(self, "_download", None)
         if download is None:
             raise MassUpdateError("沒有接到下載檔，已停止。")
-        target = Path(dest_dir) / "mass_update_sales_info.zip"
+        suggested = str(getattr(download, "suggested_filename", "") or "")
+        target = Path(dest_dir) / saved_zip_name(suggested, record)
         download.save_as(str(target))
         return target
 

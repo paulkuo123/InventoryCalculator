@@ -76,6 +76,8 @@ class ListingDriver:
         self.index = 0
         self.on_next = on_next
         self.next_selector = next_selector
+        self.honor_page_button = False
+        self.page_button_clicks = []
 
     def _page(self):
         return self.pages[self.index]
@@ -89,6 +91,10 @@ class ListingDriver:
             return [FakeElement(text=page.indicator)]
         if by == By.XPATH and "架上商品" in value:
             return list(page.count_nodes)
+        page_number = self._requested_page_number(value) if by == By.XPATH else None
+        if page_number is not None:
+            button = self._numbered_page_button(page_number)
+            return [button] if button is not None else []
         if by == By.XPATH:
             return []
         if by == By.CLASS_NAME and value == "eds-table__row":
@@ -128,6 +134,26 @@ class ListingDriver:
     def _click_next(self):
         if self.on_next:
             self.on_next(self)
+
+    def _requested_page_number(self, value):
+        if not getattr(self, "honor_page_button", False):
+            return None
+        match = re.search(r"normalize-space\(\.\)='(\d+)'", value)
+        if match is None:
+            match = re.search(r"第\s*(\d+)\s*頁", value)
+        if match is None:
+            return None
+        if "eds-pager" not in value and "eds-pagination" not in value and "第" not in value:
+            return None
+        return int(match.group(1))
+
+    def _numbered_page_button(self, page_number):
+        def click():
+            self.page_button_clicks.append(page_number)
+            if self.pages:
+                self.index = min(max(int(page_number) - 1, 0), len(self.pages) - 1)
+
+        return FakeElement(text=str(page_number), class_name="eds-pager__page", on_click=click)
 
 
 def model_row(name="黑色", spec_id="9001"):
@@ -999,6 +1025,44 @@ class _PreviousPageContext(ListingContext):
         return tab
 
 
+class _OverlapJumpTab(ListingTab):
+    """page=N shows an earlier product plus a new one, not the requested page."""
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self.visits.append(url)
+        if re.search(r"[?&]page=3(?:&|$)", url) and not getattr(self, "jumped", False):
+            self.jumped = True
+            self.driver.index = len(self.driver.pages) - 1
+            return
+        match = re.search(r"[?&]page=(\d+)", url)
+        if match and self.driver.pages:
+            page_number = int(match.group(1))
+            self.driver.index = min(max(page_number - 1, 0), 3)
+        else:
+            self.driver.index = 0
+
+
+class _OverlapJumpContext(ListingContext):
+    def new_page(self):
+        tab = _OverlapJumpTab(self.driver)
+        self.opened.append(tab)
+        return tab
+
+
+class _FreezeTab(ListingTab):
+    def goto(self, url, wait_until=None, timeout=None):
+        self.visits.append(url)
+        self.driver.index = 0
+        self.driver.freeze_next = True
+
+
+class _FreezeContext(ListingContext):
+    def new_page(self):
+        tab = _FreezeTab(self.driver)
+        self.opened.append(tab)
+        return tab
+
+
 def listing_pages(product_ids):
     pages = []
     total = len(product_ids)
@@ -1083,10 +1147,9 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertEqual(page_two[0]["跳過"], 1)
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
         self.assertEqual(crawler.crawl_count_check["expected"], 4)
-        self.assertEqual(
-            crawler.context.opened[0].visits,
-            ["https://seller.shopee.tw/portal/product/list/live/all?page=2"],
-        )
+        visits = crawler.context.opened[0].visits
+        self.assertIn("page=2", visits[0])
+        self.assertTrue(any("page=1" in visit for visit in visits[1:]))
 
     def test_resume_url_uses_ampersand_when_the_listing_url_already_has_a_query(self):
         crawler = ShopeeCrawler.__new__(ShopeeCrawler)
@@ -1106,6 +1169,15 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertEqual(
             crawler._listing_resume_url(24),
             "https://seller.shopee.tw/portal/product/list/live/all?keyword=cup&page=24",
+        )
+        crawler._listing_live_url = (
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?operationSortBy=recommend_v2&size=12&page=7"
+        )
+        self.assertEqual(
+            crawler._listing_resume_url(8),
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?operationSortBy=recommend_v2&size=12&page=8",
         )
 
         ids = ["101", "102", "103", "104"]
@@ -1148,7 +1220,7 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertIn("不會把同一頁再收一次", message)
         self.assertEqual(list(crawler.products_data), ["111", "112", "113"])
 
-    def test_fresh_tab_that_ignores_page_query_does_not_recollect(self):
+    def test_ignored_url_jump_walks_from_page_one_without_recollecting(self):
         ids = ["101", "102", "103", "104"]
 
         def advance(driver):
@@ -1158,31 +1230,79 @@ class ListingTabRefreshTests(unittest.TestCase):
         crawler = self._crawler(driver, interval=2)
         crawler.context = _StickyContext(driver)
         with redirect_stdout(io.StringIO()):
-            with self.assertRaises(CrawlIntegrityError) as caught:
-                crawler.get_all_products_info()
-        message = str(caught.exception)
-        self.assertIn("已經收過", message)
-        self.assertIn("不會把同一頁再收一次", message)
-        self.assertIn("page=3", crawler.context.opened[0].visits[0])
-        self.assertEqual(list(crawler.products_data), ["101", "102"])
+            crawler.get_all_products_info()
+        visits = crawler.context.opened[0].visits
+        self.assertIn("page=3", visits[0])
+        self.assertTrue(any("page=1" in visit for visit in visits[1:]))
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(len(crawler.products_data), 4)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
 
-    def test_fresh_tab_that_lands_on_the_previous_page_fails(self):
+    def test_ignored_url_jump_uses_the_numbered_page_button(self):
         ids = ["101", "102", "103", "104"]
 
         def advance(driver):
             driver.index += 1
 
         driver = ListingDriver(listing_pages(ids), on_next=advance)
+        driver.honor_page_button = True
         crawler = self._crawler(driver, interval=2)
-        crawler.context = _PreviousPageContext(driver)
+        crawler.context = _StickyContext(driver)
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+        visits = crawler.context.opened[0].visits
+        self.assertEqual(visits, ["https://seller.shopee.tw/portal/product/list/live/all?page=3"])
+        self.assertIn(3, driver.page_button_clicks)
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_overlapping_landed_page_is_not_treated_as_the_new_page(self):
+        ids = ["11", "22", "33", "44"]
+        pages = listing_pages(ids)
+        pages.append(ListingPage(
+            indicator="overlap",
+            rows=shop_rows(["11", "99"]),
+            body_text="架上商品(4)",
+            next_enabled=True,
+        ))
+
+        def advance(driver):
+            if driver.index < 3:
+                driver.index += 1
+
+        driver = ListingDriver(pages, on_next=advance)
+        crawler = self._crawler(driver, interval=2)
+        crawler.context = _OverlapJumpContext(driver)
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertNotIn("99", crawler.products_data)
+        self.assertTrue(crawler._page_overlaps_collected(["99", "11"]))
+        self.assertFalse(crawler._page_overlaps_collected(["77", "88"]))
+        visits = crawler.context.opened[0].visits
+        self.assertIn("page=3", visits[0])
+        self.assertTrue(any("page=1" in visit for visit in visits[1:]))
+        self.assertEqual(crawler.crawl_count_check["expected"], 4)
+
+    def test_ignored_url_jump_and_ignored_next_fails_clearly(self):
+        ids = ["101", "102", "103", "104"]
+
+        def advance(driver):
+            if getattr(driver, "freeze_next", False):
+                return
+            driver.index += 1
+
+        driver = ListingDriver(listing_pages(ids), on_next=advance)
+        crawler = self._crawler(driver, interval=2)
+        crawler.context = _FreezeContext(driver)
         with redirect_stdout(io.StringIO()):
             with self.assertRaises(CrawlIntegrityError) as caught:
                 crawler.get_all_products_info()
         message = str(caught.exception)
-        self.assertIn("與上一頁相同", message)
-        self.assertIn("不會把同一頁再收一次", message)
-        self.assertIn("?page=3", crawler.context.opened[0].visits[0])
+        self.assertIn("從第 1 頁往下翻", message)
+        self.assertIn("不會把已收過的頁再收一次", message)
         self.assertEqual(list(crawler.products_data), ["101", "102"])
+        self.assertIn("page=3", crawler.context.opened[0].visits[0])
 
     def test_target_crash_without_a_new_tab_still_fails_the_integrity_check(self):
         ids = ["101", "102", "103", "104"]
