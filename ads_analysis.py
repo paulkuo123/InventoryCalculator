@@ -33,7 +33,9 @@ from ads_scope import (
 from ads_session import (
     BROWSER_SOURCE_REMOTE,
     detect_window_key_from_name,
+    is_text_csv_export,
     normalize_browser_source,
+    prefer_export_path,
     resolve_cdp_endpoint,
 )
 from config_loader import load_openai_api_key, load_openai_config_value
@@ -315,6 +317,20 @@ def parse_period(value: str) -> Tuple[Optional[str], Optional[str]]:
     return start_text, end_text
 
 
+def ads_export_readable_as_csv(path: str) -> bool:
+    """True for a ``.csv`` export, or a ``.xlsx`` name whose bytes are CSV text.
+
+    Real xlsx workbooks fail the ZIP/PK check and are not parsed. Hits are still
+    read with the CSV reader, so metric calculation is unchanged.
+    """
+    name = os.path.basename(path)
+    if name.endswith(".csv"):
+        return True
+    if name.lower().endswith(".xlsx"):
+        return is_text_csv_export(path)
+    return False
+
+
 def html_text(value: Any) -> str:
     return html.escape("" if value is None else str(value), quote=True)
 
@@ -570,11 +586,9 @@ class AdsAnalyzer:
             raise RuntimeError(f"找不到廣告匯出資料夾: {self.ads_export_dir}")
 
         csv_files = sorted(
-            [
-                os.path.join(self.ads_export_dir, name)
-                for name in os.listdir(self.ads_export_dir)
-                if name.endswith(".csv")
-            ]
+            os.path.join(self.ads_export_dir, name)
+            for name in os.listdir(self.ads_export_dir)
+            if ads_export_readable_as_csv(os.path.join(self.ads_export_dir, name))
         )
         if not csv_files:
             raise RuntimeError("ads_exports 內沒有可分析的 CSV 檔案")
@@ -582,8 +596,10 @@ class AdsAnalyzer:
         latest_by_window: Dict[str, str] = {}
         for path in csv_files:
             window_key = detect_window_key_from_name(os.path.basename(path))
-            if window_key in self.window_order:
-                latest_by_window[window_key] = path
+            if window_key not in self.window_order:
+                continue
+            chosen = latest_by_window.get(window_key)
+            latest_by_window[window_key] = path if chosen is None else prefer_export_path(chosen, path)
 
         report_runs: List[Dict[str, Any]] = []
         metrics: List[Dict[str, Any]] = []
