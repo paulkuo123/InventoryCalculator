@@ -329,7 +329,7 @@
   }
 
   async function loadQueue() {
-    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, urlPresence: $('urlPresence').value, restockOnly: String($('restockOnly').checked), query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), _: String(Date.now()) });
+    const params = new URLSearchParams({ status: $('status').value, tier: $('tier').value, urlPresence: $('urlPresence').value, restockOnly: String($('restockOnly').checked), lowConfidenceOnly: String($('lowConfidenceOnly').checked), sellingSample: String($('sellingSample').checked), query: $('query').value, page: String(state.page), pageSize: String(state.pageSize), _: String(Date.now()) });
     const response = await fetch(`/api/sku-mapping/queue?${params}`, { cache: 'no-store' });
     const data = await response.json();
     if (!response.ok || data.status !== 'success') throw new Error(data.message || '待審核清單載入失敗');
@@ -352,7 +352,20 @@
     });
     updateSelectAllState();
     $('empty').hidden = state.items.length > 0;
+    renderSellingSampleSeed(data.sellingSample);
     renderPagination();
+  }
+
+  function renderSellingSampleSeed(sample) {
+    const node = $('sellingSampleSeed');
+    if (!node) return;
+    if (!$('sellingSample').checked || !sample || !sample.seed) {
+      node.hidden = true;
+      node.textContent = '';
+      return;
+    }
+    node.hidden = false;
+    node.textContent = `種子 ${sample.seed}（抽出 ${sample.sampled}／符合 ${sample.eligible}）`;
   }
 
   async function refreshLatestData(maxAttempts = 3) {
@@ -1433,7 +1446,7 @@
     loadQueue().catch(error => message(error.message, 'error'));
     window.scrollTo({top: 0, behavior: 'smooth'});
   });
-  ['status', 'tier', 'urlPresence', 'restockOnly'].forEach(id => $(id).addEventListener('change', () => { clearSelections(); state.page = 1; reload(); }));
+  ['status', 'tier', 'urlPresence', 'restockOnly', 'lowConfidenceOnly', 'sellingSample'].forEach(id => $(id).addEventListener('change', () => { clearSelections(); state.page = 1; reload(); }));
   document.addEventListener('keydown', event => {
     if (event.key === 'Escape' && !$('reasonModal')?.hidden) {
       closeReasonModal();

@@ -68,6 +68,11 @@
         <select id="urlPresence" aria-label="URL 狀態"><option value="with">有 URL</option><option value="without">沒有 URL</option><option value="all">全部 URL 狀態</option></select>
         <label class="check check-strong"><input id="restockOnly" type="checkbox"> 只看目前需要補貨</label>
         <button id="reload">重新載入</button>
+        <div class="filter-opt-ins">
+          <label class="check check-strong" for="lowConfidenceOnly"><input id="lowConfidenceOnly" type="checkbox"> 只看沒把握 <span class="filter-new">NEW</span></label>
+          <label class="check check-strong" for="sellingSample"><input id="sellingSample" type="checkbox"> 在賣商品抽一成 <span class="filter-new">NEW</span></label>
+          <span id="sellingSampleSeed" class="selling-sample-seed" hidden></span>
+        </div>
       </div>
       </section>
 
