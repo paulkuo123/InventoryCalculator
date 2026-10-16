@@ -61,18 +61,20 @@ class FakeElement:
 
 
 class ListingPage:
-    def __init__(self, indicator, rows, body_text, next_enabled=True):
+    def __init__(self, indicator, rows, body_text, next_enabled=True, count_nodes=None):
         self.indicator = indicator
         self.rows = rows
         self.body_text = body_text
         self.next_enabled = next_enabled
+        self.count_nodes = list(count_nodes or [])
 
 
 class ListingDriver:
-    def __init__(self, pages, on_next=None):
+    def __init__(self, pages, on_next=None, next_selector="class"):
         self.pages = pages
         self.index = 0
         self.on_next = on_next
+        self.next_selector = next_selector
 
     def _page(self):
         return self.pages[self.index]
@@ -80,10 +82,12 @@ class ListingDriver:
     def find_elements(self, by, value):
         page = self._page()
         value = str(value)
-        if by == By.XPATH and "eds-pager__button-next" in value:
+        if by == By.XPATH and self._matches_next_selector(value):
             return [self._next_button(page)]
         if by == By.XPATH and "eds-pager__page-indicator" in value:
             return [FakeElement(text=page.indicator)]
+        if by == By.XPATH and "架上商品" in value:
+            return list(page.count_nodes)
         if by == By.XPATH:
             return []
         if by == By.CLASS_NAME and value == "eds-table__row":
@@ -102,6 +106,15 @@ class ListingDriver:
 
     def execute_script(self, script, *args):
         return None
+
+    def _matches_next_selector(self, value):
+        if self.next_selector == "none":
+            return False
+        if self.next_selector == "aria":
+            return "@aria-label" in value and "@role" not in value and "下一頁" in value
+        if self.next_selector == "role":
+            return "@role='button'" in value and "下一頁" in value
+        return "eds-pager__button-next" in value
 
     def _next_button(self, page):
         class_name = "eds-pager__button-next"
@@ -140,6 +153,50 @@ def product_row(product_id, name, sales="已售出 4", models=None, variation=Tr
     if models:
         children[(By.CLASS_NAME, "model-list-item")] = models
     return FakeElement(text=name, children=children)
+
+
+SHOP_LISTED_TOTAL = 352
+
+
+def shop_rows(product_ids):
+    return [
+        product_row(product_id, f"商品{product_id}", models=[model_row(spec_id=product_id)])
+        for product_id in product_ids
+    ]
+
+
+def paginate_shop(product_ids, sizes, body_text, *, indicator_for, next_selector="class", count_nodes=None):
+    pages = []
+    cursor = 0
+    for index, size in enumerate(sizes):
+        chunk = product_ids[cursor:cursor + size]
+        cursor += size
+        pages.append(ListingPage(
+            indicator=indicator_for(index),
+            rows=shop_rows(chunk),
+            body_text=body_text,
+            next_enabled=index != len(sizes) - 1,
+            count_nodes=count_nodes,
+        ))
+    if cursor != len(product_ids):
+        raise AssertionError(f"page sizes cover {cursor}, not {len(product_ids)}")
+
+    def advance(driver):
+        driver.index += 1
+
+    return ListingDriver(pages, on_next=advance, next_selector=next_selector)
+
+
+def page_sizes_for(total, leading, rest):
+    sizes = list(leading)
+    remaining = total - sum(sizes)
+    if remaining < 0:
+        raise AssertionError(f"leading pages already exceed {total}")
+    while remaining > 0:
+        step = min(rest, remaining)
+        sizes.append(step)
+        remaining -= step
+    return sizes
 
 
 def make_crawler(driver, output_path):
@@ -187,7 +244,11 @@ class ListingIntegrityTests(unittest.TestCase):
         self.assertEqual(parse_listed_product_total("架上商品(355) 355 件商品"), 355)
         self.assertEqual(parse_listed_product_total("架上商品（355）"), 355)
         self.assertEqual(parse_listed_product_total("架上商品(355)\n1 件商品"), 1)
+        self.assertEqual(parse_listed_product_total("架上商品\n352"), 352)
+        self.assertEqual(parse_listed_product_total("架上商品 352"), 352)
+        self.assertEqual(parse_listed_product_total("共有 352 個商品"), 352)
         self.assertIsNone(parse_listed_product_total("沒有總數"))
+        self.assertIsNone(parse_listed_product_total("架上商品"))
 
     def test_stale_page_read_fails_instead_of_rereading_previous_page(self):
         page = ListingPage(
@@ -457,6 +518,7 @@ class ListingIntegrityTests(unittest.TestCase):
             crawler.get_all_products_info()
 
     def test_last_page_indicator_finishes_without_disabled_marker(self):
+        """頁碼寫 2/2 不是停下來的原因。停下來是因為已收集筆數等於頁面總數。"""
         pages = [
             ListingPage(
                 indicator="1 / 2",
@@ -482,7 +544,7 @@ class ListingIntegrityTests(unittest.TestCase):
         self.assertEqual(clicks["n"], 1)
         self.assertEqual(set(crawler.products_data), {"111", "222"})
 
-    def test_short_last_page_stops_without_disabled_marker(self):
+    def test_shorter_page_does_not_stop_while_next_is_enabled(self):
         pages = [
             ListingPage(
                 indicator="",
@@ -490,30 +552,34 @@ class ListingIntegrityTests(unittest.TestCase):
                     product_row("111", "第一個", models=[model_row(spec_id="1")]),
                     product_row("112", "第二個", models=[model_row(spec_id="2")]),
                 ],
-                body_text="架上商品(3) 3 件商品",
+                body_text="架上商品(4) 4 件商品",
                 next_enabled=True,
             ),
             ListingPage(
                 indicator="",
-                rows=[product_row("222", "最後一個", models=[model_row(spec_id="3")])],
-                body_text="架上商品(3) 3 件商品",
+                rows=[product_row("222", "比較少", models=[model_row(spec_id="3")])],
+                body_text="架上商品(4) 4 件商品",
                 next_enabled=True,
             ),
+            ListingPage(
+                indicator="",
+                rows=[product_row("333", "最後一個", models=[model_row(spec_id="4")])],
+                body_text="架上商品(4) 4 件商品",
+                next_enabled=False,
+            ),
         ]
-        clicks = {"n": 0}
 
         def advance(driver):
-            clicks["n"] += 1
-            if driver.index == 0:
-                driver.index = 1
+            driver.index += 1
 
         crawler = make_crawler(ListingDriver(pages, on_next=advance), "unused.json")
         stdout = io.StringIO()
         with redirect_stdout(stdout):
             crawler.get_all_products_info()
-        self.assertEqual(clicks["n"], 1)
-        self.assertEqual(set(crawler.products_data), {"111", "112", "222"})
+        self.assertEqual(set(crawler.products_data), {"111", "112", "222", "333"})
+        self.assertEqual([entry["頁碼"] for entry in crawler.crawl_page_logs], [1, 2, 3])
         self.assertNotIn("翻頁後頁面沒有換成下一頁", stdout.getvalue())
+        self.assertNotIn("已到最後一頁（頁碼", stdout.getvalue())
 
     def test_unreadable_name_is_invalid_and_is_not_labeled_no_spec(self):
         rows = [
@@ -629,7 +695,7 @@ class ListingIntegrityTests(unittest.TestCase):
                 indicator="2 / 2",
                 rows=[product_row("222", "最後一個", models=[model_row(spec_id="3")])],
                 body_text="架上商品(355)",
-                next_enabled=True,
+                next_enabled=False,
             ),
         ]
 
@@ -666,7 +732,7 @@ class ListingIntegrityTests(unittest.TestCase):
                 indicator="",
                 rows=[product_row("111", "重複", models=[model_row(spec_id="1")])],
                 body_text="架上商品(355)",
-                next_enabled=True,
+                next_enabled=False,
             ),
         ]
 
@@ -708,7 +774,7 @@ class ListingIntegrityTests(unittest.TestCase):
                     product_row("333", "第二頁也缺", include_sales=False, variation=False),
                 ],
                 body_text="架上商品(4) 4 件商品",
-                next_enabled=True,
+                next_enabled=False,
             ),
         ]
 
@@ -772,6 +838,96 @@ class ListingIntegrityTests(unittest.TestCase):
             finally:
                 os.umask(previous_umask)
             self.assertEqual(stat.S_IMODE(fresh.stat().st_mode), 0o640)
+
+    def test_blank_page_number_and_shorter_second_page_still_collects_352(self):
+        """10/16 的 #152 跑法：第 2 頁讀不到頁碼、列數比第 1 頁少，不能當成最後一頁。"""
+        import re
+
+        body = "架上商品(352)"
+        self.assertIsNotNone(re.search(r"架上商品\s*[（(]\s*352\s*[）)]", body))
+        ids = [str(100000 + index) for index in range(SHOP_LISTED_TOTAL)]
+        driver = paginate_shop(
+            ids,
+            page_sizes_for(SHOP_LISTED_TOTAL, [13, 12], 24),
+            body,
+            indicator_for=lambda index: "1 / 30" if index == 0 else "",
+        )
+        self.assertEqual(len(driver.pages[0].rows), 13)
+        self.assertEqual(len(driver.pages[1].rows), 12)
+        self.assertEqual(driver.pages[1].indicator, "")
+        crawler = make_crawler(driver, "unused.json")
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        self.assertEqual(len(crawler.products_data), SHOP_LISTED_TOTAL)
+        self.assertEqual(set(crawler.products_data), set(ids))
+        self.assertGreater(len(crawler.crawl_page_logs), 2)
+        self.assertEqual(crawler.crawl_page_logs[0]["成功"], 13)
+        self.assertEqual(crawler.crawl_page_logs[1]["成功"], 12)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["expected"], SHOP_LISTED_TOTAL)
+        self.assertEqual(crawler.crawl_count_check["collected"], SHOP_LISTED_TOTAL)
+        self.assertNotIn("已到最後一頁（頁碼", stdout.getvalue())
+
+    def test_missing_parenthesized_total_and_false_page_number_still_collects_352(self):
+        """10/16 的 main 跑法：body 沒有「架上商品(N)」，頁碼卻寫 1/1，第一頁只有 11 個。"""
+        import re
+
+        body = "架上商品\n352"
+        self.assertIsNone(re.search(r"架上商品\s*[（(]\s*(\d+)\s*[）)]", body))
+        self.assertEqual(parse_listed_product_total(body), SHOP_LISTED_TOTAL)
+        ids = [str(200000 + index) for index in range(SHOP_LISTED_TOTAL)]
+        driver = paginate_shop(
+            ids,
+            page_sizes_for(SHOP_LISTED_TOTAL, [11], 31),
+            body,
+            indicator_for=lambda _index: "1 / 1",
+            next_selector="aria",
+        )
+        self.assertEqual(len(driver.pages[0].rows), 11)
+        self.assertTrue(driver.pages[0].next_enabled)
+        crawler = make_crawler(driver, "unused.json")
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+        self.assertEqual(len(crawler.products_data), SHOP_LISTED_TOTAL)
+        self.assertEqual(crawler.crawl_page_logs[0]["成功"], 11)
+        self.assertGreater(len(crawler.crawl_page_logs), 1)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["expected"], SHOP_LISTED_TOTAL)
+        self.assertEqual(crawler.crawl_count_check["collected"], SHOP_LISTED_TOTAL)
+
+    def test_tab_total_can_come_from_aria_label_when_body_has_no_number(self):
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=[product_row("111", "甲", models=[model_row()])],
+            body_text="架上商品",
+            next_enabled=False,
+            count_nodes=[FakeElement(text="架上商品", attrs={"aria-label": "1"})],
+        )
+        crawler = make_crawler(ListingDriver([page]), "unused.json")
+        self.assertEqual(crawler._listed_total_for_completion(), 1)
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+        self.assertEqual(list(crawler.products_data), ["111"])
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["expected"], 1)
+
+    def test_missing_next_button_does_not_accept_eleven_of_352(self):
+        ids = [str(300000 + index) for index in range(11)]
+        page = ListingPage(
+            indicator="1 / 1",
+            rows=shop_rows(ids),
+            body_text="架上商品\n352",
+            next_enabled=True,
+        )
+        crawler = make_crawler(
+            ListingDriver([page], next_selector="none"),
+            "unused.json",
+        )
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(CrawlIntegrityError, "已收集 11，頁面顯示 352"):
+                crawler.get_all_products_info()
+        self.assertEqual(len(crawler.products_data), 11)
 
 
 if __name__ == "__main__":

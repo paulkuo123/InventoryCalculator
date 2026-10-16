@@ -13,6 +13,7 @@ from shopee_excel_download import (
     MassUpdateBlocked,
     MassUpdateError,
     MassUpdateSafetyError,
+    PlaywrightMassUpdatePage,
     build_argument_parser,
     click_allowed,
     download_and_import,
@@ -37,6 +38,8 @@ class FakePage:
         self.polls = 0
         self.armed = False
         self.saved_hrefs = []
+        self.click_details = []
+        self.file_download_clicks = 0
 
     def goto(self, url):
         self.visited = url
@@ -61,9 +64,17 @@ class FakePage:
     def body_text(self):
         return self.text
 
-    def click_label(self, label):
+    def click_label(self, label, *, expect_download=False, prefer_last=False):
         self.clicks.append(label)
-        if label == "產生報表":
+        self.click_details.append({
+            "label": label,
+            "expect_download": expect_download,
+            "prefer_last": prefer_last,
+        })
+        if expect_download:
+            self.file_download_clicks += 1
+            return
+        if label == "下載":
             self.generated = True
 
     def list_records(self):
@@ -143,9 +154,17 @@ class MassUpdateDownloadTests(unittest.TestCase):
             )
             self.assertTrue(saved.exists())
         self.assertEqual(page.visited, MASS_UPDATE_URL)
-        self.assertEqual(page.clicks, ["價格及庫存", "架上及已售完商品", "產生報表"])
+        self.assertEqual(
+            page.clicks,
+            ["價格及庫存", "所有商品", "架上及已售完商品", "下載"],
+        )
+        self.assertIn("/mass-update/download", page.visited)
+        listed = next(item for item in page.click_details if item["label"] == "架上及已售完商品")
+        generate = next(item for item in page.click_details if item["label"] == "下載")
+        self.assertTrue(listed["prefer_last"])
+        self.assertFalse(generate["expect_download"])
         self.assertEqual(page.saved_hrefs, ["https://seller.example/new.zip"])
-        self.assertNotIn("下載", page.clicks)
+        self.assertEqual(page.file_download_clicks, 0)
         self.assertFalse(page.armed)
 
     def test_reload_dialog_path_arms_beforeunload_before_download_click(self):
@@ -181,7 +200,9 @@ class MassUpdateDownloadTests(unittest.TestCase):
             with self.assertRaises(MassUpdateError) as caught:
                 run_mass_update_download(page, Path(temp_dir), max_polls=3, poll_seconds=0)
         self.assertIn("沒有下載", str(caught.exception))
-        self.assertNotIn("下載", page.clicks)
+        self.assertEqual(page.file_download_clicks, 0)
+        self.assertFalse(page.armed)
+        self.assertEqual(page.clicks.count("下載"), 1)
 
     def test_timeout_does_not_import(self):
         page = FakePage(scenario="pending")
@@ -287,6 +308,118 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertTrue(seen["fail_closed"])
         self.assertIn("900001", seen["catalog"])
         self.assertEqual(seen["catalog"]["900001"]["型號"][0]["月銷量"], "0")
+
+
+class StubDownload:
+    def save_as(self, path):
+        return None
+
+
+class StubExpect:
+    def __init__(self, page):
+        self.page = page
+        self.value = StubDownload()
+
+    def __enter__(self):
+        self.page.expected_download = True
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class StubLocator:
+    def __init__(self, owner, key, count):
+        self.owner = owner
+        self.key = key
+        self._count = count
+
+    def count(self):
+        self.owner.seen.append(("count", self.key))
+        return self._count
+
+    @property
+    def first(self):
+        self.owner.seen.append(("first", self.key))
+        return self
+
+    @property
+    def last(self):
+        self.owner.seen.append(("last", self.key))
+        return self
+
+    def click(self):
+        self.owner.clicked.append(self.key)
+
+    def get_by_text(self, text, exact=False):
+        key = f"{self.key}>text:{text}"
+        return StubLocator(self.owner, key, self.owner.counts.get(key, 0))
+
+
+class StubPlaywrightPage:
+    def __init__(self, counts):
+        self.counts = counts
+        self.seen = []
+        self.clicked = []
+        self.expected_download = False
+        self.url = MASS_UPDATE_URL
+
+    def get_by_text(self, text, exact=False):
+        key = f"text:{text}"
+        return StubLocator(self, key, self.counts.get(key, 0))
+
+    def get_by_role(self, role, name=None, exact=False):
+        key = f"role:{role}:{name}"
+        return StubLocator(self, key, self.counts.get(key, 0))
+
+    def locator(self, selector):
+        key = f"locator:{selector}"
+        return StubLocator(self, key, self.counts.get(key, 0))
+
+    def expect_download(self):
+        return StubExpect(self)
+
+
+class MassUpdateSelectorTests(unittest.TestCase):
+    def test_exact_text_is_used_before_role(self):
+        page = StubPlaywrightPage({"text:價格及庫存": 1, "role:button:價格及庫存": 1})
+        PlaywrightMassUpdatePage(page).click_label("價格及庫存")
+        self.assertEqual(page.clicked, ["text:價格及庫存"])
+        self.assertFalse(page.expected_download)
+        self.assertNotIn(("first", "role:button:價格及庫存"), page.seen)
+
+    def test_role_is_used_when_exact_text_is_missing(self):
+        page = StubPlaywrightPage({"role:tab:價格及庫存": 1})
+        PlaywrightMassUpdatePage(page).click_label("價格及庫存")
+        self.assertEqual(page.clicked, ["role:tab:價格及庫存"])
+
+    def test_listed_status_clicks_the_last_text_match(self):
+        page = StubPlaywrightPage({"text:架上及已售完商品": 2})
+        PlaywrightMassUpdatePage(page).click_label("架上及已售完商品", prefer_last=True)
+        self.assertIn(("last", "text:架上及已售完商品"), page.seen)
+        self.assertEqual(page.clicked, ["text:架上及已售完商品"])
+
+    def test_generate_download_uses_the_button_and_does_not_expect_a_file(self):
+        page = StubPlaywrightPage({"role:button:下載": 1})
+        PlaywrightMassUpdatePage(page).click_label("下載", expect_download=False)
+        self.assertEqual(page.clicked, ["role:button:下載"])
+        self.assertFalse(page.expected_download)
+
+    def test_generate_download_falls_back_to_button_has_text(self):
+        page = StubPlaywrightPage({"locator:button:has-text('下載')": 1})
+        PlaywrightMassUpdatePage(page).click_label("下載", expect_download=False)
+        self.assertEqual(page.clicked, ["locator:button:has-text('下載')"])
+        self.assertFalse(page.expected_download)
+
+    def test_file_download_clicks_the_sales_info_row(self):
+        row = "locator:tr:has-text('mass_update_sales_info')"
+        page = StubPlaywrightPage({
+            row: 1,
+            f"{row}>text:下載": 1,
+        })
+        PlaywrightMassUpdatePage(page).click_label("下載", expect_download=True)
+        self.assertEqual(page.clicked, [f"{row}>text:下載"])
+        self.assertTrue(page.expected_download)
 
 
 if __name__ == "__main__":

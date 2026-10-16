@@ -52,22 +52,33 @@ class CrawlIntegrityError(RuntimeError):
     """清單抓取無法證明完整：換頁失敗、中途出錯、無效列，或數量對不上。"""
 
 
+# 「架上商品(352)」以及分頁標籤把數字拆開的「架上商品 352」「架上商品\n352」。
+_TAB_TOTAL_RE = re.compile(
+    r"架上商品\s*(?:[（(]\s*(\d+)\s*[）)]|(\d+))"
+)
+_LIST_TOTAL_RES = (
+    re.compile(r"(\d+)\s*件商品"),
+    re.compile(r"共有?\s*(\d+)\s*個商品"),
+)
+
+
 def split_listed_product_counts(text):
     """回傳 (架上商品分頁總數, 目前清單件數)。
 
-    「架上商品(N)」是賣場分頁總數；「N 件商品」／「共 N 個商品」是目前這份清單。
+    「架上商品(N)」或「架上商品 N」是賣場分頁總數；
+    「N 件商品」／「共 N 個商品」／「共有 N 個商品」是目前這份清單。
     同一類出現兩個不同數字就失敗。
     """
     if not text:
         return None, None
-    tab_numbers = {
-        int(match)
-        for match in re.findall(r"架上商品\s*[（(]\s*(\d+)\s*[）)]", text)
-    }
-    list_numbers = {
-        int(match) for match in re.findall(r"(\d+)\s*件商品", text)
-    }
-    list_numbers.update(int(match) for match in re.findall(r"共\s*(\d+)\s*個商品", text))
+    tab_numbers = set()
+    for match in _TAB_TOTAL_RE.finditer(text):
+        raw = match.group(1) or match.group(2)
+        if raw:
+            tab_numbers.add(int(raw))
+    list_numbers = set()
+    for pattern in _LIST_TOTAL_RES:
+        list_numbers.update(int(match) for match in pattern.findall(text))
     if len(tab_numbers) > 1:
         shown = "、".join(str(number) for number in sorted(tab_numbers))
         raise CrawlIntegrityError(f"頁面上的「架上商品」總數不一致：{shown}")
@@ -2254,9 +2265,46 @@ class ShopeeCrawler:
         except Exception:
             return ""
 
+    def _read_listing_count_text(self):
+        """頁面文字，加上分頁標籤的 aria-label／title。
+
+        目前賣家中心常把「架上商品」和數字拆開，數字只出現在標籤屬性。
+        """
+        parts = [self._read_page_body_text()]
+        try:
+            nodes = self.driver.find_elements(
+                By.XPATH,
+                "//*[contains(., '架上商品') or contains(@aria-label, '架上商品')"
+                " or contains(@title, '架上商品')]",
+            )
+        except Exception:
+            nodes = []
+        for node in list(nodes)[:12]:
+            try:
+                text = str(getattr(node, "text", "") or "")
+            except Exception:
+                text = ""
+            if len(text) > 80:
+                text = ""
+            extras = []
+            for attr in ("aria-label", "title"):
+                try:
+                    value = node.get_attribute(attr)
+                except Exception:
+                    value = None
+                if value:
+                    extras.append(str(value))
+            if "架上商品" in text and extras:
+                parts.append(" ".join([text, *extras]))
+            else:
+                parts.extend(
+                    extra for extra in extras if "架上商品" in extra
+                )
+        return "\n".join(part for part in parts if part)
+
     def _ensure_collected_count_matches_page(self):
         collected = len(getattr(self, "products_data", {}) or {})
-        tab_total, list_total = split_listed_product_counts(self._read_page_body_text())
+        tab_total, list_total = split_listed_product_counts(self._read_listing_count_text())
         keyword = str(getattr(self, "search_keyword", "") or "").strip()
         if tab_total is not None and list_total is not None and tab_total != list_total:
             print(
@@ -2274,7 +2322,8 @@ class ShopeeCrawler:
             total = None
         if total is None:
             raise CrawlIntegrityError(
-                "抓取結束後在頁面上找不到商品總數（例如「架上商品(355)」），"
+                "抓取結束後在頁面上找不到商品總數"
+                "（例如「架上商品(355)」或「架上商品 355」），"
                 "無法確認有沒有漏抓，已停止。"
             )
         if collected != total:
@@ -2349,23 +2398,27 @@ class ShopeeCrawler:
         else:
             print("看不出每頁固定筆數，沒有做頁數範圍檢查。這不是總數核對。")
 
-    def _parse_page_indicator_numbers(self, indicator):
-        match = re.search(r"(\d+)\s*/\s*(\d+)", str(indicator or ""))
-        if not match:
-            return None, None
-        return int(match.group(1)), int(match.group(2))
+    def _listed_total_for_completion(self):
+        """拿來判斷「收集筆數已經到頁面總數」的數字。
 
-    def _known_last_listing_page(self, snapshot):
-        """頁碼已經到總頁數，或這一頁的商品列少於先前看過的整頁，就當成最後一頁。"""
-        current, total = self._parse_page_indicator_numbers(
-            (snapshot or {}).get("indicator"))
-        if current is not None and total is not None and total >= 1 and current >= total:
-            return True
-        known_size = getattr(self, "listing_full_page_size", None)
-        product_count = len(tuple((snapshot or {}).get("rows") or ()))
-        if known_size and product_count < known_size:
-            return True
-        return False
+        有清單件數就用清單件數。沒有清單件數時，只有沒在搜尋關鍵字才用架上商品總數。
+        關鍵字結果不能拿全店總數來提前結束。
+        """
+        tab_total, list_total = split_listed_product_counts(self._read_listing_count_text())
+        keyword = str(getattr(self, "search_keyword", "") or "").strip()
+        if list_total is not None:
+            return list_total
+        if tab_total is not None and not keyword:
+            return tab_total
+        return None
+
+    def _collected_reaches_listed_total(self):
+        total = self._listed_total_for_completion()
+        collected = len(getattr(self, "products_data", {}) or {})
+        if total is None or total <= 0 or collected < total:
+            return False
+        print(f"已收集 {collected} 筆，達到頁面顯示總數 {total}，不再點下一頁")
+        return True
 
     def _remember_full_listing_page_size(self, snapshot):
         product_count = len(tuple((snapshot or {}).get("rows") or ()))
@@ -2375,49 +2428,81 @@ class ShopeeCrawler:
         if known_size is None or product_count > known_size:
             self.listing_full_page_size = product_count
 
+    def _next_page_selectors(self):
+        """舊的 eds-pager class 優先，接著才是 aria-label／role 文字。"""
+        return [
+            "//button[contains(@class, 'eds-pager__button-next')]",
+            "//button[contains(@class, 'eds-button--frameless') and contains(@class, 'eds-pager__button-next')]",
+            "//button[contains(@class, 'eds-pagination__button-next')]",
+            "//button[contains(@aria-label, '下一頁') or contains(@aria-label, '下一页')]",
+            "//*[@role='button' and (normalize-space(.)='下一頁' or normalize-space(.)='下一页'"
+            " or contains(@aria-label, '下一頁') or contains(@aria-label, '下一页'))]",
+            "//button[contains(@class, 'pagination-next') or contains(@class, 'btn-next')]",
+            "//li[contains(@class, 'next')]/button",
+            "//div[contains(@class, 'pagination') or contains(@class, 'pager')]"
+            "//button[contains(normalize-space(.), '下一頁') or contains(normalize-space(.), '›')]",
+        ]
+
+    def _next_button_is_disabled(self, button):
+        disabled_attr = button.get_attribute("disabled")
+        aria = str(button.get_attribute("aria-disabled") or "").strip().lower()
+        btn_class = button.get_attribute("class") or ""
+        return (
+            disabled_attr is not None
+            or aria in {"true", "1"}
+            or ("disabled" in btn_class)
+        )
+
+    def _locate_next_page_button(self):
+        """回傳 (button, status)。status 是 ready、disabled 或 missing。"""
+        saw_disabled = False
+        for selector in self._next_page_selectors():
+            try:
+                buttons = self.driver.find_elements(By.XPATH, selector)
+            except Exception:
+                buttons = []
+            if not buttons:
+                continue
+            button = buttons[0]
+            btn_class = button.get_attribute("class") or ""
+            if not self._next_button_is_disabled(button):
+                print(f"找到下一頁按鈕: {btn_class}")
+                return button, "ready"
+            saw_disabled = True
+            print(f"找到下一頁按鈕，但已被禁用: {btn_class}")
+        if saw_disabled:
+            return None, "disabled"
+        return None, "missing"
+
     def go_to_next_page(self, confirm_change=True):
         """
         嘗試點擊下一頁按鈕。
-        confirm_change 為真時，會等到頁碼或商品列真的換了才返回；逾時則失敗。
+
+        最後一頁只看兩個訊號：下一頁按鈕已停用，或已收集筆數達到頁面顯示的總數。
+        讀不到頁碼、頁碼顯示 1/1、這一頁列數比前面少，都不會當成最後一頁。
+        confirm_change 為真時，會等到商品列真的換了才返回；逾時則失敗。
+        數據中心月銷量傳 confirm_change=False，不拿商品清單總數提前結束。
         :return: 如果成功點擊下一頁則返回 True，否則返回 False
         """
         try:
             before = self._snapshot_listing_page() if confirm_change else None
-            if confirm_change and self._known_last_listing_page(before):
-                indicator = (before or {}).get("indicator") or "（沒有頁碼）"
-                print(f"已到最後一頁（頁碼「{indicator}」），不再點下一頁")
+            if confirm_change and self._collected_reaches_listed_total():
                 return False
 
-            # 尋找下一頁按鈕，使用您提供的 class
-            next_page_selectors = [
-                "//button[contains(@class, 'eds-pager__button-next')]",
-                "//button[contains(@class, 'eds-button--frameless') and contains(@class, 'eds-pager__button-next')]",
-                "//button[contains(@class, 'eds-button eds-button--small eds-button--frameless eds-button--block eds-pager__button-next')]",
-                # 保留原有的選擇器作為備用
-                "//button[contains(@class, 'pagination-next') and not(@disabled)]",
-                "//li[contains(@class, 'next')]/button",
-                "//div[contains(@class, 'pagination')]//button[contains(text(), '下一頁') or contains(text(), '›')]"
-            ]
-
-            next_button = None
-            for selector in next_page_selectors:
-                buttons = self.driver.find_elements(By.XPATH, selector)
-                if buttons and len(buttons) > 0:
-                    # 檢查按鈕是否被禁用（同時檢查 HTML disabled 屬性和 CSS class）
-                    btn_disabled_attr = buttons[0].get_attribute('disabled')
-                    btn_class = buttons[0].get_attribute('class') or ''
-                    is_disabled = (btn_disabled_attr is not None) or ('disabled' in btn_class)
-                    
-                    if not is_disabled:
-                        next_button = buttons[0]
-                        print(f"找到下一頁按鈕: {btn_class}")
-                        break
-                    else:
-                        print(
-                            f"找到下一頁按鈕，但已被禁用: {btn_class}"
+            next_button, status = self._locate_next_page_button()
+            if status == "disabled":
+                print("下一頁按鈕已停用，視為最後一頁")
+                return False
+            if next_button is None:
+                if confirm_change:
+                    total = self._listed_total_for_completion()
+                    collected = len(getattr(self, "products_data", {}) or {})
+                    if total is not None and collected < total:
+                        raise CrawlIntegrityError(
+                            f"還沒有收集完（已收集 {collected}，頁面顯示 {total}），"
+                            "但找不到可以點的下一頁按鈕。"
+                            "已停止，不會把這次結果存成正式檔。"
                         )
-
-            if not next_button:
                 print("未找到下一頁按鈕或已到達最後一頁")
                 return False
 
@@ -2448,7 +2533,7 @@ class ShopeeCrawler:
                 time.sleep(1.5)
                 return True
 
-            print("等待頁碼或商品列實際換頁...")
+            print("等待商品列實際換頁...")
             self._wait_for_listing_page_change(before)
             self._remember_full_listing_page_size(before)
             return True
@@ -2977,6 +3062,7 @@ class ShopeeCrawler:
             self.crawl_page_logs = []
             self.crawl_invalid_rows = []
             self.crawl_count_check = None
+            seen_pages = set()
 
             while has_next_page:
                 print(f"\n===== 正在處理第 {page} 頁 =====")
@@ -3008,6 +3094,15 @@ class ShopeeCrawler:
 
                 # ── 關鍵步驟 3：再次捲動以載入展開後才出現的子型號行 ──
                 self.scroll_to_load_all_rows()
+
+                fingerprint = tuple(self._snapshot_listing_page().get("rows") or ())
+                if fingerprint and fingerprint in seen_pages:
+                    raise CrawlIntegrityError(
+                        "翻頁後又回到已經收過的同一批商品，但下一頁按鈕沒有停用。"
+                        "已停止，不會把這次結果存成正式檔。"
+                    )
+                if fingerprint:
+                    seen_pages.add(fingerprint)
 
                 self._collect_current_listing_page(page)
 

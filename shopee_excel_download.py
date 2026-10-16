@@ -6,7 +6,12 @@ and ``--cdp-endpoint``. When the endpoint is omitted, seller Chrome is
 
 The flow only clicks an allowlisted set of labels. Upload, save, and update
 controls are rejected before the driver is touched. Login walls, captchas, and
-sliders stop the run.
+sliders stop the run. The download page is
+``/portal/product-mass/mass-update/download``:「價格及庫存」, then「所有商品」,
+then the last「架上及已售完商品」, then the「下載」button that generates the
+file. Locators try exact text first and role (button, tab, option, menuitem,
+radio) second. The products write lock and the half-count guard still run
+inside ``commit_converted_catalog``.
 
 This module does not log into seller center. Tests pass a fake page.
 """
@@ -36,15 +41,19 @@ from shopee_excel_import import (
     restock_like_full_shop_crawler,
 )
 
-MASS_UPDATE_URL = "https://seller.shopee.tw/portal/product-mass/mass-update"
+# 下載頁。舊的 /mass-update 首頁現在沒有「價格及庫存」也沒有「產生報表」。
+MASS_UPDATE_URL = "https://seller.shopee.tw/portal/product-mass/mass-update/download"
 
 # Exact visible labels this flow may click. Anything else is refused.
 ALLOWED_CLICK_LABELS = frozenset({
     "價格及庫存",
+    "所有商品",
     "架上及已售完商品",
-    "產生報表",
     "下載",
 })
+# 「架上及已售完商品」在下拉選單裡可能出現兩次，要點最後一個。
+_PREFER_LAST_LABELS = frozenset({"架上及已售完商品"})
+_LABEL_ROLES = ("button", "tab", "option", "menuitem", "radio")
 FORBIDDEN_CLICK_RE = re.compile(r"上傳|儲存|更新")
 _SLIDER_RE = re.compile(r"滑塊|向右滑動|拖動滑塊", re.IGNORECASE)
 _DONE_RE = re.compile(r"完成|成功|可下載")
@@ -71,14 +80,24 @@ class MassUpdateSafetyError(MassUpdateError):
     """A click was outside the download-only allowlist."""
 
 
-def click_allowed(page: Any, label: str) -> None:
+def click_allowed(
+    page: Any,
+    label: str,
+    *,
+    expect_download: bool = False,
+    prefer_last: bool = False,
+) -> None:
     """Click one exact allowlisted label. Upload, save, and update never pass."""
     text = str(label or "").strip()
     if text not in ALLOWED_CLICK_LABELS or FORBIDDEN_CLICK_RE.search(text):
         raise MassUpdateSafetyError(
             f"拒絕點擊「{text}」。這個流程只能下載，不能上傳、儲存或更新。"
         )
-    page.click_label(text)
+    page.click_label(
+        text,
+        expect_download=expect_download,
+        prefer_last=prefer_last or text in _PREFER_LAST_LABELS,
+    )
 
 
 def assert_session_clear(page: Any) -> None:
@@ -161,7 +180,7 @@ def download_record(page: Any, record: Mapping[str, Any], dest_dir: Path) -> Pat
     if href and not href.lower().startswith("javascript"):
         return page.save_href(href, dest_dir)
     page.arm_beforeunload_accept()
-    click_allowed(page, "下載")
+    click_allowed(page, "下載", expect_download=True)
     return page.take_download(dest_dir)
 
 
@@ -172,17 +191,24 @@ def run_mass_update_download(
     max_polls: int = DEFAULT_MAX_POLLS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
 ) -> Path:
-    """Open the mass-update tool, generate the listed-stock report, download the zip."""
+    """Open the mass-update download page, generate the listed-stock report, save the zip.
+
+    Current Seller Centre (2026-10): open the download URL, choose「價格及庫存」,
+    open the「所有商品」menu, pick「架上及已售完商品」, then click the「下載」
+    button that generates the file. There is no「產生報表」button.
+    """
     dest_dir = Path(dest_dir)
     dest_dir.mkdir(parents=True, exist_ok=True)
     page.goto(MASS_UPDATE_URL)
     assert_session_clear(page)
     click_allowed(page, "價格及庫存")
     assert_session_clear(page)
+    click_allowed(page, "所有商品")
+    assert_session_clear(page)
     click_allowed(page, "架上及已售完商品")
     assert_session_clear(page)
     before = {record_signature(record) for record in page.list_records()}
-    click_allowed(page, "產生報表")
+    click_allowed(page, "下載", expect_download=False)
     record = wait_for_generated_record(
         page,
         before,
@@ -236,20 +262,70 @@ class PlaywrightMassUpdatePage:
         except Exception:
             return ""
 
-    def click_label(self, label: str) -> None:
-        locator = self.page.get_by_text(label, exact=True)
+    def _locator_count(self, locator: Any) -> int:
         try:
-            count = locator.count()
-        except Exception as exc:
-            raise MassUpdateError(f"畫面上找不到「{label}」，已停止。") from exc
-        if count <= 0:
-            raise MassUpdateError(f"畫面上找不到「{label}」，已停止。")
-        if label == "下載":
+            return int(locator.count())
+        except Exception:
+            return 0
+
+    def _pick(self, locator: Any, prefer_last: bool) -> Any:
+        return locator.last if prefer_last else locator.first
+
+    def _visible_label_locator(self, label: str, *, prefer_last: bool) -> Any:
+        """Exact text first (what the live download used), then role fallbacks."""
+        text = self.page.get_by_text(label, exact=True)
+        if self._locator_count(text) > 0:
+            return self._pick(text, prefer_last)
+        for role in _LABEL_ROLES:
+            role_locator = self.page.get_by_role(role, name=label, exact=True)
+            if self._locator_count(role_locator) > 0:
+                return self._pick(role_locator, prefer_last)
+        raise MassUpdateError(f"畫面上找不到「{label}」，已停止。")
+
+    def _generate_download_locator(self) -> Any:
+        """The page-level button that creates the report, not a history-row link."""
+        role = self.page.get_by_role("button", name="下載", exact=True)
+        if self._locator_count(role) > 0:
+            return role.first
+        button = self.page.locator("button:has-text('下載')")
+        if self._locator_count(button) > 0:
+            return button.first
+        raise MassUpdateError("畫面上找不到「下載」按鈕，已停止。")
+
+    def _file_download_locator(self) -> Any:
+        """Download control on the new mass_update_sales_info row."""
+        row = self.page.locator("tr:has-text('mass_update_sales_info')")
+        if self._locator_count(row) > 0:
+            target = row.first.get_by_text("下載", exact=True)
+            if self._locator_count(target) > 0:
+                return target.first
+        text = self.page.get_by_text("下載", exact=True)
+        if self._locator_count(text) > 0:
+            return text.last
+        role = self.page.get_by_role("button", name="下載", exact=True)
+        if self._locator_count(role) > 0:
+            return role.last
+        raise MassUpdateError("畫面上找不到「下載」，已停止。")
+
+    def click_label(
+        self,
+        label: str,
+        *,
+        expect_download: bool = False,
+        prefer_last: bool = False,
+    ) -> None:
+        if label == "下載" and expect_download:
+            locator = self._file_download_locator()
+        elif label == "下載":
+            locator = self._generate_download_locator()
+        else:
+            locator = self._visible_label_locator(label, prefer_last=prefer_last)
+        if expect_download:
             with self.page.expect_download() as download_info:
-                locator.first.click()
+                locator.click()
             self._download = download_info.value
             return
-        locator.first.click()
+        locator.click()
 
     def list_records(self) -> List[Dict[str, str]]:
         return list(self.page.evaluate(
