@@ -50,7 +50,11 @@ def source_product_candidates(
                 "productId": product_id,
                 "productName": str(raw_product.get("商品名稱") or ""),
                 "productImageUrl": str(raw_product.get("商品圖片網址") or ""),
-                "sold": str(raw_product.get("已售出總數量") or "0"),
+                "sold": (
+                    None
+                    if raw_product.get("已售出總數量", "0") is None
+                    else str(raw_product.get("已售出總數量") or "0")
+                ),
                 "monthlySales": str(raw_product.get("總月銷量") or "0"),
                 "modelCount": len(models),
                 "models": [

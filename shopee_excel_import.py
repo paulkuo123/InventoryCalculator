@@ -81,6 +81,18 @@ def _usable_text(value: Any) -> str:
     return text
 
 
+def _sold_total_from_previous(old_product: Mapping[str, Any]) -> Any:
+    """Keep an unknown sold total as None. Do not turn it into 0."""
+    if not isinstance(old_product, dict) or "已售出總數量" not in old_product:
+        return ""
+    value = old_product.get("已售出總數量")
+    if value is None:
+        return None
+    if not _usable_text(value):
+        return ""
+    return str(parse_count(value))
+
+
 def _excel_id(value: Any) -> str:
     """Normalize an Excel id cell. Calamine may return int or 123.0."""
     if isinstance(value, bool) or value is None:
@@ -307,8 +319,11 @@ def build_products(
         if not spec_rows:
             # Crawler: no variation DOM rows -> keep the product, store no models.
             product["無規格"] = True
-            if _usable_text(old_product.get("已售出總數量")):
-                product["已售出總數量"] = str(parse_count(old_product.get("已售出總數量")))
+            preserved_sold = _sold_total_from_previous(old_product)
+            if preserved_sold is None:
+                product["已售出總數量"] = None
+            elif preserved_sold:
+                product["已售出總數量"] = preserved_sold
             products[product_id] = product
             continue
 
@@ -330,8 +345,11 @@ def build_products(
                 if sales is None and _usable_text(old_model.get("月銷量")):
                     model["月銷量"] = str(parse_count(old_model.get("月銷量")))
             models.append(model)
-        if _usable_text(old_product.get("已售出總數量")):
-            product["已售出總數量"] = str(parse_count(old_product.get("已售出總數量")))
+        preserved_sold = _sold_total_from_previous(old_product)
+        if preserved_sold is None:
+            product["已售出總數量"] = None
+        elif preserved_sold:
+            product["已售出總數量"] = preserved_sold
         else:
             product["已售出總數量"] = str(sum(parse_count(model.get("已售出數量")) for model in models))
         product["型號"] = models
@@ -360,8 +378,12 @@ def _apply_restock(products: Dict[str, Any], inventory_month: int) -> None:
         models = product.get("型號") or []
         total_monthly = sum(parse_count(model.get("月銷量")) for model in models)
         product["總月銷量"] = str(total_monthly)
-        total_sold = parse_count(product.get("已售出總數量"))
-        product["已售出總數量"] = str(total_sold)
+        raw_sold = product.get("已售出總數量")
+        if raw_sold is None:
+            total_sold = None
+        else:
+            total_sold = parse_count(raw_sold)
+            product["已售出總數量"] = str(total_sold)
         total_restock = 0
         for model in models:
             monthly = parse_count(model.get("月銷量"))
