@@ -3456,15 +3456,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         const keyword = searchInput.value.trim();
-        const headlessModeElement = document.getElementById('headlessMode');
         const inventoryMonthElement = document.getElementById('inventoryMonth');
         
-        if (!headlessModeElement) {
-            console.error('找不到 headlessMode 元素');
-            return;
-        }
-        
-        const showBrowser = headlessModeElement.checked;
+        // 搜尋預設用 cookies 直接讀賣家中心 API，不開瀏覽器；
+        // 只有 API 不能用、退回逐頁爬時才會開，這時照舊顯示出來方便處理驗證。
+        const showBrowser = true;
         const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
         
         

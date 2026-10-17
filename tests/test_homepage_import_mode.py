@@ -11,7 +11,7 @@ INDEX_HTML = Path(__file__).resolve().parent.parent / "index.html"
 SCRIPT_JS = Path(__file__).resolve().parent.parent / "script.js"
 STYLES_CSS = INDEX_HTML.parent / "styles.css"
 
-PERFORM_SEARCH_SHA256 = "b8caeaa08982e1059e9bf84a4573f6203a59fa7113f3ef4b5f339838322975cb"
+PERFORM_SEARCH_SHA256 = "c234c087bb5cafa6c4ab9782016faf6f9296aabe3eb697027ed2908ce3b2f050"
 
 
 def perform_search_source(script):
