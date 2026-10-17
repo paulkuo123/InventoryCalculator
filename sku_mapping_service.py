@@ -18,6 +18,7 @@ import html
 import json
 import math
 import os
+import random
 import re
 from sku_spec import split_spec_dimensions
 import shutil
@@ -102,6 +103,17 @@ AI_VERIFIED_GREEN_CONFIDENCE_THRESHOLD = 0.90
 DEFERRED_REVIEW_REASON = "人工保留，稍後比較候選"
 UNAPPROVABLE_SNAPSHOT_STATUSES = frozenset({"stale", "waiting_for_login", "error", "suspected_discontinued"})
 REVIEW_TIERS = {"green", "yellow", "red", "approved"}
+# classify_review_tier already marks an uncertain suggestion yellow: AI confidence
+# under the configured green thresholds stays yellow, and a rule suggestion that
+# is not uniquely exact stays yellow for human comparison.  Red is a block, not
+# a low-confidence match.  The workbench filter reads this tier and does not
+# add another numeric cutoff.
+LOW_CONFIDENCE_REVIEW_TIER = "yellow"
+# Reproducible 10% sample.  Eligibility is productMonthlySales from the live
+# Shopee file (總月銷量, else the sum of 月銷量), which the crawler fills from
+# the 近 30 天 / 過去 30 天 window.
+SELLING_SAMPLE_SEED = "sku-mapping-selling-10pct-v1"
+SELLING_SAMPLE_PERCENT = 10
 MAX_REVIEW_CANDIDATES = 4
 GOLDEN_BACKUP_KEEP = 3
 PROMPT_VERSION = "2026-09-v2"
@@ -1421,6 +1433,41 @@ def missing_suggestion_evidence_fields(evidence: Any) -> List[str]:
         if key not in ai:
             missing.append(f"ai.{key}")
     return missing
+
+
+def select_selling_sample(
+    rows: Sequence[Mapping[str, Any]],
+    seed: str = SELLING_SAMPLE_SEED,
+    percent: int = SELLING_SAMPLE_PERCENT,
+) -> Tuple[List[Any], Dict[str, Any]]:
+    """Draw a reproducible floor(percent)% sample of rows with recent product sales.
+
+    ``productMonthlySales`` comes from the live Shopee snapshot (總月銷量, or
+    the sum of 月銷量). The crawler stores that figure from the 近 30 天 /
+    過去 30 天 window, so a positive value means the product sold in the last
+    30 days. Zero-sales rows are excluded. The draw sorts eligible ids, then
+    shuffles with ``random.Random(seed)`` and keeps ``len * percent // 100``.
+    """
+    eligible = [item for item in rows if float(item.get("productMonthlySales") or 0) > 0]
+    ordered = sorted(
+        eligible,
+        key=lambda item: (
+            str(item.get("product_id") or ""),
+            str(item.get("model_id") or ""),
+            str(item.get("id") or ""),
+        ),
+    )
+    rng = random.Random(seed)
+    rng.shuffle(ordered)
+    keep_count = (len(ordered) * int(percent)) // 100
+    chosen_ids = {str(item.get("id")) for item in ordered[:keep_count]}
+    filtered = [item for item in rows if str(item.get("id")) in chosen_ids]
+    return filtered, {
+        "seed": seed,
+        "percent": int(percent),
+        "eligible": len(ordered),
+        "sampled": keep_count,
+    }
 
 
 class MappingConflict(RuntimeError):
@@ -3200,6 +3247,8 @@ class SkuMappingService:
         url_presence: str = "with",
         page: int = 1,
         page_size: int = 50,
+        low_confidence_only: bool = False,
+        selling_sample: bool = False,
     ) -> Dict[str, Any]:
         status = str(status or "review").strip()
         query = normalize_text(query)
@@ -3419,6 +3468,16 @@ class SkuMappingService:
                     ai=ai_payload if isinstance(ai_payload, dict) else None,
                 )
                 item["final_score"] = self._item_final_score(item)
+        # Opt-in filters run after the row list is built and before the
+        # existing sort, so a request that leaves both off is unchanged.
+        selling_sample_meta = None
+        if low_confidence_only:
+            result = [
+                item for item in result
+                if str(item.get("review_tier") or "") == LOW_CONFIDENCE_REVIEW_TIER
+            ]
+        if selling_sample:
+            result, selling_sample_meta = select_selling_sample(result)
         tier_order = {"green": 0, "yellow": 1, "red": 2, "approved": 3}
         # Keep each product together.  Products are ordered by total monthly
         # sales (falling back to the sum of their model sales); variants inside
@@ -3437,7 +3496,7 @@ class SkuMappingService:
         result = result[(page - 1) * page_size: page * page_size]
         self._attach_negative_examples(result)
         self._decorate_score_explanations(result)
-        return {
+        payload = {
             "status": "success",
             "items": result,
             "total": int(total),
@@ -3445,6 +3504,9 @@ class SkuMappingService:
             "pageSize": page_size,
             "inventorySource": inventory_source,
         }
+        if selling_sample_meta is not None:
+            payload["sellingSample"] = selling_sample_meta
+        return payload
 
     @staticmethod
     def _model_lookup(
