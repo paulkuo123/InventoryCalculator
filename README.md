@@ -212,6 +212,7 @@ python main.py
 執行後會自動開啟網頁介面。
 
 - 庫存首頁：可進行商品搜尋、庫存儀表板與補貨判讀。首頁「一鍵更新全賣場庫存」會 `POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量；Cookie 先讀 `cookies.json`，接著 CDP `127.0.0.1:9239`，最後才開貼上對話框。
+  - 預設整個目錄都從 API 建：庫存（`total_seller_stock`，和「價格及庫存」Excel 核對過一致）、商品與型號名稱、圖片（型號自己的圖 → 同一個第一層選項的圖 → 商品主圖，都沒有才用舊檔或 golden_table）。`SHOPEE_STOCK_SOURCE=excel` 改回下載 Excel 拿庫存。
   - 銷量來源（`shopee_seller_api.py`）：在同一個賣家中心分頁用 GET 讀頁面自己打的 JSON，一個接一個送、不並發。商品列表 `get_product_list` 給每個型號精確的累計已售出；數據中心 `mydata/v4/product/performance` 給過去 30 天與最近幾個完整月份的型號件數。型號用 `規格ID` 對應。商品的已售出總數量是型號加總，因為列表上的商品數字含已刪除商品。
   - 缺貨型號（庫存 0）的月銷量估算用「最近 `SHOPEE_BEST_MONTHS`（預設 3）個完整月中最高的單月件數」，和過去 30 天取大者；設 0 就改回已售出數量佔比。
   - `SHOPEE_API_DELAY_SECONDS` 是請求間隔（預設 0）。429、5xx 或 `code` 不是 0 會退避重試一次，再失敗就停，不寫正式檔；401/403 直接停。`SHOPEE_SALES_SOURCE=datacenter_page` 改回逐列讀數據中心頁面。

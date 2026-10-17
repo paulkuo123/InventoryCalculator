@@ -373,6 +373,61 @@ def fetch_sales_via_api_on_page(page: Any, products: Dict[str, Any], env: Option
     return products
 
 
+def import_from_seller_api(
+    page: Any,
+    *,
+    destination: Path,
+    golden_table: Mapping[str, Any],
+    inventory_month: int,
+    env: Mapping[str, str],
+) -> Dict[str, Any]:
+    """Build the catalog from seller-centre JSON only: stock, names, sold, sales.
+
+    Same commit path and ratio guard as the Excel import. Any API error
+    raises before the official file is touched.
+    """
+    from shopee_excel_import import ExcelImportError, build_products
+    from shopee_seller_api import (
+        SellerApiError,
+        best_months_from_env,
+        fetch_product_list,
+        fetch_sales,
+        rows_from_listing,
+        seller_api_for_page,
+    )
+
+    raw_page = getattr(page, "page", None)
+    if raw_page is None:
+        raise MassUpdateError("沒有可共用的賣家中心頁面，已停止，沒有寫入正式檔。")
+    destination = Path(destination)
+    try:
+        api = seller_api_for_page(raw_page, env)
+        listed = fetch_product_list(api)
+        rows = rows_from_listing(listed)
+        if not rows:
+            raise SellerApiError("商品列表是空的，已停止。")
+        payload = build_products(
+            rows,
+            previous=load_previous_catalog(destination),
+            inventory_month=inventory_month,
+        )
+        _clear_monthly_sales(payload)
+        stats = fetch_sales(api, payload, best_months=best_months_from_env(env), listed=listed)
+    except (SellerApiError, ExcelImportError) as exc:
+        raise MassUpdateError(f"賣家中心 API 抓取失敗，沒有寫入正式檔：{exc}") from exc
+    print(
+        f"賣家中心 API：{stats['apiCalls']} 次請求，{len(listed)} 個商品，"
+        f"對上 {stats['matchedModels']} 個型號。"
+    )
+    restocked = restock_like_full_shop_crawler(payload, inventory_month)
+    return commit_converted_catalog(
+        destination,
+        restocked,
+        golden_table,
+        message="已用賣家中心 API 更新 shopee_products.json（庫存、已售出、月銷量）",
+    )
+
+
 def download_and_import(
     *,
     destination: Path,
@@ -386,18 +441,39 @@ def download_and_import(
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     sales_fetcher: Any = None,
 ) -> Dict[str, Any]:
-    """Download the zip, fill monthly sales, then commit. No write if sales fail."""
+    """Update the catalog from seller centre, then commit. No write if anything fails.
+
+    Default: stock, names, sold counts, and sales all come from seller-centre
+    JSON (``import_from_seller_api``). ``SHOPEE_STOCK_SOURCE=excel`` downloads
+    the「價格及庫存」zip for stock and names and reads sales from the API;
+    ``SHOPEE_SALES_SOURCE=datacenter_page`` also reads sales from the data
+    centre page row by row.
+    """
     source = normalize_browser_source(browser_source)
     if source != BROWSER_SOURCE_REMOTE:
         raise MassUpdateBlocked(
             "BROWSER_SOURCE",
             "這個下載只會接到已經開好的賣家中心 Chrome（--browser-source remote），不會另外開瀏覽器。",
         )
+    run_env = env if env is not None else os.environ
+    use_api_stock = (
+        sales_fetcher is None
+        and run_env.get("SHOPEE_STOCK_SOURCE", "").strip() != "excel"
+        and run_env.get("SHOPEE_SALES_SOURCE", "").strip() != "datacenter_page"
+    )
     session = None
     if page is None:
-        session, _endpoint = attach_seller_page(cdp_endpoint, env if env is not None else os.environ)
+        session, _endpoint = attach_seller_page(cdp_endpoint, run_env)
         page = PlaywrightMassUpdatePage(session.new_page())
     try:
+        if use_api_stock:
+            return import_from_seller_api(
+                page,
+                destination=destination,
+                golden_table=golden_table,
+                inventory_month=inventory_month,
+                env=run_env,
+            )
         with tempfile.TemporaryDirectory(prefix="shopee-mass-update-") as temp_dir:
             zip_path = run_mass_update_download(
                 page,
@@ -414,7 +490,6 @@ def download_and_import(
                 inventory_month=inventory_month,
             )
             _clear_monthly_sales(payload)
-            run_env = env if env is not None else os.environ
             if sales_fetcher is not None:
                 fetch = sales_fetcher
             elif run_env.get("SHOPEE_SALES_SOURCE", "").strip() == "datacenter_page":

@@ -23,9 +23,15 @@ from shopee_seller_api import (
 def _product(pid, sold, models):
     return {
         "id": int(pid),
+        "name": f"商品{pid}",
         "statistics": {"sold_count": sold},
         "model_list": [
-            {"id": int(mid), "statistics": {"sold_count": msold}, "stock_detail": {"total_seller_stock": stock}}
+            {
+                "id": int(mid),
+                "name": f"型號{mid}",
+                "statistics": {"sold_count": msold},
+                "stock_detail": {"total_seller_stock": stock},
+            }
             for mid, msold, stock in models
         ],
     }
@@ -175,6 +181,32 @@ class SellerApiTests(unittest.TestCase):
         api, sleeps = self._api(shop, delay_seconds=0.5)
         fetch_sales(api, _catalog(), today=TODAY, best_months=0)
         self.assertEqual(sleeps, [0.5, 0.5])
+
+    def test_images_come_from_the_listing_with_sibling_and_cover_fallback(self):
+        product = {
+            "id": 1, "name": "襪子", "cover_image": "cover-id", "statistics": {"sold_count": 1},
+            "model_list": [
+                {"id": 11, "name": "紅-S", "image": "red-id", "tier_index": [0, 0], "statistics": {}, "stock_detail": {}},
+                {"id": 12, "name": "紅-M", "image": "", "tier_index": [0, 1], "statistics": {}, "stock_detail": {}},
+                {"id": 13, "name": "白-S", "image": "", "tier_index": [1, 0], "statistics": {}, "stock_detail": {}},
+            ],
+        }
+        shop = FakeShop({}, list_pages=[[product]])
+        catalog = {"1": {"商品名稱": "襪子", "商品圖片網址": "old", "型號": [
+            {"型號名稱": "紅-S", "規格ID": "11", "型號圖片網址": "old"},
+            {"型號名稱": "紅-M", "規格ID": "12"},
+            {"型號名稱": "白-S", "規格ID": "13"},
+        ]}}
+        fetch_sales(self._api(shop)[0], catalog, today=TODAY, best_months=0)
+        self.assertEqual(catalog["1"]["商品圖片網址"], "https://cf.shopee.tw/file/cover-id_tn")
+        self.assertEqual(
+            [m["型號圖片網址"] for m in catalog["1"]["型號"]],
+            [
+                "https://cf.shopee.tw/file/red-id_tn",
+                "https://cf.shopee.tw/file/red-id_tn",
+                "https://cf.shopee.tw/file/cover-id_tn",
+            ],
+        )
 
     def test_month_helpers(self):
         self.assertEqual(recent_full_months(date(2026, 2, 3), 3), [(2026, 1), (2025, 12), (2025, 11)])

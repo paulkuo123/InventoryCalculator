@@ -34,6 +34,8 @@ PERFORMANCE_PAGE_SIZE = 50
 MAX_PAGES = 200
 DEFAULT_BEST_MONTHS = 3
 TAIPEI = ZoneInfo("Asia/Taipei")
+# Same thumbnail URL shape the crawler and golden_table use.
+IMAGE_URL_TEMPLATE = "https://cf.shopee.tw/file/{}_tn"
 
 # fetch(url) -> (http_status, parsed_json_or_None)
 Fetch = Callable[[str], Tuple[int, Optional[Mapping[str, Any]]]]
@@ -120,7 +122,12 @@ def _require_list(container: Any, key: str, where: str) -> List[Mapping[str, Any
 
 
 def fetch_product_list(api: SellerApi) -> Dict[str, Dict[str, Any]]:
-    """Return {product_id: {"sold": int, "models": {model_id: {"sold", "stock"}}}}."""
+    """Return {product_id: {"name", "sold", "stock", "models": {model_id: {"name", "sold", "stock"}}}}.
+
+    Stock is ``total_seller_stock``. It matched the「價格及庫存」Excel on all
+    5,852 models of a live shop on 2026-10-17 (one model differed by a sale
+    made between the two reads).
+    """
     found: Dict[str, Dict[str, Any]] = {}
     for page_number in range(1, MAX_PAGES + 1):
         body = api.get(PRODUCT_LIST_PATH, {
@@ -138,12 +145,19 @@ def fetch_product_list(api: SellerApi) -> Dict[str, Dict[str, Any]]:
             for model in product.get("model_list") or []:
                 if not isinstance(model, Mapping) or not str(model.get("id") or "").strip():
                     continue
+                tier_index = model.get("tier_index")
                 models[str(model["id"])] = {
+                    "name": str(model.get("name") or "").strip(),
+                    "image": str(model.get("image") or "").strip(),
+                    "first_tier": tier_index[0] if isinstance(tier_index, list) and tier_index else None,
                     "sold": _count((model.get("statistics") or {}).get("sold_count")),
                     "stock": _count((model.get("stock_detail") or {}).get("total_seller_stock")),
                 }
             found[product_id] = {
+                "name": str(product.get("name") or "").strip(),
+                "image": str(product.get("cover_image") or "").strip(),
                 "sold": _count((product.get("statistics") or {}).get("sold_count")),
+                "stock": _count((product.get("stock_detail") or {}).get("total_seller_stock")),
                 "models": models,
             }
         total = _count((data.get("page_info") or {}).get("total"))
@@ -186,6 +200,49 @@ def fetch_model_units(
     raise SellerApiError("數據中心頁數超過上限，已停止。")
 
 
+def image_url(image_id: str) -> str:
+    return IMAGE_URL_TEMPLATE.format(image_id) if image_id else ""
+
+
+def model_image_ids(listing: Mapping[str, Any]) -> Dict[str, str]:
+    """Image id per model: its own, else a sibling with the same first option, else the cover."""
+    models = listing.get("models") or {}
+    by_tier: Dict[Any, str] = {}
+    for model in models.values():
+        if model.get("image") and model.get("first_tier") is not None:
+            by_tier.setdefault(model["first_tier"], model["image"])
+    cover = listing.get("image") or ""
+    return {
+        model_id: model.get("image") or by_tier.get(model.get("first_tier"), "") or cover
+        for model_id, model in models.items()
+    }
+
+
+def rows_from_listing(listed: Mapping[str, Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Turn the product list into「價格及庫存」rows for ``shopee_excel_import.build_products``."""
+    rows: List[Dict[str, Any]] = []
+    for product_id, product in listed.items():
+        models = product.get("models") or {}
+        if not models:
+            rows.append({
+                "商品ID": product_id,
+                "商品名稱": product.get("name", ""),
+                "商品選項ID": "",
+                "商品規格名稱": "",
+                "庫存": product.get("stock", 0),
+            })
+            continue
+        for model_id, model in models.items():
+            rows.append({
+                "商品ID": product_id,
+                "商品名稱": product.get("name", ""),
+                "商品選項ID": model_id,
+                "商品規格名稱": model.get("name", ""),
+                "庫存": model.get("stock", 0),
+            })
+    return rows
+
+
 def _midnight(day: date) -> int:
     return int(datetime(day.year, day.month, day.day, tzinfo=TAIPEI).timestamp())
 
@@ -217,7 +274,10 @@ def apply_api_sales(
     past_30_days: Mapping[str, Mapping[str, int]],
     months: Sequence[Mapping[str, Mapping[str, int]]],
 ) -> Dict[str, int]:
-    """Write sold counts, 30-day sales, and best full month onto catalog models.
+    """Write sold counts, 30-day sales, best full month, and images onto the catalog.
+
+    Images come from the listing when it has one; otherwise the previous file
+    or golden_table fills them later.
 
     Models are matched by 規格ID, which is the seller-centre model id. The
     product total is the sum of its models' sold counts, because the
@@ -229,6 +289,9 @@ def apply_api_sales(
             continue
         listing = listed.get(str(product_id)) or {}
         listed_models = listing.get("models") or {}
+        if listing.get("image"):
+            product["商品圖片網址"] = image_url(listing["image"])
+        images = model_image_ids(listing)
         units_30 = past_30_days.get(str(product_id)) or {}
         models = [model for model in product.get("型號") or [] if isinstance(model, dict)]
         for model in models:
@@ -246,6 +309,8 @@ def apply_api_sales(
                 continue
             stats["matchedModels"] += 1
             model["已售出數量"] = str(listed_model["sold"])
+            if images.get(model_id):
+                model["型號圖片網址"] = image_url(images[model_id])
             if _count(model.get("商品庫存")) != listed_model["stock"]:
                 stats["stockMismatches"] += 1
         if models and listed_models:
@@ -261,10 +326,15 @@ def fetch_sales(
     *,
     today: Optional[date] = None,
     best_months: int = DEFAULT_BEST_MONTHS,
+    listed: Optional[Mapping[str, Mapping[str, Any]]] = None,
 ) -> Dict[str, int]:
-    """Fetch everything first, then write. A failed call leaves ``products`` untouched."""
+    """Fetch everything first, then write. A failed call leaves ``products`` untouched.
+
+    Pass ``listed`` when the product list was already fetched for stock.
+    """
     today = today or datetime.now(TAIPEI).date()
-    listed = fetch_product_list(api)
+    if listed is None:
+        listed = fetch_product_list(api)
     start, end = past_30_days_bounds(today)
     past_30_days = fetch_model_units(api, start, end, "past30days")
     months = []

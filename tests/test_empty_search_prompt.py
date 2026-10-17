@@ -53,8 +53,8 @@ class EmptySearchAndExcelApiTests(unittest.TestCase):
         self.assertIn("匯入現有商品資料", html)
         self.assertIn("一鍵更新全賣場", html)
         self.assertIn("一鍵更新全賣場庫存", html)
-        self.assertIn("新・採用 Excel，比整店爬蟲快", html)
-        self.assertIn('title="新功能：採用 Excel，比整店爬蟲快"', html)
+        self.assertIn("新・直接讀賣家中心 API，約十幾秒更新庫存與銷量", html)
+        self.assertIn('title="新功能：直接讀賣家中心 API，不用下載 Excel"', html)
         self.assertIn('class="search-mode-new"', html)
         self.assertIn(">NEW<", html)
         self.assertNotIn("one-click-new", html)
@@ -141,7 +141,7 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
             )
             self.assertEqual(state["keywordPressed"], "true")
             self.assertEqual(state["onePressed"], "false")
-            self.assertEqual(state["title"], "新功能：採用 Excel，比整店爬蟲快")
+            self.assertEqual(state["title"], "新功能：直接讀賣家中心 API，不用下載 Excel")
             self.assertEqual(state["pillText"], "NEW")
             self.assertEqual(state["pillPointer"], "none")
             self.assertEqual(state["keywordBg"], "rgb(238, 77, 45)")
@@ -186,7 +186,7 @@ class EmptySearchPromptBrowserTests(unittest.TestCase):
             self.assertTrue(one_click["inputHidden"])
             self.assertFalse(one_click["oneHidden"])
             self.assertTrue(one_click["searchHidden"])
-            self.assertIn("新・採用 Excel，比整店爬蟲快", one_click["hint"])
+            self.assertIn("新・直接讀賣家中心 API，約十幾秒更新庫存與銷量", one_click["hint"])
             self.assertTrue(page.locator("#oneClickUpdateButton").is_enabled())
             one_slot_height = page.locator("#oneClickSlot").bounding_box()["height"]
             one_month_y = page.locator("#inventoryMonth").bounding_box()["y"]

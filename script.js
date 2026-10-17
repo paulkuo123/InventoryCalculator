@@ -2457,9 +2457,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateStatusMessage(progress) {
         if (window.oneClickUpdateRunning) {
             if (progress < 40) {
-                statusMessage.textContent = '正在下載價格及庫存...';
+                statusMessage.textContent = '正在讀取商品與庫存...';
             } else if (progress < 75) {
-                statusMessage.textContent = '正在抓取月銷量...';
+                statusMessage.textContent = '正在抓取銷量...';
             } else {
                 statusMessage.textContent = '正在計算建議補貨...';
             }
@@ -3413,7 +3413,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const loading = document.getElementById('loading');
         if (loading) loading.style.display = 'block';
         const progressInterval = startProgressSimulation();
-        if (statusMessage) statusMessage.textContent = '正在下載價格及庫存...';
+        if (statusMessage) statusMessage.textContent = '正在讀取商品與庫存...';
         try {
             const form = new FormData();
             form.append('inventoryMonth', selectedInventoryMonth());
