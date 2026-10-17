@@ -574,6 +574,23 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def refresh_seller_cookies(base_dir: Optional[Path] = None, env: Optional[Mapping[str, str]] = None) -> None:
+    """Same refresh the home page does: check cookies.json, else re-read ego lite / Chrome.
+
+    Never asks for input. If nothing works, the update falls back to seller Chrome.
+    """
+    run_env = env if env is not None else os.environ
+    if run_env.get("SHOPEE_SELLER_API_TRANSPORT", "").strip() == "browser":
+        return
+    from cookie_fallback import CookiesExpired, ensure_shopee_cookies
+
+    try:
+        result = ensure_shopee_cookies(str(base_dir or Path(__file__).resolve().parent), interactive=False)
+        print(f"cookies 來源：{result.source}")
+    except CookiesExpired:
+        print("cookies.json 已失效，ego lite 和 Chrome 也讀不到，改用賣家中心 Chrome。")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_argument_parser().parse_args(list(argv) if argv is not None else None)
     golden_path = Path(args.golden_table)
@@ -581,6 +598,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         golden_table = {}
         if golden_path.exists():
             golden_table = json.loads(golden_path.read_text(encoding="utf-8"))
+        refresh_seller_cookies()
         result = download_and_import(
             destination=Path(args.output),
             golden_table=golden_table if isinstance(golden_table, dict) else {},

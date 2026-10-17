@@ -333,16 +333,28 @@ _EGO_COOKIE_SCRIPT = r"""
 const isShopee = (c) => /(^|\.)shopee\.tw$/.test(String(c.domain || "").replace(/^\./, ""));
 let cookies = [];
 let error = "";
-for (const [method, params] of [
-  ["Storage.getCookies", {}],
-  ["Network.getCookies", { urls: ["https://shopee.tw/", "https://seller.shopee.tw/"] }],
-]) {
-  try {
-    const result = await cdp(method, params);
-    cookies = (result.cookies || []).filter(isShopee);
-    if (cookies.length) break;
-  } catch (e) {
-    error = String((e && e.message) || e);
+let task = null;
+try {
+  // cdp() needs a task space; a blank page in our own space is enough to read the profile's cookies.
+  task = await taskSpace("InventoryCalculator shopee cookie read");
+  const page = task.page("p1");
+  for (const [method, params] of [
+    ["Storage.getCookies", {}],
+    ["Network.getCookies", { urls: ["https://shopee.tw/", "https://seller.shopee.tw/"] }],
+  ]) {
+    try {
+      const result = await page.cdp(method, params);
+      cookies = (result.cookies || []).filter(isShopee);
+      if (cookies.length) break;
+    } catch (e) {
+      error = String((e && e.message) || e);
+    }
+  }
+} catch (e) {
+  error = String((e && e.message) || e);
+} finally {
+  if (task) {
+    try { await task.finish({ keep: [] }); } catch (e) {}
   }
 }
 console.log(JSON.stringify({ ok: cookies.length > 0, cookies, error }));

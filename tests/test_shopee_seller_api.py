@@ -421,49 +421,48 @@ def _jar(**overrides):
 
 class _Response:
     def __init__(self, status, body):
-        self.status, self._body = status, body
+        self.status_code, self._body = status, body
 
-    def read(self):
+    def json(self):
+        if self._body is None:
+            raise ValueError("not json")
         return self._body
 
-    def __enter__(self):
-        return self
 
-    def __exit__(self, *_exc):
-        return False
+class _Session:
+    """Stands in for requests.Session."""
 
-
-class _Opener:
     def __init__(self, shop):
         self.shop, self.requests = shop, []
 
-    def open(self, request, timeout=None):
-        self.requests.append(request)
-        status, body = self.shop(request.full_url)
-        import json
-        return _Response(status, json.dumps(body).encode("utf-8"))
+    def get(self, url, headers=None, timeout=None, allow_redirects=True):
+        self.requests.append({"url": url, "headers": headers, "allow_redirects": allow_redirects})
+        status, body = self.shop(url)
+        return _Response(status, body)
 
 
 class DirectHttpTests(unittest.TestCase):
     def test_plain_http_sends_seller_cookies_and_reads_the_list(self):
         from shopee_seller_api import fetch_product_list, seller_api_from_cookies
 
-        opener = _Opener(FakeShop({}))
-        api = seller_api_from_cookies(_jar(), {}, opener=opener)
+        session = _Session(FakeShop({}))
+        api = seller_api_from_cookies(_jar(), {}, session=session)
         listed = fetch_product_list(api)
         self.assertEqual(sorted(listed), ["1", "2"])
-        request = opener.requests[0]
-        self.assertEqual(request.get_method(), "GET")
-        cookie = request.get_header("Cookie")
+        self.assertEqual(len(session.requests), 2)  # both pages on the one session
+        request = session.requests[0]
+        self.assertFalse(request["allow_redirects"])
+        self.assertEqual(request["headers"]["Accept-Encoding"], "gzip")
+        cookie = request["headers"]["Cookie"]
         self.assertIn("SPC_SC_SESSION=sess-1", cookie)  # seller.shopee.tw wins
         self.assertNotIn("OTHER=", cookie)
-        self.assertEqual(parse_qs(urlparse(request.full_url).query)["SPC_CDS"], ["cds-1"])
+        self.assertEqual(parse_qs(urlparse(request["url"]).query)["SPC_CDS"], ["cds-1"])
 
     def test_a_missing_login_cookie_is_refused_before_any_request(self):
         from shopee_seller_api import seller_api_from_cookies
 
         with self.assertRaisesRegex(SellerApiError, "SPC_ST"):
-            seller_api_from_cookies(_jar(SPC_ST=None), {}, opener=_Opener(FakeShop({})))
+            seller_api_from_cookies(_jar(SPC_ST=None), {}, session=_Session(FakeShop({})))
 
     def test_cookie_file_or_browser(self):
         import json

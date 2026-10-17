@@ -203,7 +203,29 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertEqual(args.cdp_endpoint, "http://127.0.0.1:9235")
 
     def test_cli_refuses_local_browser(self):
-        self.assertEqual(main(["--browser-source", "mac"]), 2)
+        # Without usable cookies the CLI needs seller Chrome, and never a local one.
+        # Patched so the test never reads the real cookies.json or writes the real catalog.
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                patch("shopee_excel_download.refresh_seller_cookies", lambda *_a, **_k: None), \
+                patch("shopee_seller_api.seller_api_from_cookie_file", lambda *_a, **_k: None):
+            output = Path(temp_dir) / "shopee_products.json"
+            self.assertEqual(main(["--browser-source", "mac", "--output", str(output)]), 2)
+            self.assertFalse(output.exists())
+
+    def test_cli_cookie_refresh_never_prompts_and_tolerates_expiry(self):
+        from cookie_fallback import CookiesExpired
+        from shopee_excel_download import refresh_seller_cookies
+
+        seen = []
+
+        def expired(base_dir, *, interactive):
+            seen.append(interactive)
+            raise CookiesExpired()
+
+        with patch("cookie_fallback.ensure_shopee_cookies", expired):
+            refresh_seller_cookies(Path("/nowhere"), env={})
+            refresh_seller_cookies(Path("/nowhere"), env={"SHOPEE_SELLER_API_TRANSPORT": "browser"})
+        self.assertEqual(seen, [False])
 
     def test_fake_page_import_does_not_attach_cdp(self):
         def fail_attach(*_args, **_kwargs):

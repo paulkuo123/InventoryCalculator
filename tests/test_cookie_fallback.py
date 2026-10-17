@@ -338,10 +338,16 @@ class CookieFallbackBranchTests(unittest.TestCase):
             self.assertNotIn(COOKIES_REQUIRED, str(caught.exception))
             self.assertNotIn("local-bad", self._blob(str(caught.exception)))
 
-        for name in ("crawler.py", "shopee_excel_download.py", "cookie_refresher.py", "ads_weekly.py"):
+        for name in ("crawler.py", "cookie_refresher.py", "ads_weekly.py"):
             text = (ROOT / name).read_text(encoding="utf-8")
             self.assertNotIn("ensure_shopee_cookies", text)
             self.assertNotIn("cookiePasteModal", text)
+        # The one-click CLI refreshes cookies too, but only the non-prompting way.
+        text = (ROOT / "shopee_excel_download.py").read_text(encoding="utf-8")
+        self.assertIn("ensure_shopee_cookies(", text)
+        self.assertIn("interactive=False", text)
+        self.assertNotIn("interactive=True", text)
+        self.assertNotIn("cookiePasteModal", text)
 
     def test_non_loopback_cdp_is_refused_with_zero_requests(self):
         calls = {"http": 0, "ws": 0}
