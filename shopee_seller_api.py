@@ -39,6 +39,10 @@ PERFORMANCE_PAGE_SIZE = 50
 MAX_PAGES = 200
 DEFAULT_BEST_MONTHS = 3
 TAIPEI = ZoneInfo("Asia/Taipei")
+# Full months are cached because they barely change. An entry fetched within
+# this many days after its month ended is fetched again (late cancellations).
+MONTH_CACHE_SETTLE_DAYS = 7
+MONTH_CACHE_FILENAME = "shopee_month_units.json"
 # Same thumbnail URL shape the crawler and golden_table use.
 IMAGE_URL_TEMPLATE = "https://cf.shopee.tw/file/{}_tn"
 
@@ -347,11 +351,14 @@ def fetch_sales(
     best_months: int = DEFAULT_BEST_MONTHS,
     listed: Optional[Mapping[str, Mapping[str, Any]]] = None,
     search: bool = False,
+    month_cache: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, int]:
     """Fetch everything first, then write. A failed call leaves ``products`` untouched.
 
     Pass ``listed`` when the product list was already fetched for stock.
     ``search`` means ``listed`` is a keyword result, not the whole shop.
+    ``month_cache`` (see ``load_month_cache``) skips settled full months and
+    is updated in place with whole-shop months fetched here; the caller saves it.
     """
     today = today or datetime.now(TAIPEI).date()
     if listed is None:
@@ -373,14 +380,69 @@ def fetch_sales(
     start, end = past_30_days_bounds(today)
     past_30_days = units(start, end, "past30days")
     months = []
+    fetched_months: Dict[str, Any] = {}
+    cached_count = 0
     for year, month in recent_full_months(today, best_months):
+        cached = _cached_month(month_cache, year, month) if month_cache is not None else None
+        if cached is not None:
+            months.append(cached)
+            cached_count += 1
+            continue
         start, end = month_bounds(year, month)
-        months.append(units(start, end, "month"))
+        month_units = units(start, end, "month")
+        months.append(month_units)
+        if not search:
+            fetched_months[_month_key(year, month)] = {
+                "fetchedOn": today.isoformat(),
+                "units": month_units,
+            }
     stats = apply_api_sales(products, listed, past_30_days, months)
     stats["apiCalls"] = api.calls
     if stats["unmatchedModels"] and not stats["matchedModels"]:
         raise SellerApiError("沒有任何型號的規格 ID 對得上商品列表，已停止。")
+    stats["cachedMonths"] = cached_count
+    if month_cache is not None:
+        month_cache.update(fetched_months)
     return stats
+
+
+def load_month_cache(path: Any) -> Dict[str, Any]:
+    """Read the full-month cache; a missing or unreadable file is an empty cache."""
+    import json
+    from pathlib import Path
+
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_month_cache(path: Any, cache: Mapping[str, Any]) -> None:
+    from pathlib import Path
+
+    from shopee_products_import import atomic_write_json
+
+    atomic_write_json(Path(path), dict(cache))
+
+
+def _month_key(year: int, month: int) -> str:
+    return f"{year:04d}-{month:02d}"
+
+
+def _cached_month(cache: Mapping[str, Any], year: int, month: int) -> Optional[Dict[str, Dict[str, int]]]:
+    entry = cache.get(_month_key(year, month))
+    if not isinstance(entry, Mapping) or not isinstance(entry.get("units"), Mapping):
+        return None
+    try:
+        fetched = date.fromisoformat(str(entry.get("fetchedOn")))
+    except ValueError:
+        return None
+    _start, end = month_bounds(year, month)
+    month_end = datetime.fromtimestamp(end, TAIPEI).date()
+    if fetched < month_end + timedelta(days=MONTH_CACHE_SETTLE_DAYS):
+        return None
+    return {str(pid): dict(models) for pid, models in entry["units"].items() if isinstance(models, Mapping)}
 
 
 def seller_api_for_page(page: Any, env: Optional[Mapping[str, str]] = None) -> SellerApi:

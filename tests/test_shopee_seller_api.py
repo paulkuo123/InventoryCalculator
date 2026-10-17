@@ -209,6 +209,43 @@ class SellerApiTests(unittest.TestCase):
             ],
         )
 
+    def test_settled_months_come_from_the_cache(self):
+        catalog = _catalog()
+        cache = {}
+        stats = fetch_sales(self._api(FakeShop(_units()))[0], catalog, today=date(2026, 10, 3), month_cache=cache)
+        self.assertEqual(stats["cachedMonths"], 0)
+        self.assertEqual(sorted(cache), ["2026-07", "2026-08", "2026-09"])
+
+        # Next day: September was fetched under 7 days after it ended, so only it is fetched again.
+        shop = FakeShop(_units())
+        stats = fetch_sales(self._api(shop)[0], _catalog(), today=date(2026, 10, 4), month_cache=cache)
+        self.assertEqual(stats["cachedMonths"], 2)
+        perf = [parse_qs(urlparse(url).query) for url in shop.urls if PERFORMANCE_PATH in url]
+        self.assertEqual([query["period"] for query in perf], [["past30days"], ["month"]])
+
+        # The cached months still give the same best month.
+        later = _catalog()
+        fetch_sales(self._api(FakeShop(_units()))[0], later, today=TODAY, month_cache={
+            key: {**value, "fetchedOn": "2026-10-30"} for key, value in cache.items()
+        })
+        self.assertEqual(later["1"]["型號"][0]["近月最高銷量"], "20")
+
+    def test_search_reads_but_never_writes_the_cache(self):
+        cache = {}
+        fetch_sales(self._api(FakeShop(_units()))[0], _catalog(), today=TODAY, month_cache=cache, search=True)
+        self.assertEqual(cache, {})
+
+    def test_cache_file_round_trip(self):
+        from shopee_seller_api import load_month_cache, save_month_cache
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "months.json"
+            self.assertEqual(load_month_cache(path), {})
+            save_month_cache(path, {"2026-09": {"fetchedOn": "2026-10-17", "units": {"1": {"11": 3}}}})
+            self.assertEqual(load_month_cache(path)["2026-09"]["units"], {"1": {"11": 3}})
+            path.write_text("not json", encoding="utf-8")
+            self.assertEqual(load_month_cache(path), {})
+
     def test_month_helpers(self):
         self.assertEqual(recent_full_months(date(2026, 2, 3), 3), [(2026, 1), (2025, 12), (2025, 11)])
         start, end = month_bounds(2026, 8)

@@ -390,9 +390,12 @@ def import_from_seller_api(
     from shopee_seller_api import (
         SellerApiError,
         best_months_from_env,
+        MONTH_CACHE_FILENAME,
         fetch_product_list,
         fetch_sales,
+        load_month_cache,
         rows_from_listing,
+        save_month_cache,
         seller_api_for_page,
     )
 
@@ -412,20 +415,33 @@ def import_from_seller_api(
             inventory_month=inventory_month,
         )
         _clear_monthly_sales(payload)
-        stats = fetch_sales(api, payload, best_months=best_months_from_env(env), listed=listed)
+        cache_path = destination.parent / MONTH_CACHE_FILENAME
+        month_cache = load_month_cache(cache_path)
+        stats = fetch_sales(
+            api,
+            payload,
+            best_months=best_months_from_env(env),
+            listed=listed,
+            month_cache=month_cache,
+        )
     except (SellerApiError, ExcelImportError) as exc:
         raise MassUpdateError(f"賣家中心 API 抓取失敗，沒有寫入正式檔：{exc}") from exc
     print(
         f"賣家中心 API：{stats['apiCalls']} 次請求，{len(listed)} 個商品，"
-        f"對上 {stats['matchedModels']} 個型號。"
+        f"對上 {stats['matchedModels']} 個型號，{stats['cachedMonths']} 個月份用快取。"
     )
     restocked = restock_like_full_shop_crawler(payload, inventory_month)
-    return commit_converted_catalog(
+    result = commit_converted_catalog(
         destination,
         restocked,
         golden_table,
         message="已用賣家中心 API 更新 shopee_products.json（庫存、已售出、月銷量）",
     )
+    try:
+        save_month_cache(cache_path, month_cache)
+    except OSError as exc:
+        print(f"月份快取沒有存成功（下次會重抓）：{exc}")
+    return result
 
 
 def download_and_import(

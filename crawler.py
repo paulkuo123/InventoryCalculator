@@ -2003,14 +2003,20 @@ class ShopeeCrawler:
         if os.environ.get("SHOPEE_CRAWLER_SOURCE", "").strip() == "page":
             return False
         from shopee_seller_api import (
+            MONTH_CACHE_FILENAME,
             SellerApiError,
             best_months_from_env,
             fetch_product_list,
             fetch_sales,
+            load_month_cache,
+            save_month_cache,
             seller_api_for_page,
         )
 
         keyword = str(getattr(self, "search_keyword", "") or "").strip()
+        output_dir = os.path.dirname(os.path.abspath(getattr(self, "output_path", None) or "shopee_products.json"))
+        cache_path = os.path.join(output_dir, MONTH_CACHE_FILENAME)
+        month_cache = load_month_cache(cache_path)
         try:
             api = seller_api_for_page(self.page)
             listed = fetch_product_list(api, keyword)
@@ -2025,13 +2031,22 @@ class ShopeeCrawler:
                     best_months=best_months_from_env(),
                     listed=listed,
                     search=bool(keyword),
+                    month_cache=month_cache,
                 )
-                print(f"賣家中心 API：{stats['apiCalls']} 次請求，{len(products)} 個商品")
+                print(
+                    f"賣家中心 API：{stats['apiCalls']} 次請求，{len(products)} 個商品，"
+                    f"{stats['cachedMonths']} 個月份用快取"
+                )
         except Exception as e:
             # API 只是比較快的路；任何失敗都退回原本的逐頁爬，不寫半套資料。
             reason = str(e) if isinstance(e, SellerApiError) else f"{type(e).__name__}: {e}"
             print(f"⚠️ 賣家中心 API 失敗，改用逐頁爬：{reason}")
             return False
+        if not keyword:
+            try:
+                save_month_cache(cache_path, month_cache)
+            except OSError as e:
+                print(f"月份快取沒有存成功（下次會重抓）：{e}")
         self.products_data = products
         self.crawl_page_logs = []
         self.crawl_count_check = {
