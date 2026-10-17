@@ -600,7 +600,7 @@ class ShopeeCrawler:
             expected_months (int): 期望維持的庫存月數（預設 4 個月）
             total_monthly_sales (int): 商品總月銷量
             best_month_sales (int | None): 型號近幾個完整月份的最高單月件數；
-                有抓到時缺貨估算用它，None 時用已售出數量佔比
+                大於 0 時缺貨估算用它；None 或 0（近幾個月都缺貨）時用已售出數量佔比
             
         Returns:
             int: 建議補貨數量（如果不需要補貨則為 0 或負數）

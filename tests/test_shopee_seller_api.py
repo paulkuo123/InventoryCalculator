@@ -255,7 +255,9 @@ class SellerApiTests(unittest.TestCase):
 class StockoutEstimateTests(unittest.TestCase):
     def test_best_month_replaces_the_sold_share(self):
         self.assertEqual(historical_monthly_sales(20, 10, 100, best_month=12), 12.0)
-        self.assertIsNone(historical_monthly_sales(20, 10, 100, best_month=0))
+        # Sold out for every recent month: fall back to the cumulative share.
+        self.assertEqual(historical_monthly_sales(20, 10, 100, best_month=0), 2.0)
+        self.assertIsNone(historical_monthly_sales(0, 10, 100, best_month=0))
         self.assertEqual(historical_monthly_sales(20, 10, 100), 2.0)
 
     def test_crawler_and_restock_rules_agree(self):

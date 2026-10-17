@@ -117,13 +117,14 @@ def historical_monthly_sales(product_monthly, model_sold, product_sold, best_mon
     """Monthly sales estimate for a model whose stock is 0.
 
     ``best_month`` is the model's highest full-month sales in the data
-    centre over the last few months. When it was fetched it is the estimate,
-    because 30-day sales drop while the model is sold out. Without it the
-    model's share of cumulative sold counts splits the product's monthly
-    sales. Returns None when there is no estimate.
+    centre over the last few months. When it is above 0 it is the estimate,
+    because 30-day sales drop while the model is sold out. When it is missing
+    or 0 (sold out for all those months), the model's share of cumulative
+    sold counts splits the product's monthly sales, as before. Returns None
+    when there is no estimate.
     """
-    if best_month is not None:
-        return float(best_month) if best_month > 0 else None
+    if best_month is not None and best_month > 0:
+        return float(best_month)
     if model_sold > 0 and product_sold > 0 and product_monthly > 0:
         return int(product_monthly * (model_sold / product_sold) * 10 + 0.5) / 10
     return None
