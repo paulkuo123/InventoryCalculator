@@ -1305,10 +1305,12 @@ class ListingContext:
     def __init__(self, driver):
         self.driver = driver
         self.opened = []
+        self.pages = []
 
     def new_page(self):
         tab = ListingTab(self.driver)
         self.opened.append(tab)
+        self.pages.append(tab)
         return tab
 
 
@@ -2138,6 +2140,176 @@ class RoundNineListingTests(ListingTabRefreshTests):
         self.assertIn("不會把數量記成已核對", message)
         self.assertIn("Execution context was destroyed", message)
         self.assertEqual(len(crawler.context.opened), 2)
+        self.assertEqual(list(crawler.products_data), ["101"])
+        self.assertIsNone(crawler.crawl_count_check)
+
+
+class RoundTenListingTests(ListingTabRefreshTests):
+    def test_timeout_while_fetching_page_two_resumes_at_page_two(self):
+        ids = ["101", "102", "103", "104"]
+
+        class _TimeoutWhileReadingPage2(ListingDriver):
+            def __init__(self, pages):
+                super().__init__(pages)
+                self.timeouts = 0
+
+            def find_elements(self, by, value):
+                if (
+                    self.index == 1
+                    and self.timeouts < 1
+                    and by == By.CSS_SELECTOR
+                    and "eds-table__row" in str(value)
+                ):
+                    self.timeouts += 1
+                    raise TimeoutError("Timeout 15000ms exceeded while reading page 2")
+                return super().find_elements(by, value)
+
+        driver = _TimeoutWhileReadingPage2(listing_pages(ids))
+        crawler = self._crawler(driver, interval=100)
+        extra = ListingTab(driver)
+        crawler.context.pages.extend([crawler.page, extra])
+        crawler.listing_retry_pause_seconds = 0.4
+        slept = []
+
+        def record_sleep(seconds=0, *_args, **_kwargs):
+            slept.append(seconds)
+
+        crawler_module.time.sleep = record_sleep
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        resume = crawler.context.opened[0].visits[0]
+        self.assertIn("page=2", resume)
+        self.assertNotIn("page=1", resume)
+        self.assertIn("新分頁先開清單第 2 頁（page=2）", message)
+        self.assertIn("換新分頁後從第 2 頁繼續", message)
+        self.assertNotIn("第 1 頁分頁當掉", message)
+        self.assertNotIn("新分頁先開清單第 1 頁", message)
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertIn(0.4, slept)
+        self.assertTrue(extra.closed)
+        self.assertTrue(crawler.context.pages[0].closed)
+
+    def test_scroll_snapshot_is_not_replaced_by_a_later_empty_read(self):
+        parents = [str(index) for index in range(1, 13)]
+        rows = shop_rows(parents)
+        fixed = shop_rows(parents)
+        for row in fixed:
+            row.class_name = "eds-table__fixed"
+        rows.extend(fixed)
+        self.assertEqual(len(rows), 24)
+
+        class _EmptyAfterScroll(ListingDriver):
+            def find_elements(self, by, value):
+                if by == By.CSS_SELECTOR and "eds-table__row" in str(value):
+                    return []
+                return super().find_elements(by, value)
+
+        driver = _EmptyAfterScroll([
+            ListingPage("", rows, "架上商品(12)", next_enabled=False),
+        ])
+        crawler = make_crawler(driver, "unused.json")
+        crawler.scroll_to_load_all_rows = (
+            lambda: ShopeeCrawler.scroll_to_load_all_rows(crawler)
+        )
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertIn("共載入 24 個 eds-table__row", message)
+        self.assertIn("商品列已穩定：12 列", message)
+        self.assertNotIn("0 列，這一頁是最後一頁", message)
+        self.assertEqual(crawler.crawl_page_logs[0]["DOM列數"], 24)
+        self.assertEqual(crawler.crawl_page_logs[0]["商品列數"], 12)
+        self.assertEqual(crawler.crawl_page_logs[0]["成功"], 12)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_zero_rows_resume_at_the_page_being_fetched(self):
+        page1 = [str(index) for index in range(1, 13)]
+        page2 = [str(index) for index in range(13, 25)]
+
+        class _BlankSecondPage(ListingDriver):
+            def __init__(self, pages):
+                super().__init__(pages)
+                self.blank_page2 = False
+                self.page2_gotos = 0
+
+            def find_elements(self, by, value):
+                if self.index == 1 and self.blank_page2:
+                    return []
+                return super().find_elements(by, value)
+
+        class _CountPage2(ListingTab):
+            def goto(self, url, wait_until=None, timeout=None):
+                if re.search(r"[?&]page=2(?:&|$)", url):
+                    self.driver.page2_gotos += 1
+                    self.driver.blank_page2 = self.driver.page2_gotos == 1
+                return super().goto(url, wait_until=wait_until, timeout=timeout)
+
+        class _CountContext(ListingContext):
+            def new_page(self):
+                tab = _CountPage2(self.driver)
+                self.opened.append(tab)
+                self.pages.append(tab)
+                return tab
+
+        driver = _BlankSecondPage([
+            ListingPage("", shop_rows(page1), "架上商品(24)", next_enabled=True),
+            ListingPage("", shop_rows(page2), "架上商品(24)", next_enabled=False),
+        ])
+        crawler = self._crawler(driver, interval=100)
+        crawler.context = _CountContext(driver)
+        crawler.page = _CountPage2(driver)
+        crawler.scroll_to_load_all_rows = (
+            lambda: ShopeeCrawler.scroll_to_load_all_rows(crawler)
+        )
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertNotIn("0 列，這一頁是最後一頁", message)
+        self.assertIn("第 2 頁商品列是 0", message)
+        self.assertIn("這不是最後一頁", message)
+        self.assertIn("換新分頁後從第 2 頁繼續", message)
+        self.assertIn("page=2", crawler.context.opened[0].visits[0])
+        self.assertNotIn("page=1", crawler.context.opened[0].visits[0])
+        self.assertEqual(list(crawler.products_data), page1 + page2)
+        self.assertEqual(crawler.crawl_count_check["collected"], 24)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_retry_budget_can_be_lowered(self):
+        ids = ["101", "102", "103", "104"]
+
+        class _AlwaysTimeoutPage2(ListingDriver):
+            def find_elements(self, by, value):
+                if (
+                    self.index == 1
+                    and by == By.CSS_SELECTOR
+                    and "eds-table__row" in str(value)
+                ):
+                    raise TimeoutError("Timeout 15000ms exceeded")
+                return super().find_elements(by, value)
+
+        driver = _AlwaysTimeoutPage2(listing_pages(ids))
+        crawler = self._crawler(driver, interval=100)
+        crawler.listing_page_attempts = 2
+        args = build_crawler_argument_parser().parse_args([
+            "--listing-page-attempts", "2",
+            "--listing-retry-pause-seconds", "0.5",
+        ])
+        self.assertEqual(args.listing_page_attempts, 2)
+        self.assertEqual(args.listing_retry_pause_seconds, 0.5)
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("第 2 頁", message)
+        self.assertIn("同一頁已試 2 次", message)
+        self.assertIn("不是最後一頁", message)
+        self.assertEqual(len(crawler.context.opened), 1)
+        self.assertIn("page=2", crawler.context.opened[0].visits[0])
         self.assertEqual(list(crawler.products_data), ["101"])
         self.assertIsNone(crawler.crawl_count_check)
 
