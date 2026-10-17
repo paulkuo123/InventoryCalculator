@@ -598,10 +598,8 @@ class ShopeeCrawler:
             int: 建議補貨數量（如果不需要補貨則為 0 或負數）
         """
         try:
-            # 如果總銷量為 0，無法計算
-            if total_sold == 0:
-                return 0
-
+            # 總銷量只用在缺貨時的歷史佔比；讀不到（例如 Excel 匯入的新商品）
+            # 仍照月銷量計算，不直接回 0。
             effective_monthly_sales = monthly_sales
             if (
                 current_inventory == 0

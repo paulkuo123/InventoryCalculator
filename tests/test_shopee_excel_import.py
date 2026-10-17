@@ -362,6 +362,24 @@ class ShopeeExcelImportTests(unittest.TestCase):
             ShopeeCrawler.calculate_restock_quantity(None, 10, 50, 2, 0, 4, 12),
         )
 
+    def test_new_product_without_previous_sold_count_still_gets_restock(self):
+        # Excel has no cumulative sold column, so a product missing from the
+        # previous crawl arrives with 已售出總數量 0. Monthly sales still count.
+        products = build_products(
+            [{"商品ID": "111", "商品名稱": "新品", "商品選項ID": "9", "商品規格名稱": "紅", "庫存": 2}],
+            previous={},
+            sales={"model_sales": {"111": {"紅": 30}}},
+            inventory_month=4,
+        )
+        restocked = restock_like_full_shop_crawler(products, 4)
+        model = restocked["111"]["型號"][0]
+        self.assertEqual(restocked["111"]["已售出總數量"], "0")
+        self.assertGreater(model["建議補貨數量"], 0)
+        self.assertEqual(
+            model["建議補貨數量"],
+            ShopeeCrawler.calculate_restock_quantity(None, 0, 0, 30, 2, 4, 30),
+        )
+
     def test_concurrent_imports_wait_for_the_write_lock(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             path = Path(temp_dir) / "shopee_products.json"
