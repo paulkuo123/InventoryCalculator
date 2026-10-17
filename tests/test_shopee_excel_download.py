@@ -203,7 +203,29 @@ class MassUpdateDownloadTests(unittest.TestCase):
         self.assertEqual(args.cdp_endpoint, "http://127.0.0.1:9235")
 
     def test_cli_refuses_local_browser(self):
-        self.assertEqual(main(["--browser-source", "mac"]), 2)
+        # Without usable cookies the CLI needs seller Chrome, and never a local one.
+        # Patched so the test never reads the real cookies.json or writes the real catalog.
+        with tempfile.TemporaryDirectory() as temp_dir, \
+                patch("shopee_excel_download.refresh_seller_cookies", lambda *_a, **_k: None), \
+                patch("shopee_seller_api.seller_api_from_cookie_file", lambda *_a, **_k: None):
+            output = Path(temp_dir) / "shopee_products.json"
+            self.assertEqual(main(["--browser-source", "mac", "--output", str(output)]), 2)
+            self.assertFalse(output.exists())
+
+    def test_cli_cookie_refresh_never_prompts_and_tolerates_expiry(self):
+        from cookie_fallback import CookiesExpired
+        from shopee_excel_download import refresh_seller_cookies
+
+        seen = []
+
+        def expired(base_dir, *, interactive):
+            seen.append(interactive)
+            raise CookiesExpired()
+
+        with patch("cookie_fallback.ensure_shopee_cookies", expired):
+            refresh_seller_cookies(Path("/nowhere"), env={})
+            refresh_seller_cookies(Path("/nowhere"), env={"SHOPEE_SELLER_API_TRANSPORT": "browser"})
+        self.assertEqual(seen, [False])
 
     def test_fake_page_import_does_not_attach_cdp(self):
         def fail_attach(*_args, **_kwargs):
@@ -256,6 +278,92 @@ class MassUpdateDownloadTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), before)
             self.assertFalse(list(Path(temp_dir).glob("shopee_products.json.tmp")))
 
+    def test_one_click_builds_the_catalog_from_the_seller_api_by_default(self):
+        from datetime import date
+
+        from shopee_seller_api import SellerApi
+        from tests.test_shopee_seller_api import FakeShop, _units
+
+        shop = FakeShop(_units())
+        page = FakePage()
+        page.page = object()
+        api = SellerApi(shop, "cds", sleep=lambda _s: None)
+
+        from shopee_seller_api import fetch_sales
+
+        def fetch_sales_today(api_arg, products, **kwargs):
+            return fetch_sales(api_arg, products, today=date(2026, 10, 17), **kwargs)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "shopee_products.json"
+            destination.write_text("{}\n", encoding="utf-8")
+            with patch("shopee_seller_api.seller_api_for_page", lambda *_a, **_k: api), \
+                    patch("shopee_seller_api.fetch_sales", fetch_sales_today):
+                result = download_and_import(
+                    destination=destination,
+                    golden_table={},
+                    page=page,
+                    env={},
+                    max_polls=5,
+                    poll_seconds=0,
+                )
+            saved = json.loads(destination.read_text(encoding="utf-8"))
+        # Nothing was clicked: no Excel download.
+        self.assertEqual(page.clicks, [])
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(sorted(saved), ["1", "2"])
+        red, white = saved["1"]["型號"]
+        self.assertEqual((red["規格ID"], red["商品庫存"], red["已售出數量"]), ("11", "0", "75"))
+        self.assertEqual((white["商品庫存"], white["月銷量"]), ("4", "6"))
+        self.assertEqual(saved["1"]["已售出總數量"], "100")
+        # Sold out, best full month 20, 4 months -> 80.
+        self.assertEqual(red["建議補貨數量"], 80)
+
+    def test_seller_api_failure_writes_nothing(self):
+        from shopee_seller_api import PRODUCT_LIST_PATH, SellerApi
+        from tests.test_shopee_seller_api import FakeShop, _units
+
+        shop = FakeShop(_units())
+        shop.fail[PRODUCT_LIST_PATH] = [(403, None)]
+        page = FakePage()
+        page.page = object()
+        api = SellerApi(shop, "cds", sleep=lambda _s: None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "shopee_products.json"
+            destination.write_text("{}\n", encoding="utf-8")
+            before = destination.read_bytes()
+            with patch("shopee_seller_api.seller_api_for_page", lambda *_a, **_k: api):
+                with self.assertRaisesRegex(MassUpdateError, "沒有寫入正式檔"):
+                    download_and_import(destination=destination, golden_table={}, page=page, env={})
+            self.assertEqual(destination.read_bytes(), before)
+
+    def test_excel_stock_source_still_reads_sales_from_the_api(self):
+        seen = {}
+        raw_page = object()
+        page = FakePage()
+        page.page = raw_page
+
+        def fake_api_fetch(page_arg, catalog, env):
+            seen["page"] = page_arg
+            catalog["900001"]["型號"][0]["月銷量"] = "7"
+            return catalog
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "shopee_products.json"
+            destination.write_text("{}\n", encoding="utf-8")
+            with patch("shopee_excel_download.fetch_sales_via_api_on_page", fake_api_fetch):
+                download_and_import(
+                    destination=destination,
+                    golden_table={},
+                    page=page,
+                    env={"SHOPEE_STOCK_SOURCE": "excel"},
+                    max_polls=5,
+                    poll_seconds=0,
+                )
+            saved = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertIs(seen["page"], page)
+        self.assertEqual(saved["900001"]["型號"][0]["月銷量"], "7")
+
     def test_one_click_calls_get_monthly_sales_on_the_same_page(self):
         from crawler import ShopeeCrawler
 
@@ -279,6 +387,7 @@ class MassUpdateDownloadTests(unittest.TestCase):
                     destination=destination,
                     golden_table={},
                     page=page,
+                    env={"SHOPEE_SALES_SOURCE": "datacenter_page"},
                     max_polls=5,
                     poll_seconds=0,
                 )

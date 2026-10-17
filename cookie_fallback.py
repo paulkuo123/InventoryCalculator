@@ -2,9 +2,12 @@
 
 Order:
 1. Validate the local cookies file with one read-only seller API call.
-2. If that fails, read Shopee-domain cookies from a loopback Seller Centre
+2. If that fails, read Shopee-domain cookies from ego lite through the
+   ``ego-browser`` command (macOS). Only Storage.getCookies / Network.getCookies
+   are sent, and only shopee.tw cookies leave the browser.
+3. If that fails, read Shopee-domain cookies from a loopback Seller Centre
    Chrome (CDP). Only Network.getCookies and Storage.getCookies are sent.
-3. If that also fails, web callers ask the user to paste cookies. Non-web
+4. If that also fails, web callers ask the user to paste cookies. Non-web
    callers raise the existing cookies-expired error and never wait for input.
 
 Cookie values are never logged, printed, or returned.
@@ -14,6 +17,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
+import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -321,6 +327,104 @@ def read_shopee_cookies_from_cdp(
     return [cookie for cookie in normalized if is_shopee_tw_host(cookie.get("domain"))]
 
 
+_EGO_TIMEOUT_SECONDS = 30
+# Runs inside ego lite. Reads cookies only; nothing is navigated, set or cleared.
+_EGO_COOKIE_SCRIPT = r"""
+const isShopee = (c) => /(^|\.)shopee\.tw$/.test(String(c.domain || "").replace(/^\./, ""));
+let cookies = [];
+let error = "";
+let task = null;
+try {
+  // cdp() needs a task space; a blank page in our own space is enough to read the profile's cookies.
+  task = await taskSpace("InventoryCalculator shopee cookie read");
+  const page = task.page("p1");
+  for (const [method, params] of [
+    ["Storage.getCookies", {}],
+    ["Network.getCookies", { urls: ["https://shopee.tw/", "https://seller.shopee.tw/"] }],
+  ]) {
+    try {
+      const result = await page.cdp(method, params);
+      cookies = (result.cookies || []).filter(isShopee);
+      if (cookies.length) break;
+    } catch (e) {
+      error = String((e && e.message) || e);
+    }
+  }
+} catch (e) {
+  error = String((e && e.message) || e);
+} finally {
+  if (task) {
+    try { await task.finish({ keep: [] }); } catch (e) {}
+  }
+}
+console.log(JSON.stringify({ ok: cookies.length > 0, cookies, error }));
+"""
+
+
+def _ego_command() -> str:
+    configured = str(os.environ.get("EGO_BROWSER_COMMAND", "ego-browser")).strip()
+    return configured or "ego-browser"
+
+
+def _last_json_object(output: str) -> Optional[Dict[str, Any]]:
+    for line in reversed(str(output or "").splitlines()):
+        line = line.strip()
+        if not line.startswith("{"):
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            return value
+    return None
+
+
+def read_shopee_cookies_from_ego(
+    *,
+    runner: Callable[..., Any] = subprocess.run,
+    command: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Read shopee.tw cookies (HttpOnly included) from ego lite. [] when ego lite is absent."""
+    command = command or _ego_command()
+    if shutil.which(command) is None and not os.path.isabs(command):
+        return []
+    try:
+        completed = runner(
+            [command, "nodejs"],
+            input=_EGO_COOKIE_SCRIPT,
+            text=True,
+            capture_output=True,
+            timeout=_EGO_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except Exception:
+        logger.info("ego cookie read failed to start")
+        return []
+    # ego-browser may print to either stream; the output is never logged.
+    result = _last_json_object("\n".join((completed.stdout or "", completed.stderr or "")))
+    if not result or not result.get("ok") or not isinstance(result.get("cookies"), list):
+        logger.info("ego cookie read returned nothing")
+        return []
+    return _normalize_cdp_cookies(result["cookies"])
+
+
+def _normalize_cdp_cookies(collected: Sequence[Any]) -> List[Dict[str, Any]]:
+    kept = _shopee_cookies_from_cdp_result({"cookies": list(collected)})
+    merged = _dedupe_cookies(kept)
+    try:
+        normalized, _domains = normalize_cookie_payload(playwright_cookies_to_payload(merged))
+    except ValueError:
+        logger.info("cookies failed shape check count=%s", len(merged))
+        return []
+    return [cookie for cookie in normalized if is_shopee_tw_host(cookie.get("domain"))]
+
+
+def load_local_shopee_cookies(path: Path) -> List[Dict[str, Any]]:
+    """shopee.tw cookies from a cookies.json file; [] when missing or unusable."""
+    return _load_local_cookies(Path(path)) or []
+
+
 def _dedupe_cookies(cookies: Sequence[Mapping[str, Any]]) -> List[Dict[str, Any]]:
     chosen: Dict[tuple, Dict[str, Any]] = {}
     for cookie in cookies:
@@ -355,14 +459,26 @@ def ensure_shopee_cookies(
     cdp_endpoint: str = DEFAULT_CDP_ENDPOINT,
     probe: Optional[Callable[[Sequence[Mapping[str, Any]]], bool]] = None,
     cdp_reader: Optional[Callable[..., List[Dict[str, Any]]]] = None,
+    ego_reader: Optional[Callable[[], List[Dict[str, Any]]]] = None,
 ) -> CookieEnsureResult:
-    """Try local cookies, then CDP. Web callers may need a paste; others raise."""
+    """Try local cookies, then ego lite, then CDP. Web callers may need a paste; others raise."""
     checker = probe or probe_seller_cookies
     path = Path(base_dir) / "cookies.json"
     local = _load_local_cookies(path)
     if local and _probe_ok(checker, local):
         logger.info("cookie fallback source=local count=%s", len(local))
         return CookieEnsureResult(True, "local", len(local))
+
+    try:
+        ego = ego_reader() if ego_reader is not None else read_shopee_cookies_from_ego()
+    except Exception:
+        logger.info("ego cookie read failed")
+        ego = []
+    if ego and _probe_ok(checker, ego):
+        saved = write_shopee_cookies(path, ego)
+        count = int(saved.get("count") or len(ego))
+        logger.info("cookie fallback source=ego count=%s", count)
+        return CookieEnsureResult(True, "ego", count)
 
     remote = _read_cdp(cdp_endpoint, cdp_reader)
     if remote and _probe_ok(checker, remote):

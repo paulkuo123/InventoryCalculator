@@ -2457,9 +2457,9 @@ document.addEventListener('DOMContentLoaded', function() {
     function updateStatusMessage(progress) {
         if (window.oneClickUpdateRunning) {
             if (progress < 40) {
-                statusMessage.textContent = '正在下載價格及庫存...';
+                statusMessage.textContent = '正在讀取商品與庫存...';
             } else if (progress < 75) {
-                statusMessage.textContent = '正在抓取月銷量...';
+                statusMessage.textContent = '正在抓取銷量...';
             } else {
                 statusMessage.textContent = '正在計算建議補貨...';
             }
@@ -3413,7 +3413,7 @@ document.addEventListener('DOMContentLoaded', function() {
         const loading = document.getElementById('loading');
         if (loading) loading.style.display = 'block';
         const progressInterval = startProgressSimulation();
-        if (statusMessage) statusMessage.textContent = '正在下載價格及庫存...';
+        if (statusMessage) statusMessage.textContent = '正在讀取商品與庫存...';
         try {
             const form = new FormData();
             form.append('inventoryMonth', selectedInventoryMonth());
@@ -3456,15 +3456,11 @@ document.addEventListener('DOMContentLoaded', function() {
         }
         
         const keyword = searchInput.value.trim();
-        const headlessModeElement = document.getElementById('headlessMode');
         const inventoryMonthElement = document.getElementById('inventoryMonth');
         
-        if (!headlessModeElement) {
-            console.error('找不到 headlessMode 元素');
-            return;
-        }
-        
-        const showBrowser = headlessModeElement.checked;
+        // 搜尋預設用 cookies 直接讀賣家中心 API，不開瀏覽器；
+        // 只有 API 不能用、退回逐頁爬時才會開，這時照舊顯示出來方便處理驗證。
+        const showBrowser = true;
         const inventoryMonth = inventoryMonthElement ? inventoryMonthElement.value : '4';
         
         

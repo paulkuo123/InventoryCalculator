@@ -110,6 +110,26 @@ def round_calculated_restock_qty(raw_shortage, current_stock, monthly_rate=0):
     return 0
 
 
+BEST_MONTH_SALES_FIELD = "近月最高銷量"
+
+
+def historical_monthly_sales(product_monthly, model_sold, product_sold, best_month=None):
+    """Monthly sales estimate for a model whose stock is 0.
+
+    ``best_month`` is the model's highest full-month sales in the data
+    centre over the last few months. When it is above 0 it is the estimate,
+    because 30-day sales drop while the model is sold out. When it is missing
+    or 0 (sold out for all those months), the model's share of cumulative
+    sold counts splits the product's monthly sales, as before. Returns None
+    when there is no estimate.
+    """
+    if best_month is not None and best_month > 0:
+        return float(best_month)
+    if model_sold > 0 and product_sold > 0 and product_monthly > 0:
+        return int(product_monthly * (model_sold / product_sold) * 10 + 0.5) / 10
+    return None
+
+
 def calculated_restock_details(product, model, months):
     """Explain the same calculation used by the file-based restock launcher.
 
@@ -126,11 +146,13 @@ def calculated_restock_details(product, model, months):
     monthly = float(model.get("月銷量") or 0)
     historical = None
     if stock == 0:
-        model_sales = count(model.get("已售出數量"))
-        product_sales = count(product.get("已售出總數量"))
-        product_monthly = count(product.get("總月銷量"))
-        if model_sales > 0 and product_sales > 0 and product_monthly > 0:
-            historical = int(product_monthly * (model_sales / product_sales) * 10 + 0.5) / 10
+        best = model.get(BEST_MONTH_SALES_FIELD)
+        historical = historical_monthly_sales(
+            count(product.get("總月銷量")),
+            count(model.get("已售出數量")),
+            count(product.get("已售出總數量")),
+            None if best in (None, "") else count(best),
+        )
     effective = max(monthly, historical or 0)
     target = int(effective * months + 0.5)
     raw = max(0, target - stock)

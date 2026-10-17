@@ -26,6 +26,7 @@ from cookie_fallback import (
     probe_seller_cookies,
     public_cookie_status,
     read_shopee_cookies_from_cdp,
+    read_shopee_cookies_from_ego,
     _probe_response_ok,
 )
 from cookie_import import os as cookie_import_os
@@ -174,6 +175,7 @@ class CookieFallbackBranchTests(unittest.TestCase):
                     temp_dir,
                     interactive=True,
                     probe=lambda cookies: True,
+                    ego_reader=lambda: [],
                     cdp_reader=fail_cdp,
                 )
 
@@ -206,6 +208,7 @@ class CookieFallbackBranchTests(unittest.TestCase):
                     temp_dir,
                     interactive=True,
                     probe=probe,
+                    ego_reader=lambda: [],
                     cdp_reader=lambda endpoint: read_shopee_cookies_from_cdp(
                         endpoint,
                         http_get=lambda url: {
@@ -253,6 +256,7 @@ class CookieFallbackBranchTests(unittest.TestCase):
                 temp_dir,
                 interactive=True,
                 probe=lambda cookies: False,
+                ego_reader=lambda: [],
                 cdp_reader=lambda endpoint: [shopee_cookie("cdp-bad")],
             )
 
@@ -269,6 +273,7 @@ class CookieFallbackBranchTests(unittest.TestCase):
                 temp_dir,
                 interactive=True,
                 probe=lambda cookies: False,
+                ego_reader=lambda: [],
                 cdp_reader=lambda endpoint: [],
             )
             self.assertTrue(blocked.needs_paste)
@@ -289,6 +294,7 @@ class CookieFallbackBranchTests(unittest.TestCase):
                 temp_dir,
                 interactive=True,
                 probe=lambda cookies: True,
+                ego_reader=lambda: [],
                 cdp_reader=lambda endpoint: (_ for _ in ()).throw(AssertionError("cdp")),
             )
             self.assertEqual(resumed.source, "local")
@@ -325,16 +331,23 @@ class CookieFallbackBranchTests(unittest.TestCase):
                         temp_dir,
                         interactive=False,
                         probe=lambda cookies: False,
+                        ego_reader=lambda: [],
                         cdp_reader=lambda endpoint: [],
                     )
             self.assertEqual(str(caught.exception), COOKIES_EXPIRED_MESSAGE)
             self.assertNotIn(COOKIES_REQUIRED, str(caught.exception))
             self.assertNotIn("local-bad", self._blob(str(caught.exception)))
 
-        for name in ("crawler.py", "shopee_excel_download.py", "cookie_refresher.py", "ads_weekly.py"):
+        for name in ("crawler.py", "cookie_refresher.py", "ads_weekly.py"):
             text = (ROOT / name).read_text(encoding="utf-8")
             self.assertNotIn("ensure_shopee_cookies", text)
             self.assertNotIn("cookiePasteModal", text)
+        # The one-click CLI refreshes cookies too, but only the non-prompting way.
+        text = (ROOT / "shopee_excel_download.py").read_text(encoding="utf-8")
+        self.assertIn("ensure_shopee_cookies(", text)
+        self.assertIn("interactive=False", text)
+        self.assertNotIn("interactive=True", text)
+        self.assertNotIn("cookiePasteModal", text)
 
     def test_non_loopback_cdp_is_refused_with_zero_requests(self):
         calls = {"http": 0, "ws": 0}
@@ -409,6 +422,7 @@ class CookieFallbackBranchTests(unittest.TestCase):
                 temp_dir,
                 interactive=True,
                 probe=exploding,
+                ego_reader=lambda: [],
                 cdp_reader=lambda endpoint: [],
             )
             self.assertTrue(result.needs_paste)
@@ -731,6 +745,49 @@ class CookiePasteModalBrowserTests(unittest.TestCase):
             page.wait_for_function("document.getElementById('oneClickUpdateButton').disabled === false")
             self.assertTrue(page.locator("#cookiePasteModal").is_hidden())
             browser.close()
+
+
+class EgoCookieSourceTests(unittest.TestCase):
+    def _runner(self, stdout, calls=None):
+        def run(argv, **kwargs):
+            if calls is not None:
+                calls.append((argv, kwargs))
+            return SimpleNamespace(stdout=stdout, stderr="", returncode=0)
+        return run
+
+    def test_reads_only_shopee_cookies_from_ego_lite(self):
+        cdp_cookie = {"name": "SPC_ST", "value": SECRET, "domain": ".shopee.tw", "path": "/",
+                      "expires": 1893456000, "httpOnly": True, "secure": True}
+        other = dict(cdp_cookie, name="SID", domain=".google.com")
+        line = json.dumps({"ok": True, "cookies": [cdp_cookie, other]})
+        calls = []
+        cookies = read_shopee_cookies_from_ego(
+            runner=self._runner("log line\n" + line + "\n", calls), command=os.path.abspath("ego-browser"),
+        )
+        self.assertEqual([(c["name"], c["value"]) for c in cookies], [("SPC_ST", SECRET)])
+        argv, kwargs = calls[0]
+        self.assertEqual(argv[1:], ["nodejs"])
+        self.assertIn("Storage.getCookies", kwargs["input"])
+        self.assertNotIn("clear", kwargs["input"].lower())
+
+    def test_missing_ego_or_bad_output_gives_nothing(self):
+        self.assertEqual(read_shopee_cookies_from_ego(command="no-such-ego-browser-cmd"), [])
+        self.assertEqual(
+            read_shopee_cookies_from_ego(runner=self._runner("not json"), command=os.path.abspath("x")), [],
+        )
+
+    def test_ego_cookies_are_used_and_saved_when_the_local_file_fails(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = ensure_shopee_cookies(
+                temp_dir,
+                interactive=True,
+                probe=lambda cookies: bool(cookies),
+                ego_reader=lambda: [shopee_cookie(OTHER_SECRET)],
+                cdp_reader=lambda endpoint: (_ for _ in ()).throw(AssertionError("cdp")),
+            )
+            saved = json.loads((Path(temp_dir) / "cookies.json").read_text(encoding="utf-8"))
+        self.assertEqual(result.source, "ego")
+        self.assertIn(OTHER_SECRET, json.dumps(saved))
 
 
 if __name__ == "__main__":

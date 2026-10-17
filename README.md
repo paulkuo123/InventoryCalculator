@@ -212,6 +212,18 @@ python main.py
 執行後會自動開啟網頁介面。
 
 - 庫存首頁：可進行商品搜尋、庫存儀表板與補貨判讀。首頁「一鍵更新全賣場庫存」會 `POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量；Cookie 先讀 `cookies.json`，接著 CDP `127.0.0.1:9239`，最後才開貼上對話框。
+  - 預設整個目錄都從 API 建：庫存（`total_seller_stock`，和「價格及庫存」Excel 核對過一致）、商品與型號名稱、圖片（型號自己的圖 → 同一個第一層選項的圖 → 商品主圖，都沒有才用舊檔或 golden_table）。`SHOPEE_STOCK_SOURCE=excel` 改回下載 Excel 拿庫存。
+  - 銷量來源（`shopee_seller_api.py`）：在同一個賣家中心分頁用 GET 讀頁面自己打的 JSON，一個接一個送、不並發。商品列表 `get_product_list` 給每個型號精確的累計已售出；數據中心 `mydata/v4/product/performance` 給過去 30 天與最近幾個完整月份的型號件數。型號用 `規格ID` 對應。商品的已售出總數量是型號加總，因為列表上的商品數字含已刪除商品。
+  - 缺貨型號（庫存 0）的月銷量估算用「最近 `SHOPEE_BEST_MONTHS`（預設 3）個完整月中最高的單月件數」，和過去 30 天取大者。近幾個月都缺貨（最高單月是 0）或 `SHOPEE_BEST_MONTHS=0` 時，用已售出數量佔比。
+  - 最高的那個月如果超過這幾個月中位數的 1.5 倍（例如雙 11），當成一次性爆量，改用第二高的月份。
+  - 新上架的商品（`create_time` 在期間內）把上架後的件數換算成整段期間，上架前的月份不算 0；上架不到 7 天的照 7 天算，避免放大太多。
+  - 回應少了關鍵欄位（商品 id／名稱、型號 `sold_count`、`total_seller_stock`、`confirmed_units`）就停止，不寫正式檔。
+  - 不用開瀏覽器：預設直接用 `cookies.json` 發 HTTP GET，只需要 `SPC_CDS`、`SPC_ST`、`SPC_SC_SESSION`，macOS、Linux、Windows 都一樣。cookies 失效時依序從 ego lite（`ego-browser`，含 HttpOnly）、本機 Chrome CDP 重新讀，都不行才請你在首頁貼上。`SPC_SC_SESSION` 約 5 天到期，平常有開賣家中心就會自動更新。`SHOPEE_SELLER_API_TRANSPORT=browser` 改回經過瀏覽器頁面。
+  - 日誌預設只印摘要（商品數、缺貨與建議補貨件數）；`SHOPEE_LOG_DETAIL=1` 印每個型號的明細。
+  - 已結束超過 7 天的完整月份會存在 `shopee_month_units.json`，之後不再重抓，一鍵更新平常只要約 17 個請求。搜尋只讀這個快取、不寫。
+  - `SHOPEE_API_DELAY_SECONDS` 是請求間隔（預設 0）。429、5xx 或 `code` 不是 0 會退避重試一次，再失敗就停，不寫正式檔；401/403 直接停。`SHOPEE_SALES_SOURCE=datacenter_page` 改回逐列讀數據中心頁面。
+  - 搜尋（`crawler.py`，有沒有關鍵字都一樣）登入後也先走 API：關鍵字送到「我的商品」搜尋框同一個 `search_product_list`，數據中心則用找到的完整商品名稱查（它不支援用商品 ID 搜）。API 任何失敗都退回原本的逐頁爬；`SHOPEE_CRAWLER_SOURCE=page` 直接走逐頁爬。
+  - 這些是蝦皮內部端點，不是公開 API，改版時欄位可能改變；回應形狀不對時會停下來。
 - 廣告工作台：可進行 Shopee 廣告報表匯出與 AI 分析
 - 到貨入庫工作台：可匯入 1688 訂單、處理分批／不良品，並預覽蝦皮庫存更新
 

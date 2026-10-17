@@ -28,6 +28,7 @@ from ads_session import (
     detect_session_blocker,
     normalize_browser_source,
 )
+from restock_rules import BEST_MONTH_SALES_FIELD
 from shopee_cookie_sync import connect_seller_chrome, resolve_seller_cdp_endpoints
 from shopee_excel_import import (
     commit_converted_catalog,
@@ -323,6 +324,7 @@ def _clear_monthly_sales(products: Dict[str, Any]) -> None:
             if isinstance(model, dict):
                 model["月銷量"] = "0"
                 model["建議補貨數量"] = 0
+                model.pop(BEST_MONTH_SALES_FIELD, None)
 
 
 def fetch_monthly_sales_on_page(page: Any, products: Dict[str, Any], inventory_month: int) -> Dict[str, Any]:
@@ -348,6 +350,103 @@ def fetch_monthly_sales_on_page(page: Any, products: Dict[str, Any], inventory_m
     return products
 
 
+def fetch_sales_via_api_on_page(page: Any, products: Dict[str, Any], env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """Fill sold counts, 30-day sales, and best full month from seller-centre JSON.
+
+    Set SHOPEE_SALES_SOURCE=datacenter_page to go back to reading the data
+    centre page row by row. Any API error raises, so nothing is written.
+    """
+    from shopee_seller_api import SellerApiError, best_months_from_env, fetch_sales, seller_api_for_page
+
+    raw_page = getattr(page, "page", None)
+    if raw_page is None:
+        raise MassUpdateError("沒有可共用的賣家中心頁面，已停止，沒有寫入正式檔。")
+    try:
+        api = seller_api_for_page(raw_page, env)
+        stats = fetch_sales(api, products, best_months=best_months_from_env(env))
+    except SellerApiError as exc:
+        raise MassUpdateError(f"銷量 API 抓取失敗，沒有寫入正式檔：{exc}") from exc
+    print(
+        f"銷量 API：{stats['apiCalls']} 次請求，對上 {stats['matchedModels']} 個型號，"
+        f"{stats['unmatchedModels']} 個型號沒對上，庫存與商品列表不同 {stats['stockMismatches']} 個。"
+    )
+    return products
+
+
+def import_from_seller_api(
+    page: Any = None,
+    *,
+    api: Any = None,
+    destination: Path,
+    golden_table: Mapping[str, Any],
+    inventory_month: int,
+    env: Mapping[str, str],
+) -> Dict[str, Any]:
+    """Build the catalog from seller-centre JSON only: stock, names, sold, sales.
+
+    Same commit path and ratio guard as the Excel import. Any API error
+    raises before the official file is touched.
+    """
+    from shopee_excel_import import ExcelImportError, build_products
+    from shopee_seller_api import (
+        SellerApiError,
+        best_months_from_env,
+        MONTH_CACHE_FILENAME,
+        fetch_product_list,
+        fetch_sales,
+        load_month_cache,
+        rows_from_listing,
+        save_month_cache,
+        seller_api_for_page,
+    )
+
+    raw_page = getattr(page, "page", None)
+    if api is None and raw_page is None:
+        raise MassUpdateError("沒有可共用的賣家中心頁面，已停止，沒有寫入正式檔。")
+    destination = Path(destination)
+    try:
+        if api is None:
+            api = seller_api_for_page(raw_page, env)
+        listed = fetch_product_list(api)
+        rows = rows_from_listing(listed)
+        if not rows:
+            raise SellerApiError("商品列表是空的，已停止。")
+        payload = build_products(
+            rows,
+            previous=load_previous_catalog(destination),
+            inventory_month=inventory_month,
+        )
+        _clear_monthly_sales(payload)
+        cache_path = destination.parent / MONTH_CACHE_FILENAME
+        month_cache = load_month_cache(cache_path)
+        stats = fetch_sales(
+            api,
+            payload,
+            best_months=best_months_from_env(env),
+            listed=listed,
+            month_cache=month_cache,
+        )
+    except (SellerApiError, ExcelImportError) as exc:
+        raise MassUpdateError(f"賣家中心 API 抓取失敗，沒有寫入正式檔：{exc}") from exc
+    print(
+        f"賣家中心 API：{stats['apiCalls']} 次請求，{len(listed)} 個商品，"
+        f"對上 {stats['matchedModels']} 個型號，{stats['cachedMonths']} 個月份用快取，"
+        f"新上架 {stats['newProducts']} 個商品。"
+    )
+    restocked = restock_like_full_shop_crawler(payload, inventory_month)
+    result = commit_converted_catalog(
+        destination,
+        restocked,
+        golden_table,
+        message="已用賣家中心 API 更新 shopee_products.json（庫存、已售出、月銷量）",
+    )
+    try:
+        save_month_cache(cache_path, month_cache)
+    except OSError as exc:
+        print(f"月份快取沒有存成功（下次會重抓）：{exc}")
+    return result
+
+
 def download_and_import(
     *,
     destination: Path,
@@ -360,8 +459,39 @@ def download_and_import(
     max_polls: int = DEFAULT_MAX_POLLS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     sales_fetcher: Any = None,
+    cookies_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
-    """Download the zip, fill monthly sales, then commit. No write if sales fail."""
+    """Update the catalog from seller centre, then commit. No write if anything fails.
+
+    Default: stock, names, sold counts, and sales all come from seller-centre
+    JSON (``import_from_seller_api``). ``SHOPEE_STOCK_SOURCE=excel`` downloads
+    the「價格及庫存」zip for stock and names and reads sales from the API;
+    ``SHOPEE_SALES_SOURCE=datacenter_page`` also reads sales from the data
+    centre page row by row.
+
+    The default path sends plain HTTP with cookies.json (kept fresh from ego
+    lite or Chrome by ``cookie_fallback``), so no browser is needed on macOS,
+    Linux or Windows. Without usable cookies it attaches to seller Chrome.
+    """
+    run_env = env if env is not None else os.environ
+    use_api_stock = (
+        sales_fetcher is None
+        and run_env.get("SHOPEE_STOCK_SOURCE", "").strip() != "excel"
+        and run_env.get("SHOPEE_SALES_SOURCE", "").strip() != "datacenter_page"
+    )
+    if use_api_stock and page is None:
+        from shopee_seller_api import seller_api_from_cookie_file
+
+        cookie_file = Path(cookies_path) if cookies_path else Path(__file__).resolve().parent / "cookies.json"
+        api = seller_api_from_cookie_file(cookie_file, run_env)
+        if api is not None:
+            return import_from_seller_api(
+                api=api,
+                destination=destination,
+                golden_table=golden_table,
+                inventory_month=inventory_month,
+                env=run_env,
+            )
     source = normalize_browser_source(browser_source)
     if source != BROWSER_SOURCE_REMOTE:
         raise MassUpdateBlocked(
@@ -370,9 +500,17 @@ def download_and_import(
         )
     session = None
     if page is None:
-        session, _endpoint = attach_seller_page(cdp_endpoint, env if env is not None else os.environ)
+        session, _endpoint = attach_seller_page(cdp_endpoint, run_env)
         page = PlaywrightMassUpdatePage(session.new_page())
     try:
+        if use_api_stock:
+            return import_from_seller_api(
+                page,
+                destination=destination,
+                golden_table=golden_table,
+                inventory_month=inventory_month,
+                env=run_env,
+            )
         with tempfile.TemporaryDirectory(prefix="shopee-mass-update-") as temp_dir:
             zip_path = run_mass_update_download(
                 page,
@@ -389,9 +527,12 @@ def download_and_import(
                 inventory_month=inventory_month,
             )
             _clear_monthly_sales(payload)
-            fetch = sales_fetcher or (
-                lambda catalog: fetch_monthly_sales_on_page(page, catalog, inventory_month)
-            )
+            if sales_fetcher is not None:
+                fetch = sales_fetcher
+            elif run_env.get("SHOPEE_SALES_SOURCE", "").strip() == "datacenter_page":
+                fetch = lambda catalog: fetch_monthly_sales_on_page(page, catalog, inventory_month)
+            else:
+                fetch = lambda catalog: fetch_sales_via_api_on_page(page, catalog, run_env)
             try:
                 fetched = fetch(payload)
             except MassUpdateError:
@@ -405,7 +546,7 @@ def download_and_import(
                 destination,
                 restocked,
                 golden_table,
-                message="已用價格及庫存 Excel 與數據中心月銷量更新 shopee_products.json",
+                message="已用價格及庫存 Excel 與賣家中心銷量更新 shopee_products.json",
             )
     finally:
         if session is not None:
@@ -433,6 +574,23 @@ def build_argument_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def refresh_seller_cookies(base_dir: Optional[Path] = None, env: Optional[Mapping[str, str]] = None) -> None:
+    """Same refresh the home page does: check cookies.json, else re-read ego lite / Chrome.
+
+    Never asks for input. If nothing works, the update falls back to seller Chrome.
+    """
+    run_env = env if env is not None else os.environ
+    if run_env.get("SHOPEE_SELLER_API_TRANSPORT", "").strip() == "browser":
+        return
+    from cookie_fallback import CookiesExpired, ensure_shopee_cookies
+
+    try:
+        result = ensure_shopee_cookies(str(base_dir or Path(__file__).resolve().parent), interactive=False)
+        print(f"cookies 來源：{result.source}")
+    except CookiesExpired:
+        print("cookies.json 已失效，ego lite 和 Chrome 也讀不到，改用賣家中心 Chrome。")
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = build_argument_parser().parse_args(list(argv) if argv is not None else None)
     golden_path = Path(args.golden_table)
@@ -440,6 +598,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         golden_table = {}
         if golden_path.exists():
             golden_table = json.loads(golden_path.read_text(encoding="utf-8"))
+        refresh_seller_cookies()
         result = download_and_import(
             destination=Path(args.output),
             golden_table=golden_table if isinstance(golden_table, dict) else {},
