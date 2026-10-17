@@ -14,7 +14,9 @@ from shopee_seller_api import (
     PRODUCT_SEARCH_PATH,
     SellerApi,
     SellerApiError,
+    best_full_month,
     fetch_sales,
+    scale_to_period,
     month_bounds,
     past_30_days_bounds,
     recent_full_months,
@@ -87,7 +89,7 @@ def _units():
         past30: {"1": {"11": 0, "12": 6}},
         sep: {"1": {"11": 3, "12": 5}},
         aug: {"1": {"11": 20, "12": 4}},
-        jul: {"1": {"11": 12}},
+        jul: {"1": {"11": 18}},
     }
 
 
@@ -187,9 +189,9 @@ class SellerApiTests(unittest.TestCase):
         product = {
             "id": 1, "name": "襪子", "cover_image": "cover-id", "statistics": {"sold_count": 1},
             "model_list": [
-                {"id": 11, "name": "紅-S", "image": "red-id", "tier_index": [0, 0], "statistics": {}, "stock_detail": {}},
-                {"id": 12, "name": "紅-M", "image": "", "tier_index": [0, 1], "statistics": {}, "stock_detail": {}},
-                {"id": 13, "name": "白-S", "image": "", "tier_index": [1, 0], "statistics": {}, "stock_detail": {}},
+                {"id": 11, "name": "紅-S", "image": "red-id", "tier_index": [0, 0], "statistics": {"sold_count": 0}, "stock_detail": {"total_seller_stock": 0}},
+                {"id": 12, "name": "紅-M", "image": "", "tier_index": [0, 1], "statistics": {"sold_count": 0}, "stock_detail": {"total_seller_stock": 0}},
+                {"id": 13, "name": "白-S", "image": "", "tier_index": [1, 0], "statistics": {"sold_count": 0}, "stock_detail": {"total_seller_stock": 0}},
             ],
         }
         shop = FakeShop({}, list_pages=[[product]])
@@ -340,6 +342,186 @@ class CrawlerSearchTests(unittest.TestCase):
         crawler = self._crawler(FakeShop(_units()), "")
         with patch.dict("os.environ", {"SHOPEE_CRAWLER_SOURCE": "page"}):
             self.assertFalse(crawler.collect_via_seller_api())
+
+
+class EstimateRefinementTests(unittest.TestCase):
+    def _api(self, shop):
+        return SellerApi(shop, "cds-token", sleep=lambda _s: None)
+
+    def test_a_spike_month_falls_back_to_the_next_highest(self):
+        self.assertEqual(best_full_month([3, 20, 12]), 12)  # 20 > 1.5 x 12
+        self.assertEqual(best_full_month([3, 20, 18]), 20)
+        # A median of 0 cannot tell a spike from a stock-out, so keep the highest.
+        self.assertEqual(best_full_month([0, 0, 9]), 9)
+        self.assertEqual(best_full_month([9, 4]), 9)
+        self.assertEqual(best_full_month([]), 0)
+
+    def test_partial_periods_are_scaled_to_full_length(self):
+        start, end = month_bounds(2026, 9)
+        day = 86400
+        self.assertEqual(scale_to_period(10, start, end, 0), 10)
+        self.assertEqual(scale_to_period(10, start, end, start - day), 10)
+        self.assertEqual(scale_to_period(10, start, end, end - 15 * day), 20)
+        # Listed two days before the end: scaled as if 7 days, not 15x.
+        self.assertEqual(scale_to_period(7, start, end, end - 2 * day), 30)
+
+    def test_new_product_sales_are_scaled_and_unlisted_months_skipped(self):
+        shop = FakeShop(_units())
+        start_30, end_30 = past_30_days_bounds(TODAY)
+        listed_at = end_30 - 10 * 86400  # 10 days ago, after every full month
+        for page in shop.list_pages:
+            for product in page:
+                if product["id"] == 1:
+                    product["create_time"] = listed_at
+        catalog = _catalog()
+        stats = fetch_sales(self._api(shop), catalog, today=TODAY)
+        red, white = catalog["1"]["型號"]
+        self.assertEqual(stats["newProducts"], 1)
+        self.assertEqual(white["月銷量"], "18")  # 6 in 10 days -> 18 in 30
+        # Not listed in any full month, so those months do not count as 0 sales.
+        self.assertEqual(red["近月最高銷量"], "0")
+
+    def test_missing_fields_stop_the_run(self):
+        product = _product("1", 1, [("11", 1, 1)])
+        del product["model_list"][0]["stock_detail"]
+        shop = FakeShop({}, list_pages=[[product]])
+        with self.assertRaisesRegex(SellerApiError, "stock_detail.total_seller_stock"):
+            fetch_sales(self._api(shop), _catalog(), today=TODAY, best_months=0)
+
+    def test_missing_units_stop_the_run(self):
+        units = _units()
+        shop = FakeShop(units)
+        original = shop.__call__
+
+        def fetch(url):
+            status, body = original(url)
+            for item in (body.get("result") or {}).get("items") or []:
+                for model in item.get("models") or []:
+                    model.pop("confirmed_units", None)
+            return status, body
+
+        with self.assertRaisesRegex(SellerApiError, "confirmed_units"):
+            fetch_sales(SellerApi(fetch, "cds-token", sleep=lambda _s: None), _catalog(), today=TODAY)
+
+
+def _jar(**overrides):
+    cookies = [
+        {"name": "SPC_CDS", "value": "cds-1", "domain": ".shopee.tw", "path": "/"},
+        {"name": "SPC_ST", "value": "st-1", "domain": ".shopee.tw", "path": "/"},
+        {"name": "SPC_SC_SESSION", "value": "old", "domain": ".shopee.tw", "path": "/"},
+        {"name": "SPC_SC_SESSION", "value": "sess-1", "domain": "seller.shopee.tw", "path": "/"},
+        {"name": "OTHER", "value": "x", "domain": "affiliate.shopee.tw", "path": "/"},
+    ]
+    for name, value in overrides.items():
+        cookies = [c for c in cookies if c["name"] != name]
+        if value is not None:
+            cookies.append({"name": name, "value": value, "domain": ".shopee.tw", "path": "/"})
+    return cookies
+
+
+class _Response:
+    def __init__(self, status, body):
+        self.status, self._body = status, body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc):
+        return False
+
+
+class _Opener:
+    def __init__(self, shop):
+        self.shop, self.requests = shop, []
+
+    def open(self, request, timeout=None):
+        self.requests.append(request)
+        status, body = self.shop(request.full_url)
+        import json
+        return _Response(status, json.dumps(body).encode("utf-8"))
+
+
+class DirectHttpTests(unittest.TestCase):
+    def test_plain_http_sends_seller_cookies_and_reads_the_list(self):
+        from shopee_seller_api import fetch_product_list, seller_api_from_cookies
+
+        opener = _Opener(FakeShop({}))
+        api = seller_api_from_cookies(_jar(), {}, opener=opener)
+        listed = fetch_product_list(api)
+        self.assertEqual(sorted(listed), ["1", "2"])
+        request = opener.requests[0]
+        self.assertEqual(request.get_method(), "GET")
+        cookie = request.get_header("Cookie")
+        self.assertIn("SPC_SC_SESSION=sess-1", cookie)  # seller.shopee.tw wins
+        self.assertNotIn("OTHER=", cookie)
+        self.assertEqual(parse_qs(urlparse(request.full_url).query)["SPC_CDS"], ["cds-1"])
+
+    def test_a_missing_login_cookie_is_refused_before_any_request(self):
+        from shopee_seller_api import seller_api_from_cookies
+
+        with self.assertRaisesRegex(SellerApiError, "SPC_ST"):
+            seller_api_from_cookies(_jar(SPC_ST=None), {}, opener=_Opener(FakeShop({})))
+
+    def test_cookie_file_or_browser(self):
+        import json
+        from shopee_seller_api import seller_api_from_cookie_file
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "cookies.json"
+            self.assertIsNone(seller_api_from_cookie_file(path, {}))
+            path.write_text(json.dumps(_jar()), encoding="utf-8")
+            self.assertEqual(seller_api_from_cookie_file(path, {}).spc_cds, "cds-1")
+            self.assertIsNone(seller_api_from_cookie_file(path, {"SHOPEE_SELLER_API_TRANSPORT": "browser"}))
+            path.write_text(json.dumps(_jar(SPC_SC_SESSION=None)), encoding="utf-8")
+            self.assertIsNone(seller_api_from_cookie_file(path, {}))
+
+    def test_one_click_update_uses_cookies_without_a_browser(self):
+        import json
+        from unittest.mock import patch
+        from shopee_excel_download import download_and_import
+
+        api = SellerApi(FakeShop(_units()), "cds", sleep=lambda _s: None)
+
+        def no_browser(*_a, **_k):
+            raise AssertionError("browser attached")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            cookies = Path(temp_dir) / "cookies.json"
+            cookies.write_text(json.dumps(_jar()), encoding="utf-8")
+            destination = Path(temp_dir) / "shopee_products.json"
+            destination.write_text("{}\n", encoding="utf-8")
+            with patch("shopee_seller_api.seller_api_from_cookies", lambda *_a, **_k: api), \
+                    patch("shopee_excel_download.attach_seller_page", no_browser):
+                result = download_and_import(
+                    destination=destination, golden_table={}, env={}, cookies_path=cookies,
+                )
+            saved = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertEqual(result["status"], "success")
+        self.assertEqual(sorted(saved), ["1", "2"])
+
+    def test_crawler_skips_the_browser_when_cookies_work(self):
+        import json
+        from unittest.mock import patch
+
+        crawler = object.__new__(ShopeeCrawler)
+        crawler._browser_started = False
+        crawler.search_keyword = ""
+        crawler.golden_table = {}
+        api = SellerApi(FakeShop(_units()), "cds", sleep=lambda _s: None)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            crawler.cookies_path = str(Path(temp_dir) / "cookies.json")
+            crawler.output_path = str(Path(temp_dir) / "shopee_products.json")
+            Path(crawler.cookies_path).write_text(json.dumps(_jar()), encoding="utf-8")
+            with patch("shopee_seller_api.seller_api_from_cookies", lambda *_a, **_k: api), \
+                    patch.object(ShopeeCrawler, "_init_browser", side_effect=AssertionError("browser")), \
+                    patch.dict("os.environ", {"SHOPEE_BEST_MONTHS": "0"}):
+                direct = crawler.direct_seller_api()
+                self.assertTrue(crawler.collect_via_seller_api(direct))
+        self.assertFalse(crawler._browser_started)
+        self.assertEqual(sorted(crawler.products_data), ["1", "2"])
 
 
 if __name__ == "__main__":

@@ -123,11 +123,33 @@ def _count(value: Any) -> int:
         return 0
 
 
+def _unix_seconds(value: Any) -> int:
+    """``create_time`` as Unix seconds (milliseconds are converted). 0 when absent."""
+    seconds = _count(value)
+    return seconds // 1000 if seconds > 10 ** 11 else seconds
+
+
 def _require_list(container: Any, key: str, where: str) -> List[Mapping[str, Any]]:
     value = container.get(key) if isinstance(container, Mapping) else None
     if not isinstance(value, list):
         raise SellerApiError(f"{where} 少了 {key} 陣列，蝦皮可能改版了。")
     return [item for item in value if isinstance(item, Mapping)]
+
+
+# Fields every row must carry. A missing one means Shopee changed the response,
+# so the run stops instead of writing zeros.
+PRODUCT_FIELDS = (("id",), ("name",))
+MODEL_FIELDS = (("id",), ("statistics", "sold_count"), ("stock_detail", "total_seller_stock"))
+UNIT_FIELDS = (("id",), ("confirmed_units",))
+
+
+def _check_fields(row: Mapping[str, Any], fields: Sequence[Tuple[str, ...]], where: str) -> None:
+    for path in fields:
+        value: Any = row
+        for key in path:
+            value = value.get(key) if isinstance(value, Mapping) else None
+        if value is None or (path[-1] in ("id", "name") and not str(value).strip()):
+            raise SellerApiError(f"{where} 少了 {'.'.join(path)}，蝦皮可能改版了，已停止，沒有寫入。")
 
 
 def fetch_product_list(api: SellerApi, keyword: str = "") -> Dict[str, Dict[str, Any]]:
@@ -159,12 +181,12 @@ def fetch_product_list(api: SellerApi, keyword: str = "") -> Dict[str, Dict[str,
         products = _require_list(data, "products", "商品列表")
         for product in products:
             product_id = str(product.get("id") or "").strip()
-            if not product_id:
-                continue
+            _check_fields(product, PRODUCT_FIELDS, f"商品 {product_id or '(沒有 id)'}")
             models = {}
             for model in product.get("model_list") or []:
-                if not isinstance(model, Mapping) or not str(model.get("id") or "").strip():
+                if not isinstance(model, Mapping):
                     continue
+                _check_fields(model, MODEL_FIELDS, f"商品 {product_id} 的型號 {model.get('id') or '(沒有 id)'}")
                 tier_index = model.get("tier_index")
                 models[str(model["id"])] = {
                     "name": str(model.get("name") or "").strip(),
@@ -178,6 +200,7 @@ def fetch_product_list(api: SellerApi, keyword: str = "") -> Dict[str, Dict[str,
                 "image": str(product.get("cover_image") or "").strip(),
                 "sold": _count((product.get("statistics") or {}).get("sold_count")),
                 "stock": _count((product.get("stock_detail") or {}).get("total_seller_stock")),
+                "created": _unix_seconds(product.get("create_time")),
                 "models": models,
             }
         total = _count((data.get("page_info") or {}).get("total"))
@@ -211,12 +234,13 @@ def fetch_model_units(
         items = _require_list(result, "items", "數據中心")
         for item in items:
             product_id = str(item.get("id") or "").strip()
-            if not product_id:
-                continue
+            _check_fields(item, (("id",),), "數據中心的商品")
             units = found.setdefault(product_id, {})
             for model in item.get("models") or []:
-                if isinstance(model, Mapping) and str(model.get("id") or "").strip():
-                    units[str(model["id"])] = _count(model.get("confirmed_units"))
+                if not isinstance(model, Mapping):
+                    continue
+                _check_fields(model, UNIT_FIELDS, f"數據中心商品 {product_id} 的型號")
+                units[str(model["id"])] = _count(model.get("confirmed_units"))
         total = _count(result.get("total"))
         if not items or page_num * PERFORMANCE_PAGE_SIZE >= total:
             return found
@@ -291,11 +315,47 @@ def recent_full_months(today: date, count: int) -> List[Tuple[int, int]]:
     return months
 
 
+# A full month this far above the median of the months looked at is treated as
+# a one-off spike (11.11, a viral post) and the next-highest month is used.
+SPIKE_RATIO = 1.5
+# Products listed this recently have their sales scaled up to a full period.
+# Fewer days than this are not scaled further, so one lucky week stays modest.
+MIN_SCALE_DAYS = 7
+
+
+def best_full_month(values: Sequence[int]) -> int:
+    """Highest month, or the second highest when the highest is a spike."""
+    ordered = sorted(values, reverse=True)
+    if not ordered:
+        return 0
+    if len(ordered) >= 3:
+        median = ordered[len(ordered) // 2]
+        if median > 0 and ordered[0] > SPIKE_RATIO * median:
+            return ordered[1]
+    return ordered[0]
+
+
+def scale_to_period(units: int, start: int, end: int, created: int) -> int:
+    """Scale units sold in [start, end) to the whole period when listed partway in."""
+    if not created or created <= start or units <= 0:
+        return units
+    if created >= end:
+        return units
+    active_days = max((end - created) / 86400, MIN_SCALE_DAYS)
+    period_days = (end - start) / 86400
+    if active_days >= period_days:
+        return units
+    return int(units * period_days / active_days + 0.5)
+
+
 def apply_api_sales(
     products: Dict[str, Any],
     listed: Mapping[str, Mapping[str, Any]],
     past_30_days: Mapping[str, Mapping[str, int]],
     months: Sequence[Mapping[str, Mapping[str, int]]],
+    *,
+    past_30_days_span: Optional[Tuple[int, int]] = None,
+    month_spans: Optional[Sequence[Tuple[int, int]]] = None,
 ) -> Dict[str, int]:
     """Write sold counts, 30-day sales, best full month, and images onto the catalog.
 
@@ -305,8 +365,12 @@ def apply_api_sales(
     Models are matched by 規格ID, which is the seller-centre model id. The
     product total is the sum of its models' sold counts, because the
     product-level figure also counts deleted listings.
+
+    With the spans, a product listed partway through a period (``create_time``)
+    has that period's units scaled up to the full length, so a new product is
+    not judged on a few days of sales.
     """
-    stats = {"matchedModels": 0, "unmatchedModels": 0, "stockMismatches": 0}
+    stats = {"matchedModels": 0, "unmatchedModels": 0, "stockMismatches": 0, "newProducts": 0}
     for product_id, product in products.items():
         if not isinstance(product, dict):
             continue
@@ -316,14 +380,27 @@ def apply_api_sales(
             product["商品圖片網址"] = image_url(listing["image"])
         images = model_image_ids(listing)
         units_30 = past_30_days.get(str(product_id)) or {}
+        created = _count(listing.get("created"))
+        if created and past_30_days_span and created > past_30_days_span[0]:
+            stats["newProducts"] += 1
         models = [model for model in product.get("型號") or [] if isinstance(model, dict)]
         for model in models:
             model_id = str(model.get("規格ID") or "").strip()
-            model["月銷量"] = str(units_30.get(model_id, 0))
+            sold_30 = units_30.get(model_id, 0)
+            if past_30_days_span:
+                sold_30 = scale_to_period(sold_30, *past_30_days_span, created)
+            model["月銷量"] = str(sold_30)
             if months:
-                model[BEST_MONTH_SALES_FIELD] = str(max(
-                    (month.get(str(product_id)) or {}).get(model_id, 0) for month in months
-                ))
+                values = []
+                for index, month in enumerate(months):
+                    value = (month.get(str(product_id)) or {}).get(model_id, 0)
+                    if month_spans:
+                        start, end = month_spans[index]
+                        if created >= end:
+                            continue  # not listed yet that month
+                        value = scale_to_period(value, start, end, created)
+                    values.append(value)
+                model[BEST_MONTH_SALES_FIELD] = str(best_full_month(values))
             else:
                 model.pop(BEST_MONTH_SALES_FIELD, None)
             listed_model = listed_models.get(model_id)
@@ -377,12 +454,14 @@ def fetch_sales(
                 merged[product_id] = by_model
         return merged
 
-    start, end = past_30_days_bounds(today)
-    past_30_days = units(start, end, "past30days")
+    past_30_days_span = past_30_days_bounds(today)
+    past_30_days = units(*past_30_days_span, "past30days")
     months = []
+    month_spans = []
     fetched_months: Dict[str, Any] = {}
     cached_count = 0
     for year, month in recent_full_months(today, best_months):
+        month_spans.append(month_bounds(year, month))
         cached = _cached_month(month_cache, year, month) if month_cache is not None else None
         if cached is not None:
             months.append(cached)
@@ -396,7 +475,14 @@ def fetch_sales(
                 "fetchedOn": today.isoformat(),
                 "units": month_units,
             }
-    stats = apply_api_sales(products, listed, past_30_days, months)
+    stats = apply_api_sales(
+        products,
+        listed,
+        past_30_days,
+        months,
+        past_30_days_span=past_30_days_span,
+        month_spans=month_spans,
+    )
     stats["apiCalls"] = api.calls
     if stats["unmatchedModels"] and not stats["matchedModels"]:
         raise SellerApiError("沒有任何型號的規格 ID 對得上商品列表，已停止。")
@@ -467,3 +553,112 @@ def seller_api_for_page(page: Any, env: Optional[Mapping[str, str]] = None) -> S
         spc_cds,
         delay_seconds=_env_number("SHOPEE_API_DELAY_SECONDS", 0.0, env),
     )
+
+
+# The seller-centre JSON answers plain HTTP with just these (checked on
+# 2026-10-17 from ego lite: dropping any one gives HTTP 403). SPC_SC_SESSION
+# lasts about 5 days, so cookies are re-read from the browser when it expires.
+SELLER_COOKIE_NAMES = ("SPC_CDS", "SPC_ST", "SPC_SC_SESSION")
+HTTP_TIMEOUT_SECONDS = 30
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+)
+
+
+def seller_cookie_header(cookies: Sequence[Mapping[str, Any]]) -> Tuple[str, Dict[str, str]]:
+    """Cookie header for seller.shopee.tw plus the values by name.
+
+    Only cookies a browser would send there (seller.shopee.tw or shopee.tw);
+    when both carry a name, the seller.shopee.tw one wins.
+    """
+    chosen: Dict[str, Tuple[int, str]] = {}
+    for cookie in cookies:
+        if not isinstance(cookie, Mapping):
+            continue
+        name, value = cookie.get("name"), cookie.get("value")
+        domain = str(cookie.get("domain") or "").lstrip(".").lower()
+        if domain not in ("seller.shopee.tw", "shopee.tw"):
+            continue
+        if not isinstance(name, str) or not name or not isinstance(value, str):
+            continue
+        if any(char in name + value for char in "\r\n;"):
+            continue
+        rank = 1 if domain == "seller.shopee.tw" else 0
+        if name not in chosen or rank > chosen[name][0]:
+            chosen[name] = (rank, value)
+    values = {name: value for name, (_rank, value) in chosen.items()}
+    return "; ".join(f"{name}={value}" for name, value in values.items()), values
+
+
+def seller_api_from_cookies(
+    cookies: Sequence[Mapping[str, Any]],
+    env: Optional[Mapping[str, str]] = None,
+    *,
+    opener: Any = None,
+) -> SellerApi:
+    """A SellerApi that sends plain HTTP GETs with these cookies. No browser.
+
+    Same on macOS, Linux and Windows. Raises ``SellerApiError`` when a needed
+    cookie is missing; the cookie values are never printed.
+    """
+    import urllib.error
+    import urllib.request
+    import json
+
+    header, values = seller_cookie_header(cookies)
+    missing = [name for name in SELLER_COOKIE_NAMES if not values.get(name)]
+    if missing:
+        raise SellerApiError(f"cookies 少了 {'、'.join(missing)}，請在瀏覽器重新登入賣家中心。")
+
+    class _NoRedirect(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+            return None  # a redirect means the login page, not JSON
+
+    client = opener if opener is not None else urllib.request.build_opener(_NoRedirect())
+
+    def fetch(url: str) -> Tuple[int, Optional[Mapping[str, Any]]]:
+        request = urllib.request.Request(url, headers={
+            "Accept": "application/json",
+            "Cookie": header,
+            "User-Agent": USER_AGENT,
+        }, method="GET")
+        try:
+            with client.open(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                status, raw = int(getattr(response, "status", 200) or 200), response.read()
+        except urllib.error.HTTPError as exc:
+            return int(exc.code or 0), None
+        except (urllib.error.URLError, OSError) as exc:
+            raise SellerApiError(f"連不上賣家中心：{getattr(exc, 'reason', exc)}") from None
+        try:
+            body = json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            body = None
+        return status, body if isinstance(body, Mapping) else None
+
+    return SellerApi(
+        fetch,
+        values["SPC_CDS"],
+        delay_seconds=_env_number("SHOPEE_API_DELAY_SECONDS", 0.0, env),
+    )
+
+
+def seller_api_from_cookie_file(path: Any, env: Optional[Mapping[str, str]] = None) -> Optional[SellerApi]:
+    """Direct-HTTP SellerApi from cookies.json, or None to use the browser instead.
+
+    ``SHOPEE_SELLER_API_TRANSPORT=browser`` always returns None.
+    """
+    run_env = os.environ if env is None else env
+    if str(run_env.get("SHOPEE_SELLER_API_TRANSPORT", "")).strip() == "browser":
+        return None
+    from cookie_fallback import load_local_shopee_cookies
+    from pathlib import Path
+
+    cookies = load_local_shopee_cookies(Path(path))
+    if not cookies:
+        return None
+    try:
+        return seller_api_from_cookies(cookies, run_env)
+    except SellerApiError as exc:
+        print(f"cookies.json 不能直接用，改用瀏覽器：{exc}")
+        return None

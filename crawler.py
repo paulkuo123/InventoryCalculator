@@ -141,8 +141,9 @@ class ShopeeCrawler:
         self._cdp_attached = False
         default_export_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ads_exports")
         self.ads_export_dir = ads_export_dir or default_export_dir
-        # 初始化 Playwright 瀏覽器
-        self._init_browser()
+        # 瀏覽器等到真的要用（登入、逐頁爬、廣告匯出）才開；
+        # 用 cookies 直接打賣家中心 API 成功時就完全不開瀏覽器。
+        self._browser_started = False
 
     def _load_golden_table(self):
         try:
@@ -155,6 +156,12 @@ class ShopeeCrawler:
 
     def _log_browser_source(self):
         print(f"瀏覽器來源：{self.browser_source}", flush=True)
+
+    def _ensure_browser(self):
+        if getattr(self, "_browser_started", True):
+            return
+        self._browser_started = True
+        self._init_browser()
 
     def _init_browser(self):
         """使用 Playwright 初始化瀏覽器"""
@@ -644,6 +651,9 @@ class ShopeeCrawler:
         output_path = self.output_path or "shopee_products.json"
 
         # 計算每個商品的總月銷量並添加到商品數據中
+        # 每個型號的明細預設不印（全賣場約 6,500 行），SHOPEE_LOG_DETAIL=1 才印。
+        detail = os.environ.get("SHOPEE_LOG_DETAIL", "").strip() not in ("", "0")
+        summary = {"products": 0, "models": 0, "restockModels": 0, "restockUnits": 0, "outOfStock": 0}
         print("開始計算每個商品的總月銷量...")
         for product_id, product_info in data.items():
             if str(product_id) in CRAWL_METADATA_KEYS or not isinstance(product_info, dict):
@@ -717,20 +727,35 @@ class ShopeeCrawler:
                         ),
                     )
                     model["建議補貨數量"] = restock_qty
-                    
-                    print(f"  型號 {model_name}: 庫存 {current_inventory}, 月銷量 {monthly_sales}, 建議補貨 {restock_qty}")
+                    summary["models"] += 1
+                    if current_inventory <= 0:
+                        summary["outOfStock"] += 1
+                    if restock_qty > 0:
+                        summary["restockModels"] += 1
+                        summary["restockUnits"] += restock_qty
+                    if detail:
+                        print(f"  型號 {model_name}: 庫存 {current_inventory}, 月銷量 {monthly_sales}, 建議補貨 {restock_qty}")
 
             # 計算整個商品的總建議補貨數量
             total_restock = sum(model.get("建議補貨數量", 0) for model in product_info.get("型號", []))
             product_info["總建議補貨數量"] = total_restock
 
+            summary["products"] += 1
             # 輸出詳細的計算過程
-            product_name = product_info.get("商品名稱", "未知商品")
-            print(
-                f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}, 總建議補貨: {total_restock}"
-            )
-            if model_sales_details:
-                print("  詳細月銷量: " + ", ".join(model_sales_details))
+            if detail:
+                product_name = product_info.get("商品名稱", "未知商品")
+                print(
+                    f"商品 {product_id} ({product_name}) 的總月銷量: {total_monthly_sales}, 總建議補貨: {total_restock}"
+                )
+                if model_sales_details:
+                    print("  詳細月銷量: " + ", ".join(model_sales_details))
+
+        print(
+            f"計算完成：{summary['products']} 個商品、{summary['models']} 個型號，"
+            f"缺貨 {summary['outOfStock']} 個型號，"
+            f"建議補貨 {summary['restockModels']} 個型號共 {summary['restockUnits']} 件"
+            + ("" if detail else "（每個型號的明細可設 SHOPEE_LOG_DETAIL=1 顯示）")
+        )
 
         # 按總月銷量從大到小排序
         print("開始按總月銷量從大到小排序...")
@@ -823,6 +848,7 @@ class ShopeeCrawler:
             print(f"⚠️ 回存 Cookies 失敗: {e}")
 
     def login(self):
+        self._ensure_browser()
         if self.browser_source == BROWSER_SOURCE_REMOTE:
             self._ensure_remote_seller_session()
             return
@@ -1993,12 +2019,25 @@ class ShopeeCrawler:
             product["無規格"] = True
         return product
 
-    def collect_via_seller_api(self):
+    def direct_seller_api(self):
+        """cookies.json 夠用時，回傳不經瀏覽器、直接發 HTTP 的 SellerApi；否則 None。"""
+        if os.environ.get("SHOPEE_CRAWLER_SOURCE", "").strip() == "page":
+            return None
+        from shopee_seller_api import seller_api_from_cookie_file
+
+        path = getattr(self, "cookies_path", None)
+        if not path:
+            return None
+        if not os.path.isabs(path) and not os.path.exists(path):
+            path = os.path.join(os.path.dirname(os.path.abspath(__file__)), path)
+        return seller_api_from_cookie_file(path)
+
+    def collect_via_seller_api(self, api=None):
         """
         用賣家中心頁面自己會打的 JSON 取得商品、庫存、已售出、圖片與銷量（只用 GET）。
 
-        關鍵字搜尋和「我的商品」搜尋框是同一個請求。成功回傳 True；
-        API 失敗或設了 SHOPEE_CRAWLER_SOURCE=page 就回傳 False，改走逐頁爬。
+        關鍵字搜尋和「我的商品」搜尋框是同一個請求。``api`` 沒給就用瀏覽器頁面的
+        cookie。成功回傳 True；API 失敗或設了 SHOPEE_CRAWLER_SOURCE=page 就回傳 False。
         """
         if os.environ.get("SHOPEE_CRAWLER_SOURCE", "").strip() == "page":
             return False
@@ -2018,7 +2057,8 @@ class ShopeeCrawler:
         cache_path = os.path.join(output_dir, MONTH_CACHE_FILENAME)
         month_cache = load_month_cache(cache_path)
         try:
-            api = seller_api_for_page(self.page)
+            if api is None:
+                api = seller_api_for_page(self.page)
             listed = fetch_product_list(api, keyword)
             products = {
                 product_id: self._product_from_listing(product_id, listing)
@@ -2056,6 +2096,12 @@ class ShopeeCrawler:
             "source": "seller_api",
         }
         return True
+
+    def _login_then_collect_via_seller_api(self):
+        # 登入蝦皮
+        self.login()
+        print("登入成功")
+        return self.collect_via_seller_api()
 
     def extract_monthly_sales_data(self):
         """
@@ -2221,11 +2267,10 @@ class ShopeeCrawler:
             # 初始化產品資料字典
             self.products_data = {}
 
-            # 登入蝦皮
-            self.login()
-            print("登入成功")
-
-            if self.collect_via_seller_api():
+            direct_api = self.direct_seller_api()
+            if direct_api is not None and self.collect_via_seller_api(direct_api):
+                print("已用 cookies 直接讀賣家中心 API（沒有開瀏覽器）")
+            elif self._login_then_collect_via_seller_api():
                 print("已用賣家中心 API 取得商品、庫存與銷量")
             else:
                 # 獲取所有商品資訊

@@ -374,8 +374,9 @@ def fetch_sales_via_api_on_page(page: Any, products: Dict[str, Any], env: Option
 
 
 def import_from_seller_api(
-    page: Any,
+    page: Any = None,
     *,
+    api: Any = None,
     destination: Path,
     golden_table: Mapping[str, Any],
     inventory_month: int,
@@ -400,11 +401,12 @@ def import_from_seller_api(
     )
 
     raw_page = getattr(page, "page", None)
-    if raw_page is None:
+    if api is None and raw_page is None:
         raise MassUpdateError("沒有可共用的賣家中心頁面，已停止，沒有寫入正式檔。")
     destination = Path(destination)
     try:
-        api = seller_api_for_page(raw_page, env)
+        if api is None:
+            api = seller_api_for_page(raw_page, env)
         listed = fetch_product_list(api)
         rows = rows_from_listing(listed)
         if not rows:
@@ -428,7 +430,8 @@ def import_from_seller_api(
         raise MassUpdateError(f"賣家中心 API 抓取失敗，沒有寫入正式檔：{exc}") from exc
     print(
         f"賣家中心 API：{stats['apiCalls']} 次請求，{len(listed)} 個商品，"
-        f"對上 {stats['matchedModels']} 個型號，{stats['cachedMonths']} 個月份用快取。"
+        f"對上 {stats['matchedModels']} 個型號，{stats['cachedMonths']} 個月份用快取，"
+        f"新上架 {stats['newProducts']} 個商品。"
     )
     restocked = restock_like_full_shop_crawler(payload, inventory_month)
     result = commit_converted_catalog(
@@ -456,6 +459,7 @@ def download_and_import(
     max_polls: int = DEFAULT_MAX_POLLS,
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     sales_fetcher: Any = None,
+    cookies_path: Optional[Path] = None,
 ) -> Dict[str, Any]:
     """Update the catalog from seller centre, then commit. No write if anything fails.
 
@@ -464,19 +468,36 @@ def download_and_import(
     the「價格及庫存」zip for stock and names and reads sales from the API;
     ``SHOPEE_SALES_SOURCE=datacenter_page`` also reads sales from the data
     centre page row by row.
+
+    The default path sends plain HTTP with cookies.json (kept fresh from ego
+    lite or Chrome by ``cookie_fallback``), so no browser is needed on macOS,
+    Linux or Windows. Without usable cookies it attaches to seller Chrome.
     """
-    source = normalize_browser_source(browser_source)
-    if source != BROWSER_SOURCE_REMOTE:
-        raise MassUpdateBlocked(
-            "BROWSER_SOURCE",
-            "這個下載只會接到已經開好的賣家中心 Chrome（--browser-source remote），不會另外開瀏覽器。",
-        )
     run_env = env if env is not None else os.environ
     use_api_stock = (
         sales_fetcher is None
         and run_env.get("SHOPEE_STOCK_SOURCE", "").strip() != "excel"
         and run_env.get("SHOPEE_SALES_SOURCE", "").strip() != "datacenter_page"
     )
+    if use_api_stock and page is None:
+        from shopee_seller_api import seller_api_from_cookie_file
+
+        cookie_file = Path(cookies_path) if cookies_path else Path(__file__).resolve().parent / "cookies.json"
+        api = seller_api_from_cookie_file(cookie_file, run_env)
+        if api is not None:
+            return import_from_seller_api(
+                api=api,
+                destination=destination,
+                golden_table=golden_table,
+                inventory_month=inventory_month,
+                env=run_env,
+            )
+    source = normalize_browser_source(browser_source)
+    if source != BROWSER_SOURCE_REMOTE:
+        raise MassUpdateBlocked(
+            "BROWSER_SOURCE",
+            "這個下載只會接到已經開好的賣家中心 Chrome（--browser-source remote），不會另外開瀏覽器。",
+        )
     session = None
     if page is None:
         session, _endpoint = attach_seller_page(cdp_endpoint, run_env)
