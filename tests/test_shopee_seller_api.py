@@ -11,6 +11,7 @@ from restock_rules import calculated_restock_details, historical_monthly_sales
 from shopee_seller_api import (
     PERFORMANCE_PATH,
     PRODUCT_LIST_PATH,
+    PRODUCT_SEARCH_PATH,
     SellerApi,
     SellerApiError,
     fetch_sales,
@@ -55,7 +56,7 @@ class FakeShop:
         query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         if parsed.path in self.fail:
             return self.fail[parsed.path].pop(0) if self.fail[parsed.path] else (200, {"code": 0})
-        if parsed.path == PRODUCT_LIST_PATH:
+        if parsed.path in (PRODUCT_LIST_PATH, PRODUCT_SEARCH_PATH):
             page = int(query["page_number"])
             return 200, {
                 "code": 0,
@@ -247,6 +248,59 @@ class StockoutEstimateTests(unittest.TestCase):
         self.assertEqual(red["建議補貨數量"], 80)
         # White has stock, so only its 30-day sales count.
         self.assertEqual(white["建議補貨數量"], ShopeeCrawler.calculate_restock_quantity(None, 25, 100, 6, 4, 4, 6))
+
+
+class CrawlerSearchTests(unittest.TestCase):
+    def _crawler(self, shop, keyword):
+        crawler = object.__new__(ShopeeCrawler)
+        crawler.page = object()
+        crawler.search_keyword = keyword
+        crawler.golden_table = {
+            "1": {"商品圖片網址": "golden-cover", "型號": [
+                {"規格ID": "11", "型號圖片網址": "golden-red", "1688_offer_id": "offer-1"},
+            ]},
+        }
+        self.api = SellerApi(shop, "cds", sleep=lambda _s: None)
+        return crawler
+
+    def test_keyword_search_uses_the_search_box_request_and_names_for_sales(self):
+        from unittest.mock import patch
+
+        shop = FakeShop(_units(), list_pages=[[_product("1", 9999, [("11", 75, 0), ("12", 25, 4)])]])
+        crawler = self._crawler(shop, "1")
+        with patch("shopee_seller_api.seller_api_for_page", lambda *_a, **_k: self.api), \
+                patch.dict("os.environ", {"SHOPEE_BEST_MONTHS": "0"}):
+            self.assertTrue(crawler.collect_via_seller_api())
+        list_url = urlparse(shop.urls[0])
+        self.assertTrue(list_url.path.endswith("search_product_list"))
+        self.assertEqual(parse_qs(list_url.query)["keyword"], ["1"])
+        perf = [parse_qs(urlparse(url).query) for url in shop.urls if PERFORMANCE_PATH in url]
+        # The data centre cannot search by id, so it is asked by the full name.
+        self.assertEqual([query["keyword"] for query in perf], [["商品1"]])
+        product = crawler.products_data["1"]
+        red, white = product["型號"]
+        self.assertEqual(product["已售出總數量"], "100")
+        self.assertEqual((red["商品庫存"], red["已售出數量"], red["1688_offer_id"]), ("0", "75", "offer-1"))
+        self.assertEqual(white["月銷量"], "6")
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_api_failure_falls_back_to_the_page_crawl(self):
+        from unittest.mock import patch
+
+        shop = FakeShop(_units())
+        shop.fail[PRODUCT_SEARCH_PATH] = [(403, None)]
+        crawler = self._crawler(shop, "襪子")
+        crawler.products_data = {"keep": {}}
+        with patch("shopee_seller_api.seller_api_for_page", lambda *_a, **_k: self.api):
+            self.assertFalse(crawler.collect_via_seller_api())
+        self.assertEqual(crawler.products_data, {"keep": {}})
+
+    def test_page_source_env_skips_the_api(self):
+        from unittest.mock import patch
+
+        crawler = self._crawler(FakeShop(_units()), "")
+        with patch.dict("os.environ", {"SHOPEE_CRAWLER_SOURCE": "page"}):
+            self.assertFalse(crawler.collect_via_seller_api())
 
 
 if __name__ == "__main__":

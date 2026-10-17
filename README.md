@@ -216,6 +216,7 @@ python main.py
   - 銷量來源（`shopee_seller_api.py`）：在同一個賣家中心分頁用 GET 讀頁面自己打的 JSON，一個接一個送、不並發。商品列表 `get_product_list` 給每個型號精確的累計已售出；數據中心 `mydata/v4/product/performance` 給過去 30 天與最近幾個完整月份的型號件數。型號用 `規格ID` 對應。商品的已售出總數量是型號加總，因為列表上的商品數字含已刪除商品。
   - 缺貨型號（庫存 0）的月銷量估算用「最近 `SHOPEE_BEST_MONTHS`（預設 3）個完整月中最高的單月件數」，和過去 30 天取大者；設 0 就改回已售出數量佔比。
   - `SHOPEE_API_DELAY_SECONDS` 是請求間隔（預設 0）。429、5xx 或 `code` 不是 0 會退避重試一次，再失敗就停，不寫正式檔；401/403 直接停。`SHOPEE_SALES_SOURCE=datacenter_page` 改回逐列讀數據中心頁面。
+  - 搜尋（`crawler.py`，有沒有關鍵字都一樣）登入後也先走 API：關鍵字送到「我的商品」搜尋框同一個 `search_product_list`，數據中心則用找到的完整商品名稱查（它不支援用商品 ID 搜）。API 任何失敗都退回原本的逐頁爬；`SHOPEE_CRAWLER_SOURCE=page` 直接走逐頁爬。
   - 這些是蝦皮內部端點，不是公開 API，改版時欄位可能改變；回應形狀不對時會停下來。
 - 廣告工作台：可進行 Shopee 廣告報表匯出與 AI 分析
 - 到貨入庫工作台：可匯入 1688 訂單、處理分批／不良品，並預覽蝦皮庫存更新

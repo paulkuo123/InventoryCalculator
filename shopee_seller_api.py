@@ -28,6 +28,11 @@ from restock_rules import BEST_MONTH_SALES_FIELD
 
 SELLER_ORIGIN = "https://seller.shopee.tw"
 PRODUCT_LIST_PATH = "/api/v3/opt/mpsku/list/v2/get_product_list"
+# What the「我的商品」search box calls; same response shape as get_product_list.
+PRODUCT_SEARCH_PATH = "/api/v3/opt/mpsku/list/v2/search_product_list"
+# With a few products, the data centre is queried by each full name (it cannot
+# search by product id); above this, one shop-wide query is cheaper.
+MAX_NAME_QUERIES = 5
 PERFORMANCE_PATH = "/api/mydata/v4/product/performance/"
 PRODUCT_PAGE_SIZE = 48
 PERFORMANCE_PAGE_SIZE = 50
@@ -121,20 +126,31 @@ def _require_list(container: Any, key: str, where: str) -> List[Mapping[str, Any
     return [item for item in value if isinstance(item, Mapping)]
 
 
-def fetch_product_list(api: SellerApi) -> Dict[str, Dict[str, Any]]:
+def fetch_product_list(api: SellerApi, keyword: str = "") -> Dict[str, Dict[str, Any]]:
     """Return {product_id: {"name", "sold", "stock", "models": {model_id: {"name", "sold", "stock"}}}}.
 
     Stock is ``total_seller_stock``. It matched the「價格及庫存」Excel on all
     5,852 models of a live shop on 2026-10-17 (one model differed by a sale
     made between the two reads).
+
+    With ``keyword`` this is the same search as the「我的商品」box: a product
+    id or full name finds that product, part of a name is a fuzzy match.
     """
     found: Dict[str, Dict[str, Any]] = {}
+    keyword = str(keyword or "").strip()
     for page_number in range(1, MAX_PAGES + 1):
-        body = api.get(PRODUCT_LIST_PATH, {
+        params: Dict[str, Any] = {
             "page_number": page_number,
             "page_size": PRODUCT_PAGE_SIZE,
             "list_type": "live_all",
-        })
+        }
+        if keyword:
+            params.update({
+                "keyword": keyword,
+                "request_attribute": "",
+                "operation_sort_by": "recommend_v4",
+            })
+        body = api.get(PRODUCT_SEARCH_PATH if keyword else PRODUCT_LIST_PATH, params)
         data = body.get("data") or {}
         products = _require_list(data, "products", "商品列表")
         for product in products:
@@ -167,16 +183,19 @@ def fetch_product_list(api: SellerApi) -> Dict[str, Dict[str, Any]]:
 
 
 def fetch_model_units(
-    api: SellerApi, start_time: int, end_time: int, period: str
+    api: SellerApi, start_time: int, end_time: int, period: str, keyword: str = ""
 ) -> Dict[str, Dict[str, int]]:
-    """Return {product_id: {model_id: confirmed_units}} for one data-centre period."""
+    """Return {product_id: {model_id: confirmed_units}} for one data-centre period.
+
+    ``keyword`` matches product names only, not ids.
+    """
     found: Dict[str, Dict[str, int]] = {}
     for page_num in range(1, MAX_PAGES + 1):
         body = api.get(PERFORMANCE_PATH, {
             "start_time": start_time,
             "end_time": end_time,
             "period": period,
-            "keyword": "",
+            "keyword": keyword,
             "category_type": "shopee",
             "category_id": -1,
             "page_size": PERFORMANCE_PAGE_SIZE,
@@ -327,20 +346,36 @@ def fetch_sales(
     today: Optional[date] = None,
     best_months: int = DEFAULT_BEST_MONTHS,
     listed: Optional[Mapping[str, Mapping[str, Any]]] = None,
+    search: bool = False,
 ) -> Dict[str, int]:
     """Fetch everything first, then write. A failed call leaves ``products`` untouched.
 
     Pass ``listed`` when the product list was already fetched for stock.
+    ``search`` means ``listed`` is a keyword result, not the whole shop.
     """
     today = today or datetime.now(TAIPEI).date()
     if listed is None:
         listed = fetch_product_list(api)
+    # A handful of products: ask the data centre for each full name and keep
+    # only those ids. Otherwise one shop-wide query covers everything.
+    names = sorted({str(item.get("name") or "") for item in listed.values()})
+    keywords = names if search and 0 < len(listed) <= MAX_NAME_QUERIES and all(names) else [""]
+
+    def units(start: int, end: int, period: str) -> Dict[str, Dict[str, int]]:
+        merged: Dict[str, Dict[str, int]] = {}
+        for keyword in keywords:
+            for product_id, by_model in fetch_model_units(api, start, end, period, keyword).items():
+                if search and product_id not in listed:
+                    continue
+                merged[product_id] = by_model
+        return merged
+
     start, end = past_30_days_bounds(today)
-    past_30_days = fetch_model_units(api, start, end, "past30days")
+    past_30_days = units(start, end, "past30days")
     months = []
     for year, month in recent_full_months(today, best_months):
         start, end = month_bounds(year, month)
-        months.append(fetch_model_units(api, start, end, "month"))
+        months.append(units(start, end, "month"))
     stats = apply_api_sales(products, listed, past_30_days, months)
     stats["apiCalls"] = api.calls
     if stats["unmatchedModels"] and not stats["matchedModels"]:

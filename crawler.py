@@ -1956,6 +1956,92 @@ class ShopeeCrawler:
             if getattr(self, "monthly_sales_fail_closed", False):
                 raise RuntimeError(f"月銷量抓取失敗：{e}") from e
             return self.products_data
+    def _product_from_listing(self, product_id, listing):
+        """把商品列表 API 的一個商品轉成爬蟲的商品格式，1688 對應從 golden table 帶入。"""
+        golden_info = (getattr(self, "golden_table", None) or {}).get(product_id, {})
+        golden_by_spec = {
+            str(model.get("規格ID")): model
+            for model in golden_info.get("型號", []) or []
+            if isinstance(model, dict) and model.get("規格ID")
+        }
+        models = []
+        for model_id, listed_model in (listing.get("models") or {}).items():
+            golden_model = golden_by_spec.get(model_id) or {}
+            models.append({
+                "型號名稱": listed_model.get("name") or "",
+                "規格ID": model_id,
+                "已售出數量": str(listed_model.get("sold", 0)),
+                "商品庫存": str(listed_model.get("stock", 0)),
+                "型號圖片網址": golden_model.get("型號圖片網址", "未找到"),
+                "月銷量": "0",
+                "阿里巴巴商品名稱": golden_model.get("阿里巴巴商品名稱", ""),
+                "阿里巴巴商品URL": golden_model.get("阿里巴巴商品URL", ""),
+                "1688_offer_id": golden_model.get("1688_offer_id", ""),
+                "1688_sku_id": golden_model.get("1688_sku_id", ""),
+                "1688_sku_name": golden_model.get("1688_sku_name", ""),
+                "1688_min_order_qty": golden_model.get("1688_min_order_qty", 1),
+                "1688_package_multiple": golden_model.get("1688_package_multiple", 1),
+                "1688_last_price_cny": golden_model.get("1688_last_price_cny", None),
+            })
+        product = {
+            "商品名稱": listing.get("name") or "未找到",
+            "已售出總數量": str(listing.get("sold", 0)),
+            "商品圖片網址": golden_info.get("商品圖片網址", "未找到"),
+            "型號": models,
+        }
+        if not models:
+            product["無規格"] = True
+        return product
+
+    def collect_via_seller_api(self):
+        """
+        用賣家中心頁面自己會打的 JSON 取得商品、庫存、已售出、圖片與銷量（只用 GET）。
+
+        關鍵字搜尋和「我的商品」搜尋框是同一個請求。成功回傳 True；
+        API 失敗或設了 SHOPEE_CRAWLER_SOURCE=page 就回傳 False，改走逐頁爬。
+        """
+        if os.environ.get("SHOPEE_CRAWLER_SOURCE", "").strip() == "page":
+            return False
+        from shopee_seller_api import (
+            SellerApiError,
+            best_months_from_env,
+            fetch_product_list,
+            fetch_sales,
+            seller_api_for_page,
+        )
+
+        keyword = str(getattr(self, "search_keyword", "") or "").strip()
+        try:
+            api = seller_api_for_page(self.page)
+            listed = fetch_product_list(api, keyword)
+            products = {
+                product_id: self._product_from_listing(product_id, listing)
+                for product_id, listing in listed.items()
+            }
+            if products:
+                stats = fetch_sales(
+                    api,
+                    products,
+                    best_months=best_months_from_env(),
+                    listed=listed,
+                    search=bool(keyword),
+                )
+                print(f"賣家中心 API：{stats['apiCalls']} 次請求，{len(products)} 個商品")
+        except Exception as e:
+            # API 只是比較快的路；任何失敗都退回原本的逐頁爬，不寫半套資料。
+            reason = str(e) if isinstance(e, SellerApiError) else f"{type(e).__name__}: {e}"
+            print(f"⚠️ 賣家中心 API 失敗，改用逐頁爬：{reason}")
+            return False
+        self.products_data = products
+        self.crawl_page_logs = []
+        self.crawl_count_check = {
+            "count_check": "matched",
+            "expected": len(listed),
+            "collected": len(products),
+            "source": "seller_api",
+        }
+        return True
+
     def extract_monthly_sales_data(self):
         """
         從頁面提取月銷量數據，並更新 self.products_data 中的型號資訊
@@ -2124,13 +2210,16 @@ class ShopeeCrawler:
             self.login()
             print("登入成功")
 
-            # 獲取所有商品資訊
-            self.get_all_products_info()
-            print("已獲取所有商品基本資訊")
+            if self.collect_via_seller_api():
+                print("已用賣家中心 API 取得商品、庫存與銷量")
+            else:
+                # 獲取所有商品資訊
+                self.get_all_products_info()
+                print("已獲取所有商品基本資訊")
 
-            print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
-            self.get_monthly_sales(self.search_keyword)
-            print("月銷量查詢完成")
+                print(f"開始查詢關鍵字 '{self.search_keyword}' 的月銷量")
+                self.get_monthly_sales(self.search_keyword)
+                print("月銷量查詢完成")
 
             # 完成所有資料收集後，一次性儲存 JSON 檔案
             self.save_to_file(self.products_data)
