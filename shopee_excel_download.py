@@ -28,6 +28,7 @@ from ads_session import (
     detect_session_blocker,
     normalize_browser_source,
 )
+from restock_rules import BEST_MONTH_SALES_FIELD
 from shopee_cookie_sync import connect_seller_chrome, resolve_seller_cdp_endpoints
 from shopee_excel_import import (
     commit_converted_catalog,
@@ -323,6 +324,7 @@ def _clear_monthly_sales(products: Dict[str, Any]) -> None:
             if isinstance(model, dict):
                 model["月銷量"] = "0"
                 model["建議補貨數量"] = 0
+                model.pop(BEST_MONTH_SALES_FIELD, None)
 
 
 def fetch_monthly_sales_on_page(page: Any, products: Dict[str, Any], inventory_month: int) -> Dict[str, Any]:
@@ -345,6 +347,29 @@ def fetch_monthly_sales_on_page(page: Any, products: Dict[str, Any], inventory_m
     crawler.monthly_sales_fail_closed = True
     crawler.search_keyword = ""
     crawler.get_monthly_sales("")
+    return products
+
+
+def fetch_sales_via_api_on_page(page: Any, products: Dict[str, Any], env: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """Fill sold counts, 30-day sales, and best full month from seller-centre JSON.
+
+    Set SHOPEE_SALES_SOURCE=datacenter_page to go back to reading the data
+    centre page row by row. Any API error raises, so nothing is written.
+    """
+    from shopee_seller_api import SellerApiError, best_months_from_env, fetch_sales, seller_api_for_page
+
+    raw_page = getattr(page, "page", None)
+    if raw_page is None:
+        raise MassUpdateError("沒有可共用的賣家中心頁面，已停止，沒有寫入正式檔。")
+    try:
+        api = seller_api_for_page(raw_page, env)
+        stats = fetch_sales(api, products, best_months=best_months_from_env(env))
+    except SellerApiError as exc:
+        raise MassUpdateError(f"銷量 API 抓取失敗，沒有寫入正式檔：{exc}") from exc
+    print(
+        f"銷量 API：{stats['apiCalls']} 次請求，對上 {stats['matchedModels']} 個型號，"
+        f"{stats['unmatchedModels']} 個型號沒對上，庫存與商品列表不同 {stats['stockMismatches']} 個。"
+    )
     return products
 
 
@@ -389,9 +414,13 @@ def download_and_import(
                 inventory_month=inventory_month,
             )
             _clear_monthly_sales(payload)
-            fetch = sales_fetcher or (
-                lambda catalog: fetch_monthly_sales_on_page(page, catalog, inventory_month)
-            )
+            run_env = env if env is not None else os.environ
+            if sales_fetcher is not None:
+                fetch = sales_fetcher
+            elif run_env.get("SHOPEE_SALES_SOURCE", "").strip() == "datacenter_page":
+                fetch = lambda catalog: fetch_monthly_sales_on_page(page, catalog, inventory_month)
+            else:
+                fetch = lambda catalog: fetch_sales_via_api_on_page(page, catalog, run_env)
             try:
                 fetched = fetch(payload)
             except MassUpdateError:
@@ -405,7 +434,7 @@ def download_and_import(
                 destination,
                 restocked,
                 golden_table,
-                message="已用價格及庫存 Excel 與數據中心月銷量更新 shopee_products.json",
+                message="已用價格及庫存 Excel 與賣家中心銷量更新 shopee_products.json",
             )
     finally:
         if session is not None:

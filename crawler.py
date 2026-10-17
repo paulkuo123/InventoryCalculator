@@ -23,7 +23,11 @@ from ads_session import (
     safe_url_for_log,
 )
 from housekeeping import prune_generated_files
-from restock_rules import round_calculated_restock_qty
+from restock_rules import (
+    BEST_MONTH_SALES_FIELD,
+    historical_monthly_sales,
+    round_calculated_restock_qty,
+)
 
 # Playwright 兼容層：取代 Selenium imports
 from pw_adapter import (By, WebDriverWait, EC, Keys,
@@ -577,6 +581,7 @@ class ShopeeCrawler:
         current_inventory,
         expected_months=4,
         total_monthly_sales=0,
+        best_month_sales=None,
     ):
         """
         計算建議補貨數量
@@ -593,6 +598,9 @@ class ShopeeCrawler:
             monthly_sales (int): 月銷量
             current_inventory (int): 當前庫存
             expected_months (int): 期望維持的庫存月數（預設 4 個月）
+            total_monthly_sales (int): 商品總月銷量
+            best_month_sales (int | None): 型號近幾個完整月份的最高單月件數；
+                有抓到時缺貨估算用它，None 時用已售出數量佔比
             
         Returns:
             int: 建議補貨數量（如果不需要補貨則為 0 或負數）
@@ -601,16 +609,12 @@ class ShopeeCrawler:
             # 總銷量只用在缺貨時的歷史佔比；讀不到（例如 Excel 匯入的新商品）
             # 仍照月銷量計算，不直接回 0。
             effective_monthly_sales = monthly_sales
-            if (
-                current_inventory == 0
-                and product_sold > 0
-                and total_sold > 0
-                and total_monthly_sales > 0
-            ):
-                historical_monthly_sales = int(
-                    total_monthly_sales * (product_sold / total_sold) * 10 + 0.5
-                ) / 10
-                effective_monthly_sales = max(monthly_sales, historical_monthly_sales)
+            if current_inventory == 0:
+                historical = historical_monthly_sales(
+                    total_monthly_sales, product_sold, total_sold, best_month_sales
+                )
+                if historical is not None:
+                    effective_monthly_sales = max(monthly_sales, historical)
 
             if effective_monthly_sales <= 0:
                 return 0
@@ -706,6 +710,11 @@ class ShopeeCrawler:
                         current_inventory,
                         expected_months,
                         total_monthly_sales,
+                        (
+                            self._parse_number_text(model[BEST_MONTH_SALES_FIELD])
+                            if model.get(BEST_MONTH_SALES_FIELD) not in (None, "")
+                            else None
+                        ),
                     )
                     model["建議補貨數量"] = restock_qty
                     

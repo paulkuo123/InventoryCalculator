@@ -256,6 +256,34 @@ class MassUpdateDownloadTests(unittest.TestCase):
             self.assertEqual(destination.read_bytes(), before)
             self.assertFalse(list(Path(temp_dir).glob("shopee_products.json.tmp")))
 
+    def test_one_click_reads_sales_from_the_seller_api_by_default(self):
+        seen = {}
+        raw_page = object()
+        page = FakePage()
+        page.page = raw_page
+
+        def fake_api_fetch(page_arg, catalog, env):
+            seen["page"] = page_arg
+            seen["catalog"] = catalog
+            catalog["900001"]["型號"][0]["月銷量"] = "7"
+            return catalog
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            destination = Path(temp_dir) / "shopee_products.json"
+            destination.write_text("{}\n", encoding="utf-8")
+            with patch("shopee_excel_download.fetch_sales_via_api_on_page", fake_api_fetch):
+                download_and_import(
+                    destination=destination,
+                    golden_table={},
+                    page=page,
+                    env={},
+                    max_polls=5,
+                    poll_seconds=0,
+                )
+            saved = json.loads(destination.read_text(encoding="utf-8"))
+        self.assertIs(seen["page"], page)
+        self.assertEqual(saved["900001"]["型號"][0]["月銷量"], "7")
+
     def test_one_click_calls_get_monthly_sales_on_the_same_page(self):
         from crawler import ShopeeCrawler
 
@@ -279,6 +307,7 @@ class MassUpdateDownloadTests(unittest.TestCase):
                     destination=destination,
                     golden_table={},
                     page=page,
+                    env={"SHOPEE_SALES_SOURCE": "datacenter_page"},
                     max_polls=5,
                     poll_seconds=0,
                 )
