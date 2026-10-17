@@ -16,6 +16,7 @@ from crawler import (
     ShopeeCrawler,
     build_crawler_argument_parser,
     parse_listed_product_total,
+    redact_url_for_log,
 )
 from home_bootstrap import load_home_bootstrap
 from pw_adapter import By, NoSuchElementException
@@ -1905,6 +1906,240 @@ class ListingTabRefreshTests(unittest.TestCase):
         self.assertIn("page=2", crawler.context.opened[0].visits[0])
         self.assertTrue(first.closed)
         self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+
+class _AwayTab(ListingTab):
+    @property
+    def url(self):
+        if getattr(self.driver, "away", False):
+            return self.driver.landed_url
+        return (
+            "https://seller.shopee.tw/portal/product/list/live/all"
+            "?operationSortBy=modified_time&page=1"
+        )
+
+    def goto(self, url, wait_until=None, timeout=None):
+        self.driver.away = False
+        return super().goto(url, wait_until=wait_until, timeout=timeout)
+
+
+class _ExpandBreakDriver(ListingDriver):
+    def __init__(self, pages, landed_url, always=False):
+        super().__init__(pages)
+        self.landed_url = landed_url
+        self.always = always
+        self.expand_hits = 0
+        self.away = False
+
+    def find_elements(self, by, value):
+        if by == By.XPATH and "product-more-models__content" in str(value):
+            if self.index == 1 and (self.always or self.expand_hits < 1):
+                self.expand_hits += 1
+                self.away = True
+                raise RuntimeError(
+                    "Page.evaluate: Execution context was destroyed, "
+                    "most likely because of a navigation"
+                )
+            return []
+        return super().find_elements(by, value)
+
+
+class RoundNineListingTests(ListingTabRefreshTests):
+    def test_redact_url_keeps_page_and_hides_token_values(self):
+        logged = redact_url_for_log(
+            "https://seller.shopee.tw/portal/product/999"
+            "?token=SECRETVALUE1234567890&page=4&operationSortBy=modified_time"
+        )
+        self.assertIn("/portal/product/999", logged)
+        self.assertIn("page=4", logged)
+        self.assertIn("operationSortBy=modified_time", logged)
+        self.assertIn("已省略", logged)
+        self.assertNotIn("SECRETVALUE1234567890", logged)
+
+    def test_parent_rows_skip_pinned_badge_and_expanded_variant(self):
+        parents = [str(index) for index in range(1, 13)]
+        rows = shop_rows(parents)
+        fixed = shop_rows(parents)
+        for row in fixed:
+            row.class_name = "eds-table__fixed"
+        pinned = product_row("54216463889", "置頂商品", models=[model_row()])
+        pinned.children[(By.CLASS_NAME, "eds-tag")] = [FakeElement(text="置頂")]
+        variant = product_row("999", "展開的型號列", models=[model_row()])
+        variant.class_name = "model-list-item"
+        rows.extend(fixed)
+        rows.append(pinned)
+        rows.append(variant)
+        self.assertEqual(len(rows), 26)
+
+        def advance(driver):
+            driver.index += 1
+
+        driver = ListingDriver(
+            [
+                ListingPage("", rows, "架上商品(13)", next_enabled=True),
+                ListingPage(
+                    "",
+                    shop_rows(["54216463889"]),
+                    "架上商品(13)",
+                    next_enabled=False,
+                ),
+            ],
+            on_next=advance,
+        )
+        crawler = make_crawler(driver, "unused.json")
+        with redirect_stdout(io.StringIO()):
+            crawler.get_all_products_info()
+        self.assertEqual(crawler.crawl_page_logs[0]["DOM列數"], 26)
+        self.assertEqual(crawler.crawl_page_logs[0]["商品列數"], 12)
+        self.assertEqual(crawler.crawl_page_logs[0]["成功"], 12)
+        self.assertEqual(crawler.crawl_page_logs[1]["成功"], 1)
+        self.assertEqual(
+            list(crawler.products_data),
+            parents + ["54216463889"],
+        )
+        self.assertNotIn("999", crawler.products_data)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["collected"], 13)
+
+    def test_one_repeated_parent_stays_a_new_page_and_dedupes(self):
+        page1 = [str(index) for index in range(1, 13)]
+        page2 = [str(index) for index in range(13, 25)]
+        page3 = ["1"] + [str(index) for index in range(25, 36)]
+        driver = ListingDriver([
+            ListingPage("", shop_rows(page1), "架上商品(35)", next_enabled=True),
+            ListingPage("", shop_rows(page2), "架上商品(35)", next_enabled=True),
+            ListingPage("", shop_rows(page3), "架上商品(35)", next_enabled=False),
+        ])
+        crawler = self._crawler(driver, interval=100)
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(len(crawler.products_data), 35)
+        self.assertEqual(list(crawler.products_data).count("1"), 1)
+        self.assertIn("仍算這一頁", message)
+        self.assertIn("去重後的數量核對", message)
+        self.assertNotIn("不信任這次網址跳頁", message)
+        self.assertEqual(crawler.crawl_page_logs[2]["成功"], 11)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+        self.assertEqual(crawler.crawl_count_check["collected"], 35)
+
+    def test_destroyed_context_reopens_and_redacts_the_landed_url(self):
+        ids = ["101", "102", "103", "104"]
+        driver = _ExpandBreakDriver(
+            listing_pages(ids),
+            "https://seller.shopee.tw/portal/product/999"
+            "?token=SECRETVALUE1234567890&page=4",
+        )
+        crawler = self._crawler(driver, interval=100)
+        first = _AwayTab(driver)
+        crawler.page = first
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertIn("執行環境被銷毀", message)
+        self.assertIn("page=4", message)
+        self.assertIn("已省略", message)
+        self.assertNotIn("SECRETVALUE1234567890", message)
+        self.assertIn("page=2", crawler.context.opened[0].visits[0])
+        self.assertTrue(first.closed)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_null_scroll_height_reopens_the_listing_page(self):
+        ids = ["101", "102", "103", "104"]
+
+        class _NullBodyDriver(ListingDriver):
+            def __init__(self, pages):
+                super().__init__(pages)
+                self.scroll_hits = 0
+                self.away = False
+                self.landed_url = (
+                    "https://seller.shopee.tw/portal/product/999"
+                    "?token=SECRETVALUE1234567890&page=4"
+                )
+
+            def execute_script(self, script, *args):
+                if (
+                    "scrollHeight" in str(script)
+                    and self.index == 1
+                    and self.scroll_hits < 1
+                ):
+                    self.scroll_hits += 1
+                    self.away = True
+                    raise TypeError(
+                        "Cannot read properties of null (reading 'scrollHeight')"
+                    )
+                return None
+
+        driver = _NullBodyDriver(listing_pages(ids))
+        crawler = self._crawler(driver, interval=100)
+        crawler.scroll_to_load_all_rows = (
+            lambda: ShopeeCrawler.scroll_to_load_all_rows(crawler)
+        )
+        first = _AwayTab(driver)
+        crawler.page = first
+        stdout = io.StringIO()
+        with redirect_stdout(stdout):
+            crawler.get_all_products_info()
+        message = stdout.getvalue()
+        self.assertEqual(list(crawler.products_data), ids)
+        self.assertIn("document.body", message)
+        self.assertNotIn("SECRETVALUE1234567890", message)
+        self.assertIn("page=2", crawler.context.opened[0].visits[0])
+        self.assertTrue(first.closed)
+        self.assertEqual(crawler.crawl_count_check["count_check"], "matched")
+
+    def test_login_or_captcha_stops_without_retry(self):
+        cases = (
+            (
+                "https://accounts.shopee.tw/seller/login?token=SECRETVALUE1234567890",
+                "登入",
+            ),
+            (
+                "https://seller.shopee.tw/verify/captcha?token=SECRETVALUE1234567890",
+                "驗證",
+            ),
+        )
+        for landed_url, expected in cases:
+            with self.subTest(expected=expected):
+                ids = ["101", "102", "103", "104"]
+                driver = _ExpandBreakDriver(listing_pages(ids), landed_url)
+                crawler = self._crawler(driver, interval=100)
+                crawler.page = _AwayTab(driver)
+                stdout = io.StringIO()
+                with redirect_stdout(stdout):
+                    with self.assertRaises(CrawlIntegrityError) as caught:
+                        crawler.get_all_products_info()
+                message = f"{caught.exception}\n{stdout.getvalue()}"
+                self.assertIn(expected, message)
+                self.assertIn("不會重試", message)
+                self.assertNotIn("SECRETVALUE1234567890", message)
+                self.assertEqual(crawler.context.opened, [])
+                self.assertEqual(list(crawler.products_data), ["101"])
+                self.assertIsNone(crawler.crawl_count_check)
+
+    def test_destroyed_context_stops_after_three_attempts(self):
+        ids = ["101", "102", "103", "104"]
+        driver = _ExpandBreakDriver(
+            listing_pages(ids),
+            "https://seller.shopee.tw/portal/product/999?page=4",
+            always=True,
+        )
+        crawler = self._crawler(driver, interval=100)
+        crawler.page = _AwayTab(driver)
+        with redirect_stdout(io.StringIO()):
+            with self.assertRaises(CrawlIntegrityError) as caught:
+                crawler.get_all_products_info()
+        message = str(caught.exception)
+        self.assertIn("同一頁已試 3 次", message)
+        self.assertIn("不是最後一頁", message)
+        self.assertIn("不會把數量記成已核對", message)
+        self.assertIn("Execution context was destroyed", message)
+        self.assertEqual(len(crawler.context.opened), 2)
+        self.assertEqual(list(crawler.products_data), ["101"])
+        self.assertIsNone(crawler.crawl_count_check)
 
 
 if __name__ == "__main__":
