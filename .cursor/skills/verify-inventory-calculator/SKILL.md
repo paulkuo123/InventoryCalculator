@@ -118,7 +118,7 @@ Stable handles (use these, not coordinates):
 | Dashboard status | `#overallStatusText` (empty load: `尚未分析`) |
 | Dashboard restock count | `#restockModelsCount` |
 | Keyword search (LIVE crawler — do not click) | `#searchInput`, `#searchButton` |
-| One-click stock update (LIVE seller download — do not click) | `#oneClickUpdateButton` |
+| One-click stock update (cookies read the seller-center API — do not click) | `#oneClickUpdateButton` |
 | Middle search segment (local UI only) | `#searchModeImport`. `#importProductsSlot` is hidden by default until this is pressed, which is when `#shopeeProductsFile` and `#shopeeProductsImportButton` appear |
 | Local JSON import (writes `shopee_products.json`) | `#shopeeProductsFile`, `#shopeeProductsImportButton` |
 | Advanced filter (client-side, after a catalog is loaded) | `#advancedSearchInput`, `#advancedSearchButton` |

@@ -120,15 +120,15 @@ cd InventoryCalculator
 
 ### 蝦皮庫存爬蟲用哪個瀏覽器
 
-`crawler.py` 的 `--browser-source` **預設是 `mac`**：本機 Chromium，讀 `cookies.json`。本機直接跑不要改這個預設，其他人也是靠這個預設。
+網頁搜尋與「一鍵更新全賣場庫存」走四層 Cookie 備援（`cookie_fallback.ensure_shopee_cookies`）：先檢查本機 `cookies.json`，不行再從 ego lite（`ego-browser`）讀，再不行讀本機賣家中心 Chrome 的 CDP（預設 `http://127.0.0.1:9239`），網頁最後才請你貼上。非網頁呼叫不會停下來等貼上。
 
-遠端盒（已經登入賣家中心的 Chrome）做每月庫存時，請把來源寫在指令裡，不要靠預設：
+CLI 爬蟲（`crawler.py`）不會執行 `ensure_shopee_cookies`。它預設用 `cookies.json` 直接對賣家中心發 HTTP GET；cookies 夠用就不開瀏覽器。不夠才登入。真的要開瀏覽器時，`--browser-source` **預設仍是 `mac`**（本機 Chromium）。遠端盒每月庫存請把來源寫在指令裡，不要靠預設：
 
 ```bash
 python3 crawler.py --browser-source remote
 ```
 
-啟動時會印一行 `瀏覽器來源：mac` 或 `瀏覽器來源：remote`，用來確認這次連的是哪一種。
+開瀏覽器時才印一行 `瀏覽器來源：mac` 或 `瀏覽器來源：remote`。
 
 `--mode ads-export` 沒帶這個旗標時，仍是本機 Chromium + cookies。週報請用 `python3 ads_weekly.py`，它會自己帶 `--browser-source remote`。
 
@@ -211,9 +211,9 @@ python main.py
 ```
 執行後會自動開啟網頁介面。
 
-- 庫存首頁：可進行商品搜尋、庫存儀表板與補貨判讀。首頁「一鍵更新全賣場庫存」會 `POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量；Cookie 先讀 `cookies.json`，接著 CDP `127.0.0.1:9239`，最後才開貼上對話框。
+- 庫存首頁：可進行商品搜尋、庫存儀表板與補貨判讀。首頁「一鍵更新全賣場庫存」預設用 `cookies.json` 直接呼叫賣家中心 API（HTTP GET，不開瀏覽器分頁）。Cookie 失效時依序改從 ego lite、本機 Chrome CDP、貼上對話框取得。
   - 預設整個目錄都從 API 建：庫存（`total_seller_stock`，和「價格及庫存」Excel 核對過一致）、商品與型號名稱、圖片（型號自己的圖 → 同一個第一層選項的圖 → 商品主圖，都沒有才用舊檔或 golden_table）。`SHOPEE_STOCK_SOURCE=excel` 改回下載 Excel 拿庫存。
-  - 銷量來源（`shopee_seller_api.py`）：在同一個賣家中心分頁用 GET 讀頁面自己打的 JSON，一個接一個送、不並發。商品列表 `get_product_list` 給每個型號精確的累計已售出；數據中心 `mydata/v4/product/performance` 給過去 30 天與最近幾個完整月份的型號件數。型號用 `規格ID` 對應。商品的已售出總數量是型號加總，因為列表上的商品數字含已刪除商品。
+  - 銷量來源（`shopee_seller_api.py`）：用 cookies 直接發 HTTP GET，不開分頁、不經過瀏覽器。一個接一個送、不並發。商品列表 `get_product_list` 給每個型號精確的累計已售出；數據中心 `mydata/v4/product/performance` 給過去 30 天與最近幾個完整月份的型號件數。型號用 `規格ID` 對應。商品的已售出總數量是型號加總，因為列表上的商品數字含已刪除商品。
   - 缺貨型號（庫存 0）的月銷量估算用「最近 `SHOPEE_BEST_MONTHS`（預設 3）個完整月中最高的單月件數」，和過去 30 天取大者。近幾個月都缺貨（最高單月是 0）或 `SHOPEE_BEST_MONTHS=0` 時，用已售出數量佔比。
   - 最高的那個月如果超過這幾個月中位數的 1.5 倍（例如雙 11），當成一次性爆量，改用第二高的月份。
   - 新上架的商品（`create_time` 在期間內）把上架後的件數換算成整段期間，上架前的月份不算 0；上架不到 7 天的照 7 天算，避免放大太多。
@@ -222,7 +222,7 @@ python main.py
   - 日誌預設只印摘要（商品數、缺貨與建議補貨件數）；`SHOPEE_LOG_DETAIL=1` 印每個型號的明細。
   - 已結束超過 7 天的完整月份會存在 `shopee_month_units.json`，之後不再重抓，一鍵更新平常只要約 17 個請求。搜尋只讀這個快取、不寫。
   - `SHOPEE_API_DELAY_SECONDS` 是請求間隔（預設 0）。429、5xx 或 `code` 不是 0 會退避重試一次，再失敗就停，不寫正式檔；401/403 直接停。`SHOPEE_SALES_SOURCE=datacenter_page` 改回逐列讀數據中心頁面。
-  - 搜尋（`crawler.py`，有沒有關鍵字都一樣）登入後也先走 API：關鍵字送到「我的商品」搜尋框同一個 `search_product_list`，數據中心則用找到的完整商品名稱查（它不支援用商品 ID 搜）。API 任何失敗都退回原本的逐頁爬；`SHOPEE_CRAWLER_SOURCE=page` 直接走逐頁爬。
+  - 搜尋（`crawler.py`，有沒有關鍵字都一樣）：cookies 夠用時先走賣家中心 API，不登入、不開瀏覽器。關鍵字送到「我的商品」搜尋框同一個 `search_product_list`，數據中心則用找到的完整商品名稱查（它不支援用商品 ID 搜）。API 失敗才登入，登入後再試一次 API；仍失敗才退回逐頁爬。`SHOPEE_CRAWLER_SOURCE=page` 直接走逐頁爬。
   - 這些是蝦皮內部端點，不是公開 API，改版時欄位可能改變；回應形狀不對時會停下來。
 - 廣告工作台：可進行 Shopee 廣告報表匯出與 AI 分析
 - 到貨入庫工作台：可匯入 1688 訂單、處理分批／不良品，並預覽蝦皮庫存更新
@@ -348,7 +348,7 @@ python3 ads_analysis.py --include-ai true
 ### 補貨提醒（非 Telegram）
 庭安已確認不再使用 Telegram。庫存／低水位提醒改走 **Grok Bot routines**，本系統不另建應用內推播頻道。
 
-- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`，沒帶旗標時是預設 `mac`）。首頁「一鍵更新全賣場庫存」則 `POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量；搜尋與這次更新的 Cookie 檢查順序都是 `cookies.json`、CDP `127.0.0.1:9239`、貼上對話框。
+- 搜尋庫存：首頁關鍵字搜尋，或 `GET /search`（`crawler.py`）。網頁會先跑四層 Cookie 備援（`cookies.json` → ego lite → CDP `127.0.0.1:9239` → 貼上對話框）。CLI 的 `crawler.py` 不會執行 `ensure_shopee_cookies`；cookies 夠用就直接打賣家中心 API，不夠才開瀏覽器，`--browser-source` 沒帶旗標時仍是 `mac`。首頁「一鍵更新全賣場庫存」走 `POST /api/shopee-products/download-excel`，預設也是 cookies 直接讀賣家中心 API，同一套四層備援。
 - 遠端盒每月庫存：`python3 crawler.py --browser-source remote`
 - 唯讀應補摘要：`python -m restock_loop scan`
 - 每月庫存分析：`python3 scripts/monthly_inventory_report.py`（只讀，寫到 `reports/monthly_inventory_YYYYMM/`；目錄裡已有月報檔時預設不覆寫，只有 `sources/` 不算）。例行任務改成跑這支再摘要，說明見 [`docs/monthly_inventory_report.md`](docs/monthly_inventory_report.md)
@@ -489,7 +489,7 @@ InventoryCalculator/
 ## 常見問題
 
 ### Cookies 設置失敗？
-確保您已登入蝦皮賣家中心，並使用 Cookie Editor 正確導出所有 cookies。三層 Cookie 備援（`cookies.json` → CDP `127.0.0.1:9239` → 貼上對話框）只適用於網頁搜尋與「一鍵更新全賣場庫存」（`POST /api/shopee-products/download-excel`，再從賣家中心 Chrome 抓月銷量），不適用於 CLI 爬蟲（`crawler.py`）。
+確保您已登入蝦皮賣家中心，並使用 Cookie Editor 正確導出所有 cookies。四層 Cookie 備援（`cookie_fallback.ensure_shopee_cookies`：`cookies.json` → ego lite → CDP `127.0.0.1:9239` → 貼上對話框）用在網頁搜尋與「一鍵更新全賣場庫存」（`POST /api/shopee-products/download-excel`，預設用 cookies 直接讀賣家中心 API）。CLI 爬蟲（`crawler.py`）不會執行 `ensure_shopee_cookies`。
 
 ### 爬蟲執行失敗？
 1. 檢查 `cookies.json` 是否存在且格式正確

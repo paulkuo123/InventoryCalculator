@@ -1,12 +1,18 @@
-"""Download a Shopee「價格及庫存」zip and import it.
+"""Update a Shopee catalog. The default is cookies calling the seller-centre API.
 
-Connects the same way as the seller-center crawler: ``--browser-source remote``
+``download_and_import`` reads stock, names, sold counts, and sales with a plain
+HTTP GET and ``cookies.json``. No browser tab. Same on macOS, Linux, and Windows.
+
+``SHOPEE_STOCK_SOURCE=excel`` downloads the「價格及庫存」zip for stock and names
+and still reads sales from the API. ``SHOPEE_SALES_SOURCE=datacenter_page`` also
+switches stock to that Excel download, then reads sales from the data-centre
+page row by row. Those browser paths attach with ``--browser-source remote``
 and ``--cdp-endpoint``. When the endpoint is omitted, seller Chrome is
 ``127.0.0.1:9235`` then ``9239`` (``SHOPEE_SELLER_CDP``), never the ads port.
 
-The flow only clicks an allowlisted set of labels. Upload, save, and update
-controls are rejected before the driver is touched. Login walls, captchas, and
-sliders stop the run.
+The Excel flow only clicks an allowlisted set of labels. Upload, save, and
+update controls are rejected before the driver is touched. Login walls,
+captchas, and sliders stop the run.
 
 This module does not log into seller center. Tests pass a fake page.
 """
@@ -464,9 +470,10 @@ def download_and_import(
     """Update the catalog from seller centre, then commit. No write if anything fails.
 
     Default: stock, names, sold counts, and sales all come from seller-centre
-    JSON (``import_from_seller_api``). ``SHOPEE_STOCK_SOURCE=excel`` downloads
-    the「價格及庫存」zip for stock and names and reads sales from the API;
-    ``SHOPEE_SALES_SOURCE=datacenter_page`` also reads sales from the data
+    JSON (``import_from_seller_api``) via plain HTTP GET with cookies. No browser
+    tab. ``SHOPEE_STOCK_SOURCE=excel`` downloads the「價格及庫存」zip for stock
+    and names and reads sales from the API. ``SHOPEE_SALES_SOURCE=datacenter_page``
+    also switches stock to that Excel download, and reads sales from the data
     centre page row by row.
 
     The default path sends plain HTTP with cookies.json (kept fresh from ego

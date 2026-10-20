@@ -26,7 +26,7 @@ Preconditions:
 
 - **Open home.** Open the inventory dashboard. Run `control-inventory drive inventory-dashboard`. The page `h1` reads `莉莉安蝦皮庫存管理系統`.
 - **Empty dashboard.** Read the summary card. `#overallStatusText` is `尚未分析` and `#restockModelsCount` is `—` when no catalog has been imported or crawled in this browser session.
-- **Search controls present.** Confirm `#searchInput` and `#searchButton` exist. The default segment is 關鍵字搜尋. The middle segment `#searchModeImport` only toggles local UI. `#importProductsSlot` is hidden by default until you press `#searchModeImport`, which is when `#shopeeProductsFile` and `#shopeeProductsImportButton` appear. Do not click `#searchButton`, do not press Enter in `#searchInput`, do not click `#shopeeProductsImportButton` (that writes `shopee_products.json`), and do not click `#oneClickUpdateButton` (that downloads from seller center). Switching `#searchModeKeyword` / `#searchModeImport` / `#searchModeOneClick` is local UI only.
+- **Search controls present.** Confirm `#searchInput` and `#searchButton` exist. The default segment is 關鍵字搜尋. The middle segment `#searchModeImport` only toggles local UI. `#importProductsSlot` is hidden by default until you press `#searchModeImport`, which is when `#shopeeProductsFile` and `#shopeeProductsImportButton` appear. Do not click `#searchButton`, do not press Enter in `#searchInput`, do not click `#shopeeProductsImportButton` (that writes `shopee_products.json`), and do not click `#oneClickUpdateButton` (cookies read the seller-center API). Switching `#searchModeKeyword` / `#searchModeImport` / `#searchModeOneClick` is local UI only.
 - **Header navigation.** Confirm links `a[href="/products.html"]`, `a[href="/inbound.html"]`, `a[href="/sku-mapping.html"]`, `a[href="/golden-import.html"]`, and `a[href="/ads.html"]`.
 - **Bootstrap GET.** Read the snapshot API. Run `control-inventory http GET /api/home/bootstrap --out .cursor/skills/verify-inventory-calculator/evidence/<runId>/inventory-dashboard/home.bootstrap.json`. HTTP 200. JSON `status` is `success` when `shopee_products.json` exists, or `error` with message containing `找不到 shopee_products.json` when it does not. Either outcome is valid empty-dashboard proof.
 - **Proof.** Keep `home.png`, `home.dom.txt`, `home.bootstrap.json`, and `proof.json` from the drive. The screenshot shows the heading and the dashboard card. Cleanup must leave these files in place.
@@ -34,7 +34,7 @@ Preconditions:
 ## Gotchas
 
 - `#searchButton` always hits `/search`, which starts `crawler.py` against Shopee. An empty keyword is still a live crawl.
-- `#oneClickUpdateButton` posts `/api/shopee-products/download-excel` and then fetches monthly sales on the seller Chrome page. Leave it untouched.
+- `#oneClickUpdateButton` posts `/api/shopee-products/download-excel`, which reads the seller-center API with cookies. Do not click it.
 - The homepage does not auto-call `/api/home/bootstrap` to fill the table. A successful bootstrap GET does not change `#overallStatusText`.
 - `#shopeeProductsImportButton` writes repo-root `shopee_products.json`. If you use that path, restore or delete the file afterwards; do not commit it.
 - `#cookiePasteSubmit` writes `cookies.json`. Never type cookie JSON into the page during verification.
