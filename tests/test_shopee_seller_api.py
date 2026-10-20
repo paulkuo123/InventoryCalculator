@@ -284,7 +284,11 @@ class SellerApiTests(unittest.TestCase):
             listed=listed,
             search=True,
         )
-        performance = [parse_qs(urlparse(url).query) for url in shop.urls if PERFORMANCE_PATH in url]
+        performance = [
+            parse_qs(urlparse(url).query, keep_blank_values=True)
+            for url in shop.urls
+            if PERFORMANCE_PATH in url
+        ]
         self.assertEqual([query["keyword"] for query in performance], [[""]])
         self.assertNotIn("99", products)
         self.assertEqual(sorted(products), [str(index) for index in range(1, MAX_NAME_QUERIES + 2)])
