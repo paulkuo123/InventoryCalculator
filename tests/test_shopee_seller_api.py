@@ -2,9 +2,10 @@
 
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 from crawler import ShopeeCrawler
 from restock_rules import calculated_restock_details, historical_monthly_sales
@@ -78,6 +79,14 @@ class FakeShop:
 
 
 TODAY = date(2026, 10, 17)
+
+
+class _PinnedTaipeiNow(datetime):
+    """Stand-in for ``shopee_seller_api.datetime`` so tests do not follow the clock."""
+
+    @classmethod
+    def now(cls, tz=None):
+        return datetime(2026, 10, 17, 12, 0, tzinfo=tz or ZoneInfo("Asia/Taipei"))
 
 
 def _units():
@@ -237,6 +246,51 @@ class SellerApiTests(unittest.TestCase):
         fetch_sales(self._api(FakeShop(_units()))[0], _catalog(), today=TODAY, month_cache=cache, search=True)
         self.assertEqual(cache, {})
 
+    def test_search_above_name_query_cap_uses_empty_keyword_and_drops_outside_ids(self):
+        from shopee_seller_api import MAX_NAME_QUERIES
+
+        listed = {}
+        products = {}
+        for index in range(1, MAX_NAME_QUERIES + 2):
+            product_id = str(index)
+            listed[product_id] = {
+                "name": f"商品{product_id}",
+                "image": "",
+                "sold": 1,
+                "stock": 1,
+                "created": 0,
+                "models": {
+                    "1": {"name": "型號", "sold": 1, "stock": 1, "image": "", "first_tier": None},
+                },
+            }
+            products[product_id] = {
+                "商品名稱": f"商品{product_id}",
+                "已售出總數量": "0",
+                "型號": [{
+                    "型號名稱": "型號",
+                    "規格ID": "1",
+                    "已售出數量": "0",
+                    "商品庫存": "1",
+                    "月銷量": "9",
+                }],
+            }
+        past30 = ("past30days", past_30_days_bounds(TODAY)[0])
+        shop = FakeShop({past30: {"1": {"1": 4}, "99": {"1": 50}}})
+        fetch_sales(
+            self._api(shop)[0],
+            products,
+            today=TODAY,
+            best_months=0,
+            listed=listed,
+            search=True,
+        )
+        performance = [parse_qs(urlparse(url).query) for url in shop.urls if PERFORMANCE_PATH in url]
+        self.assertEqual([query["keyword"] for query in performance], [[""]])
+        self.assertNotIn("99", products)
+        self.assertEqual(sorted(products), [str(index) for index in range(1, MAX_NAME_QUERIES + 2)])
+        self.assertEqual(products["1"]["型號"][0]["月銷量"], "4")
+        self.assertTrue(all(product["型號"][0]["月銷量"] != "50" for product in products.values()))
+
     def test_cache_file_round_trip(self):
         from shopee_seller_api import load_month_cache, save_month_cache
 
@@ -309,7 +363,8 @@ class CrawlerSearchTests(unittest.TestCase):
 
         shop = FakeShop(_units(), list_pages=[[_product("1", 9999, [("11", 75, 0), ("12", 25, 4)])]])
         crawler = self._crawler(shop, "1")
-        with patch("shopee_seller_api.seller_api_for_page", lambda *_a, **_k: self.api), \
+        with patch("shopee_seller_api.datetime", _PinnedTaipeiNow), \
+                patch("shopee_seller_api.seller_api_for_page", lambda *_a, **_k: self.api), \
                 patch.dict("os.environ", {"SHOPEE_BEST_MONTHS": "0"}):
             self.assertTrue(crawler.collect_via_seller_api())
         list_url = urlparse(shop.urls[0])
@@ -492,7 +547,8 @@ class DirectHttpTests(unittest.TestCase):
             cookies.write_text(json.dumps(_jar()), encoding="utf-8")
             destination = Path(temp_dir) / "shopee_products.json"
             destination.write_text("{}\n", encoding="utf-8")
-            with patch("shopee_seller_api.seller_api_from_cookies", lambda *_a, **_k: api), \
+            with patch("shopee_seller_api.datetime", _PinnedTaipeiNow), \
+                    patch("shopee_seller_api.seller_api_from_cookies", lambda *_a, **_k: api), \
                     patch("shopee_excel_download.attach_seller_page", no_browser):
                 result = download_and_import(
                     destination=destination, golden_table={}, env={}, cookies_path=cookies,
@@ -500,6 +556,9 @@ class DirectHttpTests(unittest.TestCase):
             saved = json.loads(destination.read_text(encoding="utf-8"))
         self.assertEqual(result["status"], "success")
         self.assertEqual(sorted(saved), ["1", "2"])
+        red, white = saved["1"]["型號"]
+        self.assertEqual((red["規格ID"], red["月銷量"], red["建議補貨數量"]), ("11", "0", 80))
+        self.assertEqual((white["規格ID"], white["月銷量"], white["建議補貨數量"]), ("12", "6", 20))
 
     def test_crawler_skips_the_browser_when_cookies_work(self):
         import json
@@ -514,13 +573,36 @@ class DirectHttpTests(unittest.TestCase):
             crawler.cookies_path = str(Path(temp_dir) / "cookies.json")
             crawler.output_path = str(Path(temp_dir) / "shopee_products.json")
             Path(crawler.cookies_path).write_text(json.dumps(_jar()), encoding="utf-8")
-            with patch("shopee_seller_api.seller_api_from_cookies", lambda *_a, **_k: api), \
+            with patch("shopee_seller_api.datetime", _PinnedTaipeiNow), \
+                    patch("shopee_seller_api.seller_api_from_cookies", lambda *_a, **_k: api), \
                     patch.object(ShopeeCrawler, "_init_browser", side_effect=AssertionError("browser")), \
                     patch.dict("os.environ", {"SHOPEE_BEST_MONTHS": "0"}):
                 direct = crawler.direct_seller_api()
                 self.assertTrue(crawler.collect_via_seller_api(direct))
         self.assertFalse(crawler._browser_started)
         self.assertEqual(sorted(crawler.products_data), ["1", "2"])
+
+    def test_session_error_message_keeps_only_the_exception_type(self):
+        class _UrlLeak(Exception):
+            pass
+
+        seen = {}
+
+        class _BadSession:
+            def get(self, url, headers=None, timeout=None, allow_redirects=True):
+                seen["url"] = url
+                raise _UrlLeak(url)
+
+        from shopee_seller_api import seller_api_from_cookies
+
+        api = seller_api_from_cookies(_jar(), {}, session=_BadSession())
+        with self.assertRaises(SellerApiError) as caught:
+            api.get(PRODUCT_LIST_PATH, {"page_number": 1})
+        message = str(caught.exception)
+        self.assertIn("SPC_CDS", seen["url"])
+        self.assertEqual(message, "連不上賣家中心：_UrlLeak")
+        self.assertNotIn("SPC_CDS", message)
+        self.assertNotIn(seen["url"], message)
 
 
 if __name__ == "__main__":

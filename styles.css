@@ -2609,7 +2609,6 @@ input:checked + .toggle-slider:before {
     background: #eef0f3;
 }
 
-.inventory-home .headless-option,
 .inventory-home .filter-option {
     display: inline-flex;
     align-items: center;
@@ -3430,13 +3429,11 @@ input:checked + .toggle-slider:before {
         width: 100%;
     }
 
-    .inventory-home .headless-option,
     .inventory-home .filter-option,
     .inventory-home .btn-primary {
         width: 100%;
     }
 
-    .inventory-home .headless-option,
     .inventory-home .filter-option {
         justify-content: flex-start;
     }

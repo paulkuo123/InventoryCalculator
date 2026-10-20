@@ -50,7 +50,7 @@ python3 scripts/monthly_inventory_report.py --help
 - 範圍：觀察清單，套用 `home_bootstrap` 的排除（排除清單，以及品名有「襪」）。
 - 危急：月銷大於 0，而且庫存 ÷ 月銷小於 1.5。庫存 0 又有月銷，算斷貨。缺月銷視同 0，不算有賣出。
 - 水位：`restock_rules.target_months_for_product`。名稱有「手機殼」或「手机壳」、後面不是吊飾或掛繩，目標 3 個月；其餘 4 個月。
-- 建議量：`restock_rules.calculated_restock_details`。目標用月銷乘月數後四捨五入，減掉庫存，再取整。庫存是 0 時，這支函式可能改用歷史銷量佔比。
+- 建議量：`restock_rules.calculated_restock_details`。目標用月銷乘月數後四捨五入，減掉庫存，再取整。庫存是 0 時，先用「近月最高銷量」（大於 0 就用它）；沒有或是 0，才退回已售出數量佔比。
 - 第一批：斷貨，而且建議量至少 20 件。
 - 補到目標水位：觀察清單裡每一個規格都用 `calculated_restock_details` 算建議量，再加總。已經在 3 或 4 個月水位以上的是 0。這個數字包含還沒跌破 1.5 個月、但還沒補滿的規格，所以會大於或等於危急建議件數。
 - 分類：`restock_rules.restock_category`。手機殼、吊飾／掛繩、其餘各一列。JSON 的 `phone_case_critical` 與 `categories.phone_case.critical_specs` 是同一個數，三列的危急規格加總等於 `critical_specs`。規格名是「加購」的手機殼仍算在手機殼這一列（所以會進 `phone_case_critical`），目標月數依店規改回 4，不會因為不是 3 個月就被算到「其餘」。
@@ -63,7 +63,7 @@ python3 scripts/monthly_inventory_report.py --help
 這支腳本的危急定義與那份相同（有月銷、可撐不到 1.5 個月），所以危急型號數、斷貨型號數應該對得上。建議件數可能不同，原因有兩個：
 
 1. 手寫報告把「保護殼／軟殼／硬殼／手機套」也算 3 個月，還把「手機殼吊飾」算 3 個月。店規函式只認「手機殼／手机壳」，吊飾與掛繩維持 4 個月。
-2. 庫存是 0 時，`calculated_restock_details` 可能用歷史銷量佔比，建議量會比「只用本月銷量」高。
+2. 庫存是 0 時，`calculated_restock_details` 先用「近月最高銷量」，沒有或是 0 才用已售出數量佔比，建議量會比「只用本月銷量」高。
 
 這份程式庫沒有 2026-10 的商品檔與 `procurement.db`，實數要在遠端機器上對。
 
