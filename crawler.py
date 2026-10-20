@@ -134,6 +134,7 @@ class ShopeeCrawler:
         self.products_data = {}
         self.crawl_page_logs = []
         self.listing_full_page_size = None
+        self._log_browser_source()
         self.golden_table = self._load_golden_table()
         self._cleaned_up = False  # 防止 cleanup() 被呼叫兩次
         self._owns_page = True
@@ -160,7 +161,6 @@ class ShopeeCrawler:
         if getattr(self, "_browser_started", True):
             return
         self._browser_started = True
-        self._log_browser_source()
         self._init_browser()
 
     def _init_browser(self):
@@ -274,8 +274,7 @@ class ShopeeCrawler:
                 self.browser.close()
             if hasattr(self, 'playwright') and self.playwright:
                 self.playwright.stop()
-            if getattr(self, "_browser_started", False):
-                print("Playwright 資源已清理")
+            print("Playwright 資源已清理")
         except Exception as e:
             print(f"清理 Playwright 資源時出錯: {e}")
 
