@@ -128,7 +128,7 @@ CLI 爬蟲（`crawler.py`）不會執行 `ensure_shopee_cookies`。它預設用 
 python3 crawler.py --browser-source remote
 ```
 
-開瀏覽器時才印一行 `瀏覽器來源：mac` 或 `瀏覽器來源：remote`。
+建立 `ShopeeCrawler` 時就印一行 `瀏覽器來源：mac` 或 `瀏覽器來源：remote`（#163 把 `_log_browser_source` 放回 `__init__`）。這一行在建構時就印，不是等瀏覽器打開才印；cookies 夠用時仍不開瀏覽器。
 
 `--mode ads-export` 沒帶這個旗標時，仍是本機 Chromium + cookies。週報請用 `python3 ads_weekly.py`，它會自己帶 `--browser-source remote`。
 
@@ -352,6 +352,7 @@ python3 ads_analysis.py --include-ai true
 - 遠端盒每月庫存：`python3 crawler.py --browser-source remote`
 - 唯讀應補摘要：`python -m restock_loop scan`
 - 每月庫存分析：`python3 scripts/monthly_inventory_report.py`（只讀，寫到 `reports/monthly_inventory_YYYYMM/`；目錄裡已有月報檔時預設不覆寫，只有 `sources/` 不算）。例行任務改成跑這支再摘要，說明見 [`docs/monthly_inventory_report.md`](docs/monthly_inventory_report.md)
+- 每月庫存包裝：`scripts/inventory-monthly.sh`（不改程式庫、不加車）。`REPO` 寫死為 `/workspace/InventoryCalculator`，明細固定 `--out /workspace/reports/inventory-monthly/pipeline`，當月摘要寫在 `/workspace/reports/inventory-monthly/`。可用記憶體要超過 2 GiB 才跑，單次最長 180 秒。同一個 pipeline 目錄再跑一次，可能撞上月報的不覆寫檢查（月報程式結束碼 2）。路徑寫在腳本裡，不要改 `REPO` 或 `--out`。
 - 廣告匯出／分析：`/ads.html` 或 `crawler.py --mode ads-export`／`ads_analysis.py`
 
 ## 應用程式打包 (發布)
@@ -402,7 +403,7 @@ InventoryCalculator/
 ├── crawler.py              # 蝦皮爬蟲與廣告匯出
 ├── reverse_audit/          # 反向查核套件（freeze / refresh / dry-run / CDP mutate；Phase 1 讀車 + Phase 2 mtop HTTP；Phase 3 `--via-mtop` 預設關）
 ├── restock_loop/           # 唯讀觀察清單應補摘要（python -m restock_loop scan）
-├── scripts/                # CDP 輔助腳本，加上只讀月報／水位訊號
+├── scripts/                # CDP 輔助腳本，加上只讀月報／水位訊號與每月包裝
 │   ├── freeze_reverse_audit_pools_20260905.py  # 勿刪（runpy 載入）
 │   ├── mutate_add_missing_cdp_20260906.py      # 勿刪（runpy 載入）
 │   ├── mutate_set_qty_cdp.py                   # 勿刪（runpy 載入）
@@ -410,6 +411,7 @@ InventoryCalculator/
 │   ├── reconcile_cart.py
 │   ├── record_1688_cart_network.py
 │   ├── run_watchlist_restock.py
+│   ├── inventory-monthly.sh                    # 不改程式庫、不加車的包裝。REPO=/workspace/InventoryCalculator；明細 --out /workspace/reports/inventory-monthly/pipeline；摘要在 /workspace/reports/inventory-monthly/。超過 2 GiB 才跑，最長 180 秒。同一目錄再跑可能不覆寫（結束碼 2）
 │   ├── monthly_inventory_report.py             # 只讀每月庫存月報：不爬、不加車、不改 golden 與首頁月數
 │   └── watchlist_stock_signal.py               # 只讀觀察清單水位訊號，月數沿用 restock_rules
 ├── purchase_history_store.py / purchase_history_import.py

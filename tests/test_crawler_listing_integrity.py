@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 import crawler as crawler_module
 from crawler import (
@@ -597,6 +598,45 @@ class ListingIntegrityTests(unittest.TestCase):
         with redirect_stdout(stdout):
             crawler._log_browser_source()
         self.assertEqual(stdout.getvalue().strip(), "瀏覽器來源：remote")
+
+    def test_constructor_prints_browser_source_before_any_browser_starts(self):
+        golden = Path(__file__).resolve().parents[1] / "golden_table.json"
+        self.assertTrue(golden.is_file())
+        stdout = io.StringIO()
+        with patch.object(crawler_module, "sync_playwright", side_effect=AssertionError("browser")):
+            with redirect_stdout(stdout):
+                crawler = ShopeeCrawler(
+                    "https://seller.shopee.tw/",
+                    "cookies.json",
+                    "https://seller.shopee.tw/portal/product/list/all",
+                )
+        self.assertEqual(stdout.getvalue(), "瀏覽器來源：mac\n")
+        self.assertFalse(crawler._browser_started)
+        self.assertFalse(crawler._cdp_attached)
+        self.assertFalse(hasattr(crawler, "playwright"))
+        self.assertIsInstance(crawler.golden_table, dict)
+        self.assertTrue(crawler.golden_table)
+
+    def test_remote_cleanup_without_browser_prints_playwright_cleaned(self):
+        golden = Path(__file__).resolve().parents[1] / "golden_table.json"
+        self.assertTrue(golden.is_file())
+        with patch.object(crawler_module, "sync_playwright", side_effect=AssertionError("browser")):
+            with redirect_stdout(io.StringIO()):
+                crawler = ShopeeCrawler(
+                    "https://seller.shopee.tw/",
+                    "cookies.json",
+                    "https://seller.shopee.tw/portal/product/list/all",
+                    browser_source="remote",
+                )
+            self.assertEqual(crawler.browser_source, "remote")
+            self.assertFalse(crawler._browser_started)
+            self.assertFalse(crawler._cdp_attached)
+            stdout = io.StringIO()
+            with redirect_stdout(stdout):
+                crawler.cleanup()
+        text = stdout.getvalue()
+        self.assertIn("Playwright 資源已清理", text)
+        self.assertNotIn("已中斷 CDP 連線", text)
 
     def test_save_replaces_official_file_only_after_the_temp_write(self):
         with tempfile.TemporaryDirectory() as temp_dir:

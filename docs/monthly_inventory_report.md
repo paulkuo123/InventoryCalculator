@@ -10,6 +10,22 @@ python3 scripts/monthly_inventory_report.py
 
 > 跑 `python3 scripts/monthly_inventory_report.py`，讀 `reports/monthly_inventory_YYYYMM/monthly_report.md`，用兩三句話摘要危急型號、建議件數，以及第一批該先處理的規格。不要重算、不要改檔。
 
+遠端盒若要固定路徑，改跑包裝腳本 `scripts/inventory-monthly.sh`（見下方「例行包裝」）。它不改程式庫、不加車。
+
+## 例行包裝 `scripts/inventory-monthly.sh`
+
+這支是包裝，不是另一套算法。它只呼叫上面的月報程式，不重抓蝦皮、不重抓 1688、不加車、不改 `golden_table.json`。`REPO` 與 `--out` 寫死在腳本裡，不要改這兩個路徑。
+
+| 項目 | 寫死的值 |
+|---|---|
+| 程式庫 | `REPO=/workspace/InventoryCalculator`，跑裡面的 `scripts/monthly_inventory_report.py` |
+| 明細目錄 | `--out /workspace/reports/inventory-monthly/pipeline`（沒有加 `--overwrite`） |
+| 當月摘要 | `/workspace/reports/inventory-monthly/YYYY-MM.md`（月份用台北時間）。終端機印出的是這份摘要的狀態，不是整份月報 |
+
+開跑前讀 `/proc/meminfo` 的 `MemAvailable`。可用記憶體要超過 2 GiB 才跑；讀不到數字，或小於等於 2 GiB（`2 * 1024 * 1024` KiB），就寫摘要並結束，這次不算月報。單次分析最長 180 秒，逾時會停掉。
+
+同一個 pipeline 目錄再跑一次時，若裡頭已有月報檔，月報程式會撞上預設的不覆寫檢查，結束碼是 2。包裝腳本沒有帶 `--overwrite`，不會清掉舊的明細，終端機會印 `STATUS=ALERT`。
+
 ## 它讀什麼
 
 | 檔案 | 用途 |

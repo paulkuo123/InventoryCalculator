@@ -142,7 +142,7 @@ reports/ads_weekly/20260911/
 | 本機庫存爬蟲 | `python3 crawler.py` | cookies 直接 HTTP GET；要開瀏覽器時來源仍是 mac |
 | 遠端盒每月庫存 | `python3 crawler.py --browser-source remote` | **remote**（旗標必填，不靠預設） |
 
-庫存爬蟲預設用 cookies 直接讀賣家中心 API，不開瀏覽器；API 失敗才登入。`--browser-source` 預設仍是 `mac`（只在真的開瀏覽器時用到）。CLI 不會執行 `ensure_shopee_cookies`。遠端盒抓每月庫存請用上一列的完整指令，不要省略 `--browser-source remote`。`--mode ads-export` 沒帶旗標時也還是本機 Chromium + cookies。
+庫存爬蟲預設用 cookies 直接讀賣家中心 API，不開瀏覽器；API 失敗才登入。`--browser-source` 預設仍是 `mac`（瀏覽器本身仍只在真的要開時才用這個來源）。建立 `ShopeeCrawler` 時就印 `瀏覽器來源：mac` 或 `瀏覽器來源：remote`（#163 把 `_log_browser_source` 放回 `__init__`），不是等瀏覽器打開才印。CLI 不會執行 `ensure_shopee_cookies`。遠端盒抓每月庫存請用上一列的完整指令，不要省略 `--browser-source remote`。`--mode ads-export` 沒帶旗標時也還是本機 Chromium + cookies。
 
 可選後備（程式還留著，營運預設不要用）：`python3 ads_weekly.py --source mac`
 
