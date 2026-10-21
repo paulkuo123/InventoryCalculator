@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 唯讀包裝：跑 InventoryCalculator 的每月庫存與水位分析。
+# 不改程式庫、不加車的包裝：跑 InventoryCalculator 的每月庫存與水位分析。
 # 詳細產出寫到 /workspace/reports，不寫回程式庫。不加車、不改 golden、不重抓蝦皮。
 set -u
 
@@ -41,10 +41,9 @@ if [[ ! -f "${SCRIPT}" ]]; then
   write_alert "找不到每月庫存分析程式，這次沒有計算。"
 fi
 
-log="$(mktemp)"
 err="$(mktemp)"
 set +e
-timeout 180 python3 "${SCRIPT}" --out "${DETAIL}" >"${log}" 2>"${err}"
+timeout 180 python3 "${SCRIPT}" --out "${DETAIL}" >/dev/null 2>"${err}"
 rc=$?
 set -u
 
@@ -152,7 +151,7 @@ lines.append("")
 md_path.write_text("\n".join(lines), encoding="utf-8")
 PY
 summary_rc=$?
-rm -f "${log}" "${err}"
+rm -f "${err}"
 
 if [[ "${summary_rc}" -ne 0 ]]; then
   write_alert "每月庫存摘要沒有寫成。"

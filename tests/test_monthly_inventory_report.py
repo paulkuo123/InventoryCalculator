@@ -563,5 +563,18 @@ class InputShapeTests(unittest.TestCase):
             )
 
 
+class InventoryMonthlyWrapperTests(unittest.TestCase):
+    def test_wrapper_passes_bash_syntax_check(self):
+        script = ROOT / "scripts" / "inventory-monthly.sh"
+        proc = subprocess.run(
+            ["bash", "-n", str(script)],
+            cwd=str(ROOT),
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()
