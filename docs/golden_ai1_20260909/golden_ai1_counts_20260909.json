@@ -1,0 +1,67 @@
+{
+  "generated_at": "2026-09-09T01:46:59Z",
+  "scope": "full_golden_model_rows",
+  "row_count": 5918,
+  "unique_products": 355,
+  "golden_product_count": 355,
+  "shopee_product_count": 353,
+  "golden_only_product_count": 2,
+  "golden_only_product_ids": [
+    "15848359384",
+    "5002617576"
+  ],
+  "golden_sha256_before": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
+  "golden_sha256_after": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
+  "golden_sha256_expected": "8a95064fbe116f9e6ead24837ced1511ce34a9f3ac69358d9c2e0fb585ab3d2e",
+  "golden_untouched": true,
+  "git_head": "90962b237e3e6faa11fe7354317d75ae5624ed44",
+  "cdp_health_path": "/workspace/_handoff/golden_triage_cdp24_health_20260909.csv",
+  "cdp_health_offers_loaded": 24,
+  "cdp_dead_row_matches": 265,
+  "cdp_alive_row_matches": 210,
+  "weird_url_rows": 0,
+  "oid_mismatch_rows": 1,
+  "ok_skip": 1296,
+  "bucket": {
+    "no_url": 945,
+    "url_suspect": 413,
+    "mapping_suspect": 3264,
+    "ok_skip": 1296
+  },
+  "bucket_sum": 5918,
+  "bucket_sum_matches_rows": true,
+  "bucket_reason": {
+    "approved_complete": 1296,
+    "no_url_and_no_offer_id": 945,
+    "has_url_mapping_incomplete": 3264,
+    "status_discontinued": 145,
+    "status_stale": 2,
+    "health_dead": 265,
+    "oid_mismatch": 1
+  },
+  "mapping_status": {
+    "approved": 3800,
+    "missing": 1832,
+    "discontinued": 236,
+    "stale": 2,
+    "pending": 48
+  },
+  "mapping_source": {
+    "manual": 1198,
+    "ai_reviewed": 310,
+    "legacy_import": 1810,
+    "legacy_user_approved": 2505,
+    "manual_url_change": 19,
+    "legacy_repair": 22,
+    "manual_soldout_20260906": 4,
+    "manual_deferred": 7,
+    "url_change_pending": 41,
+    "manual_live_verify_20260905": 2
+  },
+  "live_probe": false,
+  "notes": [
+    "Multi-source is not an error.",
+    "ok_skip rows were not re-verified.",
+    "CDP dead list is a weak signal from 2026-09-08 (17 dead / 7 alive); no new live probe."
+  ]
+}
