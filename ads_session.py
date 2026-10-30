@@ -10,6 +10,7 @@ import io
 import json
 import os
 import re
+import sys
 import time
 from datetime import date, datetime
 from pathlib import Path
@@ -64,7 +65,13 @@ EXPORT_RESULT_NAME = "ads_export_result.json"
 BLOCKER_FILENAME = "BLOCKER.md"
 SCOPE_FILENAME = "SCOPE.md"
 MANIFEST_FILENAME = "manifest.json"
-_RUN_OUTPUT_NAMES = ANALYSIS_OUTPUT_NAMES + (EXPORT_RESULT_NAME, BLOCKER_FILENAME, MANIFEST_FILENAME)
+LAST_RUN_FILENAME = "last_run.json"
+_RUN_OUTPUT_NAMES = ANALYSIS_OUTPUT_NAMES + (
+    EXPORT_RESULT_NAME,
+    BLOCKER_FILENAME,
+    MANIFEST_FILENAME,
+    LAST_RUN_FILENAME,
+)
 
 _LOGIN_URL_RE = re.compile(
     r"login|accounts\.shopee|/buyer(?:/|\.shopee)|signin|sign-in",
@@ -385,20 +392,43 @@ def discard_run_dir(path: Path) -> None:
 
 
 def promote_run_dir(stage_dir: Path, out_dir: Path) -> None:
-    """Publish staged outputs: replace only this run's known outputs, then move staged files in."""
+    """Publish staged outputs with a backup-swap.
+
+    The previous published run is moved to a timestamped sibling backup first,
+    so a failure while moving the staged dir in can always restore the last good
+    copy. Only after the swap succeeds is the backup removed (after carrying
+    over unrelated files that this run does not own).
+    """
     stage_dir = Path(stage_dir)
     out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    for name in ("ads_exports",) + _RUN_OUTPUT_NAMES:
-        target = out_dir / name
-        if target.exists():
-            _remove_tree(target)
-    for child in list(stage_dir.iterdir()):
-        target = out_dir / child.name
-        if target.exists():
-            _remove_tree(target)
-        os.replace(str(child), str(target))
-    _remove_tree(stage_dir)
+    backup: Optional[Path] = None
+    if out_dir.exists():
+        stamp = datetime.now().strftime("%Y%m%d%H%M%S-%f")
+        backup = out_dir.parent / f"{out_dir.name}.bak-{stamp}"
+        os.replace(str(out_dir), str(backup))
+    try:
+        os.replace(str(stage_dir), str(out_dir))
+    except BaseException:
+        if backup is not None and backup.exists() and not out_dir.exists():
+            os.replace(str(backup), str(out_dir))
+        raise
+    if backup is not None and backup.exists():
+        preserved = ("ads_exports",) + _RUN_OUTPUT_NAMES
+        try:
+            for child in list(backup.iterdir()):
+                if child.name in preserved:
+                    continue
+                target = out_dir / child.name
+                if target.exists():
+                    continue
+                os.replace(str(child), str(target))
+        except OSError as exc:
+            print(
+                f"[ADS_WEEKLY][WARN] 無法搬回舊檔案，保留備份目錄 {backup}：{exc}",
+                file=sys.stderr,
+            )
+            return
+        _remove_tree(backup)
 
 
 def _remove_tree(path: Path) -> None:
@@ -635,6 +665,34 @@ def _blocker_next_step(code: str, source: str, cdp_endpoint: str = "") -> str:
     if code == BLOCKER_MISSING_WINDOWS:
         return "請確認賣家中心可匯出昨天 / 近 7 天 / 過去一個月報表後重跑，不要複製上周 CSV。"
     return "請排除匯出錯誤後重跑 `python3 ads_weekly.py`；成功前不要把上周報告交給營運顧問。"
+
+
+def write_last_run(
+    out_dir: Path,
+    *,
+    status: str,
+    run_date: str,
+    code: str = "",
+    message: str = "",
+    blocker_path: str = "",
+) -> Path:
+    """Write the sibling ``last_run.json`` marker for the published run dir."""
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "last_run_status": status,
+        "updated_at": datetime.now().isoformat(),
+        "run_date": run_date,
+        "error_code": code,
+        "message": message,
+        "blocker": blocker_path,
+    }
+    path = out_dir / LAST_RUN_FILENAME
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
 
 
 def write_scope_md(out_dir: Path) -> Path:

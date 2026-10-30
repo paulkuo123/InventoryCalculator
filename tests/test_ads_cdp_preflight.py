@@ -2,7 +2,9 @@
 
 No Chrome, no network, no real CDP port: HTTP and websocket are fakes.
 """
+import io
 import json
+import os
 import subprocess
 import sys
 import unittest
@@ -358,6 +360,117 @@ class WeeklyOutputStagingTests(unittest.TestCase):
                 (out_dir / "ads_exports" / "ads_overall_yesterday_20260911.csv").exists()
             )
             self.assertFalse((out_dir.parent / f"{out_dir.name}.staging").exists())
+
+    def test_promote_failure_mid_move_keeps_old_data(self):
+        from ads_session import promote_run_dir
+
+        with TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "20260911"
+            (out_dir / "ads_exports").mkdir(parents=True)
+            old_csv = out_dir / "ads_exports" / "old.csv"
+            old_csv.write_text("old", encoding="utf-8")
+            manifest = out_dir / "manifest.json"
+            manifest.write_text('{"status": "success"}', encoding="utf-8")
+            stage = Path(temp_dir) / "20260911.staging"
+            (stage / "ads_exports").mkdir(parents=True)
+            (stage / "ads_exports" / "new.csv").write_text("new", encoding="utf-8")
+
+            real_replace = os.replace
+
+            def flaky_replace(src, dst, *args, **kwargs):
+                if str(src) == str(stage):
+                    raise OSError("simulated move failure")
+                return real_replace(src, dst, *args, **kwargs)
+
+            with patch("ads_session.os.replace", side_effect=flaky_replace):
+                with self.assertRaises(OSError):
+                    promote_run_dir(stage, out_dir)
+
+            self.assertEqual(old_csv.read_text(encoding="utf-8"), "old")
+            self.assertEqual(manifest.read_text(encoding="utf-8"), '{"status": "success"}')
+            self.assertEqual(list(Path(temp_dir).glob("*.bak-*")), [])
+            self.assertTrue(stage.exists())
+
+    def test_successful_promote_removes_backup(self):
+        from ads_session import promote_run_dir
+
+        with TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "20260911"
+            (out_dir / "ads_exports").mkdir(parents=True)
+            (out_dir / "ads_exports" / "old.csv").write_text("old", encoding="utf-8")
+            (out_dir / "notes.txt").write_text("keep", encoding="utf-8")
+            stage = Path(temp_dir) / "20260911.staging"
+            (stage / "ads_exports").mkdir(parents=True)
+            (stage / "ads_exports" / "new.csv").write_text("new", encoding="utf-8")
+
+            promote_run_dir(stage, out_dir)
+
+            self.assertEqual(list(Path(temp_dir).glob("*.bak-*")), [])
+            self.assertEqual(
+                [p.name for p in (out_dir / "ads_exports").iterdir()], ["new.csv"]
+            )
+            self.assertEqual((out_dir / "notes.txt").read_text(encoding="utf-8"), "keep")
+
+    def test_failure_after_prior_success_marks_failed_status(self):
+        def fake_success(cmd, **_kwargs):
+            if any(str(part).endswith("crawler.py") for part in cmd):
+                export_dir = Path(cmd[cmd.index("--ads-export-dir") + 1])
+                export_dir.mkdir(parents=True, exist_ok=True)
+                for name in (
+                    "ads_overall_yesterday_20260911.csv",
+                    "ads_overall_past_month_20260911.csv",
+                    "ads_overall_week_01_20260905_20260911.csv",
+                ):
+                    (export_dir / name).write_text("csv", encoding="utf-8")
+                Path(cmd[cmd.index("--output") + 1]).write_text(
+                    json.dumps({"status": "success", "message": "ok"}),
+                    encoding="utf-8",
+                )
+            return subprocess.CompletedProcess(cmd, 0, stdout="ok", stderr="")
+
+        with TemporaryDirectory() as temp_dir:
+            code = run_weekly(_args(temp_dir), runner=fake_success, python_exe="python3")
+            self.assertEqual(code, 0)
+            out_dir = Path(temp_dir) / "reports" / "ads_weekly" / "20260911"
+            csv = out_dir / "ads_exports" / "ads_overall_yesterday_20260911.csv"
+            self.assertTrue(csv.exists())
+
+            def fake_failure(*_args, **_kwargs):
+                return subprocess.CompletedProcess(
+                    args=["crawler.py"],
+                    returncode=1,
+                    stdout="",
+                    stderr="CDP_UNAVAILABLE: 預檢失敗",
+                )
+
+            captured_stderr = io.StringIO()
+            with patch("sys.stderr", new=captured_stderr):
+                code = run_weekly(_args(temp_dir), runner=fake_failure, python_exe="python3")
+            self.assertEqual(code, 1)
+
+            stderr_lines = [line for line in captured_stderr.getvalue().splitlines() if line.strip()]
+            payload = json.loads(stderr_lines[-1])
+            blocker = Path(payload["blocker"])
+            self.assertTrue(blocker.exists())
+            self.assertEqual(blocker.parent, out_dir)
+            self.assertEqual(payload["last_run"], str(out_dir / "last_run.json"))
+
+            marker = json.loads((out_dir / "last_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(marker["last_run_status"], "failed")
+            self.assertEqual(marker["error_code"], "CDP_UNAVAILABLE")
+            self.assertEqual(marker["blocker"], payload["blocker"])
+
+            manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["last_run_status"], "failed")
+            self.assertTrue(csv.exists())
+
+            code = run_weekly(_args(temp_dir), runner=fake_success, python_exe="python3")
+            self.assertEqual(code, 0)
+            marker = json.loads((out_dir / "last_run.json").read_text(encoding="utf-8"))
+            self.assertEqual(marker["last_run_status"], "success")
+            self.assertFalse((out_dir / "BLOCKER.md").exists())
+            manifest = json.loads((out_dir / "manifest.json").read_text(encoding="utf-8"))
+            self.assertEqual(manifest["last_run_status"], "success")
 
 
 if __name__ == "__main__":

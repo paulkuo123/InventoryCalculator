@@ -22,6 +22,7 @@ from ads_session import (
     AdsWeeklyBlocker,
     BLOCKER_EXPORT_FAILED,
     BLOCKER_MISSING_WINDOWS,
+    MANIFEST_FILENAME,
     analysis_output_paths,
     blocker_code_from_error,
     build_success_manifest,
@@ -36,6 +37,7 @@ from ads_session import (
     weekly_run_dir,
     weekly_staging_dir,
     write_blocker_md,
+    write_last_run,
     write_scope_md,
 )
 
@@ -326,11 +328,25 @@ def run_weekly(
             output_paths=final_paths,
             analyzed=analyzed,
         )
+        manifest["last_run_status"] = "success"
         Path(final_paths["manifest"]).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
-        print(json.dumps({"status": "success", "output_dir": str(out_dir)}, ensure_ascii=False))
+        stale_blocker = out_dir / "BLOCKER.md"
+        if stale_blocker.exists():
+            stale_blocker.unlink()
+        last_run_path = write_last_run(out_dir, status="success", run_date=run_date)
+        print(
+            json.dumps(
+                {
+                    "status": "success",
+                    "output_dir": str(out_dir),
+                    "last_run": str(last_run_path),
+                },
+                ensure_ascii=False,
+            )
+        )
         return 0
     except BaseException as exc:
         discard_run_dir(stage_dir)
@@ -342,7 +358,7 @@ def run_weekly(
         if isinstance(exc, AdsWeeklyBlocker):
             code = exc.code
             details = exc.details
-        write_blocker_md(
+        blocker_path = write_blocker_md(
             out_dir,
             code=code,
             message=message,
@@ -350,6 +366,31 @@ def run_weekly(
             details=details,
             cdp_endpoint=cdp_endpoint,
         )
+        last_run_path = write_last_run(
+            out_dir,
+            status="failed",
+            run_date=run_date,
+            code=code,
+            message=message,
+            blocker_path=str(blocker_path),
+        )
+        manifest_path = out_dir / MANIFEST_FILENAME
+        if manifest_path.exists():
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    existing["last_run_status"] = "failed"
+                    existing["last_run"] = {
+                        "failed_at": datetime.now().isoformat(),
+                        "error_code": code,
+                        "blocker": str(blocker_path),
+                    }
+                    manifest_path.write_text(
+                        json.dumps(existing, ensure_ascii=False, indent=2) + "\n",
+                        encoding="utf-8",
+                    )
+            except (OSError, ValueError):
+                pass
         print(
             json.dumps(
                 {
@@ -357,7 +398,8 @@ def run_weekly(
                     "code": code,
                     "message": message,
                     "output_dir": str(out_dir),
-                    "blocker": output_paths["blocker"],
+                    "blocker": str(blocker_path),
+                    "last_run": str(last_run_path),
                 },
                 ensure_ascii=False,
             ),
