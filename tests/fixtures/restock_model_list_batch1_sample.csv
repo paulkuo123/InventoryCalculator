@@ -1,0 +1,6 @@
+﻿商品ID,商品名稱,規格ID,蝦皮型號,月銷量,庫存,建議量,1688_offer_URL,1688_offer_id,1688_SKU名稱,1688_sku_id,Golden狀態,車內已有量,預計加車量_若車內為0,狀態,原因,停售標記(procurement.db),1688即時上架/庫存
+1001,可愛手機殼防摔,2001,黑色,10,0,77,https://detail.1688.com/offer/1.html,1,黑色,sku-a,approved,0,30,ok,,,
+1001,可愛手機殼防摔,2002,白色,8,0,88,https://detail.1688.com/offer/1.html,1,白色,sku-b,approved,0,20,ok,,,
+1002,迷你風扇掛飾,2003,藍色,5,0,55,https://detail.1688.com/offer/2.html,2,藍色,sku-c,approved,0,10,ok,,,
+1001,可愛手機殼防摔,2004,綠色,3,0,33,https://detail.1688.com/offer/3.html,3,綠色,sku-d,approved,0,5,no mapping,,,
+1002,迷你風扇掛飾,2005,紅色,2,0,22,https://detail.1688.com/offer/4.html,4,紅色,sku-e,approved,0,5,ambiguous mapping,,,
