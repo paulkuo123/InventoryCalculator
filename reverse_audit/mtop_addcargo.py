@@ -35,9 +35,14 @@ from reverse_audit.mtop_sku_map import (
     load_detail_html,
     spec_id_for_sku,
 )
+from reverse_audit.mtop_spec_resolve import resolve_spec_by_name
 
 DEFAULT_FLOW = "general"
 APPROVE_ADD_ONE = "--i-approve-add-one"
+_SPEC_NAME_NOTE = (
+    "resolved specId is used for this add only; not written to the "
+    "Golden table (record it manually if desired)"
+)
 _OFFER_IN_URL_RE = re.compile(r"/offer/(\d+)", re.I)
 
 
@@ -126,10 +131,113 @@ def build_addcargo_data(
     return data
 
 
+@dataclass
+class SpecResolution:
+    """How an addcargo ``specId`` was obtained (for preview / audit only)."""
+
+    spec_id: str
+    resolved_by: str
+    resolved_spec_text: str = ""
+    resolved_sku_id: str = ""
+
+
+def _load_detail_html_for(
+    *,
+    detail_html: Optional[str],
+    detail_html_path: Optional[str],
+    offer_id: Optional[str],
+    fetch_detail: bool,
+    fetch_html: Optional[Callable[[str], str]],
+    label: str,
+) -> str:
+    text = detail_html
+    if text is None and detail_html_path:
+        text = load_detail_html(detail_html_path)
+    if text is None and fetch_detail:
+        oid = str(offer_id or "").strip()
+        getter = fetch_html or fetch_detail_html
+        text = getter(oid)
+    if text is None:
+        raise SkuMapError(
+            f"{label} given but no detail HTML. Pass --detail-html PATH "
+            "(CI) or --fetch-detail (read-only GET of the offer page)."
+        )
+    return text
+
+
+def resolve_spec(
+    *,
+    spec_id: Optional[str] = None,
+    sku_id: Optional[str] = None,
+    sku_name: Optional[str] = None,
+    sku_second_name: Optional[str] = None,
+    spec_text: Optional[str] = None,
+    detail_html: Optional[str] = None,
+    detail_html_path: Optional[str] = None,
+    offer_id: Optional[str] = None,
+    fetch_detail: bool = False,
+    fetch_html: Optional[Callable[[str], str]] = None,
+) -> SpecResolution:
+    """Resolve a specId and record how it was found.
+
+    Order: explicit ``spec_id`` > ``sku_id`` (unchanged skuMapOriginal path) >
+    name (``sku_name`` / ``sku_second_name`` / ``spec_text``). Name resolution
+    needs the same read-only detail HTML as the skuId path.
+    """
+    explicit = str(spec_id or "").strip()
+    if explicit:
+        return SpecResolution(spec_id=explicit, resolved_by="spec_id")
+    sku = str(sku_id or "").strip()
+    if sku:
+        html = _load_detail_html_for(
+            detail_html=detail_html,
+            detail_html_path=detail_html_path,
+            offer_id=offer_id,
+            fetch_detail=fetch_detail,
+            fetch_html=fetch_html,
+            label="skuId",
+        )
+        return SpecResolution(
+            spec_id=spec_id_for_sku(html, sku),
+            resolved_by="sku_id",
+            resolved_sku_id=sku,
+        )
+    name = str(sku_name or "").strip()
+    second = str(sku_second_name or "").strip()
+    text = str(spec_text or "").strip()
+    if name or second or text:
+        html = _load_detail_html_for(
+            detail_html=detail_html,
+            detail_html_path=detail_html_path,
+            offer_id=offer_id,
+            fetch_detail=fetch_detail,
+            fetch_html=fetch_html,
+            label="SKU name",
+        )
+        option = resolve_spec_by_name(
+            html,
+            sku_name=name or None,
+            sku_second_name=second or None,
+            spec_text=text or None,
+        )
+        return SpecResolution(
+            spec_id=option.spec_id,
+            resolved_by="name",
+            resolved_spec_text=option.spec_text,
+            resolved_sku_id=option.sku_id,
+        )
+    raise MutateSafetyError(
+        "need --spec-id, --sku-id, or --sku-name/--spec-text plus detail HTML."
+    )
+
+
 def resolve_spec_id(
     *,
     spec_id: Optional[str] = None,
     sku_id: Optional[str] = None,
+    sku_name: Optional[str] = None,
+    sku_second_name: Optional[str] = None,
+    spec_text: Optional[str] = None,
     detail_html: Optional[str] = None,
     detail_html_path: Optional[str] = None,
     offer_id: Optional[str] = None,
@@ -137,25 +245,18 @@ def resolve_spec_id(
     fetch_html: Optional[Callable[[str], str]] = None,
 ) -> str:
     """Prefer an explicit specId; otherwise read-only parse skuMapOriginal."""
-    explicit = str(spec_id or "").strip()
-    if explicit:
-        return explicit
-    sku = str(sku_id or "").strip()
-    if not sku:
-        raise MutateSafetyError("need --spec-id, or --sku-id plus detail HTML")
-    html = detail_html
-    if html is None and detail_html_path:
-        html = load_detail_html(detail_html_path)
-    if html is None and fetch_detail:
-        oid = str(offer_id or "").strip()
-        getter = fetch_html or fetch_detail_html
-        html = getter(oid)
-    if html is None:
-        raise SkuMapError(
-            "skuId given but no detail HTML. Pass --detail-html PATH "
-            "(CI) or --fetch-detail (read-only GET of the offer page)."
-        )
-    return spec_id_for_sku(html, sku)
+    return resolve_spec(
+        spec_id=spec_id,
+        sku_id=sku_id,
+        sku_name=sku_name,
+        sku_second_name=sku_second_name,
+        spec_text=spec_text,
+        detail_html=detail_html,
+        detail_html_path=detail_html_path,
+        offer_id=offer_id,
+        fetch_detail=fetch_detail,
+        fetch_html=fetch_html,
+    ).spec_id
 
 
 @dataclass
@@ -168,6 +269,9 @@ class AddCargoPlan:
     quantity: int = 0
     posted: bool = False
     dry_run: bool = True
+    resolved_by: str = ""
+    resolved_spec_text: str = ""
+    resolved_sku_id: str = ""
     ret: List[str] = field(default_factory=list)
 
     def decoded_goods_params(self) -> List[Dict[str, Any]]:
@@ -194,6 +298,11 @@ class AddCargoPlan:
                 "offerId": self.offer_id,
                 "specId": self.spec_id,
                 "skuId": self.sku_id or "",
+                "specResolvedBy": self.resolved_by,
+                "specResolvedText": self.resolved_spec_text,
+                "specResolvedSkuId": self.resolved_sku_id,
+                "goldenWrite": False,
+                "goldenNote": _SPEC_NAME_NOTE,
                 "quantity": self.quantity,
                 "data": self.data,
                 "goodsParamsDecoded": decoded,
@@ -226,15 +335,21 @@ class AddCargoClient:
         quantity: Any,
         spec_id: Optional[str] = None,
         sku_id: Optional[str] = None,
+        sku_name: Optional[str] = None,
+        sku_second_name: Optional[str] = None,
+        spec_text: Optional[str] = None,
         detail_html: Optional[str] = None,
         detail_html_path: Optional[str] = None,
         fetch_detail: bool = False,
         fetch_html: Optional[Callable[[str], str]] = None,
         flow: str = DEFAULT_FLOW,
     ) -> AddCargoPlan:
-        spec = resolve_spec_id(
+        resolution = resolve_spec(
             spec_id=spec_id,
             sku_id=sku_id,
+            sku_name=sku_name,
+            sku_second_name=sku_second_name,
+            spec_text=spec_text,
             detail_html=detail_html,
             detail_html_path=detail_html_path,
             offer_id=str(offer_id or ""),
@@ -242,16 +357,19 @@ class AddCargoClient:
             fetch_html=fetch_html,
         )
         data = build_addcargo_data(
-            spec_id=spec, offer_id=offer_id, quantity=quantity, flow=flow
+            spec_id=resolution.spec_id, offer_id=offer_id, quantity=quantity, flow=flow
         )
         return AddCargoPlan(
             data=data,
             offer_id=str(_as_offer_id(offer_id)),
-            spec_id=spec,
+            spec_id=resolution.spec_id,
             sku_id=str(sku_id or "").strip(),
             quantity=_as_qty(quantity),
             posted=False,
             dry_run=True,
+            resolved_by=resolution.resolved_by,
+            resolved_spec_text=resolution.resolved_spec_text,
+            resolved_sku_id=resolution.resolved_sku_id,
         )
 
     def execute(self, plan: AddCargoPlan, *, approve: bool) -> AddCargoPlan:
