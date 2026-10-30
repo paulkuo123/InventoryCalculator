@@ -374,6 +374,67 @@ class AdsExportTests(unittest.TestCase):
             self.assertTrue(result["file_path"].endswith(".csv"))
             self.assertTrue(os.path.exists(result["file_path"]))
 
+    def _week_01_config(self):
+        return {
+            "key": "week_01",
+            "label": "近第 1 週",
+            "file_prefix": "ads_overall_week_01",
+            "start_date": date(2026, 10, 16),
+            "end_date": date(2026, 10, 22),
+        }
+
+    def test_save_ads_download_rejects_empty_file_from_save_as(self):
+        class _EmptyDownload:
+            suggested_filename = "report.xlsx"
+
+            def save_as(self, path):
+                # Playwright 1.62 writes 0 bytes when Chrome saved the file elsewhere.
+                Path(path).write_bytes(b"")
+
+            def path(self):
+                return "/nonexistent/playwright-artifact"
+
+            def failure(self):
+                return None
+
+        with TemporaryDirectory() as temp_dir:
+            self.crawler.ads_export_dir = temp_dir
+            self.crawler._ads_log = lambda *args, **kwargs: None
+
+            with self.assertRaisesRegex(RuntimeError, "ADS_DOWNLOAD_EMPTY") as raised:
+                self.crawler._save_ads_download(_EmptyDownload(), self._week_01_config())
+
+            self.assertIn("CDP", str(raised.exception))
+            self.assertEqual(os.listdir(temp_dir), [])
+
+    def test_save_ads_download_recovers_empty_save_as_from_temp_path(self):
+        payload = "期間,2026/10/16 - 2026/10/22\n商品,花費\nA,1\n".encode("utf-8-sig")
+
+        with TemporaryDirectory() as temp_dir, TemporaryDirectory() as artifacts:
+            temp_file = Path(artifacts) / "guid-1234"
+            temp_file.write_bytes(payload)
+
+            class _EmptySaveAsDownload:
+                suggested_filename = "report.xlsx"
+
+                def save_as(self, path):
+                    Path(path).write_bytes(b"")
+
+                def path(self):
+                    return str(temp_file)
+
+                def failure(self):
+                    return None
+
+            self.crawler.ads_export_dir = temp_dir
+            self.crawler._ads_log = lambda *args, **kwargs: None
+
+            result = self.crawler._save_ads_download(_EmptySaveAsDownload(), self._week_01_config())
+
+            self.assertEqual(result["status"], "success")
+            self.assertTrue(result["file_path"].endswith(".csv"))
+            self.assertGreater(os.path.getsize(result["file_path"]), 0)
+
     def test_remote_cleanup_does_not_close_browser(self):
         self.crawler._cleaned_up = False
         self.crawler._cdp_attached = True
