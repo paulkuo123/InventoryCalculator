@@ -318,6 +318,8 @@ def _build_filtered_list(
         result = None
         reason = None
         confirm = None
+        duplicate = False
+        consumed_keys = []
         for candidate_id, candidate in candidates:
             if watch_ids and candidate_id not in watch_ids:
                 reason = reason or "商品不在觀察清單或被排除"
@@ -330,6 +332,13 @@ def _build_filtered_list(
             if found is None:
                 reason = reason or "商品中找不到型號"
                 continue
+            key = (candidate_id, str(found.get("規格ID") or ""), str(found.get("型號名稱") or ""))
+            if key in matched_keys:
+                # Only the first row for a model counts, whatever its outcome
+                # (added, held for confirmation, or rejected).
+                duplicate = True
+                break
+            consumed_keys.append(key)
             item_months = target_months_for_product(name, months, found.get("型號名稱"))
             suggested = suggested_restock_qty(candidate, found, item_months)
             qty = int(override) if override is not None else suggested
@@ -358,6 +367,10 @@ def _build_filtered_list(
             result = (candidate_id, found, item, suggested)
             break
 
+        if duplicate:
+            unmatched.append({**requested, "reason": "清單重複列出同一型號，只補第一筆"})
+            continue
+        matched_keys.update(consumed_keys)
         if confirm is not None:
             needs_confirmation.append(confirm)
             continue
@@ -366,11 +379,6 @@ def _build_filtered_list(
             continue
 
         matched_id, found_model, item, suggested = result
-        key = (matched_id, str(found_model.get("規格ID") or ""), str(found_model.get("型號名稱") or ""))
-        if key in matched_keys:
-            unmatched.append({**requested, "reason": "清單重複列出同一型號，只補第一筆"})
-            continue
-        matched_keys.add(key)
         matched.append({
             "productId": matched_id,
             "modelId": str(found_model.get("規格ID") or ""),

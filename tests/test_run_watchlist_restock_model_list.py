@@ -315,6 +315,38 @@ class BuildListModelFilterTests(unittest.TestCase):
         self.assertEqual(len(report["matched"]), 1)
         self.assertEqual(report["unmatched"][0]["reason"], "清單重複列出同一型號，只補第一筆")
 
+    def test_duplicate_after_guard_hold_is_reported_not_added(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            built = _build(
+                root,
+                model_filter=[
+                    _entry(product_id="1001", model_id="s1", quantity=3000, line=1),
+                    _entry(product_id="1001", model_id="s1", quantity=5, line=2),
+                ],
+            )
+        self.assertEqual(built["products"], [])
+        report = built["modelFilter"]
+        self.assertEqual(report["matched"], [])
+        self.assertEqual(len(report["needsConfirmation"]), 1)
+        self.assertEqual(report["needsConfirmation"][0]["listQuantity"], 3000)
+        self.assertEqual(len(report["unmatched"]), 1)
+        self.assertEqual(report["unmatched"][0]["reason"], "清單重複列出同一型號，只補第一筆")
+
+    def test_duplicate_after_rejected_first_row_is_reported_not_added(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            built = _build(
+                root,
+                model_filter=[
+                    _entry(product_id="1001", model_id="s1", quantity=-5, line=1),
+                    _entry(product_id="1001", model_id="s1", quantity=5, line=2),
+                ],
+            )
+        self.assertEqual(built["products"], [])
+        reasons = [entry["reason"] for entry in built["modelFilter"]["unmatched"]]
+        self.assertEqual(reasons, ["清單數量不是正數：-5", "清單重複列出同一型號，只補第一筆"])
+
     def test_every_requested_entry_is_matched_or_unmatched(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _stage_root(Path(tmp))
@@ -418,6 +450,25 @@ class StartBatchModelFilterTests(unittest.TestCase):
                         model_filter=[_entry(product_id="9999", model_id="x")],
                     )
         self.assertEqual(started["status"], "error")
+
+    def test_duplicate_after_guard_hold_sends_nothing_to_cart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            with patch(
+                "run_watchlist_restock.start_batch",
+                side_effect=AssertionError("start_batch must not run"),
+            ):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    started, _payload = start_watchlist_restock_batch(
+                        "http://127.0.0.1:8080", root, "", 4,
+                        model_filter=[
+                            _entry(product_id="1001", model_id="s1", quantity=3000, line=1),
+                            _entry(product_id="1001", model_id="s1", quantity=5, line=2),
+                        ],
+                    )
+        self.assertEqual(started["status"], "error")
+        self.assertIn("清單重複", out.getvalue())
 
 
 class MainModelFilterTests(unittest.TestCase):
