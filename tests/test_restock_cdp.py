@@ -21,7 +21,6 @@ from restock_cdp import (
     FORBIDDEN_CDP_PORTS,
     NOT_LOGGED_IN,
     RESTOCK_CDP_ENV_VAR,
-    RESTOCK_CDP_STRICT_ENV_VAR,
     RISK_CONTROL,
     RestockCdpError,
     attach_restock_page,
@@ -33,9 +32,7 @@ from restock_cdp import (
     release_restock_page,
     resolve_restock_cdp_endpoint,
     restock_cdp_session,
-    set_strict_restock_cdp_env,
     stop_reason_for_error,
-    strict_restock_cdp_enabled,
 )
 
 
@@ -505,29 +502,13 @@ class StopReasonTests(unittest.TestCase):
         self.assertNotIn("cart_unreadable", rcdp.RESTOCK_STOP_REASONS)
 
 
-class StrictEnvTests(unittest.TestCase):
-    def test_set_and_detect_strict_env(self):
-        env = {}
-        set_strict_restock_cdp_env("9333", env=env)
-        self.assertEqual(env[RESTOCK_CDP_ENV_VAR], "http://127.0.0.1:9333")
-        self.assertEqual(env[RESTOCK_CDP_STRICT_ENV_VAR], "1")
-        self.assertTrue(strict_restock_cdp_enabled(env))
-
-    def test_strict_enabled_variants(self):
-        self.assertTrue(strict_restock_cdp_enabled({RESTOCK_CDP_STRICT_ENV_VAR: "1"}))
-        self.assertTrue(strict_restock_cdp_enabled({RESTOCK_CDP_STRICT_ENV_VAR: "TRUE"}))
-        self.assertTrue(strict_restock_cdp_enabled({RESTOCK_CDP_STRICT_ENV_VAR: "Yes"}))
-        self.assertFalse(strict_restock_cdp_enabled({}))
-        self.assertFalse(
-            strict_restock_cdp_enabled({RESTOCK_CDP_STRICT_ENV_VAR: "0"})
-        )
-
-    def test_set_strict_refuses_forbidden_endpoint(self):
-        env = {}
-        with self.assertRaises(RestockCdpError) as ctx:
-            set_strict_restock_cdp_env("9235", env=env)
-        self.assertEqual(ctx.exception.code, CDP_FORBIDDEN_PORT)
-        self.assertEqual(env, {})
+class NoStrictEnvTests(unittest.TestCase):
+    def test_strict_env_helpers_are_gone(self):
+        # ALIBABA_RESTOCK_CDP_STRICT was read by nothing; the endpoint now
+        # travels only in each child's request / --cdp argument.
+        self.assertFalse(hasattr(rcdp, "set_strict_restock_cdp_env"))
+        self.assertFalse(hasattr(rcdp, "strict_restock_cdp_enabled"))
+        self.assertFalse(hasattr(rcdp, "RESTOCK_CDP_STRICT_ENV_VAR"))
 
 
 class ReadFullCartTests(unittest.TestCase):

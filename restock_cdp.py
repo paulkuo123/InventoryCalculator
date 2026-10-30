@@ -41,7 +41,6 @@ from reverse_audit.mtop_http import classify_mutate_ret
 
 DEFAULT_RESTOCK_CDP_ENDPOINT = "http://127.0.0.1:9239"
 RESTOCK_CDP_ENV_VAR = "ALIBABA_RESTOCK_CDP"
-RESTOCK_CDP_STRICT_ENV_VAR = "ALIBABA_RESTOCK_CDP_STRICT"
 FORBIDDEN_CDP_PORTS = frozenset({9235})
 CDP_CONNECT_TIMEOUT_MS = 30000
 ADD_INTERVAL_MIN_SECONDS = 8.0
@@ -62,6 +61,7 @@ RESTOCK_STOP_REASONS = frozenset(
         "cdp_unavailable",
         "cdp_forbidden_port",
         "cdp_no_context",
+        "add_failed",
     }
 )
 
@@ -253,22 +253,6 @@ def restock_cdp_session(
             release_restock_page(page)
 
 
-def set_strict_restock_cdp_env(
-    endpoint: Any, env: Optional[Dict[str, str]] = None
-) -> None:
-    """Record a guarded restock endpoint plus the strict flag in the env."""
-    env_map = env if env is not None else os.environ
-    guarded = guard_restock_cdp_endpoint(endpoint)
-    env_map[RESTOCK_CDP_ENV_VAR] = guarded
-    env_map[RESTOCK_CDP_STRICT_ENV_VAR] = "1"
-
-
-def strict_restock_cdp_enabled(env: Optional[Dict[str, str]] = None) -> bool:
-    env_map = env if env is not None else os.environ
-    value = str(env_map.get(RESTOCK_CDP_STRICT_ENV_VAR, "") or "").strip().lower()
-    return value in {"1", "true", "yes"}
-
-
 class AddPacer:
     """Random 8-15s pause before every 1688 add except the first."""
 
@@ -393,7 +377,6 @@ __all__ = [
     "FORBIDDEN_CDP_PORTS",
     "NOT_LOGGED_IN",
     "RESTOCK_CDP_ENV_VAR",
-    "RESTOCK_CDP_STRICT_ENV_VAR",
     "RESTOCK_STOP_REASONS",
     "RISK_CONTROL",
     "RestockCdpError",
@@ -408,7 +391,5 @@ __all__ = [
     "release_restock_page",
     "resolve_restock_cdp_endpoint",
     "restock_cdp_session",
-    "set_strict_restock_cdp_env",
     "stop_reason_for_error",
-    "strict_restock_cdp_enabled",
 ]

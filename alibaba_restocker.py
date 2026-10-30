@@ -165,7 +165,15 @@ RESTOCK_RISK_STOP_MESSAGES = {
     "cdp_unavailable": "連不上已登入的 1688 Chrome（CDP），未加車；不改用其他埠或 profile Chrome。",
     "cdp_forbidden_port": "CDP 9235 保留給 Shopee 月報 Chrome，1688 補貨拒絕使用，未加車。",
     "cdp_no_context": "已登入的 1688 Chrome 沒有可用的 browser context，未加車。",
+    "add_failed": (
+        "加采购车失敗（例如簽章錯誤、業務參數錯誤或分頁內請求逾時），已停止整批補貨，不自動重試；"
+        "逾時的那一筆可能已進採購車，請以前後對帳為準。"
+    ),
 }
+# Any add outcome that is not ok/unverified/mismatch/cart_full/risk (bad_sign,
+# biz_param, in-tab http_error/timeout, ...) stops the whole batch: a timed-out
+# add may already be in the cart, so later specs must not be sent blind.
+RESTOCK_ADD_FAILED_STOP = "add_failed"
 
 
 def classify_group_submit(
@@ -2699,8 +2707,11 @@ def fill_and_submit_offer_items_individually(
             failed.append(cart_item)
             print(RESTOCK_RISK_STOP_MESSAGES[bucket], flush=True)
         else:
+            stopped_reason = RESTOCK_ADD_FAILED_STOP
+            cart_item["message"] = RESTOCK_RISK_STOP_MESSAGES[RESTOCK_ADD_FAILED_STOP]
             failed.append(cart_item)
             print(f"加采购车可能失敗：{cart_result}", flush=True)
+            print(RESTOCK_RISK_STOP_MESSAGES[RESTOCK_ADD_FAILED_STOP], flush=True)
 
         submissions.append(submission)
         processed_pending_count = index + 1
@@ -3590,8 +3601,14 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                             unprocessed_items.extend(unprocessed_rows(pending_items, product_id, product_name))
                         print(RESTOCK_RISK_STOP_MESSAGES[bucket], flush=True)
                     else:
+                        stopped_reason = RESTOCK_ADD_FAILED_STOP
+                        for cart_item in cart_items:
+                            cart_item["message"] = RESTOCK_RISK_STOP_MESSAGES[RESTOCK_ADD_FAILED_STOP]
                         failed_cart_items.extend(cart_items)
+                        for _, pending_items in grouped_entries[group_index + 1:]:
+                            unprocessed_items.extend(unprocessed_rows(pending_items, product_id, product_name))
                         print(f"加采购车可能失敗：{cart_result}", flush=True)
+                        print(RESTOCK_RISK_STOP_MESSAGES[RESTOCK_ADD_FAILED_STOP], flush=True)
 
                     if add_status != "cart_full":
                         dismiss_result = dismiss_cart_feedback(page)

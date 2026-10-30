@@ -167,8 +167,9 @@ def start_main_if_needed(
         return None
     env = os.environ.copy()
     env["INVENTORY_SKIP_BROWSER"] = "1"
-    if cdp_endpoint:
-        env["ALIBABA_RESTOCK_CDP"] = cdp_endpoint
+    # The CDP endpoint goes in the batch payload (cdpEndpoint), never in
+    # main.py's environment: legacy tools there read ALIBABA_RESTOCK_CDP with
+    # a default connect_over_cdp, which would hijack Chrome downloads.
     return popen(
         [sys.executable, str(Path(root) / "main.py")],
         cwd=str(root),
@@ -860,7 +861,9 @@ def confirm_restock(yes: bool, input_fn: Callable[[str], str] = input) -> bool:
 RECONCILE_LABELS = {
     "ok": "已確認（增量＝要求）",
     "unconfirmed": "未確認（增量＜要求，不重送）",
-    "anomaly": "異常（增量＞要求或未送卻變動）",
+    "anomaly": "異常（增量＞要求，或未送／送出失敗卻變動）",
+    "failed": "送出失敗（採購車未變動）",
+    "selection_mismatch": "頁面選取不符（採購車未變動）",
     "not_sent": "未送出",
     "unknown": "無法判斷（加車後讀車失敗）",
 }
@@ -881,7 +884,7 @@ def print_cart_reconcile(report: Dict[str, Any]) -> None:
     )
     if report.get("afterError"):
         print(f"  加車後讀車失敗：{report.get('afterError')}", flush=True)
-    for title, key in (("已送出", "sent"), ("未送出", "notSent")):
+    for title, key in (("已送出", "sent"), ("送出失敗／選取不符", "attempted"), ("未送出", "notSent")):
         rows = report.get(key) or []
         print(f"=== {title}（{len(rows)}）===", flush=True)
         for row in rows:

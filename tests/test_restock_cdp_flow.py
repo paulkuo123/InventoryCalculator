@@ -581,6 +581,36 @@ class BatchWholeListTests(unittest.TestCase):
         self.assertEqual(sorted(r["specId"] for r in report["notSent"]), ["b1", "c1"])
         self.assertEqual(report["counts"]["not_sent"], 2)
 
+    def test_mid_batch_add_failed_halts_and_reports_attempted_separately(self):
+        failed_item = dict(self.products[1]["items"][0], quantity=3)
+        jobs = {
+            "1": _success_job(self.products[0]),
+            "2": {
+                "status": "completed",
+                "result": {
+                    "status": "error",
+                    "stoppedReason": "add_failed",
+                    "message": "加采购车失敗",
+                    "summary": {"failed": [failed_item], "unprocessed": []},
+                },
+            },
+        }
+        reads = [[], [_cart_line("a1", 2)]]
+        result = run_batch_loop(
+            self.state, self._start, lambda job_id: jobs[job_id], _Persist(self.dir),
+            cart_reader_fn=lambda: reads.pop(0), pace_fn=self._pace, sleep_fn=lambda _: None,
+            cdp_available_fn=lambda *a, **k: False,
+        )
+        self.assertEqual(result["status"], STATUS_PAUSED_ATTENTION)
+        self.assertEqual(result["stoppedReason"], "add_failed")
+        self.assertNotIn("start:3", self.events, "later products are never started")
+        report = result["cartReconcile"]
+        self.assertEqual([r["specId"] for r in report["sent"]], ["a1"])
+        self.assertEqual([r["specId"] for r in report["attempted"]], ["b1"])
+        self.assertEqual(report["attempted"][0]["category"], "failed")
+        self.assertEqual([r["specId"] for r in report["notSent"]], ["c1"])
+        self.assertEqual(report["counts"]["failed"], 1)
+
     def test_after_read_failure_is_unknown_not_guessed(self):
         jobs = {p["productId"]: _success_job(p) for p in self.products}
         calls = {"n": 0}
@@ -738,6 +768,202 @@ class RestockerCdpTests(unittest.TestCase):
             self.assertEqual(self.mod.classify_group_submit([{"quantity": 1}], status, None), status)
 
 
+BAD_SIGN_RESULT = {
+    "ok": False,
+    "status": "failed",
+    "message": "卡在簽章：MtopCallError(bad_sign): FAIL_SYS_ILLEGAL_ACCESS::非法请求",
+}
+TIMEOUT_RESULT = {
+    "ok": False,
+    "status": "failed",
+    "message": "卡在業務參數：MtopCallError(http_error): in-tab fetch failed: timeout after 30000ms",
+}
+BIZ_PARAM_RESULT = {
+    "ok": False,
+    "status": "failed",
+    "message": "卡在業務參數：MtopCallError(biz_param): FAIL_BIZ_PARAM_ERROR",
+}
+
+
+class AddFailedStopsWholeBatchTests(unittest.TestCase):
+    """Any failed add (bad_sign / biz_param / in-tab timeout) halts everything."""
+
+    def setUp(self):
+        import alibaba_restocker
+
+        self.mod = alibaba_restocker
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.out = os.path.join(self.tmp.name, "result.json")
+        self.sent: List[List[str]] = []
+        self.results: List[Dict[str, Any]] = []
+
+        def fake_mtop_add(page, cart_items, debug=None, **_kwargs):
+            self.sent.append([str(i.get("specId")) for i in cart_items])
+            return dict(self.results[min(len(self.sent), len(self.results)) - 1])
+
+        def fake_fill(_page, pendings, _debug):
+            return [{"status": "filled", "modelName": p.get("modelName"), "quantity": p.get("quantity")} for p in pendings]
+
+        def fake_check(fields, _catalog):
+            return {"ok": True, "matchMode": "name_pair", "current": {"sku_id": fields.get("sku_id")}}
+
+        patches = (
+            (self.mod, "DebugLogger", _FakeDebug),
+            (self.mod, "load_sku_mappings", lambda _base: {}),
+            (self.mod, "mapped_sku_selection", lambda _m, _pid, _name: {"status": "approved"}),
+            (self.mod, "pace_before_add", lambda _debug: None),
+            (self.mod, "strict_page_session_loader", lambda _page: None),
+            (self.mod, "fill_sku_quantities_on_page", fake_fill),
+            (self.mod, "read_page_selection_summary", lambda _page: None),
+            (self.mod, "dismiss_cart_feedback", lambda _page: {"ok": True}),
+            (self.mod, "read_live_catalog_with_retry", lambda _p, _d, _u: {"rows": []}),
+            (self.mod, "catalog_mapping_check", fake_check),
+            (self.mod, "live_selection_labels", lambda check, a, b: {
+                "sku_id": "", "sku_name": a, "sku_second_name": b, "spec_text": ""}),
+            (self.mod, "open_and_read_cart", lambda *_a, **_k: []),
+            (self.mod, "verify_single_sku_in_cart_after_submit", mock.Mock(side_effect=AssertionError("no verify"))),
+        )
+        for target, name, value in patches:
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        for target, value in (
+            ("reverse_audit.mtop_switch.via_mtop_enabled", lambda: True),
+            ("reverse_audit.mtop_restock.restock_add_via_mtop", fake_mtop_add),
+        ):
+            patcher = mock.patch(target, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _pending(self, *specs):
+        return [
+            {
+                "specId": spec,
+                "modelName": spec,
+                "alibabaSkuName": spec,
+                "alibabaSkuSecondName": "",
+                "alibabaSkuId": "sku-" + spec,
+                "alibabaUrl": "https://detail.1688.com/offer/111.html",
+                "quantity": 1,
+            }
+            for spec in specs
+        ]
+
+    def _per_sku(self, result):
+        self.results = [result, {"ok": True, "status": "success"}]
+        page = FakePage()
+        with contextlib.redirect_stdout(io.StringIO()):
+            solo = self.mod.fill_and_submit_offer_items_individually(
+                page, "https://detail.1688.com/offer/111.html", self._pending("a1", "a2", "a3"), _FakeDebug("")
+            )
+        return solo, page
+
+    def test_bad_sign_on_first_spec_sends_nothing_more(self):
+        solo, page = self._per_sku(BAD_SIGN_RESULT)
+        self.assertEqual(self.sent, [["a1"]], "second spec send count must be 0")
+        self.assertEqual(solo["stopped_reason"], "add_failed")
+        self.assertEqual(solo["processed_pending_count"], 1)
+        self.assertEqual([f["specId"] for f in solo["failed"]], ["a1"])
+        self.assertEqual(page.gotos, [], "no reload for the next spec")
+
+    def test_in_tab_timeout_http_error_on_first_spec_sends_nothing_more(self):
+        solo, _page = self._per_sku(TIMEOUT_RESULT)
+        self.assertEqual(self.sent, [["a1"]])
+        self.assertEqual(solo["stopped_reason"], "add_failed")
+        self.assertIn("可能已進採購車", solo["failed"][0]["message"])
+
+    def test_biz_param_on_first_spec_sends_nothing_more(self):
+        solo, _page = self._per_sku(BIZ_PARAM_RESULT)
+        self.assertEqual(self.sent, [["a1"]])
+        self.assertEqual(solo["stopped_reason"], "add_failed")
+
+    def _run(self, items, results):
+        self.results = results
+        page = FakePage()
+
+        @contextlib.contextmanager
+        def session(endpoint):
+            yield types.SimpleNamespace(page=page, context=None, endpoint=endpoint)
+
+        payload = {
+            "productId": "p1",
+            "productName": "P",
+            "addToCart": True,
+            "items": list(items),
+        }
+        with mock.patch.object(self.mod, "restock_cdp_session", session), \
+                contextlib.redirect_stdout(io.StringIO()):
+            self.mod.run(payload, self.out)
+        return json.loads(Path(self.out).read_text(encoding="utf-8")), page
+
+    def test_per_sku_failure_leaves_remaining_specs_and_offers_unprocessed(self):
+        result, page = self._run(
+            [
+                _item("a1", 1, "a1", offer="111"),
+                _item("a2", 1, "a2", offer="111"),
+                _item("b1", 1, "b1", offer="222"),
+            ],
+            [BAD_SIGN_RESULT, {"ok": True, "status": "success"}],
+        )
+        self.assertEqual(self.sent, [["a1"]])
+        self.assertFalse(any("/offer/222" in url for url in page.gotos), "later offer never opened")
+        self.assertEqual(result["stoppedReason"], "add_failed")
+        self.assertEqual(result["status"], "error")
+        self.assertEqual(
+            sorted(row["modelName"] for row in result["summary"]["unprocessed"]), ["a2", "b1"]
+        )
+
+    def test_single_request_failure_leaves_later_offers_unprocessed(self):
+        result, page = self._run(
+            [_item("a1", 1, "a1", offer="111"), _item("b1", 1, "b1", offer="222")],
+            [TIMEOUT_RESULT, {"ok": True, "status": "success"}],
+        )
+        self.assertEqual(self.sent, [["a1"]], "later offer send count must be 0")
+        self.assertFalse(any("/offer/222" in url for url in page.gotos))
+        self.assertEqual(result["stoppedReason"], "add_failed")
+        self.assertEqual(result["status"], "error")
+        self.assertEqual([row["modelName"] for row in result["summary"]["unprocessed"]], ["b1"])
+
+    def test_add_failed_pauses_the_batch(self):
+        self.assertEqual(
+            classify_job_result({"status": "error", "stoppedReason": "add_failed"}, 1), "add_failed"
+        )
+
+
+class ReconcileAttemptedTests(unittest.TestCase):
+    def test_failed_and_selection_mismatch_are_not_counted_as_sent(self):
+        row = {
+            "productId": "1",
+            "productName": "A",
+            "summary": {
+                "succeeded": [dict(_item("ok", 1, "ok"), quantity=1)],
+                "failed": [dict(_item("bad", 2, "bad"), quantity=2), dict(_item("leak", 1, "leak"), quantity=1)],
+                "selectionMismatch": [dict(_item("mis", 1, "mis"), quantity=1)],
+            },
+        }
+        before = [_cart_line("ok", 0), _cart_line("leak", 0)]
+        after = [_cart_line("ok", 1), _cart_line("leak", 1)]
+        report = reconcile_cart_delta(before, after, [row], [])
+        by_spec = {r["specId"]: r for r in report["rows"]}
+        self.assertEqual(by_spec["ok"]["category"], "ok")
+        self.assertEqual(by_spec["bad"]["category"], "failed")
+        self.assertEqual(by_spec["mis"]["category"], "selection_mismatch")
+        self.assertEqual(by_spec["leak"]["category"], "anomaly", "failed add that still moved the cart")
+        self.assertFalse(by_spec["bad"]["sent"])
+        self.assertEqual(report["counts"]["failed"], 1)
+        self.assertEqual(report["counts"]["selection_mismatch"], 1)
+        self.assertEqual(report["counts"]["ok"], 1)
+        self.assertEqual([r["specId"] for r in report["sent"]], ["ok"])
+        self.assertEqual(sorted(r["specId"] for r in report["attempted"]), ["bad", "leak", "mis"])
+        self.assertFalse(report["ok"])
+
+    def test_after_read_failure_makes_attempted_unknown(self):
+        row = {"productId": "1", "productName": "A", "summary": {"failed": [dict(_item("bad", 2, "bad"), quantity=2)]}}
+        report = reconcile_cart_delta([], None, [row], [])
+        self.assertEqual(report["rows"][0]["category"], "unknown")
+
+
 class MainWiringTests(unittest.TestCase):
     def test_batch_thread_uses_9239_cart_reader_pacer_and_disables_freezes(self):
         import main
@@ -749,15 +975,30 @@ class MainWiringTests(unittest.TestCase):
             captured["start_fn"] = start_fn
             return state
 
+        def fake_persister(directory, cdp_available_fn=None):
+            captured["persister_cdp_available_fn"] = cdp_available_fn
+            return lambda s: None
+
         with mock.patch.object(main, "load_state", lambda _d: {"cdpEndpoint": ""}), \
                 mock.patch.object(main, "run_batch_loop", fake_loop), \
-                mock.patch.object(main, "RestockBatchPersister", lambda d: (lambda s: None)), \
-                mock.patch.object(restock_cdp, "set_strict_restock_cdp_env", lambda ep: captured.setdefault("strict", ep)), \
+                mock.patch.object(main, "RestockBatchPersister", fake_persister), \
                 mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("ALIBABA_RESTOCK_CDP", None)
+            os.environ.pop("ALIBABA_RESTOCK_CDP_STRICT", None)
+            env_before = dict(os.environ)
             main.run_restock_batch_thread("run-x")
-        self.assertEqual(captured["strict"], "http://127.0.0.1:9239")
+            env_after = dict(os.environ)
+            started = captured["start_fn"]
+            seen: List[Dict[str, Any]] = []
+            host = types.SimpleNamespace(start_alibaba_restock=lambda req: seen.append(req) or {"status": "success"})
+            with mock.patch.object(main, "_restock_job_host", lambda: host):
+                started(_product("1", "A", [_item("a1", 1, "a1")]))
+        # os.environ is untouched: legacy tools can never pick up 9239.
+        self.assertEqual(env_after, env_before)
+        self.assertNotIn("ALIBABA_RESTOCK_CDP", env_after)
+        self.assertEqual(seen[0]["cdpEndpoint"], "http://127.0.0.1:9239")
         self.assertFalse(captured["cdp_available_fn"]())
+        self.assertFalse(captured["persister_cdp_available_fn"]())
         self.assertTrue(callable(captured["cart_reader_fn"]))
         self.assertEqual(captured["pace_fn"].__func__, restock_cdp.AddPacer.wait_before_add)
 

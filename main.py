@@ -3115,14 +3115,19 @@ def remove_worker_output_if_requested(output_path, preserve_existing_output=Fals
 
 
 class RestockBatchPersister:
-    def __init__(self, directory):
+    def __init__(self, directory, cdp_available_fn=None):
         self.directory = Path(directory)
+        # The CDP restock flow passes an always-False probe so the terminal
+        # reverse-audit never runs the legacy 9223/9227 freezes (default
+        # connect_over_cdp would hijack Chrome downloads).
+        self.cdp_available_fn = cdp_available_fn
 
     def __call__(self, state):
         saved = attach_reverse_audit_if_terminal(
             state,
             self.directory,
             sources_only=bool(state.get("reverseAuditSourcesOnly")),
+            cdp_available_fn=self.cdp_available_fn,
         )
         saved = save_state(self.directory, saved)
         if saved.get("status") != STATUS_RUNNING:
@@ -3174,22 +3179,27 @@ def read_single_restock_job(job_id):
     return CustomHandler._read_alibaba_restock_job(job_id)
 
 
+def _no_legacy_cdp_freeze(*_args, **_kwargs):
+    return False
+
+
 def run_restock_batch_thread(run_id):
     directory = _restock_batches_root() / run_id
-    persister = RestockBatchPersister(directory)
+    persister = RestockBatchPersister(directory, cdp_available_fn=_no_legacy_cdp_freeze)
     try:
         state = load_state(directory)
         from restock_cdp import (
             AddPacer,
             read_full_cart_via_cdp,
             resolve_restock_cdp_endpoint,
-            set_strict_restock_cdp_env,
         )
 
         # Every product attaches to the same logged-in 1688 Chrome (default
-        # 9239). 9235 is refused; no fallback port or profile Chrome.
+        # 9239). 9235 is refused; no fallback port or profile Chrome. The
+        # endpoint travels only in each child's request/--cdp argument; this
+        # process's os.environ is never touched, so legacy tools that read
+        # ALIBABA_RESTOCK_CDP with a default connect cannot pick up 9239.
         cdp_endpoint = resolve_restock_cdp_endpoint(state.get("cdpEndpoint") or None)
-        set_strict_restock_cdp_env(cdp_endpoint)
         pacer = AddPacer()
         run_batch_loop(
             state,
@@ -3202,7 +3212,7 @@ def run_restock_batch_thread(run_id):
             # The legacy reverse-audit freezes reuse the user's existing tab and
             # try 9223/9227; the before/after full-cart read over our own tab
             # replaces them in this flow.
-            cdp_available_fn=lambda *_args, **_kwargs: False,
+            cdp_available_fn=_no_legacy_cdp_freeze,
         )
     except Exception:
         logger.exception("批次補貨執行失敗")

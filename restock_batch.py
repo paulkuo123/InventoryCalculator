@@ -65,6 +65,7 @@ RESTOCK_RISK_STOP_REASONS = {
     "cdp_unavailable",
     "cdp_forbidden_port",
     "cdp_no_context",
+    "add_failed",
 }
 PAUSE_CLASSIFICATIONS = {"mismatch", "uncertain", "unavailable", "failed"} | RESTOCK_RISK_STOP_REASONS
 CART_RECONCILE_FILENAME = "cart_reconcile.json"
@@ -1423,8 +1424,14 @@ def wait_for_job(
     return last
 
 
-SENT_SUMMARY_KEYS = ("succeeded", "unverified", "selectionMismatch", "failed")
+# Clean submits: the add went out and the page did not report a problem.
+SENT_SUMMARY_KEYS = ("succeeded", "unverified")
+# Submits that failed or hit a selection mismatch: maybe nothing was added (or
+# a timed-out add landed anyway). Counted on their own, never as "sent".
+ATTEMPTED_SUMMARY_KEYS = ("failed", "selectionMismatch")
 NOT_SENT_SUMMARY_KEYS = ("unprocessed", "cartFull", "blocked")
+_ATTEMPT_CATEGORY = {"failed": "failed", "selectionMismatch": "selection_mismatch"}
+_SEND_RANK = {"not_sent": 0, "attempted": 1, "sent": 2}
 
 
 def _reconcile_key(item: Dict[str, Any]) -> tuple:
@@ -1451,13 +1458,16 @@ def reconcile_cart_delta(
 
     delta == requested -> ok; delta < requested -> unconfirmed (never re-sent);
     delta > requested -> anomaly. Specs never sent are ``not_sent`` (or
-    ``anomaly`` when the cart still changed for them).
+    ``anomaly`` when the cart still changed for them). Submits that came back
+    ``failed`` / ``selectionMismatch`` are counted separately as ``failed`` /
+    ``selection_mismatch`` when the cart did not change, and ``anomaly`` when
+    it did (e.g. a timed-out add that landed anyway).
     """
     from alibaba_restocker import cart_quantity_for_item
 
     entries: Dict[tuple, Dict[str, Any]] = {}
 
-    def add(item: Dict[str, Any], product: Dict[str, Any], sent: bool) -> None:
+    def add(item: Dict[str, Any], product: Dict[str, Any], send: str, bucket: str = "") -> None:
         merged = {
             "productId": str(item.get("productId") or product.get("productId") or ""),
             "productName": str(item.get("productName") or product.get("productName") or ""),
@@ -1468,10 +1478,12 @@ def reconcile_cart_delta(
             "alibabaSkuId": str(item.get("alibabaSkuId") or "").strip(),
             "alibabaUrl": str(item.get("alibabaUrl") or "").strip(),
             "requested": _reconcile_qty(item),
-            "sent": sent,
+            "send": send,
+            "sent": send == "sent",
+            "submitBucket": bucket,
         }
         key = _reconcile_key(merged)
-        if key in entries and entries[key]["sent"] and not sent:
+        if key in entries and _SEND_RANK[entries[key]["send"]] > _SEND_RANK[send]:
             return
         entries[key] = merged
 
@@ -1480,28 +1492,42 @@ def reconcile_cart_delta(
         for bucket in NOT_SENT_SUMMARY_KEYS:
             for item in summary.get(bucket) or []:
                 if isinstance(item, dict):
-                    add(item, row, False)
+                    add(item, row, "not_sent", bucket)
+        for bucket in ATTEMPTED_SUMMARY_KEYS:
+            for item in summary.get(bucket) or []:
+                if isinstance(item, dict):
+                    add(item, row, "attempted", bucket)
         for bucket in SENT_SUMMARY_KEYS:
             for item in summary.get(bucket) or []:
                 if isinstance(item, dict):
-                    add(item, row, True)
+                    add(item, row, "sent", bucket)
     for product in not_started:
         for item in product_items(product):
-            add(item, product, False)
+            add(item, product, "not_sent")
 
     rows: List[Dict[str, Any]] = []
-    counts = {"ok": 0, "unconfirmed": 0, "anomaly": 0, "not_sent": 0, "unknown": 0}
+    counts = {
+        "ok": 0,
+        "unconfirmed": 0,
+        "anomaly": 0,
+        "failed": 0,
+        "selection_mismatch": 0,
+        "not_sent": 0,
+        "unknown": 0,
+    }
     for entry in entries.values():
         before_qty = cart_quantity_for_item(before_lines, entry)
         if after_lines is None:
             after_qty = None
             delta = None
-            category = "unknown" if entry["sent"] else "not_sent"
+            category = "not_sent" if entry["send"] == "not_sent" else "unknown"
         else:
             after_qty = cart_quantity_for_item(after_lines, entry)
             delta = after_qty - before_qty
-            if not entry["sent"]:
+            if entry["send"] == "not_sent":
                 category = "anomaly" if delta != 0 else "not_sent"
+            elif entry["send"] == "attempted":
+                category = "anomaly" if delta != 0 else _ATTEMPT_CATEGORY[entry["submitBucket"]]
             elif delta == entry["requested"]:
                 category = "ok"
             elif delta < entry["requested"]:
@@ -1517,8 +1543,9 @@ def reconcile_cart_delta(
         "beforeLineCount": len(before_lines),
         "afterLineCount": None if after_lines is None else len(after_lines),
         "counts": counts,
-        "sent": [row for row in rows if row["sent"]],
-        "notSent": [row for row in rows if not row["sent"]],
+        "sent": [row for row in rows if row["send"] == "sent"],
+        "attempted": [row for row in rows if row["send"] == "attempted"],
+        "notSent": [row for row in rows if row["send"] == "not_sent"],
         "rows": rows,
     }
 
