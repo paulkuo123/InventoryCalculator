@@ -1715,6 +1715,38 @@ class ShopeeCrawler:
             return locator.first
         return None
 
+    def _recover_empty_ads_download(self, download, final_path, range_config):
+        """save_as() can write 0 bytes when Chrome saved the file elsewhere; never accept that."""
+        failure = None
+        try:
+            failure = download.failure()
+        except Exception as e:
+            failure = f"無法讀取下載狀態: {e}"
+        temp_path = None
+        try:
+            temp_path = download.path()
+        except Exception:
+            temp_path = None
+        if (
+            temp_path
+            and os.path.isfile(temp_path)
+            and os.path.getsize(temp_path) > 0
+            and os.path.abspath(temp_path) != os.path.abspath(final_path)
+        ):
+            shutil.copyfile(temp_path, final_path)
+            if os.path.getsize(final_path) > 0:
+                self._ads_log("DOWNLOAD", "save_as 存成 0 位元組，已改用 Playwright 暫存檔", range_config["label"])
+                return
+        try:
+            os.remove(final_path)
+        except OSError:
+            pass
+        raise RuntimeError(
+            f"ADS_DOWNLOAD_EMPTY: {range_config['label']} 下載檔是 0 位元組"
+            f"（下載狀態：{failure or '無錯誤'}）。"
+            "瀏覽器下載位置可能被共用 Chrome 上的其他 CDP 程式改掉，檔案可能存到 ~/Downloads"
+        )
+
     def _save_ads_download(self, download, range_config):
         os.makedirs(self.ads_export_dir, exist_ok=True)
         suggested_name = download.suggested_filename or "ads_export.xlsx"
@@ -1734,6 +1766,9 @@ class ShopeeCrawler:
 
         if not os.path.exists(final_path):
             raise RuntimeError("ADS_DOWNLOAD_FILE_MISSING: 下載檔案不存在")
+
+        if os.path.getsize(final_path) == 0:
+            self._recover_empty_ads_download(download, final_path, range_config)
 
         final_path = normalize_ads_export_file(final_path)
         final_name = os.path.basename(final_path)

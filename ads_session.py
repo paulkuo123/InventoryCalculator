@@ -547,6 +547,12 @@ def prefer_export_path(current: str, candidate: str) -> str:
 def _path_is_export_csv(path: Path) -> bool:
     if not path.is_file():
         return False
+    try:
+        if path.stat().st_size == 0:
+            # A 0-byte download is not an export; let validation report the window missing.
+            return False
+    except OSError:
+        return False
     suffix = path.suffix.lower()
     if suffix == ".csv":
         return True

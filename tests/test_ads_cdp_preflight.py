@@ -246,6 +246,26 @@ class RemoteCdpAttachTests(unittest.TestCase):
         playwright.stop.assert_called_once()
 
 
+class EmptyExportValidationTests(unittest.TestCase):
+    def test_zero_byte_csv_is_not_counted_as_a_window(self):
+        from ads_session import BLOCKER_MISSING_WINDOWS, collect_export_windows
+        from ads_weekly import validate_fresh_exports
+
+        with TemporaryDirectory() as temp_dir:
+            export_dir = Path(temp_dir)
+            (export_dir / "ads_overall_yesterday_20260911.csv").write_bytes(b"")
+            (export_dir / "ads_overall_past_month_20260911.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+            (export_dir / "ads_overall_week_01_20260905_20260911.csv").write_text(
+                "a,b\n1,2\n", encoding="utf-8"
+            )
+
+            self.assertNotIn("yesterday", collect_export_windows(export_dir))
+            with self.assertRaises(AdsWeeklyBlocker) as raised:
+                validate_fresh_exports(str(export_dir))
+            self.assertIn(BLOCKER_MISSING_WINDOWS, str(raised.exception))
+            self.assertIn("yesterday", str(raised.exception))
+
+
 def _args(root):
     return Namespace(
         source="remote",
