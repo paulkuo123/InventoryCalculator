@@ -181,10 +181,18 @@ def resolve_spec(
     """Resolve a specId and record how it was found.
 
     Order: explicit ``spec_id`` > ``sku_id`` (unchanged skuMapOriginal path) >
-    name (``sku_name`` / ``sku_second_name`` / ``spec_text``). Name resolution
-    needs the same read-only detail HTML as the skuId path.
+    name (``sku_name`` / ``sku_second_name`` / ``spec_text``). Name args are
+    mutually exclusive with ``spec_id`` / ``sku_id``. Name resolution needs the
+    same read-only detail HTML as the skuId path.
     """
     explicit = str(spec_id or "").strip()
+    has_names = any(str(v or "").strip() for v in (sku_name, sku_second_name, spec_text))
+    if has_names and (explicit or str(sku_id or "").strip()):
+        raise MutateSafetyError(
+            "--sku-name/--sku-second-name/--spec-text cannot be combined with "
+            "--spec-id or --sku-id (mutually exclusive); pass only one way to "
+            "pick the spec."
+        )
     if explicit:
         return SpecResolution(spec_id=explicit, resolved_by="spec_id")
     sku = str(sku_id or "").strip()

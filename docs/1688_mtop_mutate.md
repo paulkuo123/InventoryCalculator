@@ -91,6 +91,8 @@ python -m reverse_audit.mtop_mutate add --offer-id ID \
 **比對規則（嚴格）：**
 
 - 名稱維度：`--sku-name` 為主，可加一個 `--sku-second-name`；`--sku-second-name` 不能單獨用。
+- 名稱參數（`--sku-name`／`--sku-second-name`／`--spec-text`）不能跟 `--spec-id` 或 `--sku-id` 一起用，會直接報錯（互斥）。
+- 同時給 `--sku-name` 和 `--spec-text` 時，兩邊都要各自剛好對到一筆，而且是**同一筆**；只要有一邊對不到、對到多筆或兩邊不同，就報錯並列出兩邊各自的結果。
 - `--spec-text` 用 `sku_spec.split_spec_dimensions` 切開（`>`、`＞`、`,` 等）；也接受「正規化後整串（含分隔符號）」與選項原始規格文字完全相同。把維度黏在一起（例如 `远峰蓝iPhone13Pro`）**不算**命中。
 - 正規化只做：HTML unescape、Unicode NFKC（全形／半形）、移除所有空白、casefold。**不**做簡繁折疊、不做前綴／子字串／模糊比對。
 - 候選必須與想要的維度 tuple **完全相等**（長度、順序都一樣）。`17` 不會命中 `17pro`。

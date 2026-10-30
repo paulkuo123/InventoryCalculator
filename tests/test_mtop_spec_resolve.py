@@ -22,7 +22,7 @@ from reverse_audit.mtop_addcargo import (  # noqa: E402
     resolve_spec,
     resolve_spec_id,
 )
-from reverse_audit.mtop_http import EXIT_OK  # noqa: E402
+from reverse_audit.mtop_http import EXIT_OK, MutateSafetyError  # noqa: E402
 from reverse_audit.mtop_mutate import main as mutate_main  # noqa: E402
 from reverse_audit.mtop_spec_resolve import (  # noqa: E402
     SpecNameError,
@@ -114,14 +114,37 @@ class SpecResolveUnitTests(unittest.TestCase):
         opt = resolve_spec_by_name(NAMES_HTML, spec_text="远峰蓝&gt;iPhone13Pro")
         self.assertEqual(opt.spec_id, "spec-name-01")
 
-    def test_spec_text_alternative_with_name_uses_union(self):
-        # Name target and spec_text target point at different rows: ambiguity.
+    def test_name_no_match_but_spec_text_match_is_error(self):
+        with self.assertRaises(SpecNameError) as ctx:
+            resolve_spec_by_name(
+                NAMES_HTML, sku_name="红色", spec_text="抹茶绿>iPhone15"
+            )
+        self.assertEqual(ctx.exception.reason, "name_text_conflict")
+        message = str(ctx.exception)
+        self.assertIn("no match", message)
+        self.assertIn("spec-name-03", message)
+
+    def test_name_and_spec_text_match_different_specs_is_error(self):
         with self.assertRaises(SpecNameError) as ctx:
             resolve_spec_by_name(
                 NAMES_HTML, sku_name="粉色", spec_text="抹茶绿>iPhone15"
             )
-        self.assertEqual(ctx.exception.reason, "ambiguous")
-        self.assertEqual(len(ctx.exception.candidates), 2)
+        self.assertEqual(ctx.exception.reason, "name_text_conflict")
+        self.assertEqual(
+            {opt.spec_id for opt in ctx.exception.candidates},
+            {"spec-name-08", "spec-name-03"},
+        )
+        self.assertIn("spec-name-08", str(ctx.exception))
+        self.assertIn("spec-name-03", str(ctx.exception))
+
+    def test_name_and_spec_text_match_same_spec_is_ok(self):
+        opt = resolve_spec_by_name(
+            NAMES_HTML,
+            sku_name="抹茶绿",
+            sku_second_name="iPhone15",
+            spec_text="抹茶绿>iPhone15",
+        )
+        self.assertEqual(opt.spec_id, "spec-name-03")
 
     def test_none_match_lists_wanted_and_options(self):
         with self.assertRaises(SpecNameError) as ctx:
@@ -178,15 +201,32 @@ class AddCargoNameResolutionTests(unittest.TestCase):
             "spec-name-01",
         )
 
-    def test_resolve_spec_id_spec_id_still_wins_over_names(self):
-        self.assertEqual(
-            resolve_spec_id(
-                spec_id="explicit-spec",
-                sku_name="粉色",
-                detail_html_path=str(NAMES_HTML_PATH),
-            ),
-            "explicit-spec",
+    def test_names_with_spec_id_or_sku_id_are_mutually_exclusive(self):
+        for extra in ({"spec_id": "explicit-spec"}, {"sku_id": "9000000000001"}):
+            for names in (
+                {"sku_name": "粉色"},
+                {"spec_text": "粉色"},
+                {"sku_second_name": "iPhone15"},
+            ):
+                with self.subTest(extra=extra, names=names):
+                    with self.assertRaises(MutateSafetyError) as ctx:
+                        resolve_spec_id(
+                            detail_html_path=str(NAMES_HTML_PATH), **extra, **names
+                        )
+                    self.assertIn("mutually exclusive", str(ctx.exception))
+
+    def test_cli_rejects_sku_id_with_sku_name(self):
+        proc = subprocess.run(
+            [
+                sys.executable, "-m", "reverse_audit.mtop_mutate", "add",
+                "--offer-id", OFFER, "--sku-id", "9000000000001",
+                "--sku-name", "粉色", "--detail-html", str(NAMES_HTML_PATH),
+                "--qty", "1", "--json",
+            ],
+            cwd=str(ROOT), capture_output=True, text=True, check=False,
         )
+        self.assertNotEqual(proc.returncode, EXIT_OK)
+        self.assertIn("mutually exclusive", proc.stderr)
 
     def test_resolve_spec_reports_resolution_source(self):
         by_name = resolve_spec(

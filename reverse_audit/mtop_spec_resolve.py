@@ -29,7 +29,7 @@ class SpecNameError(SkuMapError):
     """Name-based spec resolution could not pick exactly one specId.
 
     ``reason`` is one of: ``no_rows``, ``no_wanted``, ``second_without_primary``,
-    ``no_match``, ``ambiguous``. ``candidates`` holds the ambiguous matches.
+    ``no_match``, ``ambiguous``, ``name_text_conflict``. ``candidates`` holds the ambiguous matches.
     """
 
     def __init__(
@@ -159,7 +159,8 @@ def resolve_spec_by_name(
     ``sku_name`` (plus optional ``sku_second_name``) builds one wanted tuple.
     ``spec_text`` is split with :func:`sku_spec.split_spec_dimensions` after
     HTML unescape and builds an alternative wanted tuple; the normalized whole
-    raw spec text (separators included) is also accepted. Both may be given and either may match. 0 matches
+    raw spec text (separators included) is also accepted. If both are given,
+    each must resolve to exactly one option and it must be the same one. 0 matches
     or >1 matches raise :class:`SpecNameError`; we never pick a winner.
     """
     name = str(sku_name or "").strip()
@@ -186,29 +187,72 @@ def resolve_spec_by_name(
         )
     options = _options_from_rows(rows)
 
-    wanted_tuples: List[Tuple[str, ...]] = []
+    name_desc = _wanted_description(name, second, None)
+    text_desc = _wanted_description(None, None, text)
+    if name and text:
+        # Both given: each must resolve on its own to exactly one spec, and it
+        # must be the same spec. Never fall back to whichever one matched.
+        name_hits = _match_name(options, name, second)
+        text_hits = _match_spec_text(options, text)
+        if (
+            len(name_hits) == 1
+            and len(text_hits) == 1
+            and name_hits[0].spec_id == text_hits[0].spec_id
+        ):
+            return name_hits[0]
+        raise SpecNameError(
+            "--sku-name/--sku-second-name and --spec-text must both resolve to the "
+            "same single spec option; refusing to guess. "
+            f"{name_desc} -> {_describe_hits(name_hits)}; "
+            f"{text_desc} -> {_describe_hits(text_hits)}",
+            reason="name_text_conflict",
+            candidates=_dedupe(name_hits + text_hits),
+        )
     if name:
-        name_parts = [name]
-        if second:
-            name_parts.append(second)
-        wanted_tuples.append(_norm_parts(name_parts))
-    whole: set[str] = set()
-    if text:
-        wanted_tuples.append(_norm_parts(split_spec_dimensions(html.unescape(text))))
-        whole.add(normalize_option(text))
+        return _single(_match_name(options, name, second), name_desc, options)
+    return _single(_match_spec_text(options, text), text_desc, options)
 
-    candidates: List[SpecOption] = []
-    for option in options:
-        option_tuple = _norm_parts(option.parts)
-        matched = option_tuple in wanted_tuples
-        if not matched and whole:
-            # Whole-string alternative: the normalized raw spec text (separators
-            # included) must equal the option's normalized raw spec text.
-            matched = normalize_option(option.spec_text) in whole
-        if matched:
-            candidates.append(option)
 
-    wanted_desc = _wanted_description(name, second, text)
+def _match_name(
+    options: Sequence[SpecOption], name: str, second: str
+) -> List[SpecOption]:
+    wanted = _norm_parts([name] + ([second] if second else []))
+    return [opt for opt in options if _norm_parts(opt.parts) == wanted]
+
+
+def _match_spec_text(options: Sequence[SpecOption], text: str) -> List[SpecOption]:
+    wanted = _norm_parts(split_spec_dimensions(html.unescape(text)))
+    # Whole-string alternative: the normalized raw spec text (separators
+    # included) must equal the option's normalized raw spec text.
+    whole = normalize_option(text)
+    return [
+        opt
+        for opt in options
+        if _norm_parts(opt.parts) == wanted or normalize_option(opt.spec_text) == whole
+    ]
+
+
+def _dedupe(options: Sequence[SpecOption]) -> List[SpecOption]:
+    seen: set[str] = set()
+    out: List[SpecOption] = []
+    for opt in options:
+        if opt.spec_id not in seen:
+            seen.add(opt.spec_id)
+            out.append(opt)
+    return out
+
+
+def _describe_hits(hits: Sequence[SpecOption]) -> str:
+    if not hits:
+        return "no match"
+    if len(hits) == 1:
+        return _format_option(hits[0])
+    return f"{len(hits)} matches: {_format_options(hits)}"
+
+
+def _single(
+    candidates: List[SpecOption], wanted_desc: str, options: Sequence[SpecOption]
+) -> SpecOption:
     if not candidates:
         raise SpecNameError(
             f"no spec option matched wanted {wanted_desc}. Available: "
