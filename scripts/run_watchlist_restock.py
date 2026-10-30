@@ -11,6 +11,8 @@ product/watchlist imports; opening it does not load a list or change its filter.
 from __future__ import annotations
 
 import argparse
+import csv
+import io
 import json
 import os
 import re
@@ -197,12 +199,299 @@ def golden_model(golden: Dict[str, Any], product_id: str, spec_id: str, model_na
     return {}
 
 
+def _golden_restock_item(
+    product_id: str,
+    product: Dict[str, Any],
+    model: Dict[str, Any],
+    golden: Dict[str, Any],
+    qty: int,
+    item_months: int,
+) -> tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Build one restock item for a positive qty, or return the blocker reason."""
+    name = str(product.get("商品名稱") or "")
+    model_name = str(model.get("型號名稱") or "")
+    mapped = golden_model(golden, product_id, str(model.get("規格ID") or ""), model_name)
+    sku_name = str(mapped.get("1688_sku_name") or "").strip()
+    second = str(mapped.get("1688_sku_second_name") or "").strip()
+    url = str(mapped.get("阿里巴巴商品URL") or model.get("阿里巴巴商品URL") or "").strip()
+    status = str(mapped.get("1688_mapping_status") or "").strip()
+    if not url.startswith("http"):
+        return None, "沒有 1688 對應"
+    if not sku_name:
+        return None, "缺少 1688 SKU 名稱"
+    if sku_name in DISCONTINUED_SKU_NAMES:
+        return None, "1688 SKU 已停售"
+    if status != "approved":
+        return None, "1688 對應未核准"
+    if requires_second_sku(name, model_name) and not second:
+        return None, "需要第二個 1688 SKU"
+    return {
+        "specId": str(model.get("規格ID") or ""),
+        "modelName": model_name,
+        "alibabaSkuName": sku_name,
+        "alibabaSkuSecondName": second,
+        "alibabaSkuId": str(mapped.get("1688_sku_id") or ""),
+        "restockQty": qty,
+        "alibabaUrl": url,
+        "targetMonths": item_months,
+    }, None
+
+
+def _find_model_in_product(
+    product: Dict[str, Any],
+    model_id: str,
+    model_name: str,
+) -> Optional[Dict[str, Any]]:
+    for model in product.get("型號") or []:
+        if not isinstance(model, dict):
+            continue
+        if model_id:
+            if str(model.get("規格ID") or "") == model_id:
+                return model
+        elif model_name:
+            if str(model.get("型號名稱") or "").strip() == model_name:
+                return model
+    return None
+
+
+def _build_filtered_list(
+    products: Dict[str, Any],
+    watch_ids: set,
+    golden: Dict[str, Any],
+    keyword: str,
+    months: int,
+    model_filter: list,
+) -> Dict[str, Any]:
+    """Process only the requested Shopee models; report every entry as matched or unmatched."""
+    rows_by_product: Dict[str, Dict[str, Any]] = {}
+    matched_keys: set = set()
+    matched = []
+    unmatched = []
+    for entry in model_filter:
+        product_id = str(entry.get("productId") or "").strip()
+        model_id = str(entry.get("modelId") or "").strip()
+        model_name = str(entry.get("modelName") or "").strip()
+        override = entry.get("quantity")
+        requested = {
+            "productId": product_id,
+            "modelId": model_id,
+            "modelName": model_name,
+        }
+        if product_id:
+            product = products.get(product_id)
+            if not isinstance(product, dict):
+                unmatched.append({**requested, "reason": "商品不在 shopee_products"})
+                continue
+            candidates = [(product_id, product)]
+        else:
+            candidates = [
+                (str(candidate_id), candidate)
+                for candidate_id, candidate in products.items()
+                if isinstance(candidate, dict)
+                and model_id
+                and any(
+                    isinstance(model, dict) and str(model.get("規格ID") or "") == model_id
+                    for model in (candidate.get("型號") or [])
+                )
+            ]
+            if not candidates:
+                unmatched.append({**requested, "reason": "商品中找不到型號"})
+                continue
+
+        result = None
+        reason = None
+        for candidate_id, candidate in candidates:
+            if watch_ids and candidate_id not in watch_ids:
+                reason = reason or "商品不在觀察清單或被排除"
+                continue
+            name = str(candidate.get("商品名稱") or "")
+            if keyword and keyword not in name:
+                reason = reason or "商品名稱不含關鍵字"
+                continue
+            found = _find_model_in_product(candidate, model_id, model_name)
+            if found is None:
+                reason = reason or "商品中找不到型號"
+                continue
+            item_months = target_months_for_product(name, months, found.get("型號名稱"))
+            qty = int(override) if override is not None else suggested_restock_qty(candidate, found, item_months)
+            if qty <= 0:
+                reason = reason or ("清單數量為 0" if override is not None else "計算補貨量為 0")
+                continue
+            item, blocker_reason = _golden_restock_item(
+                candidate_id, candidate, found, golden, qty, item_months
+            )
+            if item is None:
+                reason = reason or blocker_reason or "1688 對應未完成"
+                continue
+            result = (candidate_id, found, item)
+            break
+
+        if result is None:
+            unmatched.append({**requested, "reason": reason or "無法配對"})
+            continue
+
+        matched_id, found_model, item = result
+        key = (matched_id, str(found_model.get("規格ID") or ""), str(found_model.get("型號名稱") or ""))
+        if key in matched_keys:
+            unmatched.append({**requested, "reason": "清單重複列出同一型號，只補第一筆"})
+            continue
+        matched_keys.add(key)
+        matched.append({
+            "productId": matched_id,
+            "modelId": str(found_model.get("規格ID") or ""),
+            "modelName": str(found_model.get("型號名稱") or ""),
+            "quantity": item["restockQty"],
+        })
+        row = rows_by_product.setdefault(matched_id, {
+            "productId": matched_id,
+            "productName": str(products[matched_id].get("商品名稱") or ""),
+            "targetMonths": target_months_for_product(
+                str(products[matched_id].get("商品名稱") or ""), months
+            ),
+            "blockerCount": 0,
+            "items": [],
+        })
+        row["items"].append(item)
+
+    rows = [rows_by_product[str(pid)] for pid in products if str(pid) in rows_by_product]
+    return {
+        "keyword": keyword,
+        "generatedAt": datetime.now().isoformat(timespec="seconds"),
+        "products": rows,
+        "modelFilter": {
+            "requested": len(model_filter),
+            "matched": matched,
+            "unmatched": unmatched,
+        },
+    }
+
+
+_MODELS_FILE_PRODUCT_ALIASES = {"商品id", "product_id", "item_id", "itemid", "shopee_item_id"}
+_MODELS_FILE_MODEL_ID_ALIASES = {"規格id", "model_id", "modelid", "spec_id"}
+_MODELS_FILE_MODEL_NAME_ALIASES = {"蝦皮型號", "型號名稱", "model_name", "variant", "variant_name"}
+_MODELS_FILE_QTY_ALIASES = {"quantity", "qty", "數量", "補貨量"}
+_MODELS_FILE_STATUS_ALIASES = {"狀態", "status"}
+
+
+def _models_file_column(raw_name: str) -> Optional[str]:
+    name = str(raw_name or "").strip().lower()
+    if name in _MODELS_FILE_PRODUCT_ALIASES:
+        return "productId"
+    if name in _MODELS_FILE_MODEL_ID_ALIASES:
+        return "modelId"
+    if name in _MODELS_FILE_MODEL_NAME_ALIASES:
+        return "modelName"
+    if name in _MODELS_FILE_QTY_ALIASES:
+        return "quantity"
+    if name in _MODELS_FILE_STATUS_ALIASES:
+        return "status"
+    return None
+
+
+def _parse_optional_quantity(value: str) -> tuple[Optional[int], Optional[str]]:
+    text = str(value or "").strip()
+    if not text:
+        return None, None
+    try:
+        return int(text), None
+    except (TypeError, ValueError):
+        return None, text
+
+
+def parse_models_file(path: Path) -> Dict[str, Any]:
+    """Parse a Shopee model-list CSV (UTF-8 with or without BOM). Pure/offline."""
+    text = Path(path).read_text(encoding="utf-8-sig")
+    reader = csv.reader(io.StringIO(text))
+    try:
+        header = next(reader)
+    except StopIteration:
+        return {"models": [], "skipped": [], "errors": ["模型清單是空的"]}
+    columns: Dict[str, int] = {}
+    for index, raw_name in enumerate(header):
+        canonical = _models_file_column(raw_name)
+        if canonical and canonical not in columns:
+            columns[canonical] = index
+
+    def cell(row, field):
+        index = columns.get(field)
+        if index is None or index >= len(row):
+            return ""
+        return str(row[index]).strip()
+
+    models = []
+    skipped = []
+    errors = []
+    for line, row in enumerate(reader, start=2):
+        if not row or all(str(value).strip() == "" for value in row):
+            continue
+        product_id = cell(row, "productId")
+        model_id = cell(row, "modelId")
+        model_name = cell(row, "modelName")
+        status = cell(row, "status")
+        quantity, quantity_error = _parse_optional_quantity(cell(row, "quantity"))
+        entry = {
+            "productId": product_id,
+            "modelId": model_id,
+            "modelName": model_name,
+            "quantity": quantity,
+            "line": line,
+        }
+        if status and status.lower() != "ok":
+            skipped.append({**entry, "reason": f"清單狀態 {status}"})
+            continue
+        if quantity_error is not None:
+            errors.append(f"第 {line} 列：數量不是整數：{quantity_error}")
+            continue
+        if not model_id and not (product_id and model_name):
+            errors.append(f"第 {line} 列：沒有規格ID，也沒有商品ID＋型號名稱")
+            continue
+        models.append(entry)
+    return {"models": models, "skipped": skipped, "errors": errors}
+
+
+def parse_model_ids(text: str) -> list:
+    entries = []
+    for token in str(text or "").split(","):
+        model_id = token.strip()
+        if not model_id:
+            continue
+        entries.append({
+            "productId": "",
+            "modelId": model_id,
+            "modelName": "",
+            "quantity": None,
+            "line": 0,
+        })
+    return entries
+
+
+def load_model_filter(args: argparse.Namespace) -> tuple[list, list, list]:
+    models: list = []
+    skipped: list = []
+    errors: list = []
+    models_file = getattr(args, "models_file", None)
+    if models_file:
+        try:
+            parsed = parse_models_file(Path(models_file))
+        except OSError as exc:
+            errors.append(f"無法讀取模型清單 {models_file}：{exc}")
+            return models, skipped, errors
+        models.extend(parsed["models"])
+        skipped.extend(parsed["skipped"])
+        errors.extend(parsed["errors"])
+    model_ids = getattr(args, "model_ids", "") or ""
+    if str(model_ids).strip():
+        models.extend(parse_model_ids(model_ids))
+    return models, skipped, errors
+
+
 def build_list_from_files(
     products_path: Path,
     watchlist_path: Path,
     golden_path: Path,
     keyword: str,
     months: int = 4,
+    model_filter: Optional[list] = None,
 ) -> Dict[str, Any]:
     products = without_crawl_metadata(json.loads(products_path.read_text(encoding="utf-8")))
     watchlist = json.loads(watchlist_path.read_text(encoding="utf-8"))
@@ -218,6 +507,8 @@ def build_list_from_files(
         )["productIds"]
     }
     golden = json.loads(golden_path.read_text(encoding="utf-8"))
+    if model_filter is not None:
+        return _build_filtered_list(products, watch_ids, golden, keyword, months, model_filter)
     rows = []
     for product_id, product in products.items():
         if not isinstance(product, dict):
@@ -237,28 +528,11 @@ def build_list_from_files(
             qty = suggested_restock_qty(product, model, item_months)
             if qty <= 0:
                 continue
-            mapped = golden_model(golden, str(product_id), str(model.get("規格ID") or ""), str(model.get("型號名稱") or ""))
-            sku_name = str(mapped.get("1688_sku_name") or "").strip()
-            second = str(mapped.get("1688_sku_second_name") or "").strip()
-            url = str(mapped.get("阿里巴巴商品URL") or model.get("阿里巴巴商品URL") or "").strip()
-            status = str(mapped.get("1688_mapping_status") or "").strip()
-            if (
-                url.startswith("http")
-                and sku_name
-                and sku_name not in DISCONTINUED_SKU_NAMES
-                and status == "approved"
-                and (not requires_second_sku(name, str(model.get("型號名稱") or "")) or second)
-            ):
-                items.append({
-                    "specId": str(model.get("規格ID") or ""),
-                    "modelName": str(model.get("型號名稱") or ""),
-                    "alibabaSkuName": sku_name,
-                    "alibabaSkuSecondName": second,
-                    "alibabaSkuId": str(mapped.get("1688_sku_id") or ""),
-                    "restockQty": qty,
-                    "alibabaUrl": url,
-                    "targetMonths": item_months,
-                })
+            item, _reason = _golden_restock_item(
+                str(product_id), product, model, golden, qty, item_months
+            )
+            if item is not None:
+                items.append(item)
             else:
                 blockers += 1
         if items or blockers:
@@ -280,6 +554,7 @@ def build_visible_style_products(
     root: Path,
     keyword: str = "",
     months: int = 4,
+    model_filter: Optional[list] = None,
 ) -> Dict[str, Any]:
     built = build_list_from_files(
         Path(root) / "shopee_products.json",
@@ -287,6 +562,7 @@ def build_visible_style_products(
         Path(root) / "golden_table.json",
         keyword,
         months,
+        model_filter=model_filter,
     )
     products = []
     for row in built.get("products") or []:
@@ -299,10 +575,13 @@ def build_visible_style_products(
             "gaps": [{"modelName": "", "reason": f"{row.get('blockerCount')} 個型號未完成 1688 對應"}]
             if row.get("blockerCount") else [],
         })
-    return {
+    result = {
         "keyword": keyword,
         "products": products,
     }
+    if "modelFilter" in built:
+        result["modelFilter"] = built["modelFilter"]
+    return result
 
 
 def start_batch(base_url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -356,6 +635,21 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--keyword", default="", help="只補商品名稱含此關鍵字的項目，例如 吊飾")
     parser.add_argument("--months", type=int, default=4)
+    parser.add_argument(
+        "--models-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "只補此 CSV 清單列出的蝦皮型號（規格ID）。UTF-8，可含 BOM。"
+            "可與 --model-ids 併用（取聯集）。"
+        ),
+    )
+    parser.add_argument(
+        "--model-ids",
+        default="",
+        metavar="IDS",
+        help="只補這些蝦皮型號（規格ID，逗號分隔）。可與 --models-file 併用（取聯集）。",
+    )
     parser.add_argument(
         "--restock",
         action="store_true",
@@ -469,6 +763,50 @@ def print_not_yet_adding_to_cart(keyword: str = "", *, restock_or_yes: bool = Fa
         )
 
 
+def print_model_filter_summary(payload: Dict[str, Any], skipped: Optional[list] = None) -> None:
+    """Print the matched/unmatched model-filter report. Read-only; never POSTs."""
+    report = (payload or {}).get("modelFilter") or {}
+    skipped = skipped or []
+    print("模型清單過濾摘要（只補清單列出的蝦皮型號）", flush=True)
+    print("=== 已配對型號 ===", flush=True)
+    for row in (payload or {}).get("products") or []:
+        items = row.get("items") or []
+        if not items:
+            continue
+        print(f"商品 {row.get('productId')} {row.get('productName')}", flush=True)
+        for item in items:
+            print(
+                f"  - {item.get('modelName')}（規格ID {item.get('specId')}）"
+                f" x {item.get('restockQty')}",
+                flush=True,
+            )
+    print("=== 清單狀態略過 ===", flush=True)
+    if not skipped:
+        print("  （無）", flush=True)
+    for entry in skipped:
+        print(
+            f"  第 {entry.get('line')} 列：商品 {entry.get('productId') or '-'} "
+            f"型號 {entry.get('modelName') or entry.get('modelId') or '-'} — {entry.get('reason')}",
+            flush=True,
+        )
+    unmatched = report.get("unmatched") or []
+    print("=== 未配對型號 ===", flush=True)
+    if not unmatched:
+        print("  （無）", flush=True)
+    for entry in unmatched:
+        print(
+            f"  商品 {entry.get('productId') or '-'} 型號 "
+            f"{entry.get('modelName') or entry.get('modelId') or '-'} — {entry.get('reason')}",
+            flush=True,
+        )
+    matched = report.get("matched") or []
+    print(
+        f"合計：要求 {report.get('requested', 0)} 個型號，配對 {len(matched)} 個，"
+        f"未配對 {len(unmatched)} 個，清單狀態略過 {len(skipped)} 列",
+        flush=True,
+    )
+
+
 def start_watchlist_restock_batch(
     base_url: str,
     root: Path,
@@ -477,14 +815,21 @@ def start_watchlist_restock_batch(
     *,
     reverse_audit_refreeze: bool = False,
     reverse_audit_sources_only: bool = False,
+    model_filter: Optional[list] = None,
+    model_skipped: Optional[list] = None,
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Existing Path A engine: build_visible_style_products → POST batches."""
-    payload = build_visible_style_products(root, keyword, months)
+    payload = build_visible_style_products(root, keyword, months, model_filter=model_filter)
+    if model_filter is not None:
+        print_model_filter_summary(payload, model_skipped or [])
+        payload.pop("modelFilter", None)
     if reverse_audit_sources_only:
         payload["reverseAuditSourcesOnly"] = True
     elif reverse_audit_refreeze:
         payload["reverseAuditRefreeze"] = True
     ready = sum(1 for product in payload["products"] if product.get("items"))
+    if model_filter is not None and ready == 0:
+        return {"status": "error", "message": "模型清單沒有可補的型號，未加車"}, payload
     print(f"準備補貨 {ready} 個商品（關鍵字：{keyword or '觀察清單全部'}）", flush=True)
     started = start_batch(base_url, payload)
     return started, payload
@@ -594,7 +939,11 @@ def run_review_homepage(args: argparse.Namespace) -> int:
         terminate_process(process)
 
 
-def run_approved_watchlist_restock(args: argparse.Namespace) -> int:
+def run_approved_watchlist_restock(
+    args: argparse.Namespace,
+    model_filter: Optional[list] = None,
+    model_skipped: Optional[list] = None,
+) -> int:
     process = None
     try:
         process, base, code = prepare_homepage(args)
@@ -607,6 +956,8 @@ def run_approved_watchlist_restock(args: argparse.Namespace) -> int:
             base, ROOT, args.keyword, args.months,
             reverse_audit_refreeze=bool(args.refreeze),
             reverse_audit_sources_only=bool(args.sources_only),
+            model_filter=model_filter,
+            model_skipped=model_skipped,
         )
         if started.get("status") != "success" or not started.get("runId"):
             print(started.get("message") or "啟動整頁補貨失敗", file=sys.stderr)
@@ -642,6 +993,26 @@ def main(argv: Optional[list] = None) -> int:
         if args.resume:
             return run_resume(args)
 
+        model_filter: Optional[list] = None
+        model_skipped: list = []
+        if getattr(args, "models_file", None) or str(getattr(args, "model_ids", "") or "").strip():
+            model_filter, model_skipped, filter_errors = load_model_filter(args)
+            if filter_errors:
+                for message in filter_errors:
+                    print(message, file=sys.stderr)
+                return EXIT_ERROR
+            if not approved_watchlist_restock(args):
+                payload = build_visible_style_products(
+                    ROOT, args.keyword, args.months, model_filter=model_filter
+                )
+                print_model_filter_summary(payload, model_skipped)
+                print_not_yet_adding_to_cart(
+                    args.keyword,
+                    restock_or_yes=bool(args.restock or args.yes),
+                )
+                print("  （只補清單型號時，請帶同樣的 --models-file／--model-ids）", flush=True)
+                return EXIT_OK
+
         print_task1_scan_summary(ROOT)
 
         if not approved_watchlist_restock(args):
@@ -653,7 +1024,9 @@ def main(argv: Optional[list] = None) -> int:
                 return EXIT_OK
             return run_review_homepage(args)
 
-        return run_approved_watchlist_restock(args)
+        return run_approved_watchlist_restock(
+            args, model_filter=model_filter, model_skipped=model_skipped
+        )
     except KeyboardInterrupt:
         print("\n已中斷。main.py 若由此腳本啟動，將一併結束。", flush=True)
         return EXIT_ERROR
