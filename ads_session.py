@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import os
 import re
+import time
 from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 
@@ -21,6 +23,9 @@ BROWSER_SOURCES = (BROWSER_SOURCE_REMOTE, BROWSER_SOURCE_MAC)
 
 DEFAULT_CDP_ENDPOINT = "http://127.0.0.1:9232"
 CDP_ENV_VAR = "SHOPEE_ADS_CDP"
+CDP_PREFLIGHT_TIMEOUT_SECONDS = 5.0
+CDP_CONNECT_TIMEOUT_MS = 30000
+_CDP_PROBE_TITLE_LIMIT = 60
 
 WEEKLY_OUTPUT_ROOT = "reports/ads_weekly"
 REQUIRED_WINDOWS = ("yesterday", "week_01", "past_month")
@@ -59,6 +64,7 @@ EXPORT_RESULT_NAME = "ads_export_result.json"
 BLOCKER_FILENAME = "BLOCKER.md"
 SCOPE_FILENAME = "SCOPE.md"
 MANIFEST_FILENAME = "manifest.json"
+_RUN_OUTPUT_NAMES = ANALYSIS_OUTPUT_NAMES + (EXPORT_RESULT_NAME, BLOCKER_FILENAME, MANIFEST_FILENAME)
 
 _LOGIN_URL_RE = re.compile(
     r"login|accounts\.shopee|/buyer(?:/|\.shopee)|signin|sign-in",
@@ -121,6 +127,186 @@ def _normalize_cdp_endpoint(value: str) -> str:
     return text
 
 
+def _default_http_get(url: str, timeout: float) -> Any:
+    import urllib.request
+
+    with urllib.request.urlopen(url, timeout=timeout) as response:
+        payload = response.read()
+    return json.loads(payload.decode("utf-8"))
+
+
+def _default_ws_connect(url: str, timeout: float) -> Any:
+    import websocket
+
+    return websocket.create_connection(url, timeout=timeout)
+
+
+def _truncate_cdp_title(title: Any, limit: int = _CDP_PROBE_TITLE_LIMIT) -> str:
+    text = " ".join(str(title or "").split())
+    if len(text) > limit:
+        return text[:limit] + "…"
+    return text
+
+
+def _cdp_send(ws: Any, message: Dict[str, Any]) -> None:
+    ws.send(json.dumps(message))
+
+
+def _cdp_recv_response(ws: Any, message_id: int, timeout: float) -> Dict[str, Any]:
+    deadline = time.monotonic() + max(float(timeout), 0.0)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f"等待 CDP 回應逾時（id={message_id}）")
+        try:
+            ws.settimeout(remaining)
+        except Exception:
+            pass
+        try:
+            raw = ws.recv()
+        except Exception as e:
+            raise TimeoutError(f"等待 CDP 回應逾時（id={message_id}）: {e}") from e
+        if not raw:
+            raise TimeoutError(f"等待 CDP 回應逾時（id={message_id}）")
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+        if isinstance(payload, dict) and payload.get("id") == message_id:
+            return payload
+
+
+def _probe_single_target(
+    ws: Any,
+    index: int,
+    target_id: str,
+    title: str,
+    host: str,
+    timeout: float,
+) -> None:
+    """Attach, evaluate ``1``, then detach. Read-only: no close/navigate/reload."""
+    # Three ids per target so a late detach reply never matches the next attach.
+    attach_id = index * 3 + 1
+    eval_id = attach_id + 1
+    session_id = ""
+    try:
+        _cdp_send(
+            ws,
+            {
+                "id": attach_id,
+                "method": "Target.attachToTarget",
+                "params": {"targetId": target_id, "flatten": True},
+            },
+        )
+        attached = _cdp_recv_response(ws, attach_id, timeout)
+        result = attached.get("result") if isinstance(attached, dict) else None
+        session_id = str((result or {}).get("sessionId") or "")
+        if not session_id:
+            raise RuntimeError("Target.attachToTarget 沒有回傳 sessionId")
+        _cdp_send(
+            ws,
+            {
+                "id": eval_id,
+                "method": "Runtime.evaluate",
+                "params": {"expression": "1"},
+                "sessionId": session_id,
+            },
+        )
+        _cdp_recv_response(ws, eval_id, timeout)
+    except AdsWeeklyBlocker:
+        raise
+    except Exception as e:
+        raise AdsWeeklyBlocker(
+            BLOCKER_CDP_UNAVAILABLE,
+            f"頁面無回應（host={host}, target={target_id[:8]}, title={title}）: {e}",
+        ) from e
+    finally:
+        if session_id:
+            try:
+                _cdp_send(
+                    ws,
+                    {
+                        "id": eval_id + 1,
+                        "method": "Target.detachFromTarget",
+                        "params": {"sessionId": session_id},
+                    },
+                )
+            except Exception:
+                pass
+
+
+def probe_cdp_endpoint(
+    endpoint: str,
+    *,
+    http_get: Optional[Callable[..., Any]] = None,
+    ws_connect: Optional[Callable[..., Any]] = None,
+    timeout: float = CDP_PREFLIGHT_TIMEOUT_SECONDS,
+) -> List[Dict[str, str]]:
+    """Read-only CDP pre-flight before ``connect_over_cdp``.
+
+    Queries ``/json/version`` + ``/json/list``, then attaches to every page
+    target and runs ``Runtime.evaluate`` with a short timeout. Any hung target
+    fails fast with ``CDP_UNAVAILABLE`` naming the host, truncated title, and
+    the first 8 chars of the target id. Never closes/reloads/navigates/activates
+    a tab and never reads cookies. ``http_get``/``ws_connect`` are injectable for
+    offline tests.
+    """
+    http_get = http_get or _default_http_get
+    ws_connect = ws_connect or _default_ws_connect
+    parsed = urlparse(str(endpoint or "").strip())
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 9222
+    base = f"http://{host}:{port}"
+
+    try:
+        version = http_get(f"{base}/json/version", timeout)
+        targets = http_get(f"{base}/json/list", timeout)
+    except Exception as e:
+        raise AdsWeeklyBlocker(
+            BLOCKER_CDP_UNAVAILABLE,
+            f"無法連線遠端 Chrome（{host}）: {e}",
+        ) from e
+
+    ws_url = ""
+    if isinstance(version, dict):
+        ws_url = str(version.get("webSocketDebuggerUrl") or "")
+    if not ws_url:
+        raise AdsWeeklyBlocker(
+            BLOCKER_CDP_UNAVAILABLE,
+            f"遠端 Chrome（{host}）沒有回報 WebSocket 位址",
+        )
+
+    pages: List[Dict[str, Any]] = []
+    if isinstance(targets, list):
+        pages = [t for t in targets if isinstance(t, dict) and str(t.get("type")) == "page"]
+
+    ws = None
+    probed: List[Dict[str, str]] = []
+    try:
+        ws = ws_connect(ws_url, timeout)
+        for index, target in enumerate(pages):
+            target_id = str(target.get("id") or target.get("targetId") or "")
+            title = _truncate_cdp_title(target.get("title"))
+            # Hostname only: tab URLs can carry query tokens.
+            page_host = urlparse(str(target.get("url") or "")).hostname or "-"
+            _probe_single_target(ws, index, target_id, title, page_host, timeout)
+            probed.append({"target_id": target_id, "title": title})
+    except AdsWeeklyBlocker:
+        raise
+    except Exception as e:
+        raise AdsWeeklyBlocker(
+            BLOCKER_CDP_UNAVAILABLE,
+            f"無法透過 CDP 檢查遠端 Chrome（{host}）頁面: {e}",
+        ) from e
+    finally:
+        if ws is not None:
+            try:
+                ws.close()
+            except Exception:
+                pass
+    return probed
+
+
 def weekly_run_dir(repo_root: str, run_date: Optional[str] = None) -> Path:
     stamp = (run_date or datetime.now().strftime("%Y%m%d")).strip()
     if not re.fullmatch(r"\d{8}", stamp):
@@ -169,8 +355,10 @@ def blocker_code_from_error(exc: BaseException) -> str:
 
 
 def prepare_weekly_run_dir(out_dir: Path) -> Path:
-    """Create today's weekly dir and wipe this-run exports/analysis so last week is never reused.
+    """Create a weekly dir and wipe this-run exports/analysis so last week is never reused.
 
+    ``ads_weekly`` calls this on the ``*.staging`` dir, so the published dated
+    folder is only replaced by ``promote_run_dir`` after a successful run.
     Previous dated folders under reports/ads_weekly/ are left untouched and unread.
     """
     out_dir = Path(out_dir)
@@ -178,11 +366,39 @@ def prepare_weekly_run_dir(out_dir: Path) -> Path:
     if export_dir.exists():
         _remove_tree(export_dir)
     export_dir.mkdir(parents=True, exist_ok=True)
-    for name in ANALYSIS_OUTPUT_NAMES + (EXPORT_RESULT_NAME, BLOCKER_FILENAME, MANIFEST_FILENAME):
+    for name in _RUN_OUTPUT_NAMES:
         path = out_dir / name
         if path.exists():
             path.unlink()
     return export_dir
+
+
+def weekly_staging_dir(out_dir: Path) -> Path:
+    """Sibling staging dir so a failed run never touches the published outputs."""
+    out_dir = Path(out_dir)
+    return out_dir.parent / f"{out_dir.name}.staging"
+
+
+def discard_run_dir(path: Path) -> None:
+    if Path(path).exists():
+        _remove_tree(Path(path))
+
+
+def promote_run_dir(stage_dir: Path, out_dir: Path) -> None:
+    """Publish staged outputs: replace only this run's known outputs, then move staged files in."""
+    stage_dir = Path(stage_dir)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for name in ("ads_exports",) + _RUN_OUTPUT_NAMES:
+        target = out_dir / name
+        if target.exists():
+            _remove_tree(target)
+    for child in list(stage_dir.iterdir()):
+        target = out_dir / child.name
+        if target.exists():
+            _remove_tree(target)
+        os.replace(str(child), str(target))
+    _remove_tree(stage_dir)
 
 
 def _remove_tree(path: Path) -> None:
@@ -284,7 +500,7 @@ def normalize_ads_export_file(path: Path) -> str:
             raise RuntimeError(f"ADS_XLSX_CONVERT_FAILED: {e}")
         return str(csv_path)
 
-    if path.suffix.lower() != ".csv":
+    if path.suffix.lower() != ".csv" and is_text_csv_export(path):
         csv_path = path.with_suffix(".csv")
         path.rename(csv_path)
         path = csv_path
@@ -377,7 +593,7 @@ def write_blocker_md(
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    next_step = _blocker_next_step(code, source)
+    next_step = _blocker_next_step(code, source, cdp_endpoint)
     body = "\n".join(
         [
             "# 廣告週報抓取 BLOCKER",
@@ -399,11 +615,12 @@ def write_blocker_md(
     return path
 
 
-def _blocker_next_step(code: str, source: str) -> str:
+def _blocker_next_step(code: str, source: str, cdp_endpoint: str = "") -> str:
     if code == BLOCKER_CDP_UNAVAILABLE:
+        endpoint = str(cdp_endpoint or "").strip() or DEFAULT_CDP_ENDPOINT
         return (
             "請在已登入蝦皮賣家中心的遠端 Chrome 開啟 remote debugging "
-            f"（預設 {DEFAULT_CDP_ENDPOINT}，或設 {CDP_ENV_VAR}）後重跑 `python3 ads_weekly.py`。"
+            f"（{endpoint}，或設 {CDP_ENV_VAR}）後重跑 `python3 ads_weekly.py`。"
         )
     if code in (BLOCKER_LOGIN_WALL, BLOCKER_CAPTCHA, BLOCKER_SESSION_DEAD, BLOCKER_COOKIES_EXPIRED):
         if source == BROWSER_SOURCE_MAC:

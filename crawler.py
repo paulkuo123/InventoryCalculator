@@ -16,10 +16,12 @@ import tempfile
 from ads_session import (
     BROWSER_SOURCE_MAC,
     BROWSER_SOURCE_REMOTE,
+    CDP_CONNECT_TIMEOUT_MS,
     detect_session_blocker,
     is_blocker_error,
     normalize_ads_export_file,
     normalize_browser_source,
+    probe_cdp_endpoint,
     read_export_period,
     resolve_cdp_endpoint,
     safe_url_for_log,
@@ -223,9 +225,16 @@ class ShopeeCrawler:
         """Attach to an already-logged-in remote Chrome. Never launch a new profile."""
         endpoint = self.cdp_endpoint
         print(f"正在連線遠端 Chrome CDP: {endpoint}")
+        # Read-only pre-flight: attaches to each page target and evaluates ``1``
+        # with a short timeout. A hung renderer fails fast here instead of
+        # stalling Playwright connect_over_cdp for the full CDP timeout.
+        probed = probe_cdp_endpoint(endpoint)
+        print(f"CDP 預檢通過（{len(probed)} 個頁面回應）")
         self.playwright = sync_playwright().start()
         try:
-            self.browser = self.playwright.chromium.connect_over_cdp(endpoint)
+            self.browser = self.playwright.chromium.connect_over_cdp(
+                endpoint, timeout=CDP_CONNECT_TIMEOUT_MS
+            )
         except Exception as e:
             try:
                 self.playwright.stop()
@@ -233,23 +242,21 @@ class ShopeeCrawler:
                 pass
             raise RuntimeError(
                 f"CDP_UNAVAILABLE: 無法連線遠端 Chrome ({endpoint}): {e}"
+                f"（預檢已通過 {len(probed)} 個頁面）"
             ) from e
+        # Mark attached right away so cleanup() only disconnects and never
+        # calls browser.close() on the shared remote Chrome.
+        self._cdp_attached = True
         if not self.browser.contexts:
             raise RuntimeError("CDP_UNAVAILABLE: 遠端 Chrome 沒有可用的 browser context")
         self.context = self.browser.contexts[0]
-        self._cdp_attached = True
         self.page, self._owns_page = self._pick_or_create_ads_page(self.context)
         self.driver = PlaywrightDriver(self.page)
         print("已連線遠端已登入 Chrome（不載入 cookies.json，也不會關閉遠端瀏覽器）")
 
     def _pick_or_create_ads_page(self, context):
-        for page in context.pages:
-            try:
-                url = page.url or ""
-            except Exception:
-                continue
-            if "seller.shopee.tw" in url and detect_session_blocker(url) is None:
-                return page, False
+        # Always open our own page in the existing context. Reusing a shared tab
+        # risks attaching to a hung renderer; the owned page is closed in cleanup().
         return context.new_page(), True
 
     def cleanup(self):
@@ -1356,13 +1363,17 @@ class ShopeeCrawler:
         if getattr(self, "_ads_tz_override_applied", False):
             return
         self._ads_tz_override_applied = True
-        try:
-            session = self.page.context.new_cdp_session(self.page)
-            session.send("Emulation.setTimezoneOverride", {"timezoneId": "Asia/Taipei"})
-            self._ads_tz_cdp_session = session
-            self._ads_log("TZ", "已將廣告頁瀏覽器時區強制為 Asia/Taipei")
-        except Exception as e:
-            self._ads_log("TZ", f"設定瀏覽器時區為 Asia/Taipei 失敗（將以現有時區繼續）: {e}")
+        last_error = None
+        for attempt in (1, 2):
+            try:
+                session = self.page.context.new_cdp_session(self.page)
+                session.send("Emulation.setTimezoneOverride", {"timezoneId": "Asia/Taipei"})
+                self._ads_tz_cdp_session = session
+                self._ads_log("TZ", "已將廣告頁瀏覽器時區強制為 Asia/Taipei")
+                return
+            except Exception as e:
+                last_error = e
+        self._ads_log("TZ", f"設定瀏覽器時區為 Asia/Taipei 失敗（將以現有時區繼續）: {last_error}")
 
     def _navigate_to_ads_range_page(self, range_config):
         self._force_taipei_timezone()
@@ -1742,7 +1753,15 @@ class ShopeeCrawler:
                     f"蝦皮檔案期間為 {period_start}~{period_end}（多半是瀏覽器時區不是台北）"
                 )
         else:
-            self._ads_log("DOWNLOAD", "報表找不到「期間」列，略過期間驗證", range_config["label"])
+            missing_path = f"{os.path.splitext(final_path)[0]}.period_missing"
+            try:
+                os.replace(final_path, missing_path)
+            except Exception:
+                pass
+            raise RuntimeError(
+                f"ADS_REPORT_PERIOD_MISSING: {range_config['label']} 報表找不到「期間」列，"
+                "拒絕未經期間驗證的下載檔"
+            )
 
         self._ads_log("DOWNLOAD", f"廣告報表已下載完成: {final_path}", range_config["label"])
         return {
@@ -3388,9 +3407,17 @@ def main():
 
         # 運行指定流程
         if args.mode == 'ads-export':
-            result = crawler.export_ads_report()
-            with open(args.output, 'w', encoding='utf-8') as f:
-                json.dump(result, f, ensure_ascii=False, indent=4)
+            try:
+                result = crawler.export_ads_report()
+                with open(args.output, 'w', encoding='utf-8') as f:
+                    json.dump(result, f, ensure_ascii=False, indent=4)
+            finally:
+                # Covers sys.exit(77) from blockers and any exception from
+                # export_ads_report(): always close owned pages and drop CDP.
+                try:
+                    crawler.cleanup()
+                except Exception:
+                    pass
         else:
             # run() 失敗時回傳 None（Cookies 失效則已自行 sys.exit(77)）；
             # 必須以非零碼退出，避免呼叫端把舊的 shopee_products.json 當成新結果。

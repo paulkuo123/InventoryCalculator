@@ -26,12 +26,15 @@ from ads_session import (
     blocker_code_from_error,
     build_success_manifest,
     collect_export_windows,
+    discard_run_dir,
     is_blocker_error,
     missing_required_windows,
     normalize_browser_source,
     prepare_weekly_run_dir,
+    promote_run_dir,
     resolve_cdp_endpoint,
     weekly_run_dir,
+    weekly_staging_dir,
     write_blocker_md,
     write_scope_md,
 )
@@ -282,9 +285,12 @@ def run_weekly(
     cdp_endpoint = resolve_cdp_endpoint(args.cdp_endpoint) if source == BROWSER_SOURCE_REMOTE else ""
     run_date = str(args.date or "").strip() or datetime.now().strftime("%Y%m%d")
     out_dir = weekly_run_dir(root, run_date)
-    export_dir = prepare_weekly_run_dir(out_dir)
-    output_paths = analysis_output_paths(out_dir)
-    write_scope_md(out_dir)
+    # Stage the whole run in a sibling dir; publish only after full success so a
+    # failed run never wipes the previous CSVs/reports.
+    stage_dir = weekly_staging_dir(out_dir)
+    export_dir = prepare_weekly_run_dir(stage_dir)
+    output_paths = analysis_output_paths(stage_dir)
+    write_scope_md(stage_dir)
 
     try:
         fetch_ads_reports(
@@ -310,21 +316,24 @@ def run_weekly(
                 runner=runner,
             )
             analyzed = True
+        promote_run_dir(stage_dir, out_dir)
+        final_paths = analysis_output_paths(out_dir)
         manifest = build_success_manifest(
             source=source,
             cdp_endpoint=cdp_endpoint,
             run_date=run_date,
             windows=windows,
-            output_paths=output_paths,
+            output_paths=final_paths,
             analyzed=analyzed,
         )
-        Path(output_paths["manifest"]).write_text(
+        Path(final_paths["manifest"]).write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
             encoding="utf-8",
         )
         print(json.dumps({"status": "success", "output_dir": str(out_dir)}, ensure_ascii=False))
         return 0
     except BaseException as exc:
+        discard_run_dir(stage_dir)
         if isinstance(exc, SystemExit):
             raise
         code = blocker_code_from_error(exc) if is_blocker_error(exc) else BLOCKER_EXPORT_FAILED
