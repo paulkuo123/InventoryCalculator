@@ -254,6 +254,22 @@ def _find_model_in_product(
     return None
 
 
+# Guard for list-provided quantities (typo protection, e.g. 3000 instead of 30).
+# A list quantity above LIST_QTY_ABSOLUTE_CAP, or above LIST_QTY_MAX_RATIO x the
+# water-level suggestion (when the suggestion is > 0), is NOT added to the cart
+# and is reported under "需要確認" instead.
+LIST_QTY_ABSOLUTE_CAP = 200
+LIST_QTY_MAX_RATIO = 2
+
+
+def list_quantity_needs_confirmation(list_qty: int, suggested_qty: int) -> Optional[str]:
+    if list_qty > LIST_QTY_ABSOLUTE_CAP:
+        return f"清單數量超過上限 {LIST_QTY_ABSOLUTE_CAP}"
+    if suggested_qty > 0 and list_qty > LIST_QTY_MAX_RATIO * suggested_qty:
+        return f"清單數量超過水位建議量的 {LIST_QTY_MAX_RATIO} 倍"
+    return None
+
+
 def _build_filtered_list(
     products: Dict[str, Any],
     watch_ids: set,
@@ -267,6 +283,7 @@ def _build_filtered_list(
     matched_keys: set = set()
     matched = []
     unmatched = []
+    needs_confirmation = []
     for entry in model_filter:
         product_id = str(entry.get("productId") or "").strip()
         model_id = str(entry.get("modelId") or "").strip()
@@ -300,6 +317,9 @@ def _build_filtered_list(
 
         result = None
         reason = None
+        confirm = None
+        duplicate = False
+        consumed_keys = []
         for candidate_id, candidate in candidates:
             if watch_ids and candidate_id not in watch_ids:
                 reason = reason or "商品不在觀察清單或被排除"
@@ -312,10 +332,18 @@ def _build_filtered_list(
             if found is None:
                 reason = reason or "商品中找不到型號"
                 continue
+            key = (candidate_id, str(found.get("規格ID") or ""), str(found.get("型號名稱") or ""))
+            if key in matched_keys:
+                # Only the first row for a model counts, whatever its outcome
+                # (added, held for confirmation, or rejected).
+                duplicate = True
+                break
+            consumed_keys.append(key)
             item_months = target_months_for_product(name, months, found.get("型號名稱"))
-            qty = int(override) if override is not None else suggested_restock_qty(candidate, found, item_months)
+            suggested = suggested_restock_qty(candidate, found, item_months)
+            qty = int(override) if override is not None else suggested
             if qty <= 0:
-                reason = reason or ("清單數量為 0" if override is not None else "計算補貨量為 0")
+                reason = reason or (f"清單數量不是正數：{qty}" if override is not None else "計算補貨量為 0")
                 continue
             item, blocker_reason = _golden_restock_item(
                 candidate_id, candidate, found, golden, qty, item_months
@@ -323,24 +351,41 @@ def _build_filtered_list(
             if item is None:
                 reason = reason or blocker_reason or "1688 對應未完成"
                 continue
-            result = (candidate_id, found, item)
+            if override is not None:
+                confirm_reason = list_quantity_needs_confirmation(qty, suggested)
+                if confirm_reason:
+                    confirm = {
+                        **requested,
+                        "productId": candidate_id,
+                        "modelId": str(found.get("規格ID") or ""),
+                        "modelName": str(found.get("型號名稱") or ""),
+                        "listQuantity": qty,
+                        "suggestedQuantity": suggested,
+                        "reason": confirm_reason,
+                    }
+                    break
+            result = (candidate_id, found, item, suggested)
             break
 
+        if duplicate:
+            unmatched.append({**requested, "reason": "清單重複列出同一型號，只補第一筆"})
+            continue
+        matched_keys.update(consumed_keys)
+        if confirm is not None:
+            needs_confirmation.append(confirm)
+            continue
         if result is None:
             unmatched.append({**requested, "reason": reason or "無法配對"})
             continue
 
-        matched_id, found_model, item = result
-        key = (matched_id, str(found_model.get("規格ID") or ""), str(found_model.get("型號名稱") or ""))
-        if key in matched_keys:
-            unmatched.append({**requested, "reason": "清單重複列出同一型號，只補第一筆"})
-            continue
-        matched_keys.add(key)
+        matched_id, found_model, item, suggested = result
         matched.append({
             "productId": matched_id,
             "modelId": str(found_model.get("規格ID") or ""),
             "modelName": str(found_model.get("型號名稱") or ""),
             "quantity": item["restockQty"],
+            "listQuantity": override,
+            "suggestedQuantity": suggested,
         })
         row = rows_by_product.setdefault(matched_id, {
             "productId": matched_id,
@@ -362,6 +407,7 @@ def _build_filtered_list(
             "requested": len(model_filter),
             "matched": matched,
             "unmatched": unmatched,
+            "needsConfirmation": needs_confirmation,
         },
     }
 
@@ -392,10 +438,11 @@ def _parse_optional_quantity(value: str) -> tuple[Optional[int], Optional[str]]:
     text = str(value or "").strip()
     if not text:
         return None, None
-    try:
-        return int(text), None
-    except (TypeError, ValueError):
+    # ASCII digits only: reject "5_000", full-width "５", "+5", "5.0" etc.
+    # A leading "-" is accepted so negatives can be reported as not positive.
+    if not re.fullmatch(r"-?[0-9]+", text):
         return None, text
+    return int(text), None
 
 
 def parse_models_file(path: Path) -> Dict[str, Any]:
@@ -768,6 +815,11 @@ def print_model_filter_summary(payload: Dict[str, Any], skipped: Optional[list] 
     report = (payload or {}).get("modelFilter") or {}
     skipped = skipped or []
     print("模型清單過濾摘要（只補清單列出的蝦皮型號）", flush=True)
+    list_qty_rows = {
+        (str(entry.get("productId")), str(entry.get("modelId"))): entry
+        for entry in report.get("matched") or []
+        if entry.get("listQuantity") is not None
+    }
     print("=== 已配對型號 ===", flush=True)
     for row in (payload or {}).get("products") or []:
         items = row.get("items") or []
@@ -775,9 +827,15 @@ def print_model_filter_summary(payload: Dict[str, Any], skipped: Optional[list] 
             continue
         print(f"商品 {row.get('productId')} {row.get('productName')}", flush=True)
         for item in items:
+            listed = list_qty_rows.get((str(row.get("productId")), str(item.get("specId"))))
+            qty_text = (
+                f"清單數量 {listed['listQuantity']}／水位建議 {listed['suggestedQuantity']}"
+                if listed
+                else f"水位建議 {item.get('restockQty')}"
+            )
             print(
                 f"  - {item.get('modelName')}（規格ID {item.get('specId')}）"
-                f" x {item.get('restockQty')}",
+                f" x {item.get('restockQty')}（{qty_text}）",
                 flush=True,
             )
     print("=== 清單狀態略過 ===", flush=True)
@@ -799,10 +857,27 @@ def print_model_filter_summary(payload: Dict[str, Any], skipped: Optional[list] 
             f"{entry.get('modelName') or entry.get('modelId') or '-'} — {entry.get('reason')}",
             flush=True,
         )
+    needs_confirmation = report.get("needsConfirmation") or []
+    print(
+        f"=== 需要確認（清單數量過大，不加車；上限 {LIST_QTY_ABSOLUTE_CAP} 件或水位建議的 "
+        f"{LIST_QTY_MAX_RATIO} 倍） ===",
+        flush=True,
+    )
+    if not needs_confirmation:
+        print("  （無）", flush=True)
+    for entry in needs_confirmation:
+        print(
+            f"  商品 {entry.get('productId') or '-'} 型號 "
+            f"{entry.get('modelName') or entry.get('modelId') or '-'}（規格ID {entry.get('modelId') or '-'}）"
+            f" — 清單數量 {entry.get('listQuantity')}／水位建議 {entry.get('suggestedQuantity')}"
+            f" — {entry.get('reason')}",
+            flush=True,
+        )
     matched = report.get("matched") or []
     print(
         f"合計：要求 {report.get('requested', 0)} 個型號，配對 {len(matched)} 個，"
-        f"未配對 {len(unmatched)} 個，清單狀態略過 {len(skipped)} 列",
+        f"未配對 {len(unmatched)} 個，需要確認 {len(needs_confirmation)} 個，"
+        f"清單狀態略過 {len(skipped)} 列",
         flush=True,
     )
 
