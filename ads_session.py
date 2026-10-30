@@ -9,9 +9,9 @@ import csv
 import io
 import os
 import re
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from urllib.parse import urlparse
 
 
@@ -243,6 +243,82 @@ def is_text_csv_export(path: Path) -> bool:
     except csv.Error:
         return False
     return any(len(row) >= 2 and any(cell.strip() for cell in row) for row in rows)
+
+
+_PERIOD_RANGE_RE = re.compile(
+    r"(\d{4})[/-](\d{1,2})[/-](\d{1,2})\s*[-~]\s*(\d{4})[/-](\d{1,2})[/-](\d{1,2})"
+)
+
+
+def normalize_ads_export_file(path: Path) -> str:
+    """Turn a saved Shopee ads export into a CSV that downstream code can read.
+
+    A real xlsx (ZIP signature) is kept as-is and its first sheet is written to
+    a sibling ``.csv`` (utf-8-sig, values only); the ``.csv`` path is returned.
+    Text content saved under a non-``.csv`` name is renamed to ``.csv``.
+    """
+    path = Path(path)
+    try:
+        with path.open("rb") as handle:
+            signature = handle.read(4)
+    except OSError as e:
+        raise RuntimeError(f"ADS_DOWNLOAD_FILE_MISSING: 無法讀取下載檔案 {path}: {e}")
+
+    if signature.startswith(_ZIP_SIGNATURES):
+        csv_path = path.with_suffix(".csv")
+        try:
+            from openpyxl import load_workbook
+        except Exception as e:  # pragma: no cover - depends on environment
+            raise RuntimeError(f"ADS_XLSX_CONVERT_FAILED: 缺少 openpyxl ({e})")
+        try:
+            workbook = load_workbook(filename=str(path), read_only=True, data_only=True)
+            try:
+                sheet = workbook.active
+                with csv_path.open("w", encoding="utf-8-sig", newline="") as output:
+                    writer = csv.writer(output)
+                    for row in sheet.iter_rows(values_only=True):
+                        writer.writerow(["" if value is None else value for value in row])
+            finally:
+                workbook.close()
+        except Exception as e:
+            raise RuntimeError(f"ADS_XLSX_CONVERT_FAILED: {e}")
+        return str(csv_path)
+
+    if path.suffix.lower() != ".csv":
+        csv_path = path.with_suffix(".csv")
+        path.rename(csv_path)
+        path = csv_path
+    return str(path)
+
+
+def read_export_period(path: Path) -> Optional[Tuple[date, date]]:
+    """Read the 期間 row of an ads export CSV, if present."""
+    path = Path(path)
+    try:
+        with path.open("r", encoding="utf-8-sig", errors="replace") as handle:
+            for _ in range(20):
+                line = handle.readline()
+                if not line:
+                    break
+                try:
+                    row = next(csv.reader([line]))
+                except Exception:
+                    continue
+                if not row or row[0].strip() != "期間":
+                    continue
+                for cell in row[1:]:
+                    match = _PERIOD_RANGE_RE.search(cell or "")
+                    if not match:
+                        continue
+                    try:
+                        start = date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                        end = date(int(match.group(4)), int(match.group(5)), int(match.group(6)))
+                    except ValueError:
+                        continue
+                    return start, end
+    except OSError:
+        return None
+    return None
 
 
 def prefer_export_path(current: str, candidate: str) -> str:

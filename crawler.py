@@ -18,7 +18,9 @@ from ads_session import (
     BROWSER_SOURCE_REMOTE,
     detect_session_blocker,
     is_blocker_error,
+    normalize_ads_export_file,
     normalize_browser_source,
+    read_export_period,
     resolve_cdp_endpoint,
     safe_url_for_log,
 )
@@ -1335,7 +1337,35 @@ class ShopeeCrawler:
             time.sleep(0.25)
         return self._ads_latest_reports_panel_is_visible()
 
+    @staticmethod
+    def _ads_page_is_browser_error(url, page_text):
+        """True when the browser is sitting on Chrome's own error page."""
+        url_text = str(url or "")
+        text = str(page_text or "")
+        if url_text.startswith("chrome-error://"):
+            return True
+        markers = (
+            "ERR_TOO_MANY_REDIRECTS",
+            "redirected you too many times",
+            "重新導向的次數過多",
+        )
+        return any(marker in text for marker in markers)
+
+    def _force_taipei_timezone(self):
+        """Best-effort: pin the ads page browser timezone so Shopee renders Taipei dates."""
+        if getattr(self, "_ads_tz_override_applied", False):
+            return
+        self._ads_tz_override_applied = True
+        try:
+            session = self.page.context.new_cdp_session(self.page)
+            session.send("Emulation.setTimezoneOverride", {"timezoneId": "Asia/Taipei"})
+            self._ads_tz_cdp_session = session
+            self._ads_log("TZ", "已將廣告頁瀏覽器時區強制為 Asia/Taipei")
+        except Exception as e:
+            self._ads_log("TZ", f"設定瀏覽器時區為 Asia/Taipei 失敗（將以現有時區繼續）: {e}")
+
     def _navigate_to_ads_range_page(self, range_config):
+        self._force_taipei_timezone()
         target_url = self._build_ads_range_url(range_config)
         self._ads_log("RANGE", f"正在直接進入 {range_config['label']} 報表頁：{target_url}", range_config["label"])
         last_error = None
@@ -1356,8 +1386,31 @@ class ShopeeCrawler:
                 self._ads_log("RANGE", f"{range_config['label']} 報表頁 networkidle 等待超時，繼續操作: {e}", range_config["label"])
 
             if not self._ads_range_url_matches(self.page.url, range_config):
-                last_error = RuntimeError(f"頁面日期參數與要求的 {range_config['label']} 不一致")
-                self._ads_log("RANGE", f"第 {attempt} 次載入後日期參數不一致，將重試", range_config["label"])
+                actual_url = safe_url_for_log(self.page.url)
+                try:
+                    actual_query = parse_qs(urlparse(self.page.url).query)
+                    actual_from = actual_query.get("from", [""])[0]
+                    actual_to = actual_query.get("to", [""])[0]
+                except Exception:
+                    actual_from = actual_to = ""
+                expected_from = str(self._to_taipei_unix_timestamp(range_config["start_date"], end_of_day=False))
+                expected_to = str(self._to_taipei_unix_timestamp(range_config["end_date"], end_of_day=True))
+                self._ads_log(
+                    "RANGE",
+                    f"第 {attempt} 次載入後日期參數不一致：實際 URL={actual_url} from={actual_from} to={actual_to}；要求 from={expected_from} to={expected_to}",
+                    range_config["label"],
+                )
+                try:
+                    page_text = self.page.locator("body").inner_text(timeout=3000)
+                except Exception:
+                    page_text = ""
+                if self._ads_page_is_browser_error(self.page.url, page_text):
+                    last_error = RuntimeError(
+                        "ADS_REDIRECT_LOOP: 瀏覽器停在錯誤頁（重新導向過多），通常是蝦皮登入狀態/Cookie 問題"
+                    )
+                    self._ads_log("RANGE", f"偵測到瀏覽器錯誤頁（重新導向過多），將重試：{actual_url}", range_config["label"])
+                else:
+                    last_error = RuntimeError(f"頁面日期參數與要求的 {range_config['label']} 不一致")
                 time.sleep(3)
                 continue
 
@@ -1464,6 +1517,42 @@ class ShopeeCrawler:
         self._capture_debug_html("ads_latest_reports_panel_not_found")
         return False
 
+    def _ads_panel_diagnostics(self):
+        """Count the expected panel locators; never raises."""
+        parts = []
+        try:
+            panel_locators = [
+                ("最新報表文字", self.page.get_by_text(re.compile(r"^\s*最新報表\s*$"))),
+                ("popover", self.page.locator(".export-button-popover .export-container")),
+                ("result-item", self.page.locator('[data-testid="export-data-result-item"]')),
+                ("trigger", self.page.locator('[data-testid="export-data-result-trigger"]')),
+            ]
+            for label, locator in panel_locators:
+                try:
+                    parts.append(f"{label} count={locator.count()}")
+                except Exception:
+                    parts.append(f"{label} count=?")
+        except Exception as e:
+            parts.append(f"診斷失敗: {e}")
+        return "；".join(parts)
+
+    def _ads_panel_not_found_error(self):
+        page_url = getattr(self.page, "url", "") or ""
+        actual_url = safe_url_for_log(page_url)
+        try:
+            page_text = self.page.locator("body").inner_text(timeout=3000)
+        except Exception:
+            page_text = ""
+        if self._ads_page_is_browser_error(page_url, page_text):
+            return RuntimeError(
+                "ADS_REDIRECT_LOOP: 瀏覽器停在錯誤頁（重新導向過多），通常是蝦皮登入狀態/Cookie 問題"
+                f"（URL={actual_url}）"
+            )
+        return RuntimeError(
+            "ADS_REPORT_PANEL_NOT_FOUND: 找不到最新報表面板"
+            f"（目前 URL={actual_url}；{self._ads_panel_diagnostics()}）"
+        )
+
     def _collect_ads_report_entries(self):
         entries = []
         rows = self.page.locator('[data-testid="export-data-result-item"]')
@@ -1525,17 +1614,25 @@ class ShopeeCrawler:
             return False
         start_date, end_date = self._extract_report_date_range(report_name)
         if start_date and end_date:
-            expected_start = range_config["start_date"]
-            expected_end = range_config["end_date"]
-            if end_date != expected_end:
-                return False
-            # Shopee 預設「近 7 天／過去一個月」起日常與我方算法差 1 天
-            if start_date == expected_start:
-                return True
-            if expected_start != expected_end and abs((start_date - expected_start).days) <= 1:
-                return True
-            return False
+            return (
+                start_date == range_config["start_date"]
+                and end_date == range_config["end_date"]
+            )
         return any(re.search(pattern, report_name) for pattern in range_config["report_patterns"])
+
+    def _find_off_by_one_report_names(self, entries, range_config):
+        """Report names whose end matches but whose start is exactly one day early."""
+        names = []
+        for entry in entries:
+            name = entry.get("report_name", "")
+            start_date, end_date = self._extract_report_date_range(name)
+            if (
+                start_date
+                and end_date == range_config["end_date"]
+                and (range_config["start_date"] - start_date).days == 1
+            ):
+                names.append(name)
+        return names
 
     def _extract_report_date_range(self, report_name):
         match = re.search(r"(\d{4}/\d{2}/\d{2})(?:-(\d{4}/\d{2}/\d{2}))?\.csv$", report_name)
@@ -1627,6 +1724,26 @@ class ShopeeCrawler:
         if not os.path.exists(final_path):
             raise RuntimeError("ADS_DOWNLOAD_FILE_MISSING: 下載檔案不存在")
 
+        final_path = normalize_ads_export_file(final_path)
+        final_name = os.path.basename(final_path)
+
+        period = read_export_period(final_path)
+        if period is not None:
+            period_start, period_end = period
+            if (period_start, period_end) != (range_config["start_date"], range_config["end_date"]):
+                mismatch_path = f"{os.path.splitext(final_path)[0]}.period_mismatch"
+                try:
+                    os.replace(final_path, mismatch_path)
+                except Exception:
+                    mismatch_path = final_path
+                raise RuntimeError(
+                    f"ADS_REPORT_PERIOD_MISMATCH: {range_config['label']} 要求 "
+                    f"{range_config['start_date']}~{range_config['end_date']}，"
+                    f"蝦皮檔案期間為 {period_start}~{period_end}（多半是瀏覽器時區不是台北）"
+                )
+        else:
+            self._ads_log("DOWNLOAD", "報表找不到「期間」列，略過期間驗證", range_config["label"])
+
         self._ads_log("DOWNLOAD", f"廣告報表已下載完成: {final_path}", range_config["label"])
         return {
             "range_key": range_config["key"],
@@ -1671,7 +1788,7 @@ class ShopeeCrawler:
         while time.time() < deadline:
             poll_count += 1
             if not self._open_ads_latest_reports_panel():
-                raise RuntimeError("ADS_REPORT_PANEL_NOT_FOUND: 找不到最新報表面板")
+                raise self._ads_panel_not_found_error()
 
             matching_entries, all_entries = self._find_matching_report_entries(range_config)
             self._ads_log(
@@ -1682,6 +1799,14 @@ class ShopeeCrawler:
             if not matching_entries and all_entries:
                 sample_names = " | ".join(entry.get("report_name", "") for entry in all_entries[:3])
                 self._ads_log("CHECK", f"目前候選報表樣本：{sample_names}", range_config["label"])
+                off_by_one = self._find_off_by_one_report_names(all_entries, range_config)
+                if off_by_one:
+                    self._ads_log(
+                        "CHECK",
+                        "面板上有起日早一天的報表（多半是瀏覽器時區不是台北），不會下載："
+                        + " | ".join(off_by_one[:3]),
+                        range_config["label"],
+                    )
 
             downloadable_entry = next((entry for entry in matching_entries if entry.get("has_download")), None)
             processing_entry = next((entry for entry in matching_entries if entry.get("has_processing")), None)

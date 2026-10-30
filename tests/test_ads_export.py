@@ -1,11 +1,24 @@
+import os
 import unittest
-from datetime import date
+from datetime import date, datetime
+from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import MagicMock, patch
 from urllib.parse import parse_qs, urlparse
+from zoneinfo import ZoneInfo
 
 from ads_analysis import AdsAnalyzer
+from ads_session import normalize_ads_export_file, read_export_period
 from crawler import ADS_EXPORT_RANGE_ORDER, DEFAULT_TREND_EXPORT_WEEKS, ShopeeCrawler
+
+
+class _FakeDownload:
+    def __init__(self, payload, suggested_filename):
+        self._payload = payload
+        self.suggested_filename = suggested_filename
+
+    def save_as(self, path):
+        Path(path).write_bytes(self._payload)
 
 
 class AdsExportTests(unittest.TestCase):
@@ -174,6 +187,193 @@ class AdsExportTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "LOGIN_WALL"):
             self.crawler._raise_if_session_blocked()
 
+    def test_week_configs_are_contiguous_and_seven_days_inclusive(self):
+        fixed_now = datetime(2026, 10, 24, 9, 0, 0, tzinfo=ZoneInfo("Asia/Taipei"))
+
+        class _FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now if tz is None else fixed_now.astimezone(tz)
+
+        with patch("crawler.datetime", _FixedDateTime):
+            configs = self.crawler._build_ads_trend_range_configs()
+
+        for week_index in range(1, 5):
+            current = configs[f"week_{week_index:02d}"]
+            self.assertEqual((current["end_date"] - current["start_date"]).days, 6)
+            query = parse_qs(urlparse(self.crawler._build_ads_range_url(current)).query)
+            span_seconds = int(query["to"][0]) - int(query["from"][0]) + 1
+            self.assertEqual(span_seconds, 7 * 86400)
+
+        self.assertEqual(configs["week_01"]["end_date"], date(2026, 10, 23))
+        for week_index in range(2, 5):
+            previous = configs[f"week_{week_index - 1:02d}"]
+            current = configs[f"week_{week_index:02d}"]
+            self.assertEqual((previous["start_date"] - current["end_date"]).days, 1)
+
+    def test_report_matches_range_requires_exact_dates(self):
+        config = {
+            "start_date": date(2026, 10, 16),
+            "end_date": date(2026, 10, 22),
+            "report_patterns": [],
+        }
+
+        self.assertFalse(
+            self.crawler._report_matches_range("總體廣告數據_2026/10/15-2026/10/22.csv", config)
+        )
+        self.assertTrue(
+            self.crawler._report_matches_range("總體廣告數據_2026/10/16-2026/10/22.csv", config)
+        )
+
+    def test_ads_page_is_browser_error(self):
+        self.assertTrue(
+            self.crawler._ads_page_is_browser_error("chrome-error://chromewebdata/", "")
+        )
+        self.assertTrue(
+            self.crawler._ads_page_is_browser_error("https://seller.shopee.tw/", "ERR_TOO_MANY_REDIRECTS")
+        )
+        self.assertTrue(
+            self.crawler._ads_page_is_browser_error("https://seller.shopee.tw/", "重新導向的次數過多")
+        )
+        self.assertFalse(
+            self.crawler._ads_page_is_browser_error(
+                "https://seller.shopee.tw/portal/marketing/pas/index", "廣告數據"
+            )
+        )
+
+    def test_wait_for_ads_report_download_raises_redirect_loop_on_error_page(self):
+        self.crawler.page = MagicMock()
+        self.crawler.page.url = "chrome-error://chromewebdata/"
+        self.crawler.page.locator.return_value.inner_text.return_value = "ERR_TOO_MANY_REDIRECTS"
+        self.crawler._open_ads_latest_reports_panel = MagicMock(return_value=False)
+        self.crawler._ads_log = lambda *args, **kwargs: None
+        config = {
+            "key": "week_01",
+            "label": "近第 1 週",
+            "start_date": date(2026, 10, 16),
+            "end_date": date(2026, 10, 22),
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "ADS_REDIRECT_LOOP"):
+            self.crawler._wait_for_ads_report_download(config, timeout=1, poll_interval=0)
+
+    def test_panel_not_found_includes_diagnostics(self):
+        self.crawler.page = MagicMock()
+        self.crawler.page.url = "https://seller.shopee.tw/portal/marketing/pas/index"
+        self.crawler.page.locator.return_value.inner_text.return_value = "廣告數據"
+        self.crawler._open_ads_latest_reports_panel = MagicMock(return_value=False)
+        self.crawler._ads_log = lambda *args, **kwargs: None
+        config = {
+            "key": "week_01",
+            "label": "近第 1 週",
+            "start_date": date(2026, 10, 16),
+            "end_date": date(2026, 10, 22),
+        }
+
+        with self.assertRaisesRegex(RuntimeError, "ADS_REPORT_PANEL_NOT_FOUND"):
+            self.crawler._wait_for_ads_report_download(config, timeout=1, poll_interval=0)
+
+    def test_normalize_ads_export_file_renames_text_xlsx_to_csv(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "out.xlsx"
+            payload = "期間,2026/10/16 - 2026/10/22\n商品,花費\nA,1\n".encode("utf-8-sig")
+            path.write_bytes(payload)
+
+            result = normalize_ads_export_file(path)
+
+            self.assertEqual(result, str(Path(temp_dir) / "out.csv"))
+            self.assertEqual(Path(result).read_bytes(), payload)
+            self.assertFalse(path.exists())
+
+    def test_normalize_ads_export_file_converts_real_xlsx(self):
+        from openpyxl import Workbook
+
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "out.xlsx"
+            workbook = Workbook()
+            sheet = workbook.active
+            sheet.append(["期間", "2026/10/16 - 2026/10/22"])
+            sheet.append(["商品", "花費"])
+            sheet.append(["A", 12.5])
+            sheet.append(["B", None])
+            workbook.save(path)
+
+            result = normalize_ads_export_file(path)
+
+            self.assertEqual(result, str(Path(temp_dir) / "out.csv"))
+            self.assertTrue(path.exists())
+            text = Path(result).read_text(encoding="utf-8-sig")
+            self.assertIn("期間", text)
+            self.assertIn("2026/10/16 - 2026/10/22", text)
+            self.assertIn("A,12.5", text)
+
+    def test_normalize_ads_export_file_leaves_plain_csv(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "out.csv"
+            path.write_text("a,b\n1,2\n", encoding="utf-8")
+
+            result = normalize_ads_export_file(path)
+
+            self.assertEqual(result, str(path))
+            self.assertTrue(path.exists())
+
+    def test_read_export_period_parses_bom_line(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "out.csv"
+            path.write_text("期間,2026/10/15 - 2026/10/22\n商品,花費\n", encoding="utf-8-sig")
+
+            self.assertEqual(
+                read_export_period(path),
+                (date(2026, 10, 15), date(2026, 10, 22)),
+            )
+
+    def test_read_export_period_returns_none_when_absent(self):
+        with TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "out.csv"
+            path.write_text("商品,花費\nA,1\n", encoding="utf-8")
+
+            self.assertIsNone(read_export_period(path))
+
+    def test_save_ads_download_rejects_period_mismatch(self):
+        config = {
+            "key": "week_01",
+            "label": "近第 1 週",
+            "file_prefix": "ads_overall_week_01",
+            "start_date": date(2026, 10, 16),
+            "end_date": date(2026, 10, 22),
+        }
+        payload = "期間,2026/10/15 - 2026/10/22\n商品,花費\nA,1\n".encode("utf-8-sig")
+
+        with TemporaryDirectory() as temp_dir:
+            self.crawler.ads_export_dir = temp_dir
+            self.crawler._ads_log = lambda *args, **kwargs: None
+            download = _FakeDownload(payload, "report.xlsx")
+
+            with self.assertRaisesRegex(RuntimeError, "ADS_REPORT_PERIOD_MISMATCH"):
+                self.crawler._save_ads_download(download, config)
+
+            self.assertTrue(any(name.endswith(".period_mismatch") for name in os.listdir(temp_dir)))
+
+    def test_save_ads_download_accepts_exact_period(self):
+        config = {
+            "key": "week_01",
+            "label": "近第 1 週",
+            "file_prefix": "ads_overall_week_01",
+            "start_date": date(2026, 10, 16),
+            "end_date": date(2026, 10, 22),
+        }
+        payload = "期間,2026/10/16 - 2026/10/22\n商品,花費\nA,1\n".encode("utf-8-sig")
+
+        with TemporaryDirectory() as temp_dir:
+            self.crawler.ads_export_dir = temp_dir
+            self.crawler._ads_log = lambda *args, **kwargs: None
+            download = _FakeDownload(payload, "report.xlsx")
+
+            result = self.crawler._save_ads_download(download, config)
+
+            self.assertTrue(result["file_path"].endswith(".csv"))
+            self.assertTrue(os.path.exists(result["file_path"]))
+
     def test_remote_cleanup_does_not_close_browser(self):
         self.crawler._cleaned_up = False
         self.crawler._cdp_attached = True
@@ -187,6 +387,48 @@ class AdsExportTests(unittest.TestCase):
         self.crawler.browser.close.assert_not_called()
         self.crawler.context.close.assert_not_called()
         self.crawler.playwright.stop.assert_called_once()
+
+    def test_off_by_one_report_names_are_flagged_not_matched(self):
+        config = {
+            "key": "week_01",
+            "label": "近第 1 週",
+            "start_date": date(2026, 10, 16),
+            "end_date": date(2026, 10, 22),
+            "report_patterns": [],
+        }
+        entries = [
+            {"report_name": "所有CPC成效報告2026/10/15-2026/10/22.csv"},
+            {"report_name": "所有CPC成效報告2026/10/16-2026/10/22.csv"},
+            {"report_name": "所有CPC成效報告2026/10/08-2026/10/15.csv"},
+        ]
+        self.assertEqual(
+            self.crawler._find_off_by_one_report_names(entries, config),
+            ["所有CPC成效報告2026/10/15-2026/10/22.csv"],
+        )
+        self.assertFalse(self.crawler._report_matches_range(entries[0]["report_name"], config))
+        self.assertTrue(self.crawler._report_matches_range(entries[1]["report_name"], config))
+
+    def test_force_taipei_timezone_overrides_once(self):
+        session = MagicMock()
+        page = MagicMock()
+        page.context.new_cdp_session.return_value = session
+        self.crawler.page = page
+        self.crawler._ads_log = MagicMock()
+
+        self.crawler._force_taipei_timezone()
+        self.crawler._force_taipei_timezone()
+
+        session.send.assert_called_once_with(
+            "Emulation.setTimezoneOverride", {"timezoneId": "Asia/Taipei"}
+        )
+
+    def test_force_taipei_timezone_never_raises(self):
+        page = MagicMock()
+        page.context.new_cdp_session.side_effect = RuntimeError("no cdp")
+        self.crawler.page = page
+        self.crawler._ads_log = MagicMock()
+
+        self.crawler._force_taipei_timezone()
 
 
 if __name__ == "__main__":

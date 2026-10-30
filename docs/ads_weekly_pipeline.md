@@ -76,8 +76,10 @@ python3 ads_analysis.py --refresh-source true --source remote
 ```text
 reports/ads_weekly/20260911/
   ads_exports/
-    # 檔名可以是 .csv，或內容為 CSV 文字的 .xlsx（validate_fresh_exports 會計入該視窗）。
-    # 真正的 xlsx（ZIP／PK）仍不算。
+    # 下載後會看檔案內容：CSV 文字一律改名為 .csv；真正的 xlsx（ZIP／PK）保留原檔，
+    # 並另外轉出同名 .csv 給後續分析用。
+    # 下載後也會核對檔案裡的「期間」列，和要求的日期不一致（例如近 7 天變 8 天）
+    # 會改名為 *.period_mismatch 並回報 ADS_REPORT_PERIOD_MISMATCH，不會被當成該視窗。
     ads_overall_past_month_*.csv      # 過去一個月（上月同日至昨天，29–32 天）
     ads_overall_yesterday_*.csv       # 昨天（主決策視窗）
     ads_overall_week_01_*_*.csv       # 滾動近 7 天
