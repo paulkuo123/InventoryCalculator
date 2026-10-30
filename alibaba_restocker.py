@@ -9,7 +9,7 @@ import sys
 import time
 import unicodedata
 from collections import defaultdict
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from typing import Any, Dict, List, Optional
 
 from playwright.sync_api import Error as PlaywrightError
@@ -17,6 +17,13 @@ from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
 from ego_browser_page import EgoBrowserContext
+from restock_cdp import (
+    RestockCdpError,
+    release_restock_page,
+    resolve_restock_cdp_endpoint,
+    restock_cdp_session,
+    stop_reason_for_error,
+)
 from housekeeping import prune_generated_files
 
 
@@ -151,6 +158,16 @@ def should_submit_offer_items_individually(add_to_cart: bool, pending_count: int
     return bool(add_to_cart) and int(pending_count or 0) > 1
 
 
+RESTOCK_RISK_STOP_STATUSES = frozenset({"risk_control", "not_logged_in"})
+RESTOCK_RISK_STOP_MESSAGES = {
+    "risk_control": "1688 出現滑塊／風控驗證（例如 RGV587、x5sec），已停止整批補貨，不自動重試。",
+    "not_logged_in": "9239 Chrome 的 1688 登入已失效，已停止整批補貨，不改用其他埠或 profile Chrome。",
+    "cdp_unavailable": "連不上已登入的 1688 Chrome（CDP），未加車；不改用其他埠或 profile Chrome。",
+    "cdp_forbidden_port": "CDP 9235 保留給 Shopee 月報 Chrome，1688 補貨拒絕使用，未加車。",
+    "cdp_no_context": "已登入的 1688 Chrome 沒有可用的 browser context，未加車。",
+}
+
+
 def classify_group_submit(
     cart_items: List[Dict[str, Any]],
     add_status: str,
@@ -161,6 +178,9 @@ def classify_group_submit(
     expected_qty = sum(int(entry.get("quantity") or 0) for entry in cart_items)
     if add_status == "cart_full":
         return "cart_full"
+    if add_status in RESTOCK_RISK_STOP_STATUSES:
+        # Slider / login lost / RGV587: stop the whole batch, never retry.
+        return str(add_status)
     if add_status == "selection_mismatch":
         # PR#18 預點擊 mismatch：未按加采购车，獨立成桶。
         return "selection_mismatch"
@@ -1161,6 +1181,11 @@ def restock_result_outcome(
         f"預期補貨 {expected_count} 個型號，實際確認加入 {confirmed_count} 個。請核對 1688 採購車。"
         if count_mismatch else ""
     )
+    if stopped_reason in RESTOCK_RISK_STOP_MESSAGES:
+        return {
+            "status": "error",
+            "message": RESTOCK_RISK_STOP_MESSAGES[stopped_reason],
+        }
     if stopped_reason:
         return {
             "status": "cart_limit_reached",
@@ -2668,6 +2693,11 @@ def fill_and_submit_offer_items_individually(
             stopped_reason = "cart_limit_reached"
             cart_full.append(cart_item)
             print("1688 採購車已達上限，停止後續補貨商品。", flush=True)
+        elif bucket in RESTOCK_RISK_STOP_STATUSES:
+            stopped_reason = bucket
+            cart_item["message"] = RESTOCK_RISK_STOP_MESSAGES[bucket]
+            failed.append(cart_item)
+            print(RESTOCK_RISK_STOP_MESSAGES[bucket], flush=True)
         else:
             failed.append(cart_item)
             print(f"加采购车可能失敗：{cart_result}", flush=True)
@@ -2741,11 +2771,84 @@ def verify_single_sku_in_cart_after_submit(
     return None
 
 
+_ADD_PACER = None
+
+
+def restock_add_pacer():
+    """Process-wide pacer: random 8-15s before every 1688 add except the first."""
+    global _ADD_PACER
+    if _ADD_PACER is None:
+        from restock_cdp import AddPacer
+
+        _ADD_PACER = AddPacer()
+    return _ADD_PACER
+
+
+def pace_before_add(debug: Optional[Any] = None) -> float:
+    delay = restock_add_pacer().wait_before_add()
+    if debug is not None and delay:
+        debug.log("add_interval_wait", {"seconds": round(delay, 2)})
+    return delay
+
+
+def stop_signal_for_cart_result(page, cart_result: Dict[str, Any]) -> str:
+    """Return risk_control / not_logged_in when an add hit a wall; '' otherwise."""
+    from restock_cdp import detect_restock_stop_signal
+
+    texts: List[Any] = [cart_result.get("message"), cart_result.get("ret")]
+    samples = cart_result.get("samples")
+    if isinstance(samples, list):
+        texts.extend(samples)
+    for attempt in cart_result.get("attempts") or []:
+        if isinstance(attempt, dict):
+            feedback = attempt.get("feedback") or {}
+            if isinstance(feedback, dict):
+                texts.append(feedback.get("message"))
+                if isinstance(feedback.get("samples"), list):
+                    texts.extend(feedback.get("samples"))
+    for row in cart_result.get("items") or []:
+        if isinstance(row, dict):
+            texts.extend([row.get("message"), row.get("ret")])
+    try:
+        url = str(getattr(page, "url", "") or "")
+    except Exception:
+        url = ""
+    return detect_restock_stop_signal(*[text for text in texts if text], url=url) or ""
+
+
+def strict_page_session_loader(page):
+    """mtop session from the attached 9239 page only; never probe 9227/9223."""
+    from reverse_audit.mtop_restock import MtopRestockError, session_from_page
+
+    def _load():
+        session = session_from_page(page)
+        if session is None or not session.token():
+            raise MtopRestockError(
+                "卡在登入／session：9239 Chrome 的 1688 cookies 缺少 _m_h5_tk，"
+                "不改用其他 CDP port 或 profile Chrome"
+            )
+        return session
+
+    return _load
+
+
 def add_to_cart_via_mtop(page, cart_items: List[Dict[str, Any]], debug: DebugLogger) -> Dict[str, Any]:
     """Path A: signed addcargo instead of DOM 加采购车. Fail-closed on mtop errors."""
     from reverse_audit.mtop_restock import restock_add_via_mtop
 
-    return restock_add_via_mtop(page, cart_items, debug, approve=True)
+    pace_before_add(debug)
+    result = restock_add_via_mtop(
+        page,
+        cart_items,
+        debug,
+        approve=True,
+        load_session=strict_page_session_loader(page),
+    )
+    signal = stop_signal_for_cart_result(page, result)
+    if signal:
+        result = {**result, "ok": False, "status": signal}
+        debug.log("add_to_cart_stop_signal", {"signal": signal, "mode": "mtop"})
+    return result
 
 
 def add_to_cart_with_retry(
@@ -2843,6 +2946,7 @@ def add_to_cart_with_retry(
                 break
             page.wait_for_timeout(AFTER_FILL_WAIT_MS)
 
+        pace_before_add(debug)
         click_result = click_add_to_cart(page)
         debug.log("clicked_add_to_cart", {
             "modelNames": model_names,
@@ -2866,6 +2970,16 @@ def add_to_cart_with_retry(
             **attempt_result,
         })
 
+        stop_signal = stop_signal_for_cart_result(page, {"attempts": [attempt_result]})
+        if stop_signal:
+            # Slider / login lost / risk control: never retry, stop the whole batch.
+            final_status = stop_signal
+            debug.log("add_to_cart_stop_signal", {
+                "modelNames": model_names,
+                "attempt": attempt,
+                "signal": stop_signal,
+            })
+            break
         if feedback.get("status") == "success":
             final_status = "success"
             break
@@ -3030,6 +3144,33 @@ def close_context_after_inspection(context, wait_result: str, debug: DebugLogger
     return True
 
 
+def unprocessed_rows(pending_items, product_id: str = "", product_name: str = "") -> List[Dict[str, Any]]:
+    return [{
+        "productId": str(item.get("productId") or product_id or ""),
+        "productName": str(item.get("productName") or product_name or "").strip(),
+        "modelName": str(item.get("modelName") or "").strip(),
+        "quantity": int(item.get("restockQty") or item.get("adjustedQty") or item.get("quantity") or 0),
+        "alibabaUrl": str(item.get("alibabaUrl") or ""),
+    } for item in pending_items]
+
+
+def page_block_reason(page, read_html: bool = True) -> str:
+    """``risk_control`` / ``not_logged_in`` when the tab shows a slider or login wall."""
+    from reverse_audit.mtop_in_tab import classify_page_block
+
+    try:
+        url = str(page.url or "")
+    except Exception:  # noqa: BLE001
+        url = ""
+    html_text = ""
+    if read_html:
+        try:
+            html_text = str(page.content() or "")
+        except Exception:  # noqa: BLE001
+            html_text = ""
+    return classify_page_block(url, html_text) or ""
+
+
 def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause_seconds: int = 0) -> None:
     product_id = str(payload.get("productId") or "")
     product_name = str(payload.get("productName") or "")
@@ -3073,18 +3214,45 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
         })
         return
 
-    profile_dir = os.path.join(base_dir, "alibaba_chrome_profile")
-    browser_backend = resolve_restock_browser_backend()
-    browser_runtime = nullcontext(None) if browser_backend == "ego" else sync_playwright()
+    # Attach to the already-logged-in 1688 Chrome (default CDP 9239) and use
+    # only our own new tab. No profile Chrome launch, no fallback port.
+    cdp_stack = ExitStack()
+    try:
+        cdp_endpoint = resolve_restock_cdp_endpoint(payload.get("cdpEndpoint") or None)
+        cdp_session = cdp_stack.enter_context(restock_cdp_session(cdp_endpoint))
+    except RestockCdpError as exc:
+        cdp_stack.close()
+        reason = stop_reason_for_error(exc)
+        print(f"1688 補貨未開始：{exc}", flush=True)
+        debug.log("restock_cdp_attach_failed", {"code": exc.code, "message": exc.message})
+        write_result(output_path, {
+            "status": "error",
+            "message": f"{RESTOCK_RISK_STOP_MESSAGES.get(reason, '')}{exc}",
+            "stoppedReason": reason,
+            "productId": product_id,
+            "productName": product_name,
+            "draftId": draft_id,
+            "summary": {
+                "succeeded": [],
+                "failed": [],
+                "blocked": [],
+                "unverified": [],
+                "selectionMismatch": [],
+                "cartFull": [],
+                "unprocessed": items,
+            },
+            "debugLogPath": debug.path,
+        })
+        return
 
-    with browser_runtime as playwright:
-        context, browser_name = launch_dedicated_context(browser_backend, playwright, profile_dir, headless)
-        if browser_name == "ego-lite":
-            print("使用 1688 補貨專用瀏覽器：ego-lite（沿用 ego-lite 登入狀態）", flush=True)
-        else:
-            print(f"使用 1688 補貨專用瀏覽器：{browser_name}", flush=True)
-            print(f"1688 登入資料夾：{profile_dir}", flush=True)
-        page = context.pages[0] if context.pages else context.new_page()
+    with cdp_stack:
+        context = cdp_session.context
+        page = cdp_session.page
+        print(
+            f"使用已登入的 1688 Chrome：CDP {cdp_session.endpoint}（no_defaults，只開自己的分頁）",
+            flush=True,
+        )
+        debug.log("restock_cdp_attached", {"endpoint": cdp_session.endpoint})
 
         baseline_cart_lines: Optional[List[Dict[str, Any]]] = []
         if add_to_cart:
@@ -3100,9 +3268,14 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 required_offer_ids=required_offer_ids,
             )
             if baseline_cart_lines is None:
+                baseline_stop = page_block_reason(page, read_html=False)
                 write_result(output_path, {
                     "status": "error",
-                    "message": "提交前無法可靠讀取採購車數量基線，為避免重複或誤報，未執行加車",
+                    "stoppedReason": baseline_stop,
+                    "message": (
+                        RESTOCK_RISK_STOP_MESSAGES.get(baseline_stop, "")
+                        + "提交前無法可靠讀取採購車數量基線，為避免重複或誤報，未執行加車"
+                    ),
                     "productId": product_id,
                     "productName": product_name,
                     "draftId": draft_id,
@@ -3132,6 +3305,15 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
             page.goto(url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
             debug.log("url_loaded", {"url": url, "pageUrl": page.url})
+            page_stop = page_block_reason(page)
+            if page_stop:
+                stopped_reason = page_stop
+                print(RESTOCK_RISK_STOP_MESSAGES[page_stop], flush=True)
+                debug.log("product_page_blocked", {"url": url, "reason": page_stop})
+                for _, pending_items in grouped_entries[group_index:]:
+                    unprocessed_items.extend(unprocessed_rows(pending_items, product_id, product_name))
+                results.append({"url": url, "items": [], "addToCart": [], "stoppedReason": page_stop})
+                break
 
             live_catalog = read_live_catalog_with_retry(page, debug, url)
 
@@ -3272,7 +3454,7 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 unverified_cart_items.extend(solo.get("unverified") or [])
                 selection_mismatch_items.extend(solo.get("selection_mismatch") or [])
                 failed_cart_items.extend(solo.get("failed") or [])
-                if solo.get("cart_full"):
+                if solo.get("cart_full") or solo.get("stopped_reason"):
                     stopped_reason = solo.get("stopped_reason") or "cart_limit_reached"
                     cart_limit_items.extend(solo.get("cart_full") or [])
                     processed = int(solo.get("processed_pending_count") or 0)
@@ -3399,6 +3581,14 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                                     "alibabaUrl": str(pending_item.get("alibabaUrl") or ""),
                                 })
                         print("1688 採購車已達上限，停止後續補貨商品。", flush=True)
+                    elif bucket in RESTOCK_RISK_STOP_STATUSES:
+                        stopped_reason = bucket
+                        for cart_item in cart_items:
+                            cart_item["message"] = RESTOCK_RISK_STOP_MESSAGES[bucket]
+                        failed_cart_items.extend(cart_items)
+                        for _, pending_items in grouped_entries[group_index + 1:]:
+                            unprocessed_items.extend(unprocessed_rows(pending_items, product_id, product_name))
+                        print(RESTOCK_RISK_STOP_MESSAGES[bucket], flush=True)
                     else:
                         failed_cart_items.extend(cart_items)
                         print(f"加采购车可能失敗：{cart_result}", flush=True)
@@ -3574,12 +3764,14 @@ def run(payload: Dict[str, Any], output_path: str, headless: bool = False, pause
                 print(SESSION_CLOSED_MARKER, flush=True)
                 debug.log("restock_session_released")
         else:
-            print("補貨完成，正在關閉瀏覽器。", flush=True)
+            print("補貨完成，只關閉本流程開的分頁（不關共用 Chrome 與其他分頁）。", flush=True)
 
-        # 使用者已關閉 ego-lite 頁面時，不需再次關閉 Task Space。
-        if close_context_after_inspection(context, wait_result, debug) and wait_result != "page_closed":
+        # Only our own tab is closed (restock_cdp_session releases it on exit);
+        # the shared 9239 browser, its context and other tabs stay open.
+        if wait_result != "page_closed":
+            release_restock_page(page)
             print(SESSION_CLOSED_MARKER, flush=True)
-            debug.log("restock_session_released")
+            debug.log("restock_session_released", {"closed": "own_page_only"})
 
 
 def main() -> None:
@@ -3589,6 +3781,14 @@ def main() -> None:
     parser.add_argument("--headless", default="false")
     parser.add_argument("--pause-seconds", type=int, default=0)
     parser.add_argument("--add-to-cart", action="store_true")
+    parser.add_argument(
+        "--cdp",
+        default=None,
+        help=(
+            "已登入 1688 Chrome 的 CDP 位址（預設 ALIBABA_RESTOCK_CDP，否則 http://127.0.0.1:9239）。"
+            "9235 拒用；連不上就停，不改試其他埠，也不另開 profile Chrome。"
+        ),
+    )
     parser.add_argument(
         "--via-mtop",
         action="store_true",
@@ -3609,6 +3809,8 @@ def main() -> None:
     payload = load_payload(args.input)
     if args.add_to_cart:
         payload["addToCart"] = True
+    if args.cdp:
+        payload["cdpEndpoint"] = str(args.cdp).strip()
 
     run(
         payload,

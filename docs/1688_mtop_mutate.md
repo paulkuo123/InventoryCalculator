@@ -86,7 +86,7 @@ python -m reverse_audit.mtop_mutate add --offer-id ID \
   --spec-text '远峰蓝>iPhone13Pro' --detail-html FILE --qty 1
 ```
 
-解析順序：`--spec-id` 優先；沒有才走 `--sku-id`（行為不變）；兩者都沒有、但有 `--sku-name`／`--spec-text` 時，才需要詳情頁 HTML（來源與 skuId 路徑相同：`--detail-html` 或唯讀 `--fetch-detail`）。
+解析順序：`--spec-id` 優先；沒有才走 `--sku-id`（行為不變）；兩者都沒有、但有 `--sku-name`／`--spec-text` 時，才需要詳情頁 HTML（來源與 skuId 路徑相同：`--detail-html`，或 `--cdp --fetch-detail` 在已登入的 9239 分頁內讀商品頁）。
 
 **比對規則（嚴格）：**
 
@@ -133,7 +133,7 @@ python -m reverse_audit.mtop_mutate remove \
 
 可改 `--cookie-jar /tmp/1688.cookie-jar`。若改量／刪列要離線組包、只在 POST 時用 session，可同時帶 `--fixture`（須含完整 Ultron model：endpoint／linkage／hierarchy／data；Phase 1 `bundle.json` 不夠）。
 
-skuId 而沒有 specId、又想 live 解：`--fetch-detail` 會 **GET** `https://detail.1688.com/offer/<id>.html`（唯讀，不加車）。CI 請用 `--detail-html`。`--offer-url 'https://detail.1688.com/offer/<id>.html'` 可代替 `--offer-id`。
+skuId 而沒有 specId、又想 live 解：`--cdp --fetch-detail` 會在已登入 1688 的 Chrome（預設 CDP 9239，`connect_over_cdp(no_defaults=True)`，只開自己的分頁）內開 `https://detail.1688.com/offer/<id>.html` 讀 `skuMapOriginal`（唯讀，不加車）。box 端直接 GET 已停用（會被 x5sec 滑塊擋）；沒有 `--cdp` 的 `--fetch-detail` 會直接報錯。`add --cdp` 的 addcargo 也在同一分頁內用 `fetch(credentials:"include")` 送出；碰到滑塊／登入頁整批停止，不改走其他路。CI 請用 `--detail-html`。`--offer-url 'https://detail.1688.com/offer/<id>.html'` 可代替 `--offer-id`。
 
 Grok 遠端 CDP 一次 smoke（庭安已授權；**先 dry-run 再帶旗標**；cloud CI 不要跑）：
 

@@ -1955,6 +1955,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             state["reverseAuditSourcesOnly"] = True
         if payload.get("reverseAuditRefreeze"):
             state["reverseAuditRefreeze"] = True
+        if str(payload.get("cdpEndpoint") or "").strip():
+            from restock_cdp import guard_restock_cdp_endpoint
+
+            # Refuse 9235 before anything is persisted or launched.
+            state["cdpEndpoint"] = guard_restock_cdp_endpoint(str(payload["cdpEndpoint"]).strip())
         launched = launch_restock_batch(state)
         return {
             "status": "success",
@@ -2056,6 +2061,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         ]
         if restock_payload.get("addToCart", True):
             cmd.append("--add-to-cart")
+        cdp_endpoint = str((payload or {}).get("cdpEndpoint") or restock_payload.get("cdpEndpoint") or "").strip()
+        if cdp_endpoint:
+            from restock_cdp import guard_restock_cdp_endpoint
+
+            cmd.extend(["--cdp", guard_restock_cdp_endpoint(cdp_endpoint)])
 
         try:
             process = subprocess.Popen(
@@ -3143,16 +3153,19 @@ def _restock_job_host():
     return CustomHandler.__new__(CustomHandler)
 
 
-def start_single_product_from_batch(product):
+def start_single_product_from_batch(product, cdp_endpoint=None):
     host = _restock_job_host()
     try:
-        return host.start_alibaba_restock({
+        request = {
             "productId": product.get("productId"),
             "productName": product.get("productName"),
             "addToCart": True,
             "pauseSeconds": 0,
             "items": product_items(product),
-        })
+        }
+        if cdp_endpoint:
+            request["cdpEndpoint"] = cdp_endpoint
+        return host.start_alibaba_restock(request)
     except Exception as error:
         return {"status": "error", "message": str(error)}
 
@@ -3166,12 +3179,30 @@ def run_restock_batch_thread(run_id):
     persister = RestockBatchPersister(directory)
     try:
         state = load_state(directory)
+        from restock_cdp import (
+            AddPacer,
+            read_full_cart_via_cdp,
+            resolve_restock_cdp_endpoint,
+            set_strict_restock_cdp_env,
+        )
+
+        # Every product attaches to the same logged-in 1688 Chrome (default
+        # 9239). 9235 is refused; no fallback port or profile Chrome.
+        cdp_endpoint = resolve_restock_cdp_endpoint(state.get("cdpEndpoint") or None)
+        set_strict_restock_cdp_env(cdp_endpoint)
+        pacer = AddPacer()
         run_batch_loop(
             state,
-            start_single_product_from_batch,
+            lambda product: start_single_product_from_batch(product, cdp_endpoint),
             read_single_restock_job,
             persister,
             should_stop=lambda: restock_batch_runtime.get("stop"),
+            cart_reader_fn=lambda: read_full_cart_via_cdp(cdp_endpoint),
+            pace_fn=pacer.wait_before_add,
+            # The legacy reverse-audit freezes reuse the user's existing tab and
+            # try 9223/9227; the before/after full-cart read over our own tab
+            # replaces them in this flow.
+            cdp_available_fn=lambda *_args, **_kwargs: False,
         )
     except Exception:
         logger.exception("批次補貨執行失敗")

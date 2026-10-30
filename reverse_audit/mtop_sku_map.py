@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
 from reverse_audit.mtop_http import USER_AGENT, offer_detail_url
 
@@ -142,16 +142,30 @@ def load_detail_html(path: str | Path) -> str:
     return html_path.read_text(encoding="utf-8", errors="replace")
 
 
+DIRECT_DETAIL_FETCH_DISABLED = (
+    "direct box-side fetch of detail.1688.com is disabled (no 9239 login cookies -> x5sec slider). "
+    "Use --cdp so the product page is read inside the logged-in 9239 Chrome tab, or --detail-html FILE."
+)
+
+
 def fetch_detail_html(
     offer_id: str,
     *,
     opener: Optional[Any] = None,
     timeout: float = 30.0,
 ) -> str:
-    """Read-only GET of the public offer page. Does not add to cart."""
+    """Read-only GET of the offer page through an injected opener only.
+
+    A box-side GET without the logged-in browser session gets the x5sec
+    slider page (0 sku rows), so the default ``urlopen`` path is disabled.
+    Live callers use ``reverse_audit.mtop_in_tab.read_offer_detail_html_in_tab``
+    inside the 9239 tab instead.
+    """
     oid = str(offer_id or "").strip()
     if not oid.isdigit():
         raise SkuMapError(f"offerId must be digits, got {oid!r}")
+    if opener is None:
+        raise SkuMapError(DIRECT_DETAIL_FETCH_DISABLED)
     url = offer_detail_url(oid)
     request = Request(
         url,
@@ -162,7 +176,7 @@ def fetch_detail_html(
         },
         method="GET",
     )
-    fetch = opener or urlopen
+    fetch = opener
     try:
         with fetch(request, timeout=timeout) as resp:
             raw = resp.read()

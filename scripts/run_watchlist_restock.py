@@ -161,11 +161,14 @@ def start_main_if_needed(
     port: int,
     popen: Callable[..., Any] = subprocess.Popen,
     is_up_fn: Callable[[str], bool] = server_is_up,
+    cdp_endpoint: str = "",
 ) -> Optional[Any]:
     if is_up_fn(server_url(port)):
         return None
     env = os.environ.copy()
     env["INVENTORY_SKIP_BROWSER"] = "1"
+    if cdp_endpoint:
+        env["ALIBABA_RESTOCK_CDP"] = cdp_endpoint
     return popen(
         [sys.executable, str(Path(root) / "main.py")],
         cwd=str(root),
@@ -615,7 +618,7 @@ def wait_for_batch(
         last = read_fn(base_url, run_id)
         batch = last.get("batch") if isinstance(last.get("batch"), dict) else last
         status = str(batch.get("status") or "")
-        if status and status != "running":
+        if status and status != "running" and not batch.get("cartReconcilePending"):
             return last
         sleep_fn(2)
     last["status"] = "error"
@@ -699,6 +702,15 @@ def parse_args(argv: Optional[list] = None) -> argparse.Namespace:
         help=(
             "CI／離線：強制 sources-only，不加車前／後 live freeze，不開 Chrome。"
             "與 --refreeze 同時出現時以此為準。永不 mutate。"
+        ),
+    )
+    parser.add_argument(
+        "--cdp",
+        default=None,
+        metavar="URL",
+        help=(
+            "已登入 1688 的 Chrome CDP 位址；預設 ALIBABA_RESTOCK_CDP，否則 http://127.0.0.1:9239。"
+            "9235（Shopee 月報）一律拒用；連不上就停，不改試其他埠、不另開 profile Chrome。"
         ),
     )
     parser.add_argument(
@@ -817,9 +829,12 @@ def start_watchlist_restock_batch(
     reverse_audit_sources_only: bool = False,
     model_filter: Optional[list] = None,
     model_skipped: Optional[list] = None,
+    cdp_endpoint: str = "",
 ) -> tuple[Dict[str, Any], Dict[str, Any]]:
     """Existing Path A engine: build_visible_style_products → POST batches."""
     payload = build_visible_style_products(root, keyword, months, model_filter=model_filter)
+    if cdp_endpoint:
+        payload["cdpEndpoint"] = cdp_endpoint
     if model_filter is not None:
         print_model_filter_summary(payload, model_skipped or [])
         payload.pop("modelFilter", None)
@@ -840,6 +855,42 @@ def confirm_restock(yes: bool, input_fn: Callable[[str], str] = input) -> bool:
         return True
     answer = input_fn("首頁已載入。確認畫面後按 Enter 開始補貨，或輸入 n 取消：")
     return str(answer or "").strip().lower() not in {"n", "no", "q", "quit"}
+
+
+RECONCILE_LABELS = {
+    "ok": "已確認（增量＝要求）",
+    "unconfirmed": "未確認（增量＜要求，不重送）",
+    "anomaly": "異常（增量＞要求或未送卻變動）",
+    "not_sent": "未送出",
+    "unknown": "無法判斷（加車後讀車失敗）",
+}
+
+
+def print_cart_reconcile(report: Dict[str, Any]) -> None:
+    """Print the before/after full-cart reconciliation (read-only)."""
+    if not report:
+        return
+    if report.get("beforeError"):
+        print(f"採購車前後對帳：加車前讀不到完整採購車，整批未開始（{report.get('beforeError')}）", flush=True)
+        return
+    counts = report.get("counts") or {}
+    print(
+        "採購車前後對帳："
+        + "，".join(f"{RECONCILE_LABELS[key]} {counts.get(key, 0)}" for key in RECONCILE_LABELS),
+        flush=True,
+    )
+    if report.get("afterError"):
+        print(f"  加車後讀車失敗：{report.get('afterError')}", flush=True)
+    for title, key in (("已送出", "sent"), ("未送出", "notSent")):
+        rows = report.get(key) or []
+        print(f"=== {title}（{len(rows)}）===", flush=True)
+        for row in rows:
+            print(
+                f"  - {row.get('productId')} {row.get('modelName')}：要求 {row.get('requested')}，"
+                f"前 {row.get('before')} → 後 {row.get('after')}（增量 {row.get('delta')}）"
+                f" → {RECONCILE_LABELS.get(str(row.get('category')), row.get('category'))}",
+                flush=True,
+            )
 
 
 def print_batch_outcome(batch: Dict[str, Any], port: int) -> None:
@@ -863,6 +914,7 @@ def print_batch_outcome(batch: Dict[str, Any], port: int) -> None:
                 f"（{reverse_audit.get('cartDeltaPath') or ''}）",
                 flush=True,
             )
+    print_cart_reconcile(batch.get("cartReconcile") or {})
     if run_id:
         print(f"報告：{server_url(port)}/api/alibaba-restock/batches/{run_id}/report.html", flush=True)
         print(f"續跑：python scripts/run_watchlist_restock.py --resume {run_id}", flush=True)
@@ -871,7 +923,9 @@ def print_batch_outcome(batch: Dict[str, Any], port: int) -> None:
 def prepare_homepage(args: argparse.Namespace) -> tuple[Optional[Any], Optional[str], int]:
     """Start main.py if needed and wait for homepage data. Returns (process, base, exit_code)."""
     base = server_url(args.port)
-    process = start_main_if_needed(ROOT, args.port)
+    process = start_main_if_needed(
+        ROOT, args.port, cdp_endpoint=str(getattr(args, "cdp_endpoint", "") or "")
+    )
     if process is not None:
         print(f"已啟動 main.py（pid {process.pid}）", flush=True)
     else:
@@ -958,6 +1012,7 @@ def run_approved_watchlist_restock(
             reverse_audit_sources_only=bool(args.sources_only),
             model_filter=model_filter,
             model_skipped=model_skipped,
+            cdp_endpoint=str(getattr(args, "cdp_endpoint", "") or ""),
         )
         if started.get("status") != "success" or not started.get("runId"):
             print(started.get("message") or "啟動整頁補貨失敗", file=sys.stderr)
@@ -985,6 +1040,14 @@ def terminate_process(process: Optional[Any]) -> None:
 
 def main(argv: Optional[list] = None) -> int:
     args = parse_args(argv)
+    try:
+        from restock_cdp import RestockCdpError, resolve_restock_cdp_endpoint
+
+        # Resolve early (CLI > ALIBABA_RESTOCK_CDP > 9239); 9235 refused even in dry-run.
+        args.cdp_endpoint = resolve_restock_cdp_endpoint(getattr(args, "cdp", None))
+    except RestockCdpError as exc:
+        print(f"{exc.code}: {exc.message}", file=sys.stderr)
+        return EXIT_ERROR
     if getattr(args, "via_mtop", False):
         from reverse_audit.mtop_switch import apply_via_mtop_cli
 

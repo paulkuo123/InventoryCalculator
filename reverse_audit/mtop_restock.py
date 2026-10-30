@@ -159,6 +159,18 @@ def _page_html(page: Any, detail_html: Optional[str] = None) -> Optional[str]:
     return str(html or "")
 
 
+def _raise_restock_if_page_blocked(page: Any, html: str) -> None:
+    """Slider / login wall on the product tab -> fail closed (no direct fetch)."""
+    from reverse_audit.mtop_in_tab import InTabBlockedError, raise_if_blocked
+
+    try:
+        raise_if_blocked(str(getattr(page, "url", "") or ""), html, what="offer page")
+    except NotLoggedInError as exc:
+        raise MtopRestockError(f"卡在登入／session：{exc}") from exc
+    except InTabBlockedError as exc:
+        raise MtopRestockError(f"卡在風控：{exc}") from exc
+
+
 def _qty_on_lines(lines: Sequence[CartLine], offer_id: str, sku_id: str) -> int:
     total = 0
     for line in lines:
@@ -257,6 +269,8 @@ def add_one(
             result.error = f"卡在登入／session：{exc}"
         elif isinstance(exc, MtopCallError) and getattr(exc, "kind", "") == "bad_sign":
             result.error = f"卡在簽章：{exc}"
+        elif isinstance(exc, MtopCallError) and getattr(exc, "kind", "") == "risk_control":
+            result.error = f"卡在風控：{exc}"
         elif isinstance(exc, MtopCallError):
             result.error = f"卡在業務參數／風控／Ultron 包：{exc}"
         else:
@@ -471,9 +485,17 @@ def restock_add_via_mtop(
 ) -> Dict[str, Any]:
     """Path A hook: replace DOM 加采购车 with per-SKU addcargo."""
     log: Optional[LogFn] = debug.log if debug is not None and hasattr(debug, "log") else None
+    if transport is None and page is not None and hasattr(page, "evaluate"):
+        # addcargo + read_cart run as fetch() inside the logged-in tab; never
+        # POST to 1688 from the box.
+        from reverse_audit.mtop_in_tab import page_fetch_transport
+
+        transport = page_fetch_transport(page)
     try:
         sess = load_mtop_session(page=page, session=session, load_session=load_session)
         html = _page_html(page)
+        if page is not None and html is not None:
+            _raise_restock_if_page_blocked(page, html)
         return add_items(
             cart_items,
             approve=approve,
