@@ -418,7 +418,11 @@ def promote_run_dir(stage_dir: Path, out_dir: Path) -> None:
             for child in list(backup.iterdir()):
                 if child.name in preserved:
                     continue
-                target = out_dir / child.name
+                name = child.name
+                if name == "SUMMARY.md":
+                    # An old hand-written summary must not sit next to new reports.
+                    name = "SUMMARY.md.stale"
+                target = out_dir / name
                 if target.exists():
                     continue
                 os.replace(str(child), str(target))

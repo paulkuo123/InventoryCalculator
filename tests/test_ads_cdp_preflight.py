@@ -411,6 +411,25 @@ class WeeklyOutputStagingTests(unittest.TestCase):
             )
             self.assertEqual((out_dir / "notes.txt").read_text(encoding="utf-8"), "keep")
 
+    def test_promote_marks_old_summary_as_stale(self):
+        from ads_session import promote_run_dir
+
+        with TemporaryDirectory() as temp_dir:
+            out_dir = Path(temp_dir) / "20260911"
+            out_dir.mkdir()
+            (out_dir / "SUMMARY.md").write_text("old summary", encoding="utf-8")
+            stage = Path(temp_dir) / "20260911.staging"
+            (stage / "ads_exports").mkdir(parents=True)
+            (stage / "ads_exports" / "new.csv").write_text("new", encoding="utf-8")
+
+            promote_run_dir(stage, out_dir)
+
+            self.assertFalse((out_dir / "SUMMARY.md").exists())
+            self.assertEqual(
+                (out_dir / "SUMMARY.md.stale").read_text(encoding="utf-8"), "old summary"
+            )
+            self.assertEqual(list(Path(temp_dir).glob("*.bak-*")), [])
+
     def test_failure_after_prior_success_marks_failed_status(self):
         def fake_success(cmd, **_kwargs):
             if any(str(part).endswith("crawler.py") for part in cmd):
