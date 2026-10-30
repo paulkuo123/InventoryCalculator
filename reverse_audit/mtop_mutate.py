@@ -10,6 +10,10 @@ exactly one explicit flag:
 Usage:
   python -m reverse_audit.mtop_mutate add --offer-id ID --spec-id SPEC --qty 1
   python -m reverse_audit.mtop_mutate add --offer-id ID --sku-id SKU --detail-html FILE --qty 1
+  python -m reverse_audit.mtop_mutate add --offer-id ID --sku-name NAME \
+      [--sku-second-name SECOND] --detail-html FILE --qty 1
+  python -m reverse_audit.mtop_mutate add --offer-id ID --spec-text TEXT \
+      --detail-html FILE --qty 1
   python -m reverse_audit.mtop_mutate set-qty --cart-id ID --qty N --fixture ultron_render_model.json
   python -m reverse_audit.mtop_mutate remove --cart-id ID --fixture ultron_render_model.json
 
@@ -43,6 +47,7 @@ from reverse_audit.mtop_session import (
     load_session_from_cdp,
 )
 from reverse_audit.mtop_sku_map import SkuMapError
+from reverse_audit.mtop_spec_resolve import SpecNameError
 from reverse_audit.mtop_ultron_mutate import (
     APPROVE_REMOVE_ONE,
     APPROVE_SET_QTY,
@@ -113,6 +118,24 @@ def build_parser() -> argparse.ArgumentParser:
         dest="sku_id",
         default=None,
         help="If no --spec-id: resolve via detail HTML skuMapOriginal",
+    )
+    add_p.add_argument(
+        "--sku-name",
+        dest="sku_name",
+        default=None,
+        help="If no --spec-id/--sku-id: match detail HTML SKU name (primary dimension)",
+    )
+    add_p.add_argument(
+        "--sku-second-name",
+        dest="sku_second_name",
+        default=None,
+        help="Optional second SKU dimension (needs --sku-name)",
+    )
+    add_p.add_argument(
+        "--spec-text",
+        dest="spec_text",
+        default=None,
+        help="Alternative to --sku-name: match full spec text (split on > / ＞ / ,)",
     )
     add_p.add_argument(
         "--detail-html",
@@ -225,6 +248,13 @@ def _emit(preview: dict, args: argparse.Namespace) -> None:
             f"# offerId={preview.get('offerId')} specId={preview.get('specId')} "
             f"qty={preview.get('quantity')}"
         )
+        if preview.get("specResolvedBy") == "name":
+            print(
+                f"# specId resolved by name: {preview.get('specId')} "
+                f"(skuId={preview.get('specResolvedSkuId') or '-'}, "
+                f"spec={preview.get('specResolvedText')}) — not written to the "
+                "Golden table; record it manually if desired"
+            )
     else:
         print(
             f"# cartId={preview.get('cartId')} qty={preview.get('quantity')} "
@@ -256,6 +286,9 @@ def run_add(args: argparse.Namespace) -> int:
         quantity=args.qty,
         spec_id=args.spec_id,
         sku_id=args.sku_id,
+        sku_name=args.sku_name,
+        sku_second_name=args.sku_second_name,
+        spec_text=args.spec_text,
         detail_html_path=args.detail_html,
         fetch_detail=bool(args.fetch_detail),
     )
@@ -332,6 +365,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ForbiddenApiError,
         MutateSafetyError,
         SkuMapError,
+        SpecNameError,
         ItemNodeError,
         NotLoggedInError,
         CdpUnavailableError,

@@ -71,6 +71,45 @@ python -m reverse_audit.mtop_mutate remove \
 
 可選：`--json` 印同一份遮罩 JSON；`--out PATH` 寫檔（仍不含 cookie／token／sign）。
 
+## 用名稱解 specId（無 1688 skuId 的型號）
+
+有些 offer 的詳情頁 `skuMapOriginal` 沒有可用的 `skuId`，但有 SKU 名稱。這時可以用名稱解出 `specId`，**唯讀解析已存好的詳情頁 HTML**，不會連網、不會加車。
+
+```bash
+# 主規格 + 第二規格（兩個維度）
+python -m reverse_audit.mtop_mutate add --offer-id ID \
+  --sku-name '远峰蓝' --sku-second-name 'iPhone13Pro' \
+  --detail-html FILE --qty 1
+
+# 只給完整規格文字（用 > ／ ＞ ／ , 切維度）
+python -m reverse_audit.mtop_mutate add --offer-id ID \
+  --spec-text '远峰蓝>iPhone13Pro' --detail-html FILE --qty 1
+```
+
+解析順序：`--spec-id` 優先；沒有才走 `--sku-id`（行為不變）；兩者都沒有、但有 `--sku-name`／`--spec-text` 時，才需要詳情頁 HTML（來源與 skuId 路徑相同：`--detail-html` 或唯讀 `--fetch-detail`）。
+
+**比對規則（嚴格）：**
+
+- 名稱維度：`--sku-name` 為主，可加一個 `--sku-second-name`；`--sku-second-name` 不能單獨用。
+- 名稱參數（`--sku-name`／`--sku-second-name`／`--spec-text`）不能跟 `--spec-id` 或 `--sku-id` 一起用，會直接報錯（互斥）。
+- 同時給 `--sku-name` 和 `--spec-text` 時，兩邊都要各自剛好對到一筆，而且是**同一筆**；只要有一邊對不到、對到多筆或兩邊不同，就報錯並列出兩邊各自的結果。
+- `--spec-text` 用 `sku_spec.split_spec_dimensions` 切開（`>`、`＞`、`,` 等）；也接受「正規化後整串（含分隔符號）」與選項原始規格文字完全相同。把維度黏在一起（例如 `远峰蓝iPhone13Pro`）**不算**命中。
+- 正規化只做：HTML unescape、Unicode NFKC（全形／半形）、移除所有空白、casefold。**不**做簡繁折疊、不做前綴／子字串／模糊比對。
+- 候選必須與想要的維度 tuple **完全相等**（長度、順序都一樣）。`17` 不會命中 `17pro`。
+- 命中 0 筆：報錯並列出想要的名稱與所有可用選項（規格文字 + specId，最多列 60 筆）。
+- 命中多筆（例如正規化後文字相同）：報錯並列出候選，**絕不代選**。
+- 整頁沒有任何 `skuMapOriginal`：報錯並提示可能是登入／x5 punish／captcha 頁，不亂猜。
+
+**不會寫 golden：** 解析出來的 `specId` 只用於這一次 add；preview 會帶 `specResolvedBy`／`specResolvedText`／`specResolvedSkuId` 與 `goldenWrite=false`，訊息也會提醒「not written to the Golden table」。名稱解出的 `specId` 不會寫進 golden_table.json；要留存請人工記錄。
+
+離線形狀檢查（唯讀 CSV，不連網）：
+
+```bash
+python scripts/check_batch1_spec_name_shapes.py /path/batch1_qty.csv
+# 有已存的詳情頁時再給：--detail-dir DIR（讀 <offerId>.html）
+```
+
+
 ## 怎麼跑（本機一次 live；文件 only，CI 禁止）
 
 前置：本機已登入 1688 的 Chrome + remote debugging（埠＝你正在點的 profile；computerUse 常見 `:9227`），或 git 外面的 cookie-jar。Session 規則與 Phase 1 相同（1688 domain 優先於 taobao 複本）。**不要**把 cookie／`addressId` 提交進 git。
