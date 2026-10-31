@@ -735,8 +735,9 @@ def build_parser() -> argparse.ArgumentParser:
         const="",
         default=None,
         help=(
-            "Read cookies from an already-logged-in Chrome via connect_over_cdp. "
-            "Optional URL (else ALIBABA_RESTOCK_CDP, then 9227 / 9223). "
+            "Read the cart inside our own tab on an already-logged-in Chrome via "
+            "connect_over_cdp(no_defaults=True). Optional URL (else "
+            "ALIBABA_RESTOCK_CDP, then 9239). 9235 refused; no other port tried. "
             "Never launches Chrome."
         ),
     )
@@ -831,18 +832,60 @@ def run_fixture(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
-def run_live(args: argparse.Namespace) -> int:
-    try:
-        if args.cookie_jar:
-            session = load_cookie_jar(args.cookie_jar)
-        else:
-            session = load_session_from_cdp(args.cdp)
+def _in_tab_hooks():
+    """Indirection so offline tests can swap the CDP attach / in-tab helpers."""
+    import restock_cdp
+    from reverse_audit import mtop_in_tab
+    from reverse_audit.mtop_restock import session_from_page
+
+    return restock_cdp, mtop_in_tab, session_from_page
+
+
+def read_cart_in_tab(args: argparse.Namespace) -> ReadCartResult:
+    """``--cdp``: render/asyncload run as fetch() inside our own tab on the
+    logged-in Chrome (connect_over_cdp no_defaults=True). 9235 refused; no
+    other port tried; nothing is sent to 1688 from the box."""
+    restock_cdp, mtop_in_tab, session_from_page = _in_tab_hooks()
+    endpoint = restock_cdp.resolve_restock_cdp_endpoint(args.cdp or None)
+    with restock_cdp.restock_cdp_session(endpoint) as cdp:
+        page = cdp.page
+        mtop_in_tab.open_in_tab(page, mtop_in_tab.CART_PAGE_URL, what="cart page")
+        session = session_from_page(page)
+        if session is None:
+            raise NotLoggedInError("not logged in (no 1688 cookies in the CDP tab)")
         session.require_token()
-        client = ReadCartClient(session, address_id=getattr(args, "address_id", None))
-        result = client.read_cart(
+        client = ReadCartClient(
+            session,
+            transport=mtop_in_tab.page_fetch_transport(page),
+            address_id=getattr(args, "address_id", None),
+        )
+        return client.read_cart(
             include_asyncload=not args.no_asyncload,
             page_no=int(args.page_no),
         )
+
+
+def run_live(args: argparse.Namespace) -> int:
+    from restock_cdp import RestockCdpError
+
+    try:
+        if args.cookie_jar:
+            session = load_cookie_jar(args.cookie_jar)
+            session.require_token()
+            client = ReadCartClient(session, address_id=getattr(args, "address_id", None))
+            result = client.read_cart(
+                include_asyncload=not args.no_asyncload,
+                page_no=int(args.page_no),
+            )
+        else:
+            result = read_cart_in_tab(args)
+    except RestockCdpError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        if exc.code == "NOT_LOGGED_IN":
+            return EXIT_NOT_LOGGED_IN
+        if exc.code == "CDP_FORBIDDEN_PORT":
+            return EXIT_USAGE
+        return EXIT_CDP
     except CdpUnavailableError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_CDP

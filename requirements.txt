@@ -1,4 +1,4 @@
-playwright
+playwright>=1.60.0  # connect_over_cdp(no_defaults=True) added in 1.60
 psutil
 PyQt5
 requests

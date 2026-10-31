@@ -1955,6 +1955,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
             state["reverseAuditSourcesOnly"] = True
         if payload.get("reverseAuditRefreeze"):
             state["reverseAuditRefreeze"] = True
+        if str(payload.get("cdpEndpoint") or "").strip():
+            from restock_cdp import guard_restock_cdp_endpoint
+
+            # Refuse 9235 before anything is persisted or launched.
+            state["cdpEndpoint"] = guard_restock_cdp_endpoint(str(payload["cdpEndpoint"]).strip())
         launched = launch_restock_batch(state)
         return {
             "status": "success",
@@ -2056,6 +2061,11 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
         ]
         if restock_payload.get("addToCart", True):
             cmd.append("--add-to-cart")
+        cdp_endpoint = str((payload or {}).get("cdpEndpoint") or restock_payload.get("cdpEndpoint") or "").strip()
+        if cdp_endpoint:
+            from restock_cdp import guard_restock_cdp_endpoint
+
+            cmd.extend(["--cdp", guard_restock_cdp_endpoint(cdp_endpoint)])
 
         try:
             process = subprocess.Popen(
@@ -2085,6 +2095,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "completed": 0,
                 "total": len(items),
                 "pageIndex": 0,
+                # Hidden from job reads ("_" prefix); lets the batch stop a
+                # child that outlived its wait.
+                "_process": process,
             }
 
         def publish_worker_result(worker_result=None, fallback_message=""):
@@ -3105,14 +3118,19 @@ def remove_worker_output_if_requested(output_path, preserve_existing_output=Fals
 
 
 class RestockBatchPersister:
-    def __init__(self, directory):
+    def __init__(self, directory, cdp_available_fn=None):
         self.directory = Path(directory)
+        # The CDP restock flow passes an always-False probe so the terminal
+        # reverse-audit never runs the legacy 9223/9227 freezes (default
+        # connect_over_cdp would hijack Chrome downloads).
+        self.cdp_available_fn = cdp_available_fn
 
     def __call__(self, state):
         saved = attach_reverse_audit_if_terminal(
             state,
             self.directory,
             sources_only=bool(state.get("reverseAuditSourcesOnly")),
+            cdp_available_fn=self.cdp_available_fn,
         )
         saved = save_state(self.directory, saved)
         if saved.get("status") != STATUS_RUNNING:
@@ -3143,16 +3161,19 @@ def _restock_job_host():
     return CustomHandler.__new__(CustomHandler)
 
 
-def start_single_product_from_batch(product):
+def start_single_product_from_batch(product, cdp_endpoint=None):
     host = _restock_job_host()
     try:
-        return host.start_alibaba_restock({
+        request = {
             "productId": product.get("productId"),
             "productName": product.get("productName"),
             "addToCart": True,
             "pauseSeconds": 0,
             "items": product_items(product),
-        })
+        }
+        if cdp_endpoint:
+            request["cdpEndpoint"] = cdp_endpoint
+        return host.start_alibaba_restock(request)
     except Exception as error:
         return {"status": "error", "message": str(error)}
 
@@ -3161,17 +3182,75 @@ def read_single_restock_job(job_id):
     return CustomHandler._read_alibaba_restock_job(job_id)
 
 
+def terminate_single_restock_job(job_id, grace_seconds=10):
+    """Stop a timed-out restock child (its whole process group).
+
+    Returns True only when the child is confirmed to have exited.
+    """
+    with alibaba_restock_jobs_lock:
+        job = alibaba_restock_jobs.get(job_id) or {}
+        process = job.get("_process")
+    if process is None:
+        return False
+    if process.poll() is not None:
+        return True
+    if os.name == "nt":
+        steps = (process.terminate, process.kill)
+    else:
+        steps = (
+            lambda: os.killpg(os.getpgid(process.pid), signal.SIGTERM),
+            lambda: os.killpg(os.getpgid(process.pid), signal.SIGKILL),
+        )
+    for step in steps:
+        try:
+            step()
+        except ProcessLookupError:
+            return True
+        except Exception:
+            logger.exception("終止逾時的 1688 補貨子程序失敗")
+        try:
+            process.wait(timeout=grace_seconds)
+            return True
+        except subprocess.TimeoutExpired:
+            continue
+    return process.poll() is not None
+
+
+def _no_legacy_cdp_freeze(*_args, **_kwargs):
+    return False
+
+
 def run_restock_batch_thread(run_id):
     directory = _restock_batches_root() / run_id
-    persister = RestockBatchPersister(directory)
+    persister = RestockBatchPersister(directory, cdp_available_fn=_no_legacy_cdp_freeze)
     try:
         state = load_state(directory)
+        from restock_cdp import (
+            AddPacer,
+            read_full_cart_via_cdp,
+            resolve_restock_cdp_endpoint,
+        )
+
+        # Every product attaches to the same logged-in 1688 Chrome (default
+        # 9239). 9235 is refused; no fallback port or profile Chrome. The
+        # endpoint travels only in each child's request/--cdp argument; this
+        # process's os.environ is never touched, so legacy tools that read
+        # ALIBABA_RESTOCK_CDP with a default connect cannot pick up 9239.
+        cdp_endpoint = resolve_restock_cdp_endpoint(state.get("cdpEndpoint") or None)
+        pacer = AddPacer()
         run_batch_loop(
             state,
-            start_single_product_from_batch,
+            lambda product: start_single_product_from_batch(product, cdp_endpoint),
             read_single_restock_job,
             persister,
             should_stop=lambda: restock_batch_runtime.get("stop"),
+            cart_reader_fn=lambda: read_full_cart_via_cdp(cdp_endpoint),
+            pace_fn=pacer.wait_before_add,
+            terminate_fn=terminate_single_restock_job,
+            # The legacy reverse-audit freezes reuse the user's existing tab and
+            # try 9223/9227; the before/after full-cart read over our own tab
+            # replaces them in this flow.
+            cdp_available_fn=_no_legacy_cdp_freeze,
         )
     except Exception:
         logger.exception("批次補貨執行失敗")

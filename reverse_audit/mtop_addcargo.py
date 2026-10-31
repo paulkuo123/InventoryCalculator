@@ -31,7 +31,7 @@ from reverse_audit.mtop_session import MtopSession
 from reverse_audit.mtop_sign import H5_APP_KEY, canonical_data_json
 from reverse_audit.mtop_sku_map import (
     SkuMapError,
-    fetch_detail_html,
+    DIRECT_DETAIL_FETCH_DISABLED,
     load_detail_html,
     spec_id_for_sku,
 )
@@ -155,12 +155,15 @@ def _load_detail_html_for(
         text = load_detail_html(detail_html_path)
     if text is None and fetch_detail:
         oid = str(offer_id or "").strip()
-        getter = fetch_html or fetch_detail_html
-        text = getter(oid)
+        if fetch_html is None:
+            # Never GET 1688 from the box: no browser cookies -> x5sec slider.
+            # The product page is read inside the 9239 tab (mtop_in_tab).
+            raise SkuMapError(DIRECT_DETAIL_FETCH_DISABLED)
+        text = fetch_html(oid)
     if text is None:
         raise SkuMapError(
             f"{label} given but no detail HTML. Pass --detail-html PATH "
-            "(CI) or --fetch-detail (read-only GET of the offer page)."
+            "(CI) or --cdp --fetch-detail (product page read inside the 9239 tab)."
         )
     return text
 
