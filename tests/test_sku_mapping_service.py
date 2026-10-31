@@ -1,5 +1,6 @@
 import json
 import os
+import random
 import tempfile
 import time
 import unittest
@@ -13,7 +14,10 @@ from sku_mapping_service import (
     DEFERRED_REVIEW_REASON,
     DEFAULT_ANTHROPIC_MODEL,
     GEMINI_MAPPING_SCHEMA,
+    LOW_CONFIDENCE_REVIEW_TIER,
     MAPPING_SCHEMA,
+    SELLING_SAMPLE_PERCENT,
+    SELLING_SAMPLE_SEED,
     URL_HEALTH_TTL_SECONDS,
     MappingConflict,
     SkuMappingService,
@@ -247,6 +251,186 @@ class SkuMappingServiceTest(unittest.TestCase):
         self.assertEqual(service.queue(tier="red", url_presence="without")["total"], 0)
         with self.assertRaisesRegex(ValueError, "URL 篩選值不正確"):
             service.queue(url_presence="invalid")
+
+    def test_opt_in_filters_default_off_match_the_unfiltered_queue(self):
+        baseline = self.service.queue(status="review")
+        off = self.service.queue(status="review", low_confidence_only=False, selling_sample=False)
+        self.assertEqual(off, baseline)
+        self.assertNotIn("sellingSample", baseline)
+        self.assertGreater(baseline["total"], 0)
+
+    def test_low_confidence_filter_uses_existing_yellow_review_tier(self):
+        # classify_review_tier already keeps an AI match under the configured
+        # green threshold (0.95) on yellow.  The filter reads that tier.
+        tier, reason = SkuMappingService.classify_review_tier(
+            "pending",
+            [
+                {"candidate_key": "offer:black", "sku_id": "black", "sku_name": "黑色"},
+                {"candidate_key": "offer:white", "sku_id": "white", "sku_name": "白色"},
+            ],
+            "ok",
+            {
+                "source": "gemini",
+                "decision": "match",
+                "selected_candidate_key": "offer:black",
+                "selected_sku_id": "black",
+                "confidence": 0.949,
+            },
+        )
+        self.assertEqual(tier, LOW_CONFIDENCE_REVIEW_TIER)
+        self.assertIn("人工比較", reason)
+        with self.service.connect() as conn:
+            conn.execute(
+                "UPDATE sku_mapping_suggestions SET review_tier='yellow', confidence=0.99 WHERE product_id='p-socks'"
+            )
+            conn.execute(
+                "UPDATE sku_mapping_suggestions SET review_tier='green', confidence=0.1 WHERE product_id='p-case'"
+            )
+        queue = self.service.queue(status="review", low_confidence_only=True)
+        self.assertEqual([item["product_id"] for item in queue["items"]], ["p-socks"])
+        self.assertEqual(queue["items"][0]["review_tier"], "yellow")
+        self.assertNotIn("sellingSample", queue)
+        unchanged = self.service.queue(status="review", low_confidence_only=False)
+        self.assertEqual(unchanged["total"], 2)
+
+    def test_selling_sample_is_reproducible_ten_percent_of_last_30_day_product_sales(self):
+        with tempfile.TemporaryDirectory() as directory:
+            golden = {}
+            shopee = {}
+            for index in range(20):
+                product_id = f"sold-{index:02d}"
+                model_id = f"m-{index:02d}"
+                golden[product_id] = {
+                    "商品名稱": f"在賣{index}",
+                    "型號": [{
+                        "規格ID": model_id,
+                        "型號名稱": "A",
+                        "阿里巴巴商品URL": f"https://detail.1688.com/offer/{1000 + index}.html",
+                    }],
+                }
+                shopee[product_id] = {
+                    "商品名稱": f"在賣{index}",
+                    "總月銷量": str(index + 1),
+                    "型號": [{
+                        "規格ID": model_id,
+                        "型號名稱": "A",
+                        "月銷量": str(index + 1),
+                        "商品庫存": 1,
+                    }],
+                }
+            golden["model-only"] = {
+                "商品名稱": "只有型號月銷",
+                "型號": [{
+                    "規格ID": "model-only-a",
+                    "型號名稱": "A",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/9.html",
+                }],
+            }
+            shopee["model-only"] = {
+                "商品名稱": "只有型號月銷",
+                "型號": [{
+                    "規格ID": "model-only-a",
+                    "型號名稱": "A",
+                    "月銷量": "6",
+                    "商品庫存": 1,
+                }],
+            }
+            golden["quiet"] = {
+                "商品名稱": "沒賣",
+                "總月銷量": "0",
+                "型號": [{
+                    "規格ID": "quiet-a",
+                    "型號名稱": "A",
+                    "阿里巴巴商品URL": "https://detail.1688.com/offer/8.html",
+                }],
+            }
+            shopee["quiet"] = {
+                "商品名稱": "沒賣",
+                "總月銷量": "0",
+                "型號": [{
+                    "規格ID": "quiet-a",
+                    "型號名稱": "A",
+                    "月銷量": "0",
+                    "商品庫存": 3,
+                }],
+            }
+            with open(os.path.join(directory, "golden_table.json"), "w", encoding="utf-8") as handle:
+                json.dump(golden, handle, ensure_ascii=False)
+            with open(os.path.join(directory, "shopee_products.json"), "w", encoding="utf-8") as handle:
+                json.dump(shopee, handle, ensure_ascii=False)
+            service = SkuMappingService(directory)
+            baseline = service.queue(status="review", page_size=200)
+            self.assertEqual(baseline["total"], 22)
+            self.assertNotIn("sellingSample", baseline)
+            eligible = [row for row in baseline["items"] if float(row.get("productMonthlySales") or 0) > 0]
+            self.assertEqual(len(eligible), 21)
+            self.assertTrue(any(row["product_id"] == "model-only" for row in eligible))
+            self.assertFalse(any(row["product_id"] == "quiet" for row in eligible))
+            ordered = sorted(
+                eligible,
+                key=lambda row: (str(row["product_id"]), str(row["model_id"]), str(row["id"])),
+            )
+            rng = random.Random(SELLING_SAMPLE_SEED)
+            rng.shuffle(ordered)
+            keep = (len(ordered) * SELLING_SAMPLE_PERCENT) // 100
+            expected_ids = [row["id"] for row in ordered[:keep]]
+            self.assertEqual(keep, 2)
+            sampled = service.queue(status="review", page_size=50, selling_sample=True)
+            again = service.queue(status="review", page_size=50, selling_sample=True)
+            self.assertEqual(sampled["total"], keep)
+            self.assertEqual(sampled["sellingSample"], {
+                "seed": SELLING_SAMPLE_SEED,
+                "percent": SELLING_SAMPLE_PERCENT,
+                "eligible": 21,
+                "sampled": keep,
+            })
+            self.assertEqual(sorted(row["id"] for row in sampled["items"]), sorted(expected_ids))
+            self.assertEqual([row["id"] for row in again["items"]], [row["id"] for row in sampled["items"]])
+            self.assertTrue(all(float(row["productMonthlySales"] or 0) > 0 for row in sampled["items"]))
+            self.assertNotIn("quiet", {row["product_id"] for row in sampled["items"]})
+            with service.connect() as conn:
+                conn.execute("UPDATE sku_mapping_suggestions SET review_tier='yellow'")
+                conn.execute("UPDATE sku_mapping_suggestions SET review_tier='green' WHERE product_id='quiet'")
+            yellow_only = service.queue(status="review", page_size=200, low_confidence_only=True)
+            yellow_ids = {row["id"] for row in yellow_only["items"]}
+            self.assertNotIn(
+                next(row["id"] for row in baseline["items"] if row["product_id"] == "quiet"),
+                yellow_ids,
+            )
+            combined = service.queue(
+                status="review",
+                page_size=200,
+                low_confidence_only=True,
+                selling_sample=True,
+            )
+            yellow_eligible = [row for row in eligible if row["id"] in yellow_ids]
+            yellow_ordered = sorted(
+                yellow_eligible,
+                key=lambda row: (str(row["product_id"]), str(row["model_id"]), str(row["id"])),
+            )
+            yellow_rng = random.Random(SELLING_SAMPLE_SEED)
+            yellow_rng.shuffle(yellow_ordered)
+            yellow_keep = (len(yellow_ordered) * SELLING_SAMPLE_PERCENT) // 100
+            self.assertEqual(
+                sorted(row["id"] for row in combined["items"]),
+                sorted(row["id"] for row in yellow_ordered[:yellow_keep]),
+            )
+            self.assertEqual(combined["sellingSample"]["seed"], SELLING_SAMPLE_SEED)
+            self.assertTrue(all(row["review_tier"] == "yellow" for row in combined["items"]))
+
+    def test_workbench_filter_toggles_are_opt_in_and_labeled_new(self):
+        root = Path(__file__).resolve().parents[1]
+        html = (root / "sku-mapping.html").read_text(encoding="utf-8")
+        js = (root / "sku-mapping.js").read_text(encoding="utf-8")
+        self.assertIn('id="lowConfidenceOnly" type="checkbox"', html)
+        self.assertIn('> 只看沒把握 <span class="filter-new">NEW</span>', html)
+        self.assertIn('id="sellingSample" type="checkbox"', html)
+        self.assertIn('> 在賣商品抽一成 <span class="filter-new">NEW</span>', html)
+        self.assertNotRegex(html, r'id="lowConfidenceOnly"[^>]*\bchecked\b')
+        self.assertNotRegex(html, r'id="sellingSample"[^>]*\bchecked\b')
+        self.assertIn("lowConfidenceOnly: String($('lowConfidenceOnly').checked)", js)
+        self.assertIn("sellingSample: String($('sellingSample').checked)", js)
+        self.assertIn("種子 ${sample.seed}", js)
 
     def test_phone_pro_and_pro_max_are_not_interchangeable(self):
         model = {"product_name": "手機殼", "model_name": "iPhone 11 Pro,黑色"}

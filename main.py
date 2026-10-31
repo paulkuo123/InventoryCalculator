@@ -335,6 +335,8 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                     url_presence=params.get("urlPresence", ["with"])[0],
                     page=int(params.get("page", ["1"])[0]),
                     page_size=int(params.get("pageSize", ["50"])[0]),
+                    low_confidence_only=params.get("lowConfidenceOnly", ["false"])[0].lower() == "true",
+                    selling_sample=params.get("sellingSample", ["false"])[0].lower() == "true",
                 ))
             except ValueError as e:
                 self._send_json_response(400, {"status": "error", "message": str(e)})
