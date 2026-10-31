@@ -54,6 +54,9 @@ LogFn = Callable[[str, Dict[str, Any]], None]
 # restock_batch.RESTOCK_RISK_STOP_REASONS.
 MTOP_API_HOST_UNREACHABLE_STOP = "mtop_api_host_unreachable"
 MTOP_API_PREFLIGHT_FAILED_STOP = "mtop_api_preflight_failed"
+# Generic per-item add failure that stopped the rest of the batch (already a
+# registered stop reason in restock_cdp / restock_batch).
+MTOP_ADD_FAILED_STOP = "add_failed"
 
 # `posted` only means the code reached `plan.posted = True` after a response.
 POSTED_FALSE_NOTE = (
@@ -288,7 +291,14 @@ def add_one(
         return result
     except (MutateSafetyError, SkuMapError, MtopCallError, SessionError, NotLoggedInError) as exc:
         result.ok = False
-        kind = str(getattr(exc, "kind", "") or "") if isinstance(exc, MtopCallError) else ""
+        if isinstance(exc, MtopCallError):
+            kind = str(getattr(exc, "kind", "") or "")
+        elif isinstance(exc, NotLoggedInError):
+            kind = "not_logged_in"
+        elif isinstance(exc, SessionError):
+            kind = "session_error"
+        else:
+            kind = ""
         result.error_kind = kind
         if result.send_attempted and not result.posted and kind in (HOST_UNREACHABLE_KIND, "http_error"):
             result.request_outcome_unknown = True
@@ -328,6 +338,26 @@ def _preflight_stop_reason(exc: BaseException) -> str:
     return MTOP_API_PREFLIGHT_FAILED_STOP
 
 
+def item_stop_reason(one: "ItemMutateResult") -> Optional[str]:
+    """Stop reason for the whole batch after a failed *sent* item, else None.
+
+    Once a request was attempted and did not come back as a clean success,
+    later items are never sent blind (timeout / host down / login / risk /
+    signature / business error alike). Failures before any send (e.g. no
+    specId resolved) keep the old per-item behavior.
+    """
+    if one.ok or not one.send_attempted:
+        return None
+    kind = one.error_kind
+    if kind in (HOST_UNREACHABLE_KIND, "http_error"):
+        return MTOP_API_HOST_UNREACHABLE_STOP
+    if kind == "not_logged_in":
+        return "not_logged_in"
+    if kind == "risk_control":
+        return "risk_control"
+    return MTOP_ADD_FAILED_STOP
+
+
 def mtop_api_preflight(
     session: Optional[MtopSession],
     *,
@@ -342,7 +372,7 @@ def mtop_api_preflight(
     """
     try:
         return read_cart_lines(session, transport=transport, reader=reader), None  # type: ignore[arg-type]
-    except (MtopCallError, SessionError, NotLoggedInError) as exc:
+    except Exception as exc:  # noqa: BLE001 - any preflight failure must stop cleanly, never add
         reason = _preflight_stop_reason(exc)
         if reason == MTOP_API_HOST_UNREACHABLE_STOP:
             label = add_error_label(exc) if getattr(exc, "kind", "") == HOST_UNREACHABLE_KIND else (
@@ -500,7 +530,8 @@ def add_items(
                 "didNotFallbackToDom": True,
             }
 
-    host_down: Optional[ItemMutateResult] = None
+    stopped_by: Optional[ItemMutateResult] = None
+    stop_reason: Optional[str] = None
     for item in items:
         one = add_one(
             item,
@@ -514,10 +545,26 @@ def add_items(
         results.append(one)
         if log:
             log("mtop_addcargo", one.as_dict())
-        if one.error_kind == HOST_UNREACHABLE_KIND:
-            # Host went down mid-batch: stop; never send later items blind.
-            host_down = one
+        reason = item_stop_reason(one)
+        if reason is not None:
+            # A sent item failed (timeout / host down / login / risk /
+            # signature / business): stop; never send later items blind.
+            stopped_by = one
+            stop_reason = reason
             break
+    not_sent_items = [
+        {
+            "offerId": _offer_id_of(item),
+            "skuId": _sku_id_of(item),
+            "specId": _spec_id_of(item),
+            "quantity": _qty_of(item, "quantity", "restockQty", "expected_qty", "qty"),
+            "modelName": str(item.get("modelName") or item.get("sku_name") or ""),
+            "posted": False,
+            "sendAttempted": False,
+            "status": "not_sent",
+        }
+        for item in list(items)[len(results):]
+    ]
 
     after_lines: Optional[List[CartLine]] = None
     unverified = False
@@ -544,10 +591,14 @@ def add_items(
                 )
 
     failed = [r for r in results if not r.ok]
-    if host_down is not None:
-        status = MTOP_API_HOST_UNREACHABLE_STOP
+    if stopped_by is not None:
+        # Path A reads `status`; risk/login/host keep their stop statuses,
+        # other sent failures stay "failed" (stoppedReason add_failed).
+        status = stop_reason if stop_reason != MTOP_ADD_FAILED_STOP else "failed"
         ok = False
-        message = host_down.error
+        message = stopped_by.error or "mtop addcargo failed (fail-closed; not falling back to DOM)"
+        if not_sent_items:
+            message = f"{message}（已停止整批，後面 {len(not_sent_items)} 筆未送出）"
     elif failed:
         status = "failed"
         ok = False
@@ -571,7 +622,8 @@ def add_items(
         "postedNote": POSTED_FALSE_NOTE,
         "message": message,
         "itemCount": len(items),
-        "notSentCount": len(items) - len(results),
+        "notSentCount": len(not_sent_items),
+        "notSentItems": not_sent_items,
         "modelNames": [str(item.get("modelName") or item.get("sku_name") or "") for item in items],
         "quantityTotal": sum(int(r.quantity or 0) for r in results),
         "results": [r.as_dict() for r in results],
@@ -584,8 +636,8 @@ def add_items(
             }
         ],
     }
-    if host_down is not None:
-        summary["stoppedReason"] = MTOP_API_HOST_UNREACHABLE_STOP
+    if stop_reason is not None:
+        summary["stoppedReason"] = stop_reason
     return summary
 
 

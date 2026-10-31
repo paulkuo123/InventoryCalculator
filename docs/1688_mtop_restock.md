@@ -100,7 +100,13 @@ python -m reverse_audit.mtop_mutate add --offer-id ID --spec-id SPEC --qty 1 \
   - `mtop_api_preflight_failed`：主機有回應但讀車失敗（例如未知回包）。
   - 未登入／風控照舊回 `not_logged_in`／`risk_control`。
   - 這些都已登錄在 `restock_cdp.RESTOCK_STOP_REASONS`／`restock_batch.RESTOCK_RISK_STOP_REASONS`，`restock_batch` 會暫停整批。
-- 預檢過了、加車途中才主機不通 → 該筆標 `errorKind: host_unreachable`，後面的品項**不送**（`notSentCount`），整批同樣以 `mtop_api_host_unreachable` 停止。
+- 預檢過了、加車途中**任一筆已送出卻沒成功**（主機不通、逾時、未登入、風控、簽章、業務錯誤）→ 後面的品項**一律不送**（`notSentCount`／`notSentItems`，每筆 `sendAttempted: false`），整批停止：
+  - 主機不通／逾時 → `mtop_api_host_unreachable`（逾時另標 `requestOutcomeUnknown: true`）
+  - 未登入 → `not_logged_in`；風控 → `risk_control`
+  - 簽章／業務／其他 → `status: failed`、`stoppedReason: add_failed`
+  - 還沒送出就失敗（例如解析不到 specId）維持原本行為：該筆失敗，繼續下一筆。
+- 預檢遇到意料外的例外也乾淨停止（`mtop_api_preflight_failed`），不會拋出。
+- 阿里入口 404 也可能是 API 名稱或版本錯誤，訊息會一併提示。
 - 主機不通的錯誤**不再**標成「卡在業務參數／風控／Ultron 包」；那個標籤只留給 1688 有回應的業務錯誤。
 - **`posted:false` 只代表程式沒走到送出成功那一行，不能證明請求沒送到 1688。** 請看每筆的 `sendAttempted`（已進入送出步驟）與 `requestOutcomeUnknown`（已嘗試送出但沒拿到可用回應，例如 CORS／逾時：那一筆可能已進採購車，以採購車對帳為準）。
 

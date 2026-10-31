@@ -28,7 +28,7 @@ from reverse_audit.mtop_restock import (  # noqa: E402
     add_one,
     restock_add_via_mtop,
 )
-from reverse_audit.mtop_session import load_cookie_jar  # noqa: E402
+from reverse_audit.mtop_session import NotLoggedInError, load_cookie_jar  # noqa: E402
 
 FIX = ROOT / "tests" / "fixtures" / "1688_mtop_mutate"
 COOKIE_JAR = ROOT / "tests" / "fixtures" / "1688_mtop_read_cart" / "cookie_jar.netscape"
@@ -254,6 +254,118 @@ class PreflightTests(unittest.TestCase):
         self.assertEqual(len(page.evaluate_calls), 1)
         self.assertNotIn("addcargo", page.evaluate_calls[0]["url"])
         self.assertIn("render", page.evaluate_calls[0]["url"])
+
+
+def _sequence_transport(calls: List[Dict[str, Any]], outcomes: List[Any]):
+    """Each addcargo call pops one outcome: None = success, exception = raise."""
+
+    def transport(url, method, headers, body):
+        calls.append({"url": url, "method": method})
+        outcome = outcomes.pop(0) if outcomes else None
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return {"status": 200, "headers": {}, "text": ADDCARGO_OK.read_text(encoding="utf-8"), "url": url}
+
+    return transport
+
+
+def _three_items():
+    return [_item(modelName="A"), _item(spec_id="spec-bbb", modelName="B"), _item(spec_id="spec-ccc", modelName="C")]
+
+
+class MidBatchStopTests(unittest.TestCase):
+    def _run(self, outcomes):
+        calls: List[Dict[str, Any]] = []
+        summary = add_items(
+            _three_items(),
+            approve=True,
+            session=_session(),
+            transport=_sequence_transport(calls, list(outcomes)),
+            reader=FakeReader([]),
+            reconcile=False,
+        )
+        return calls, summary
+
+    def _assert_not_sent(self, summary, count):
+        self.assertEqual(summary["notSentCount"], count)
+        self.assertEqual(len(summary["notSentItems"]), count)
+        for entry in summary["notSentItems"]:
+            self.assertFalse(entry["sendAttempted"])
+            self.assertFalse(entry["posted"])
+            self.assertEqual(entry["status"], "not_sent")
+
+    def test_timeout_mid_batch_stops_later_items(self):
+        timeout = MtopCallError("in-tab fetch failed: signal is aborted without reason", kind="http_error")
+        calls, summary = self._run([timeout])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(summary["status"], MTOP_API_HOST_UNREACHABLE_STOP)
+        self.assertEqual(summary["stoppedReason"], MTOP_API_HOST_UNREACHABLE_STOP)
+        self.assertTrue(summary["requestOutcomeUnknown"])
+        self.assertTrue(summary["results"][0]["requestOutcomeUnknown"])
+        self._assert_not_sent(summary, 2)
+        self.assertEqual([e["modelName"] for e in summary["notSentItems"]], ["B", "C"])
+
+    def test_risk_control_mid_batch_stops_later_items(self):
+        calls, summary = self._run([None, MtopCallError("RGV587_ERROR", kind="risk_control")])
+        self.assertEqual(len(calls), 2, "first ok, second risk, third never sent")
+        self.assertEqual(summary["status"], "risk_control")
+        self.assertEqual(summary["stoppedReason"], "risk_control")
+        self.assertTrue(summary["posted"])
+        self._assert_not_sent(summary, 1)
+
+    def test_login_expired_mid_batch_stops_later_items(self):
+        calls, summary = self._run([NotLoggedInError("session expired")])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(summary["status"], "not_logged_in")
+        self.assertEqual(summary["stoppedReason"], "not_logged_in")
+        self.assertEqual(summary["results"][0]["errorKind"], "not_logged_in")
+        self._assert_not_sent(summary, 2)
+
+    def test_business_and_sign_errors_stop_later_items(self):
+        for kind in ("biz_param", "bad_sign", "mtop_error"):
+            with self.subTest(kind=kind):
+                calls, summary = self._run([MtopCallError("FAIL_BIZ", kind=kind)])
+                self.assertEqual(len(calls), 1)
+                self.assertEqual(summary["status"], "failed")
+                self.assertEqual(summary["stoppedReason"], "add_failed")
+                self.assertFalse(summary["requestOutcomeUnknown"])
+                self._assert_not_sent(summary, 2)
+
+    def test_all_success_sends_everything(self):
+        calls, summary = self._run([])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(summary["status"], "success")
+        self.assertNotIn("stoppedReason", summary)
+        self._assert_not_sent(summary, 0)
+
+    def test_stop_reasons_are_registered(self):
+        import restock_batch
+        import restock_cdp
+
+        for reason in ("add_failed", "risk_control", "not_logged_in", MTOP_API_HOST_UNREACHABLE_STOP):
+            self.assertIn(reason, restock_cdp.RESTOCK_STOP_REASONS)
+            self.assertIn(reason, restock_batch.RESTOCK_RISK_STOP_REASONS)
+
+
+class OptionalHardeningTests(unittest.TestCase):
+    def test_ingress_404_message_mentions_api_name_or_version(self):
+        page = FakePage(lambda arg: {"ok": True, "status": 404, "url": arg["url"], "text": "Tengine 404"})
+        with self.assertRaises(MtopHostUnreachableError) as ctx:
+            page_fetch_transport(page)(H5, "POST", {}, b"a=1")
+        self.assertIn("也可能是 API 名稱或版本錯誤", str(ctx.exception))
+
+    def test_preflight_unexpected_exception_is_clean_stop(self):
+        calls: List[Dict[str, Any]] = []
+        summary = add_items(
+            [_item()],
+            approve=True,
+            session=_session(),
+            transport=_recording_transport(calls),
+            reader=FakeReader(exc=ValueError("unexpected parser crash")),
+        )
+        self.assertEqual(calls, [])
+        self.assertEqual(summary["stoppedReason"], MTOP_API_PREFLIGHT_FAILED_STOP)
+        self.assertEqual(summary["notSentCount"], 1)
 
 
 class StopReasonRegistrationTests(unittest.TestCase):

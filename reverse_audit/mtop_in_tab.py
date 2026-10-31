@@ -313,7 +313,10 @@ def page_fetch_transport(
         status = int(raw.get("status") or 0)
         if status == 404 and any(m in text.lower() for m in _INGRESS_404_MARKERS):
             detail = f"HTTP 404 from Alibaba ingress ({redact_url_for_log(final_url)})"
-            raise MtopHostUnreachableError(host_unreachable_message(detail), detail=detail)
+            raise MtopHostUnreachableError(
+                f"{host_unreachable_message(detail)}；也可能是 API 名稱或版本錯誤",
+                detail=detail,
+            )
         return {
             "status": status,
             "headers": {},
