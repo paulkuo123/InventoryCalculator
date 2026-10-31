@@ -660,6 +660,19 @@ class ReconcileCategoryTests(unittest.TestCase):
         self.assertEqual(by_spec["short"]["delta"], 1)
         self.assertFalse(report["ok"])
 
+    def test_similar_but_different_spec_is_not_counted_as_added(self):
+        # 1688 ignored the requested "iPhone15" option and the cart only grew
+        # on the similar "iPhone15 Pro" row (same offer, no skuId on the line).
+        item = dict(_item("iPhone15", 1, "s15"), alibabaSkuId="", quantity=1)
+        pro_before = {"skuName": "iPhone15 Pro", "offerId": "1", "quantity": 2}
+        pro_after = {"skuName": "iPhone15 Pro", "offerId": "1", "quantity": 3}
+        report = reconcile_cart_delta([pro_before], [pro_after], [self._row([item])], [])
+        row = report["rows"][0]
+        self.assertEqual(row["delta"], 0)
+        self.assertEqual(row["category"], "unconfirmed")
+        self.assertEqual(report["counts"]["ok"], 0)
+        self.assertFalse(report["ok"])
+
 
 # --------------------------------------------------------------------------
 # Part A: restocker attach / risk stop, main + CLI wiring
