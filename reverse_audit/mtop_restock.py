@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from reverse_audit.mtop_addcargo import AddCargoClient, parse_offer_id
 from reverse_audit.mtop_http import (
@@ -27,6 +27,7 @@ from reverse_audit.mtop_http import (
     Transport,
     mask_for_log,
 )
+from reverse_audit.mtop_in_tab import HOST_UNREACHABLE_KIND, HOST_UNREACHABLE_LABEL
 from reverse_audit.mtop_read_cart import CartLine, MtopCallError, ReadCartClient
 from reverse_audit.mtop_session import (
     CdpUnavailableError,
@@ -47,6 +48,21 @@ from reverse_audit.mutate import (
 )
 
 LogFn = Callable[[str, Dict[str, Any]], None]
+
+# Batch stop reasons from the read-only API preflight / a host-level add
+# failure. Registered in restock_cdp.RESTOCK_STOP_REASONS and
+# restock_batch.RESTOCK_RISK_STOP_REASONS.
+MTOP_API_HOST_UNREACHABLE_STOP = "mtop_api_host_unreachable"
+MTOP_API_PREFLIGHT_FAILED_STOP = "mtop_api_preflight_failed"
+# Generic per-item add failure that stopped the rest of the batch (already a
+# registered stop reason in restock_cdp / restock_batch).
+MTOP_ADD_FAILED_STOP = "add_failed"
+
+# `posted` only means the code reached `plan.posted = True` after a response.
+POSTED_FALSE_NOTE = (
+    "posted:false 只代表程式沒走到送出成功那一行，不能證明請求沒送到 1688；"
+    "看 sendAttempted / requestOutcomeUnknown"
+)
 
 
 class MtopRestockError(RuntimeError):
@@ -203,6 +219,12 @@ class ItemMutateResult:
     ok: bool = False
     error: str = ""
     ret: List[str] = field(default_factory=list)
+    # True once execute() was entered with approve: a request may have left
+    # the browser even when ``posted`` stays False.
+    send_attempted: bool = False
+    # Send attempted but no usable response (Failed to fetch / CORS / timeout).
+    request_outcome_unknown: bool = False
+    error_kind: str = ""
 
     def as_dict(self) -> Dict[str, Any]:
         return mask_for_log(
@@ -217,6 +239,9 @@ class ItemMutateResult:
                 "ok": self.ok,
                 "error": self.error,
                 "ret": list(self.ret),
+                "sendAttempted": self.send_attempted,
+                "requestOutcomeUnknown": self.request_outcome_unknown,
+                "errorKind": self.error_kind,
             }
         )
 
@@ -255,6 +280,7 @@ def add_one(
             fetch_html=fetch_html,
         )
         result.spec_id = plan.spec_id
+        result.send_attempted = bool(approve)
         worker.execute(plan, approve=bool(approve))
         result.posted = bool(plan.posted)
         result.ret = list(plan.ret)
@@ -265,17 +291,104 @@ def add_one(
         return result
     except (MutateSafetyError, SkuMapError, MtopCallError, SessionError, NotLoggedInError) as exc:
         result.ok = False
-        if isinstance(exc, NotLoggedInError):
-            result.error = f"卡在登入／session：{exc}"
-        elif isinstance(exc, MtopCallError) and getattr(exc, "kind", "") == "bad_sign":
-            result.error = f"卡在簽章：{exc}"
-        elif isinstance(exc, MtopCallError) and getattr(exc, "kind", "") == "risk_control":
-            result.error = f"卡在風控：{exc}"
-        elif isinstance(exc, MtopCallError):
-            result.error = f"卡在業務參數／風控／Ultron 包：{exc}"
+        if isinstance(exc, MtopCallError):
+            kind = str(getattr(exc, "kind", "") or "")
+        elif isinstance(exc, NotLoggedInError):
+            kind = "not_logged_in"
+        elif isinstance(exc, SessionError):
+            kind = "session_error"
         else:
-            result.error = f"卡在業務參數：{exc}"
+            kind = ""
+        result.error_kind = kind
+        if result.send_attempted and not result.posted and kind in (HOST_UNREACHABLE_KIND, "http_error"):
+            result.request_outcome_unknown = True
+        result.error = add_error_label(exc)
         return result
+
+
+def add_error_label(exc: BaseException) -> str:
+    """User-facing label for an add failure (connection errors are not business params)."""
+    kind = str(getattr(exc, "kind", "") or "") if isinstance(exc, MtopCallError) else ""
+    if isinstance(exc, NotLoggedInError):
+        return f"卡在登入／session：{exc}"
+    if kind == HOST_UNREACHABLE_KIND:
+        text = str(exc)
+        return text if text.startswith(HOST_UNREACHABLE_LABEL) else f"{HOST_UNREACHABLE_LABEL}：{text}"
+    if kind == "http_error":
+        return f"卡在分頁內請求（連線／逾時，結果不明）：{exc}"
+    if kind == "bad_sign":
+        return f"卡在簽章：{exc}"
+    if kind == "risk_control":
+        return f"卡在風控：{exc}"
+    if isinstance(exc, MtopCallError):
+        return f"卡在業務參數／風控／Ultron 包：{exc}"
+    return f"卡在業務參數：{exc}"
+
+
+def _preflight_stop_reason(exc: BaseException) -> str:
+    if isinstance(exc, NotLoggedInError):
+        return "not_logged_in"
+    kind = str(getattr(exc, "kind", "") or "")
+    if kind == "not_logged_in":
+        return "not_logged_in"
+    if kind == "risk_control":
+        return "risk_control"
+    if kind in (HOST_UNREACHABLE_KIND, "http_error"):
+        return MTOP_API_HOST_UNREACHABLE_STOP
+    return MTOP_API_PREFLIGHT_FAILED_STOP
+
+
+def item_stop_reason(one: "ItemMutateResult") -> Optional[str]:
+    """Stop reason for the whole batch after a failed *sent* item, else None.
+
+    Once a request was attempted and did not come back as a clean success,
+    later items are never sent blind (timeout / host down / login / risk /
+    signature / business error alike). Failures before any send (e.g. no
+    specId resolved) keep the old per-item behavior.
+    """
+    if one.ok or not one.send_attempted:
+        return None
+    kind = one.error_kind
+    if kind in (HOST_UNREACHABLE_KIND, "http_error"):
+        return MTOP_API_HOST_UNREACHABLE_STOP
+    if kind == "not_logged_in":
+        return "not_logged_in"
+    if kind == "risk_control":
+        return "risk_control"
+    return MTOP_ADD_FAILED_STOP
+
+
+def mtop_api_preflight(
+    session: Optional[MtopSession],
+    *,
+    transport: Optional[Transport] = None,
+    reader: Optional[ReadCartClient] = None,
+) -> Tuple[List[CartLine], Optional[Dict[str, Any]]]:
+    """One read-only cart render before any addcargo in the batch.
+
+    Returns ``(lines, None)`` on success (lines double as the reconcile
+    baseline) or ``([], stop)`` where ``stop`` has ``stoppedReason`` and
+    ``message``. On a stop the caller must send no add request.
+    """
+    try:
+        return read_cart_lines(session, transport=transport, reader=reader), None  # type: ignore[arg-type]
+    except Exception as exc:  # noqa: BLE001 - any preflight failure must stop cleanly, never add
+        reason = _preflight_stop_reason(exc)
+        if reason == MTOP_API_HOST_UNREACHABLE_STOP:
+            label = add_error_label(exc) if getattr(exc, "kind", "") == HOST_UNREACHABLE_KIND else (
+                f"{HOST_UNREACHABLE_LABEL}：{exc}"
+            )
+        elif reason == "not_logged_in":
+            label = f"卡在登入／session：{exc}"
+        elif reason == "risk_control":
+            label = f"卡在風控：{exc}"
+        else:
+            label = f"唯讀 API 預檢（讀採購車）失敗：{exc}"
+        return [], {
+            "stoppedReason": reason,
+            "message": f"加車前 API 預檢失敗，整批停止、未送任何加車請求。{label}",
+            "errorKind": str(getattr(exc, "kind", "") or type(exc).__name__),
+        }
 
 
 def set_qty_one(
@@ -391,14 +504,34 @@ def add_items(
         }
 
     before_lines: List[CartLine] = []
-    if reconcile and session is not None:
-        try:
-            before_lines = read_cart_lines(session, transport=transport, reader=reader)
-        except (MtopCallError, SessionError) as exc:
+    if session is not None or reader is not None:
+        # Read-only API preflight before any add (also the reconcile
+        # baseline). Failure stops the whole batch with zero add requests.
+        before_lines, stop = mtop_api_preflight(session, transport=transport, reader=reader)
+        if stop is not None:
             if log:
-                log("mtop_read_cart_before_failed", {"message": str(exc)})
-            before_lines = []
+                log("mtop_api_preflight_failed", dict(stop))
+            reason = str(stop["stoppedReason"])
+            return {
+                "ok": False,
+                "status": reason,
+                "stoppedReason": reason,
+                "mode": "mtop_addcargo",
+                "posted": False,
+                "sendAttempted": False,
+                "postedNote": "預檢失敗，未送任何加車請求",
+                "message": str(stop["message"]),
+                "preflight": dict(stop),
+                "itemCount": len(items),
+                "notSentCount": len(items),
+                "modelNames": [str(item.get("modelName") or item.get("sku_name") or "") for item in items],
+                "quantityTotal": 0,
+                "results": [],
+                "didNotFallbackToDom": True,
+            }
 
+    stopped_by: Optional[ItemMutateResult] = None
+    stop_reason: Optional[str] = None
     for item in items:
         one = add_one(
             item,
@@ -412,6 +545,26 @@ def add_items(
         results.append(one)
         if log:
             log("mtop_addcargo", one.as_dict())
+        reason = item_stop_reason(one)
+        if reason is not None:
+            # A sent item failed (timeout / host down / login / risk /
+            # signature / business): stop; never send later items blind.
+            stopped_by = one
+            stop_reason = reason
+            break
+    not_sent_items = [
+        {
+            "offerId": _offer_id_of(item),
+            "skuId": _sku_id_of(item),
+            "specId": _spec_id_of(item),
+            "quantity": _qty_of(item, "quantity", "restockQty", "expected_qty", "qty"),
+            "modelName": str(item.get("modelName") or item.get("sku_name") or ""),
+            "posted": False,
+            "sendAttempted": False,
+            "status": "not_sent",
+        }
+        for item in list(items)[len(results):]
+    ]
 
     after_lines: Optional[List[CartLine]] = None
     unverified = False
@@ -438,7 +591,15 @@ def add_items(
                 )
 
     failed = [r for r in results if not r.ok]
-    if failed:
+    if stopped_by is not None:
+        # Path A reads `status`; risk/login/host keep their stop statuses,
+        # other sent failures stay "failed" (stoppedReason add_failed).
+        status = stop_reason if stop_reason != MTOP_ADD_FAILED_STOP else "failed"
+        ok = False
+        message = stopped_by.error or "mtop addcargo failed (fail-closed; not falling back to DOM)"
+        if not_sent_items:
+            message = f"{message}（已停止整批，後面 {len(not_sent_items)} 筆未送出）"
+    elif failed:
         status = "failed"
         ok = False
         message = failed[0].error or "mtop addcargo failed (fail-closed; not falling back to DOM)"
@@ -451,13 +612,18 @@ def add_items(
         ok = True
         message = "mtop addcargo ok"
 
-    return {
+    summary: Dict[str, Any] = {
         "ok": ok,
         "status": status,
         "mode": "mtop_addcargo",
         "posted": posted_any,
+        "sendAttempted": any(r.send_attempted for r in results),
+        "requestOutcomeUnknown": any(r.request_outcome_unknown for r in results),
+        "postedNote": POSTED_FALSE_NOTE,
         "message": message,
         "itemCount": len(items),
+        "notSentCount": len(not_sent_items),
+        "notSentItems": not_sent_items,
         "modelNames": [str(item.get("modelName") or item.get("sku_name") or "") for item in items],
         "quantityTotal": sum(int(r.quantity or 0) for r in results),
         "results": [r.as_dict() for r in results],
@@ -470,6 +636,9 @@ def add_items(
             }
         ],
     }
+    if stop_reason is not None:
+        summary["stoppedReason"] = stop_reason
+    return summary
 
 
 def restock_add_via_mtop(
@@ -574,7 +743,8 @@ def run_add_via_mtop(
     )
     _write_result(out_dir, "mutate_mtop_add_result.json", summary)
     print(
-        f"[mutate:add:mtop] posted={summary.get('posted')} status={summary.get('status')}",
+        f"[mutate:add:mtop] posted={summary.get('posted')} status={summary.get('status')} "
+        f"stoppedReason={summary.get('stoppedReason') or ''}",
         flush=True,
     )
     return 0 if summary.get("ok") else 1
