@@ -66,6 +66,7 @@ RESTOCK_RISK_STOP_REASONS = {
     "cdp_forbidden_port",
     "cdp_no_context",
     "add_failed",
+    "per_sku_cart_unreadable",
 }
 PAUSE_CLASSIFICATIONS = {"mismatch", "uncertain", "unavailable", "failed"} | RESTOCK_RISK_STOP_REASONS
 CART_RECONCILE_FILENAME = "cart_reconcile.json"
@@ -1472,7 +1473,7 @@ def reconcile_cart_delta(
     to add (``intendedSpecs``) that landed in no bucket at all (subprocess
     crash, job timeout) are ``uncertain``, or ``anomaly`` if the cart moved.
     """
-    from alibaba_restocker import cart_quantity_for_item
+    from alibaba_restocker import cart_quantity_for_item_exact
 
     entries: Dict[tuple, Dict[str, Any]] = {}
 
@@ -1538,13 +1539,13 @@ def reconcile_cart_delta(
         "unknown": 0,
     }
     for entry in entries.values():
-        before_qty = cart_quantity_for_item(before_lines, entry)
+        before_qty = cart_quantity_for_item_exact(before_lines, entry)
         if after_lines is None:
             after_qty = None
             delta = None
             category = "not_sent" if entry["send"] == "not_sent" else "unknown"
         else:
-            after_qty = cart_quantity_for_item(after_lines, entry)
+            after_qty = cart_quantity_for_item_exact(after_lines, entry)
             delta = after_qty - before_qty
             if entry["send"] == "not_sent":
                 category = "anomaly" if delta != 0 else "not_sent"

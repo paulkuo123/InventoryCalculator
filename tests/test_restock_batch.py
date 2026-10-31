@@ -88,6 +88,20 @@ class RestockBatchTests(unittest.TestCase):
         self.assertEqual(state["status"], STATUS_COMPLETED_GAPS)
         self.assertEqual(len(state["gaps"]), 1)
 
+    def test_classify_per_sku_cart_unreadable_pauses_batch(self):
+        import restock_batch
+        import restock_cdp
+
+        classification = classify_job_result({
+            "status": "error",
+            "stoppedReason": "per_sku_cart_unreadable",
+            "countCheck": {"expected": 4, "confirmed": 0, "mismatch": True},
+        }, 4)
+        self.assertEqual(classification, "per_sku_cart_unreadable")
+        self.assertIn(classification, restock_batch.PAUSE_CLASSIFICATIONS)
+        self.assertIn("per_sku_cart_unreadable", restock_cdp.RESTOCK_STOP_REASONS)
+        self.assertNotIn("cart_unreadable", restock_batch.RESTOCK_RISK_STOP_REASONS)
+
     def test_classify_cart_full_is_not_mismatch(self):
         self.assertEqual(classify_job_result({
             "status": "cart_limit_reached",

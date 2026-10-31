@@ -166,14 +166,22 @@ RESTOCK_RISK_STOP_MESSAGES = {
     "cdp_forbidden_port": "CDP 9235 保留給 Shopee 月報 Chrome，1688 補貨拒絕使用，未加車。",
     "cdp_no_context": "已登入的 1688 Chrome 沒有可用的 browser context，未加車。",
     "add_failed": (
-        "加采购车失敗（例如簽章錯誤、業務參數錯誤或分頁內請求逾時），已停止整批補貨，不自動重試；"
-        "逾時的那一筆可能已進採購車，請以前後對帳為準。"
+        "加采购车失敗（例如簽章錯誤、業務參數錯誤、分頁內請求逾時，或逐筆核對採購車數量沒有增加），"
+        "已停止整批補貨，不自動重試；逾時的那一筆可能已進採購車，請以前後對帳為準。"
+    ),
+    "per_sku_cart_unreadable": (
+        "同一商品連續兩次逐筆核對都讀不到採購車，無法確認加車結果，已停止整批補貨，"
+        "不自動重試；請先人工核對 1688 採購車。"
     ),
 }
 # Any add outcome that is not ok/unverified/mismatch/cart_full/risk (bad_sign,
 # biz_param, in-tab http_error/timeout, ...) stops the whole batch: a timed-out
 # add may already be in the cart, so later specs must not be sent blind.
 RESTOCK_ADD_FAILED_STOP = "add_failed"
+# Per-SKU cart verify could not read the cart this many times in a row within
+# one product: later specs would be sent without any confirmation, so stop.
+RESTOCK_CART_UNREADABLE_STOP = "per_sku_cart_unreadable"
+PER_SKU_UNREADABLE_STOP_AFTER = 2
 
 
 def classify_group_submit(
@@ -236,8 +244,8 @@ def apply_cart_verification_to_buckets(
     found: List[Dict[str, Any]] = []
     missing: List[Dict[str, Any]] = []
     for item in submitted:
-        before_qty = cart_quantity_for_item(baseline_cart_lines, item)
-        after_qty = cart_quantity_for_item(cart_lines, item)
+        before_qty = cart_quantity_for_item_exact(baseline_cart_lines, item)
+        after_qty = cart_quantity_for_item_exact(cart_lines, item)
         expected_qty = int(item.get("quantity") or item.get("restockQty") or 0)
         delta = after_qty - before_qty
         updated = dict(item)
@@ -409,6 +417,60 @@ def cart_quantity_for_item(cart_lines: List[Dict[str, Any]], item: Dict[str, Any
         if isinstance(line, dict) and cart_line_matches_item(line, item)
     ]
     return max(quantities, default=0)
+
+
+# Trailing cart spec segments that 1688 appends to a SKU row and that are not
+# part of the SKU name itself.
+CART_SPEC_TRAILING_MARKERS = frozenset({"已选定制服务", "已選定制服務"})
+
+
+def _cart_line_spec_segments(line: Dict[str, Any]) -> List[str]:
+    """Split one cart row into its normalized SKU name segments."""
+    first = str(line.get("skuName") or "").strip()
+    second = str(line.get("skuSecondName") or "").strip()
+    if second:
+        raw = [first, second]
+    else:
+        raw = re.split(r"[;；]", str(line.get("specText") or first))
+    segments = [normalize_text(part) for part in raw]
+    segments = [part for part in segments if part]
+    markers = {normalize_text(marker) for marker in CART_SPEC_TRAILING_MARKERS}
+    while segments and segments[-1] in markers:
+        segments.pop()
+    return segments
+
+
+def cart_line_matches_item_exact(line: Dict[str, Any], item: Dict[str, Any]) -> bool:
+    """Exact cart-row match for quantity deltas: same offer, then skuId or every name segment.
+
+    Unlike cart_line_matches_item there is no substring match, so
+    "抹茶绿; iPhone15Pro" never counts toward "抹茶绿 / iPhone15".
+    """
+    offer = extract_offer_id(item.get("alibabaUrl") or "")
+    line_offer = str(line.get("offerId") or "").strip()
+    if not offer or offer != line_offer:
+        return False
+    sku_id = str(item.get("alibabaSkuId") or "").strip()
+    line_sku = str(line.get("skuId") or "").strip()
+    if sku_id and line_sku:
+        return sku_id == line_sku
+    expected = [
+        normalize_text(item.get("alibabaSkuName")),
+        normalize_text(item.get("alibabaSkuSecondName")),
+    ]
+    expected = [part for part in expected if part]
+    if not expected:
+        return False
+    return _cart_line_spec_segments(line) == expected
+
+
+def cart_quantity_for_item_exact(cart_lines: List[Dict[str, Any]], item: Dict[str, Any]) -> int:
+    """Sum the quantity of every cart row that exactly matches one SKU."""
+    return sum(
+        int(line.get("quantity") or 0)
+        for line in cart_lines or []
+        if isinstance(line, dict) and cart_line_matches_item_exact(line, item)
+    )
 
 
 def reconcile_restock_with_cart(
@@ -933,6 +995,7 @@ class DebugLogger:
         with open(self.path, "a", encoding="utf-8"):
             pass
         prune_generated_files(debug_dir, ("alibaba_restock_*.jsonl",), keep=20)
+        prune_generated_files(debug_dir, ("alibaba_restock_*_add_timeout_*.png",), keep=20)
 
     def log(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
         record = {
@@ -2548,6 +2611,8 @@ def fill_and_submit_offer_items_individually(
     processed_pending_count = 0
     offer_id = extract_offer_id(url)
     required_offer_ids = {offer_id} if offer_id else None
+    spec_baseline_lines = baseline_cart_lines
+    consecutive_unreadable = 0
 
     for index, pending in enumerate(pending_fills):
         if index > 0:
@@ -2678,25 +2743,58 @@ def fill_and_submit_offer_items_individually(
             print(f"{mismatch_message}，該規格不列為確認", flush=True)
         elif bucket == "unverified":
             # 先 dismiss offer 頁提示，再進採購車核對增量，避免後續 SKU 白燒額度。
+            cart_lines_read: List[Dict[str, Any]] = []
             verified_item = verify_single_sku_in_cart_after_submit(
                 page,
                 cart_item,
                 debug,
-                baseline_cart_lines=baseline_cart_lines,
+                baseline_cart_lines=spec_baseline_lines,
                 required_offer_ids=required_offer_ids,
+                cart_lines_sink=cart_lines_read,
             )
             if verified_item is not None:
+                consecutive_unreadable = 0
+                # This read is the newest known cart state: the next spec of
+                # the same product measures its delta from here.
+                spec_baseline_lines = list(cart_lines_read)
+            else:
+                consecutive_unreadable += 1
+            if verified_item is not None and verified_item.get("confirmedAddedQty"):
                 confirmed.append(verified_item)
                 print(
                     f"採購車已確認：1 個規格（{verified_item.get('modelName')}）",
                     flush=True,
                 )
+            elif verified_item is not None and int(verified_item.get("quantity") or 0) > 0:
+                # The cart was fully read and this SKU did not grow by the
+                # expected amount: the add is a definite failure (e.g. 1688
+                # silently ignored the click). Stop instead of sending the
+                # remaining specs blind.
+                stopped_reason = RESTOCK_ADD_FAILED_STOP
+                shortfall_item = dict(verified_item)
+                shortfall_item["itemResult"] = cart_item.get("itemResult")
+                shortfall_item["message"] = (
+                    f"已按加采购车，但採購車核對該規格只增加 "
+                    f"{verified_item.get('cartQuantityDelta')} 個（預期 {verified_item.get('quantity')} 個），"
+                    "視為加車失敗並停止後續規格"
+                )
+                failed.append(shortfall_item)
+                print(shortfall_item["message"], flush=True)
+                print(RESTOCK_RISK_STOP_MESSAGES[RESTOCK_ADD_FAILED_STOP], flush=True)
             else:
                 unverified.append(cart_item)
                 print(
                     f"已按一次加采购车，待採購車核對：1 個規格（{cart_item.get('modelName')}）",
                     flush=True,
                 )
+                if consecutive_unreadable >= PER_SKU_UNREADABLE_STOP_AFTER:
+                    stopped_reason = RESTOCK_CART_UNREADABLE_STOP
+                    debug.log("per_sku_cart_unreadable_stop", {
+                        "url": url,
+                        "modelName": cart_item.get("modelName"),
+                        "consecutiveUnreadable": consecutive_unreadable,
+                    })
+                    print(RESTOCK_RISK_STOP_MESSAGES[RESTOCK_CART_UNREADABLE_STOP], flush=True)
         elif bucket == "cart_full":
             stopped_reason = "cart_limit_reached"
             cart_full.append(cart_item)
@@ -2737,10 +2835,15 @@ def verify_single_sku_in_cart_after_submit(
     debug: "DebugLogger",
     baseline_cart_lines: Optional[List[Dict[str, Any]]] = None,
     required_offer_ids: Optional[set] = None,
+    cart_lines_sink: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[Dict[str, Any]]:
     """成功送出後立刻核對該 SKU 是否已出現在採購車增量中。
 
-    讀不到車或增量不足時回傳 None，留給整批結尾再核對；不另建框架。
+    讀不到車時回傳 None，留給整批結尾再核對。讀得到車時一律回傳帶
+    cartQuantityDelta 的 dict；只有增量足夠才帶 confirmedAddedQty，
+    增量不足代表這次加車確定沒有生效，由呼叫端停止後續規格。
+    讀得到車時會把這次讀到的列放進 cart_lines_sink，供下一個規格當基線。
+    數量只算同 offer、skuId 或規格名稱逐段完全相同的列（加總，不取最大）。
     """
     if baseline_cart_lines is None:
         return None
@@ -2761,8 +2864,10 @@ def verify_single_sku_in_cart_after_submit(
             "modelName": cart_item.get("modelName"),
         })
         return None
-    before_qty = cart_quantity_for_item(baseline_cart_lines, cart_item)
-    after_qty = cart_quantity_for_item(cart_lines, cart_item)
+    if cart_lines_sink is not None:
+        cart_lines_sink[:] = list(cart_lines)
+    before_qty = cart_quantity_for_item_exact(baseline_cart_lines, cart_item)
+    after_qty = cart_quantity_for_item_exact(cart_lines, cart_item)
     expected_qty = int(cart_item.get("quantity") or 0)
     delta = after_qty - before_qty
     updated = dict(cart_item)
@@ -2778,8 +2883,54 @@ def verify_single_sku_in_cart_after_submit(
     })
     if expected_qty > 0 and delta >= expected_qty:
         updated["confirmedAddedQty"] = expected_qty
-        return updated
-    return None
+    return updated
+
+
+ADD_TIMEOUT_OVERLAY_JS = r"""
+() => {
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    const st = window.getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
+  };
+  const sel = [
+    '[role="dialog"]', '[role="alert"]', '.next-dialog', '.next-overlay-inner',
+    '.next-message', '.ant-modal', '.ant-message', '[class*="dialog"]',
+    '[class*="Dialog"]', '[class*="modal"]', '[class*="toast"]', '[class*="Toast"]',
+  ].join(',');
+  const out = [];
+  for (const el of document.querySelectorAll(sel)) {
+    if (!visible(el)) continue;
+    const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    out.push({cls: String(el.className || '').slice(0, 120), text: text.slice(0, 300)});
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+"""
+
+
+def capture_add_feedback_timeout_diagnostics(page, debug: "DebugLogger", model_names: List[str]) -> None:
+    """Read-only evidence for a 加采购车 click that produced no toast.
+
+    Logs visible overlay/dialog texts and saves a screenshot next to the debug
+    log so the next silent no-op can be diagnosed offline. Never clicks.
+    """
+    payload: Dict[str, Any] = {"modelNames": model_names, "url": getattr(page, "url", "")}
+    try:
+        payload["overlays"] = page.evaluate(ADD_TIMEOUT_OVERLAY_JS) or []
+    except Exception as exc:
+        payload["overlaysError"] = str(exc)
+    debug_path = str(getattr(debug, "path", "") or "")
+    if debug_path:
+        shot_path = f"{os.path.splitext(debug_path)[0]}_add_timeout_{int(time.time() * 1000)}.png"
+        try:
+            page.screenshot(path=shot_path, full_page=False)
+            payload["screenshot"] = shot_path
+        except Exception as exc:
+            payload["screenshotError"] = str(exc)
+    debug.log("add_to_cart_feedback_timeout_diagnostics", payload)
 
 
 _ADD_PACER = None
@@ -3008,6 +3159,7 @@ def add_to_cart_with_retry(
         if not retry_allowed:
             if click_result.get("ok") and feedback.get("status") in ("pending", "unknown"):
                 final_status = "clicked_unverified"
+                capture_add_feedback_timeout_diagnostics(page, debug, model_names)
             debug.log("skip_add_to_cart_retry", {
                 "modelNames": model_names,
                 "itemCount": len(cart_items),

@@ -62,6 +62,7 @@ RESTOCK_STOP_REASONS = frozenset(
         "cdp_forbidden_port",
         "cdp_no_context",
         "add_failed",
+        "per_sku_cart_unreadable",
     }
 )
 
