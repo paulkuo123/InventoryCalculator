@@ -865,6 +865,7 @@ RECONCILE_LABELS = {
     "failed": "送出失敗（採購車未變動）",
     "selection_mismatch": "頁面選取不符（採購車未變動）",
     "not_sent": "未送出",
+    "uncertain": "已嘗試、結果不確定（子程序異常結束或逾時，採購車未變動）",
     "unknown": "無法判斷（加車後讀車失敗）",
 }
 
@@ -884,7 +885,14 @@ def print_cart_reconcile(report: Dict[str, Any]) -> None:
     )
     if report.get("afterError"):
         print(f"  加車後讀車失敗：{report.get('afterError')}", flush=True)
-    for title, key in (("已送出", "sent"), ("送出失敗／選取不符", "attempted"), ("未送出", "notSent")):
+    for warning in report.get("warnings") or []:
+        print(f"  注意：{warning}", flush=True)
+    for title, key in (
+        ("已送出", "sent"),
+        ("送出失敗／選取不符", "attempted"),
+        ("已嘗試、結果不確定", "uncertain"),
+        ("未送出", "notSent"),
+    ):
         rows = report.get(key) or []
         print(f"=== {title}（{len(rows)}）===", flush=True)
         for row in rows:

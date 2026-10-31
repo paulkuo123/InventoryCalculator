@@ -2095,6 +2095,9 @@ class CustomHandler(http.server.SimpleHTTPRequestHandler):
                 "completed": 0,
                 "total": len(items),
                 "pageIndex": 0,
+                # Hidden from job reads ("_" prefix); lets the batch stop a
+                # child that outlived its wait.
+                "_process": process,
             }
 
         def publish_worker_result(worker_result=None, fallback_message=""):
@@ -3179,6 +3182,40 @@ def read_single_restock_job(job_id):
     return CustomHandler._read_alibaba_restock_job(job_id)
 
 
+def terminate_single_restock_job(job_id, grace_seconds=10):
+    """Stop a timed-out restock child (its whole process group).
+
+    Returns True only when the child is confirmed to have exited.
+    """
+    with alibaba_restock_jobs_lock:
+        job = alibaba_restock_jobs.get(job_id) or {}
+        process = job.get("_process")
+    if process is None:
+        return False
+    if process.poll() is not None:
+        return True
+    if os.name == "nt":
+        steps = (process.terminate, process.kill)
+    else:
+        steps = (
+            lambda: os.killpg(os.getpgid(process.pid), signal.SIGTERM),
+            lambda: os.killpg(os.getpgid(process.pid), signal.SIGKILL),
+        )
+    for step in steps:
+        try:
+            step()
+        except ProcessLookupError:
+            return True
+        except Exception:
+            logger.exception("終止逾時的 1688 補貨子程序失敗")
+        try:
+            process.wait(timeout=grace_seconds)
+            return True
+        except subprocess.TimeoutExpired:
+            continue
+    return process.poll() is not None
+
+
 def _no_legacy_cdp_freeze(*_args, **_kwargs):
     return False
 
@@ -3209,6 +3246,7 @@ def run_restock_batch_thread(run_id):
             should_stop=lambda: restock_batch_runtime.get("stop"),
             cart_reader_fn=lambda: read_full_cart_via_cdp(cdp_endpoint),
             pace_fn=pacer.wait_before_add,
+            terminate_fn=terminate_single_restock_job,
             # The legacy reverse-audit freezes reuse the user's existing tab and
             # try 9223/9227; the before/after full-cart read over our own tab
             # replaces them in this flow.

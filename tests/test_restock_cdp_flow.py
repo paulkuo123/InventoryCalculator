@@ -964,6 +964,134 @@ class ReconcileAttemptedTests(unittest.TestCase):
         self.assertEqual(report["rows"][0]["category"], "unknown")
 
 
+class UncertainOutcomeTests(unittest.TestCase):
+    """Crashed / timed-out add jobs never let their specs vanish from reconcile."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+        self.events: List[str] = []
+
+    def _start(self, product_row):
+        self.events.append("start:" + product_row["productId"])
+        return {"status": "success", "jobId": product_row["productId"]}
+
+    def _state(self, products):
+        return create_state(build_preview(products), run_id="run-uncertain")
+
+    def test_subprocess_crash_reports_specs_uncertain_and_not_ok(self):
+        products = [
+            _product("1", "A", [_item("a1", 2, "a1")]),
+            _product("2", "B", [_item("b1", 1, "b1"), _item("b2", 3, "b2")]),
+            _product("3", "C", [_item("c1", 1, "c1")]),
+        ]
+        jobs = {
+            "1": _success_job(products[0]),
+            # What main.py publishes when the child dies without a result file.
+            "2": {"status": "failed", "message": "1688 補貨流程異常結束（返回碼 -9）"},
+        }
+        reads = [[], [_cart_line("a1", 2)]]
+        result = run_batch_loop(
+            self._state(products), self._start, lambda job_id: jobs[job_id], _Persist(self.dir),
+            cart_reader_fn=lambda: reads.pop(0), sleep_fn=lambda _: None,
+            cdp_available_fn=lambda *a, **k: False,
+        )
+        self.assertEqual(result["status"], STATUS_PAUSED_ATTENTION)
+        self.assertNotIn("start:3", self.events)
+        report = result["cartReconcile"]
+        self.assertEqual(sorted(r["specId"] for r in report["uncertain"]), ["b1", "b2"])
+        self.assertTrue(all(r["category"] == "uncertain" for r in report["uncertain"]))
+        self.assertEqual(report["counts"]["uncertain"], 2)
+        self.assertEqual(report["counts"]["ok"], 1)
+        self.assertEqual([r["specId"] for r in report["notSent"]], ["c1"])
+        self.assertFalse(report["ok"])
+
+    def _run_timeout(self, terminate_fn):
+        products = [
+            _product("1", "A", [_item("a1", 1, "a1"), _item("a2", 2, "a2")]),
+            _product("2", "B", [_item("b1", 1, "b1")]),
+        ]
+        reads = [[], []]
+        return run_batch_loop(
+            self._state(products), self._start, lambda _id: {"status": "running"}, _Persist(self.dir),
+            cart_reader_fn=lambda: reads.pop(0), sleep_fn=lambda _: None,
+            cdp_available_fn=lambda *a, **k: False,
+            timeout_seconds=0, terminate_fn=terminate_fn,
+        )
+
+    def test_job_timeout_terminates_child_and_reports_specs_uncertain(self):
+        killed: List[str] = []
+        result = self._run_timeout(lambda job_id: killed.append(job_id) or True)
+        self.assertEqual(killed, ["1"])
+        self.assertEqual(result["status"], STATUS_PAUSED_ATTENTION)
+        self.assertEqual(result["stoppedReason"], "job_timeout")
+        self.assertNotIn("start:2", self.events)
+        row = result["done"][0]
+        self.assertTrue(row["jobTimeout"])
+        self.assertTrue(row["processTerminated"])
+        self.assertEqual(row["stoppedReason"], "job_timeout")
+        report = result["cartReconcile"]
+        self.assertEqual(report["stoppedReason"], "job_timeout")
+        self.assertEqual(sorted(r["specId"] for r in report["uncertain"]), ["a1", "a2"])
+        self.assertEqual(report["counts"]["uncertain"], 2)
+        self.assertEqual(report["warnings"], [])
+        self.assertFalse(report["ok"])
+
+    def test_job_timeout_unconfirmed_termination_warns_child_may_still_run(self):
+        for terminate_fn in (None, lambda _id: False, mock.Mock(side_effect=OSError("no such job"))):
+            self.events.clear()
+            result = self._run_timeout(terminate_fn)
+            self.assertEqual(result["stoppedReason"], "job_timeout")
+            self.assertFalse(result["done"][0]["processTerminated"])
+            self.assertIn("可能仍在背景執行", result["message"])
+            report = result["cartReconcile"]
+            self.assertEqual(report["counts"]["uncertain"], 2)
+            self.assertEqual(len(report["warnings"]), 1)
+            self.assertIn("可能仍在背景執行", report["warnings"][0])
+            self.assertFalse(report["ok"])
+
+    def test_missing_spec_whose_cart_qty_changed_is_anomaly(self):
+        row = {
+            "productId": "1",
+            "productName": "A",
+            "intendedSpecs": [_item("moved", 2, "moved"), _item("still", 1, "still"), _item("done", 1, "done")],
+            "summary": {"succeeded": [dict(_item("done", 1, "done"), quantity=1)]},
+        }
+        before = [_cart_line("moved", 1), _cart_line("done", 0)]
+        after = [_cart_line("moved", 3), _cart_line("done", 1)]
+        report = reconcile_cart_delta(before, after, [row], [])
+        by_spec = {r["specId"]: r for r in report["rows"]}
+        self.assertEqual(by_spec["moved"]["category"], "anomaly")
+        self.assertEqual(by_spec["moved"]["delta"], 2)
+        self.assertEqual(by_spec["still"]["category"], "uncertain")
+        self.assertEqual(by_spec["done"]["category"], "ok")
+        self.assertEqual(report["counts"]["anomaly"], 1)
+        self.assertEqual(report["counts"]["uncertain"], 1)
+        self.assertFalse(report["ok"])
+
+    def test_after_read_failure_makes_missing_spec_unknown(self):
+        row = {"productId": "1", "intendedSpecs": [_item("x", 1, "x")], "summary": {}}
+        report = reconcile_cart_delta([], None, [row], [])
+        self.assertEqual(report["rows"][0]["category"], "unknown")
+        self.assertFalse(report["ok"])
+
+    def test_terminate_single_restock_job_kills_process_group(self):
+        import subprocess
+        import main
+
+        process = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(60)"],
+            preexec_fn=None if os.name == "nt" else os.setsid,
+        )
+        self.addCleanup(lambda: process.poll() is None and process.kill())
+        with mock.patch.dict(main.alibaba_restock_jobs, {"job-x": {"status": "running", "_process": process}}):
+            self.assertNotIn("_process", main.CustomHandler._read_alibaba_restock_job("job-x"))
+            self.assertTrue(main.terminate_single_restock_job("job-x", grace_seconds=5))
+        self.assertIsNotNone(process.poll())
+        self.assertFalse(main.terminate_single_restock_job("missing-job"))
+
+
 class MainWiringTests(unittest.TestCase):
     def test_batch_thread_uses_9239_cart_reader_pacer_and_disables_freezes(self):
         import main
@@ -1000,6 +1128,7 @@ class MainWiringTests(unittest.TestCase):
         self.assertFalse(captured["cdp_available_fn"]())
         self.assertFalse(captured["persister_cdp_available_fn"]())
         self.assertTrue(callable(captured["cart_reader_fn"]))
+        self.assertIs(captured["terminate_fn"], main.terminate_single_restock_job)
         self.assertEqual(captured["pace_fn"].__func__, restock_cdp.AddPacer.wait_before_add)
 
     def test_single_product_request_carries_cdp_endpoint(self):

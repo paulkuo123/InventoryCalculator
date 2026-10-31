@@ -543,6 +543,7 @@ def summarize_product_row(product: Dict[str, Any], started: Dict[str, Any], job:
         if isinstance(item, dict)
     )
     classification = classify_job_result(payload, expected)
+    timed_out = bool(job.get("timedOut"))
     return {
         "productId": str(product.get("productId") or ""),
         "productName": str(product.get("productName") or ""),
@@ -554,7 +555,9 @@ def summarize_product_row(product: Dict[str, Any], started: Dict[str, Any], job:
         "classification": classification,
         "status": payload.get("status") or job.get("status") or "",
         "message": payload.get("message") or job.get("message") or started.get("message") or "",
-        "stoppedReason": payload.get("stoppedReason") or "",
+        "stoppedReason": "job_timeout" if timed_out else payload.get("stoppedReason") or "",
+        "jobTimeout": timed_out,
+        "processTerminated": job.get("processTerminated") if timed_out else None,
         "confirmed": count.get("confirmed"),
         "countMismatch": bool(count.get("mismatch")),
         "cartFound": verify.get("foundCount"),
@@ -565,6 +568,9 @@ def summarize_product_row(product: Dict[str, Any], started: Dict[str, Any], job:
         "blockedCount": len(summary.get("blocked") or []),
         "debugLogPath": payload.get("debugLogPath") or "",
         "items": items,
+        # Every spec this product meant to add; reconcile marks any spec that
+        # is in no outcome bucket (crash / timeout) as ``uncertain``.
+        "intendedSpecs": [dict(item) for item in items],
         "summary": summary,
         "liveLabels": _live_labels_from_result(payload),
     }
@@ -1420,7 +1426,8 @@ def wait_for_job(
         sleep_fn(2)
     last = dict(last or {})
     last["status"] = "failed"
-    last["message"] = last.get("message") or f"等待 job {job_id} 逾時"
+    last["timedOut"] = True
+    last["message"] = f"等待 job {job_id} 逾時（{timeout_seconds} 秒）"
     return last
 
 
@@ -1431,7 +1438,7 @@ SENT_SUMMARY_KEYS = ("succeeded", "unverified")
 ATTEMPTED_SUMMARY_KEYS = ("failed", "selectionMismatch")
 NOT_SENT_SUMMARY_KEYS = ("unprocessed", "cartFull", "blocked")
 _ATTEMPT_CATEGORY = {"failed": "failed", "selectionMismatch": "selection_mismatch"}
-_SEND_RANK = {"not_sent": 0, "attempted": 1, "sent": 2}
+_SEND_RANK = {"not_sent": 0, "attempted": 1, "uncertain": 1, "sent": 2}
 
 
 def _reconcile_key(item: Dict[str, Any]) -> tuple:
@@ -1461,7 +1468,9 @@ def reconcile_cart_delta(
     ``anomaly`` when the cart still changed for them). Submits that came back
     ``failed`` / ``selectionMismatch`` are counted separately as ``failed`` /
     ``selection_mismatch`` when the cart did not change, and ``anomaly`` when
-    it did (e.g. a timed-out add that landed anyway).
+    it did (e.g. a timed-out add that landed anyway). Specs a product meant
+    to add (``intendedSpecs``) that landed in no bucket at all (subprocess
+    crash, job timeout) are ``uncertain``, or ``anomaly`` if the cart moved.
     """
     from alibaba_restocker import cart_quantity_for_item
 
@@ -1487,20 +1496,32 @@ def reconcile_cart_delta(
             return
         entries[key] = merged
 
+    warnings: List[str] = []
     for row in done_rows:
         summary = row.get("summary") if isinstance(row.get("summary"), dict) else {}
-        for bucket in NOT_SENT_SUMMARY_KEYS:
-            for item in summary.get(bucket) or []:
-                if isinstance(item, dict):
-                    add(item, row, "not_sent", bucket)
-        for bucket in ATTEMPTED_SUMMARY_KEYS:
-            for item in summary.get(bucket) or []:
-                if isinstance(item, dict):
-                    add(item, row, "attempted", bucket)
-        for bucket in SENT_SUMMARY_KEYS:
-            for item in summary.get(bucket) or []:
-                if isinstance(item, dict):
-                    add(item, row, "sent", bucket)
+        seen: set = set()
+        for send, buckets in (
+            ("not_sent", NOT_SENT_SUMMARY_KEYS),
+            ("attempted", ATTEMPTED_SUMMARY_KEYS),
+            ("sent", SENT_SUMMARY_KEYS),
+        ):
+            for bucket in buckets:
+                for item in summary.get(bucket) or []:
+                    if isinstance(item, dict):
+                        add(item, row, send, bucket)
+                        seen.add(_reconcile_key({**item, "productId": item.get("productId") or row.get("productId")}))
+        # Intended specs with no outcome at all (subprocess crash, job
+        # timeout): the add may or may not have gone out.
+        for item in row.get("intendedSpecs") or []:
+            if isinstance(item, dict):
+                key = _reconcile_key({**item, "productId": item.get("productId") or row.get("productId")})
+                if key not in seen:
+                    add(item, row, "uncertain")
+        if row.get("jobTimeout") and not row.get("processTerminated"):
+            warnings.append(
+                f"商品 {row.get('productId') or ''} 的加車子程序等待逾時，且無法確認已終止，"
+                "可能仍在背景執行；加車後讀到的採購車可能還會變動"
+            )
     for product in not_started:
         for item in product_items(product):
             add(item, product, "not_sent")
@@ -1513,6 +1534,7 @@ def reconcile_cart_delta(
         "failed": 0,
         "selection_mismatch": 0,
         "not_sent": 0,
+        "uncertain": 0,
         "unknown": 0,
     }
     for entry in entries.values():
@@ -1528,6 +1550,8 @@ def reconcile_cart_delta(
                 category = "anomaly" if delta != 0 else "not_sent"
             elif entry["send"] == "attempted":
                 category = "anomaly" if delta != 0 else _ATTEMPT_CATEGORY[entry["submitBucket"]]
+            elif entry["send"] == "uncertain":
+                category = "anomaly" if delta != 0 else "uncertain"
             elif delta == entry["requested"]:
                 category = "ok"
             elif delta < entry["requested"]:
@@ -1537,7 +1561,12 @@ def reconcile_cart_delta(
         counts[category] += 1
         rows.append({**entry, "before": before_qty, "after": after_qty, "delta": delta, "category": category})
     return {
-        "ok": after_lines is not None and counts["unconfirmed"] == 0 and counts["anomaly"] == 0,
+        "ok": (
+            after_lines is not None
+            and counts["unconfirmed"] == 0
+            and counts["anomaly"] == 0
+            and counts["uncertain"] == 0
+        ),
         "afterReadable": after_lines is not None,
         "afterError": after_error,
         "beforeLineCount": len(before_lines),
@@ -1545,8 +1574,10 @@ def reconcile_cart_delta(
         "counts": counts,
         "sent": [row for row in rows if row["send"] == "sent"],
         "attempted": [row for row in rows if row["send"] == "attempted"],
+        "uncertain": [row for row in rows if row["send"] == "uncertain"],
         "notSent": [row for row in rows if row["send"] == "not_sent"],
         "rows": rows,
+        "warnings": warnings,
     }
 
 
@@ -1647,6 +1678,16 @@ def run_batch_loop(
     return final_state
 
 
+def _terminate_timed_out_job(terminate_fn: Optional[Callable[[str], bool]], job_id: str) -> bool:
+    """Stop a timed-out add-to-cart subprocess; True only when confirmed stopped."""
+    if terminate_fn is None:
+        return False
+    try:
+        return bool(terminate_fn(job_id))
+    except Exception:  # noqa: BLE001 - unconfirmed, reported as possibly running
+        return False
+
+
 def _run_batch_loop_core(
     state: Dict[str, Any],
     start_fn: Callable[[Dict[str, Any]], Dict[str, Any]],
@@ -1665,6 +1706,7 @@ def _run_batch_loop_core(
     freeze_fn: Optional[Callable[..., int]] = None,
     cdp_available_fn: Optional[Callable[..., bool]] = None,
     pace_fn: Optional[Callable[[], Any]] = None,
+    terminate_fn: Optional[Callable[[str], bool]] = None,
 ) -> Dict[str, Any]:
     directory = reverse_audit_dir or getattr(persist_fn, "directory", None)
     forced_sources_only = _force_sources_only(state, sources_only)
@@ -1763,12 +1805,23 @@ def _run_batch_loop_core(
         state = mark_running_product(state, product, str(started["jobId"]))
         state = persist_fn(state)
         job = wait_for_job(read_fn, str(started["jobId"]), timeout_seconds=timeout_seconds, sleep_fn=sleep_fn)
+        if job.get("timedOut"):
+            job["processTerminated"] = _terminate_timed_out_job(terminate_fn, str(started["jobId"]))
         result = job.get("result") if isinstance(job.get("result"), dict) else {}
         row = summarize_product_row(product, started, job)
         persist_fn_artifacts = getattr(persist_fn, "write_artifacts", None)
         if callable(persist_fn_artifacts):
             persist_fn_artifacts(product, job, row, result)
         state = apply_product_outcome(state, product, row, result or job)
+        if row.get("jobTimeout"):
+            state = dict(state)
+            state["status"] = STATUS_PAUSED_ATTENTION
+            state["stoppedReason"] = "job_timeout"
+            state["message"] = (
+                f"等待加車子程序逾時（{timeout_seconds} 秒），"
+                + ("已終止子程序" if row.get("processTerminated") else "無法確認子程序已終止，可能仍在背景執行")
+                + "；此商品各型號結果不確定，請核對採購車"
+            )
         state = persist_fn(state)
         if state.get("status") != STATUS_RUNNING:
             return state
