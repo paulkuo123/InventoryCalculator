@@ -166,8 +166,8 @@ RESTOCK_RISK_STOP_MESSAGES = {
     "cdp_forbidden_port": "CDP 9235 保留給 Shopee 月報 Chrome，1688 補貨拒絕使用，未加車。",
     "cdp_no_context": "已登入的 1688 Chrome 沒有可用的 browser context，未加車。",
     "add_failed": (
-        "加采购车失敗（例如簽章錯誤、業務參數錯誤或分頁內請求逾時），已停止整批補貨，不自動重試；"
-        "逾時的那一筆可能已進採購車，請以前後對帳為準。"
+        "加采购车失敗（例如簽章錯誤、業務參數錯誤、分頁內請求逾時，或逐筆核對採購車數量沒有增加），"
+        "已停止整批補貨，不自動重試；逾時的那一筆可能已進採購車，請以前後對帳為準。"
     ),
 }
 # Any add outcome that is not ok/unverified/mismatch/cart_full/risk (bad_sign,
@@ -933,6 +933,7 @@ class DebugLogger:
         with open(self.path, "a", encoding="utf-8"):
             pass
         prune_generated_files(debug_dir, ("alibaba_restock_*.jsonl",), keep=20)
+        prune_generated_files(debug_dir, ("alibaba_restock_*_add_timeout_*.png",), keep=20)
 
     def log(self, event: str, payload: Optional[Dict[str, Any]] = None) -> None:
         record = {
@@ -2685,12 +2686,28 @@ def fill_and_submit_offer_items_individually(
                 baseline_cart_lines=baseline_cart_lines,
                 required_offer_ids=required_offer_ids,
             )
-            if verified_item is not None:
+            if verified_item is not None and verified_item.get("confirmedAddedQty"):
                 confirmed.append(verified_item)
                 print(
                     f"採購車已確認：1 個規格（{verified_item.get('modelName')}）",
                     flush=True,
                 )
+            elif verified_item is not None and int(verified_item.get("quantity") or 0) > 0:
+                # The cart was fully read and this SKU did not grow by the
+                # expected amount: the add is a definite failure (e.g. 1688
+                # silently ignored the click). Stop instead of sending the
+                # remaining specs blind.
+                stopped_reason = RESTOCK_ADD_FAILED_STOP
+                shortfall_item = dict(verified_item)
+                shortfall_item["itemResult"] = cart_item.get("itemResult")
+                shortfall_item["message"] = (
+                    f"已按加采购车，但採購車核對該規格只增加 "
+                    f"{verified_item.get('cartQuantityDelta')} 個（預期 {verified_item.get('quantity')} 個），"
+                    "視為加車失敗並停止後續規格"
+                )
+                failed.append(shortfall_item)
+                print(shortfall_item["message"], flush=True)
+                print(RESTOCK_RISK_STOP_MESSAGES[RESTOCK_ADD_FAILED_STOP], flush=True)
             else:
                 unverified.append(cart_item)
                 print(
@@ -2740,7 +2757,9 @@ def verify_single_sku_in_cart_after_submit(
 ) -> Optional[Dict[str, Any]]:
     """成功送出後立刻核對該 SKU 是否已出現在採購車增量中。
 
-    讀不到車或增量不足時回傳 None，留給整批結尾再核對；不另建框架。
+    讀不到車時回傳 None，留給整批結尾再核對。讀得到車時一律回傳帶
+    cartQuantityDelta 的 dict；只有增量足夠才帶 confirmedAddedQty，
+    增量不足代表這次加車確定沒有生效，由呼叫端停止後續規格。
     """
     if baseline_cart_lines is None:
         return None
@@ -2778,8 +2797,54 @@ def verify_single_sku_in_cart_after_submit(
     })
     if expected_qty > 0 and delta >= expected_qty:
         updated["confirmedAddedQty"] = expected_qty
-        return updated
-    return None
+    return updated
+
+
+ADD_TIMEOUT_OVERLAY_JS = r"""
+() => {
+  const visible = (el) => {
+    const r = el.getBoundingClientRect();
+    const st = window.getComputedStyle(el);
+    return r.width > 0 && r.height > 0 && st.visibility !== 'hidden' && st.display !== 'none';
+  };
+  const sel = [
+    '[role="dialog"]', '[role="alert"]', '.next-dialog', '.next-overlay-inner',
+    '.next-message', '.ant-modal', '.ant-message', '[class*="dialog"]',
+    '[class*="Dialog"]', '[class*="modal"]', '[class*="toast"]', '[class*="Toast"]',
+  ].join(',');
+  const out = [];
+  for (const el of document.querySelectorAll(sel)) {
+    if (!visible(el)) continue;
+    const text = (el.innerText || '').replace(/\s+/g, ' ').trim();
+    if (!text) continue;
+    out.push({cls: String(el.className || '').slice(0, 120), text: text.slice(0, 300)});
+    if (out.length >= 8) break;
+  }
+  return out;
+}
+"""
+
+
+def capture_add_feedback_timeout_diagnostics(page, debug: "DebugLogger", model_names: List[str]) -> None:
+    """Read-only evidence for a 加采购车 click that produced no toast.
+
+    Logs visible overlay/dialog texts and saves a screenshot next to the debug
+    log so the next silent no-op can be diagnosed offline. Never clicks.
+    """
+    payload: Dict[str, Any] = {"modelNames": model_names, "url": getattr(page, "url", "")}
+    try:
+        payload["overlays"] = page.evaluate(ADD_TIMEOUT_OVERLAY_JS) or []
+    except Exception as exc:
+        payload["overlaysError"] = str(exc)
+    debug_path = str(getattr(debug, "path", "") or "")
+    if debug_path:
+        shot_path = f"{os.path.splitext(debug_path)[0]}_add_timeout_{int(time.time() * 1000)}.png"
+        try:
+            page.screenshot(path=shot_path, full_page=False)
+            payload["screenshot"] = shot_path
+        except Exception as exc:
+            payload["screenshotError"] = str(exc)
+    debug.log("add_to_cart_feedback_timeout_diagnostics", payload)
 
 
 _ADD_PACER = None
@@ -3008,6 +3073,7 @@ def add_to_cart_with_retry(
         if not retry_allowed:
             if click_result.get("ok") and feedback.get("status") in ("pending", "unknown"):
                 final_status = "clicked_unverified"
+                capture_add_feedback_timeout_diagnostics(page, debug, model_names)
             debug.log("skip_add_to_cart_retry", {
                 "modelNames": model_names,
                 "itemCount": len(cart_items),

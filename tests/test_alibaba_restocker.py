@@ -1805,7 +1805,202 @@ class AlibabaRestockerTests(unittest.TestCase):
                 baseline_cart_lines=baseline,
                 required_offer_ids={"661385649783"},
             )
-        self.assertIsNone(missing)
+        # A readable cart with no growth is a definite shortfall, not "unknown".
+        self.assertIsNotNone(missing)
+        self.assertNotIn("confirmedAddedQty", missing)
+        self.assertEqual(missing["cartQuantityDelta"], 0)
+
+        with patch.object(alibaba_restocker, "open_and_read_cart", return_value=None):
+            unreadable = alibaba_restocker.verify_single_sku_in_cart_after_submit(
+                page,
+                item,
+                debug,
+                baseline_cart_lines=baseline,
+                required_offer_ids={"661385649783"},
+            )
+        self.assertIsNone(unreadable)
+
+    def _incident_pending(self, url):
+        """Offer 661385649783 from batch 20261031-213916-b3e88df9."""
+        specs = [
+            ("抹茶綠軍規,13/14", "抹茶绿", "iPhone13/14通用", 40),
+            ("藍色軍規,13 pro", "远峰蓝", "iPhone13Pro", 20),
+            ("黑色軍規,12/12 pro", "黑色", "iPhone12/12Pro通用", 20),
+            ("抹茶綠軍規,15", "抹茶绿", "iPhone15", 20),
+        ]
+        return [
+            {
+                "modelName": model,
+                "alibabaSkuName": color,
+                "alibabaSkuSecondName": second,
+                "alibabaSkuId": str(index),
+                "alibabaUrl": url,
+                "quantity": qty,
+            }
+            for index, (model, color, second, qty) in enumerate(specs)
+        ]
+
+    def test_per_sku_stops_when_toast_times_out_and_cart_did_not_grow(self):
+        """Toast timeout + fully read cart with delta 0 must stop the offer, not move on."""
+        page = FakePage()
+        debug = FakeDebug()
+        url = "https://detail.1688.com/offer/661385649783.html"
+        pending = self._incident_pending(url)
+        baseline = [{"offerId": "999", "skuName": "其他", "quantity": 5}]
+        with patch.object(
+            alibaba_restocker,
+            "fill_sku_quantities_on_page",
+            side_effect=[[{"status": "filled", "modelName": item["modelName"]}] for item in pending],
+        ), patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            return_value={"skuCount": 1, "quantity": 40},
+        ), patch.object(
+            alibaba_restocker,
+            "add_to_cart_with_retry",
+            return_value={
+                "ok": True,
+                "status": "clicked_unverified",
+                "message": "等待成功/錯誤提示逾時",
+            },
+        ) as add, patch.object(
+            alibaba_restocker, "dismiss_cart_feedback", return_value={"ok": False}
+        ), patch.object(
+            alibaba_restocker, "open_and_read_cart", return_value=list(baseline)
+        ):
+            result = alibaba_restocker.fill_and_submit_offer_items_individually(
+                page, url, pending, debug, baseline_cart_lines=baseline
+            )
+
+        self.assertEqual(add.call_count, 1)
+        self.assertEqual(result["stopped_reason"], alibaba_restocker.RESTOCK_ADD_FAILED_STOP)
+        self.assertEqual(result["processed_pending_count"], 1)
+        self.assertEqual(result["confirmed"], [])
+        self.assertEqual(result["unverified"], [])
+        self.assertEqual(len(result["failed"]), 1)
+        failed = result["failed"][0]
+        self.assertEqual(failed["modelName"], "抹茶綠軍規,13/14")
+        self.assertEqual(failed["cartQuantityDelta"], 0)
+        self.assertIn("停止後續規格", failed["message"])
+
+    def test_per_sku_keeps_going_when_cart_unreadable(self):
+        """An unreadable cart is still only unverified; end-of-run reconcile decides."""
+        page = FakePage()
+        debug = FakeDebug()
+        url = "https://detail.1688.com/offer/661385649783.html"
+        pending = self._incident_pending(url)[:2]
+        with patch.object(
+            alibaba_restocker,
+            "fill_sku_quantities_on_page",
+            side_effect=[[{"status": "filled", "modelName": item["modelName"]}] for item in pending],
+        ), patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            side_effect=[{"skuCount": 1, "quantity": 40}, {"skuCount": 1, "quantity": 20}],
+        ), patch.object(
+            alibaba_restocker,
+            "add_to_cart_with_retry",
+            return_value={"ok": True, "status": "clicked_unverified", "message": "逾時"},
+        ) as add, patch.object(
+            alibaba_restocker, "dismiss_cart_feedback", return_value={"ok": False}
+        ), patch.object(
+            alibaba_restocker, "open_and_read_cart", return_value=None
+        ):
+            result = alibaba_restocker.fill_and_submit_offer_items_individually(
+                page, url, pending, debug, baseline_cart_lines=[]
+            )
+
+        self.assertEqual(add.call_count, 2)
+        self.assertEqual(result["stopped_reason"], "")
+        self.assertEqual(len(result["unverified"]), 2)
+        self.assertEqual(result["failed"], [])
+
+    def test_per_sku_confirmed_spec_then_shortfall_stops_on_second(self):
+        """First spec grows the cart and is confirmed; the silent no-op on the next one stops."""
+        page = FakePage()
+        debug = FakeDebug()
+        url = "https://detail.1688.com/offer/661385649783.html"
+        pending = self._incident_pending(url)[2:]  # 黑色 12/12pro, 抹茶绿 15
+        pending = [pending[1], pending[0], pending[1]]
+        baseline = []
+        verify_results = [
+            dict(pending[0], cartQuantityDelta=20, confirmedAddedQty=20),
+            dict(pending[1], cartQuantityDelta=0),
+        ]
+        with patch.object(
+            alibaba_restocker,
+            "fill_sku_quantities_on_page",
+            side_effect=[[{"status": "filled", "modelName": item["modelName"]}] for item in pending],
+        ), patch.object(
+            alibaba_restocker,
+            "read_page_selection_summary",
+            return_value={"skuCount": 1, "quantity": 20},
+        ), patch.object(
+            alibaba_restocker,
+            "add_to_cart_with_retry",
+            side_effect=[
+                {"ok": True, "status": "success", "message": "加购成功"},
+                {"ok": True, "status": "clicked_unverified", "message": "逾時"},
+            ],
+        ) as add, patch.object(
+            alibaba_restocker, "dismiss_cart_feedback", return_value={"ok": False}
+        ), patch.object(
+            alibaba_restocker, "verify_single_sku_in_cart_after_submit", side_effect=verify_results
+        ):
+            result = alibaba_restocker.fill_and_submit_offer_items_individually(
+                page, url, pending, debug, baseline_cart_lines=baseline
+            )
+
+        self.assertEqual(add.call_count, 2)
+        self.assertEqual([item["modelName"] for item in result["confirmed"]], ["抹茶綠軍規,15"])
+        self.assertEqual([item["modelName"] for item in result["failed"]], ["黑色軍規,12/12 pro"])
+        self.assertEqual(result["stopped_reason"], alibaba_restocker.RESTOCK_ADD_FAILED_STOP)
+        self.assertEqual(result["processed_pending_count"], 2)
+
+    def test_feedback_timeout_captures_read_only_diagnostics(self):
+        """Toast timeout logs visible overlays + a screenshot path, and never clicks again."""
+        class DiagPage(FakePage):
+            def __init__(self):
+                super().__init__()
+                self.evaluated = []
+                self.shots = []
+
+            def evaluate(self, script, *args):
+                self.evaluated.append(script)
+                return [{"cls": "next-dialog", "text": "请选择服务"}]
+
+            def screenshot(self, path=None, full_page=False):
+                self.shots.append(path)
+
+        page = DiagPage()
+        debug = FakeDebug()
+        debug.path = "/tmp/alibaba_restock_123.jsonl"
+        items = [{
+            "modelName": "抹茶綠軍規,13/14",
+            "alibabaSkuName": "抹茶绿",
+            "alibabaSkuSecondName": "iPhone13/14通用",
+            "quantity": 40,
+        }]
+        with patch.object(
+            alibaba_restocker, "read_page_selection_summary", return_value={"skuCount": 1, "quantity": 40},
+        ), patch.object(
+            alibaba_restocker, "click_add_to_cart",
+            return_value={"ok": True, "text": "加采购车", "candidates": ["加采购车"]},
+        ) as click, patch.object(
+            alibaba_restocker, "wait_for_cart_feedback",
+            return_value={"status": "unknown", "message": "等待成功/錯誤提示逾時", "retryable": False},
+        ), patch.object(
+            alibaba_restocker, "recover_offer_page_before_submit", return_value=None,
+        ):
+            result = alibaba_restocker.add_to_cart_with_retry(page, items, debug)
+
+        self.assertEqual(click.call_count, 1)
+        self.assertEqual(result["status"], "clicked_unverified")
+        events = [payload for name, payload in debug.events if name == "add_to_cart_feedback_timeout_diagnostics"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["overlays"][0]["text"], "请选择服务")
+        self.assertEqual(page.shots, [events[0]["screenshot"]])
+        self.assertTrue(events[0]["screenshot"].startswith("/tmp/alibaba_restock_123_add_timeout_"))
 
 
 
