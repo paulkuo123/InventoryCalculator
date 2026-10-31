@@ -66,6 +66,7 @@ RESTOCK_RISK_STOP_REASONS = {
     "cdp_forbidden_port",
     "cdp_no_context",
     "add_failed",
+    "per_sku_cart_unreadable",
 }
 PAUSE_CLASSIFICATIONS = {"mismatch", "uncertain", "unavailable", "failed"} | RESTOCK_RISK_STOP_REASONS
 CART_RECONCILE_FILENAME = "cart_reconcile.json"
