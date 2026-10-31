@@ -63,6 +63,9 @@ RESTOCK_STOP_REASONS = frozenset(
         "cdp_no_context",
         "add_failed",
         "per_sku_cart_unreadable",
+        # --via-mtop: read-only API preflight / in-tab fetch to h5api failed.
+        "mtop_api_host_unreachable",
+        "mtop_api_preflight_failed",
     }
 )
 

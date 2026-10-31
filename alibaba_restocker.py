@@ -158,7 +158,13 @@ def should_submit_offer_items_individually(add_to_cart: bool, pending_count: int
     return bool(add_to_cart) and int(pending_count or 0) > 1
 
 
-RESTOCK_RISK_STOP_STATUSES = frozenset({"risk_control", "not_logged_in"})
+RESTOCK_RISK_STOP_STATUSES = frozenset({
+    "risk_control",
+    "not_logged_in",
+    # --via-mtop (reverse_audit.mtop_restock): API preflight / host failure.
+    "mtop_api_host_unreachable",
+    "mtop_api_preflight_failed",
+})
 RESTOCK_RISK_STOP_MESSAGES = {
     "risk_control": "1688 出現滑塊／風控驗證（例如 RGV587、x5sec），已停止整批補貨，不自動重試。",
     "not_logged_in": "9239 Chrome 的 1688 登入已失效，已停止整批補貨，不改用其他埠或 profile Chrome。",
@@ -168,6 +174,13 @@ RESTOCK_RISK_STOP_MESSAGES = {
     "add_failed": (
         "加采购车失敗（例如簽章錯誤、業務參數錯誤、分頁內請求逾時，或逐筆核對採購車數量沒有增加），"
         "已停止整批補貨，不自動重試；逾時的那一筆可能已進採購車，請以前後對帳為準。"
+    ),
+    "mtop_api_host_unreachable": (
+        "1688 API 主機不通（h5api.m.1688.com 連不上或被瀏覽器 CORS 擋下），已停止整批補貨，不自動重試；"
+        "加車前預檢失敗時未送任何加車請求；若是加車途中斷線，那一筆結果不明，請以採購車對帳為準。"
+    ),
+    "mtop_api_preflight_failed": (
+        "加車前的唯讀 API 預檢（讀採購車）失敗，已停止整批補貨，未送任何加車請求；請先人工確認 1688 採購車可讀。"
     ),
     "per_sku_cart_unreadable": (
         "同一商品連續兩次逐筆核對都讀不到採購車，無法確認加車結果，已停止整批補貨，"

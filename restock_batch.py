@@ -67,6 +67,8 @@ RESTOCK_RISK_STOP_REASONS = {
     "cdp_no_context",
     "add_failed",
     "per_sku_cart_unreadable",
+    "mtop_api_host_unreachable",
+    "mtop_api_preflight_failed",
 }
 PAUSE_CLASSIFICATIONS = {"mismatch", "uncertain", "unavailable", "failed"} | RESTOCK_RISK_STOP_REASONS
 CART_RECONCILE_FILENAME = "cart_reconcile.json"

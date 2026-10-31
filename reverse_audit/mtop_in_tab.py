@@ -96,6 +96,62 @@ class InTabBlockedError(MtopCallError):
         self.url = url
 
 
+# ``MtopCallError.kind`` for "the browser could not get a usable response from
+# h5api.m.1688.com" (``TypeError: Failed to fetch``, CORS
+# MissingAllowOriginHeader, net::ERR_*). Seen 2026-11-01: Alibaba's ingress
+# answered 404 text/html without Access-Control-Allow-Origin, so Chrome threw
+# away the response. The request may still have reached 1688's edge, so the
+# outcome of a mutating call is *unknown*, not "not sent".
+HOST_UNREACHABLE_KIND = "host_unreachable"
+HOST_UNREACHABLE_LABEL = "1688 API 主機不通"
+
+_HOST_UNREACHABLE_MARKERS = (
+    "failed to fetch",
+    "networkerror",
+    "network error",
+    "load failed",
+    "cors",
+    "access-control-allow-origin",
+    "missingalloworiginheader",
+    "net::err_",
+    "err_failed",
+    "err_blocked_by_orb",
+)
+# Alibaba ingress 404 page (only visible when CORS lets it through).
+_INGRESS_404_MARKERS = ("tengine", "aserver-ingress")
+
+
+class MtopHostUnreachableError(MtopCallError):
+    """In-tab fetch to the 1688 API host failed at the network/CORS layer.
+
+    Stop the whole batch; never retry blind. A mutating request may or may
+    not have reached 1688 (``request_outcome_unknown``).
+    """
+
+    request_outcome_unknown = True
+
+    def __init__(self, message: str, *, detail: str = ""):
+        super().__init__(message, kind=HOST_UNREACHABLE_KIND)
+        self.detail = str(detail or "")
+
+
+def is_host_unreachable_error(error: Any) -> bool:
+    """True for a browser fetch failure such as ``Failed to fetch`` / CORS."""
+    low = str(error or "").lower()
+    if not low or "abort" in low:
+        # AbortError = our own 30s timeout; keep it a plain http_error.
+        return False
+    return any(marker in low for marker in _HOST_UNREACHABLE_MARKERS)
+
+
+def host_unreachable_message(detail: Any) -> str:
+    return (
+        f"{HOST_UNREACHABLE_LABEL}：瀏覽器分頁連不上 h5api.m.1688.com 或回應被 CORS 擋下"
+        f"（in-tab fetch failed: {detail}）。這是連線層問題，不是請求內容問題；請求可能已到 1688 入口，"
+        "結果不明，整批停止、不自動重試"
+    )
+
+
 def classify_page_block(url: str = "", html: str = "") -> Optional[str]:
     """``not_logged_in`` / ``risk_control`` for a wall page, else ``None``."""
     final_url = str(url or "")
@@ -248,12 +304,18 @@ def page_fetch_transport(
         )
         if not isinstance(raw, dict) or not raw.get("ok"):
             error = raw.get("error") if isinstance(raw, dict) else raw
+            if is_host_unreachable_error(error):
+                raise MtopHostUnreachableError(host_unreachable_message(error), detail=str(error))
             raise MtopCallError(f"in-tab fetch failed: {error}", kind="http_error")
         text = str(raw.get("text") or "")
         final_url = str(raw.get("url") or url)
         raise_if_blocked(final_url, text, what="mtop in-tab fetch")
+        status = int(raw.get("status") or 0)
+        if status == 404 and any(m in text.lower() for m in _INGRESS_404_MARKERS):
+            detail = f"HTTP 404 from Alibaba ingress ({redact_url_for_log(final_url)})"
+            raise MtopHostUnreachableError(host_unreachable_message(detail), detail=detail)
         return {
-            "status": int(raw.get("status") or 0),
+            "status": status,
             "headers": {},
             "text": text,
             "url": final_url,
@@ -265,10 +327,15 @@ def page_fetch_transport(
 __all__ = [
     "BLOCK_PAGE_MAX_CHARS",
     "CART_PAGE_URL",
+    "HOST_UNREACHABLE_KIND",
+    "HOST_UNREACHABLE_LABEL",
     "InTabBlockedError",
+    "MtopHostUnreachableError",
     "assert_page_not_blocked",
     "classify_page_block",
+    "host_unreachable_message",
     "in_tab_fetch_html",
+    "is_host_unreachable_error",
     "open_in_tab",
     "page_fetch_transport",
     "raise_if_blocked",
