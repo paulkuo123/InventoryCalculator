@@ -69,6 +69,7 @@ RESTOCK_RISK_STOP_REASONS = {
     "per_sku_cart_unreadable",
     "mtop_api_host_unreachable",
     "mtop_api_preflight_failed",
+    "in_transit_unreadable",
 }
 PAUSE_CLASSIFICATIONS = {"mismatch", "uncertain", "unavailable", "failed"} | RESTOCK_RISK_STOP_REASONS
 CART_RECONCILE_FILENAME = "cart_reconcile.json"
@@ -1613,6 +1614,7 @@ def run_batch_loop(
     persist_fn: Callable[[Dict[str, Any]], None],
     *,
     cart_reader_fn: Optional[Callable[[], List[Dict[str, Any]]]] = None,
+    in_transit_reader_fn: Optional[Callable[[], Dict[str, Any]]] = None,
     pace_fn: Optional[Callable[[], Any]] = None,
     **kwargs: Any,
 ) -> Dict[str, Any]:
@@ -1622,8 +1624,48 @@ def run_batch_loop(
     never treated as empty) and after (always attempted, also after a risk or
     login stop), then reconciled per spec into ``state["cartReconcile"]`` and
     ``cart_reconcile.json``. ``pace_fn`` runs before each product start.
+
+    With ``in_transit_reader_fn`` the cart + order pools are read first; any
+    model already in transit (or unmatched) is not added at all. An unreadable
+    source stops the whole batch before anything is added.
     """
     directory = kwargs.get("reverse_audit_dir") or getattr(persist_fn, "directory", None)
+    if (
+        in_transit_reader_fn is not None
+        and state.get("remaining")
+        and state.get("status") in RESUMABLE_STATUSES | {STATUS_RUNNING}
+    ):
+        import restock_in_transit
+
+        try:
+            sources = in_transit_reader_fn()
+        except Exception as exc:  # noqa: BLE001 - fail closed, never treat as 0
+            source = str(getattr(exc, "source", "") or "")
+            label = restock_in_transit.IN_TRANSIT_LABELS.get(source) or "來源"
+            state = dict(state)
+            state["status"] = STATUS_PAUSED_ATTENTION
+            state["stoppedReason"] = "in_transit_unreadable"
+            state["currentProductId"] = None
+            state["currentJobId"] = None
+            state["message"] = (
+                f"加車前無法完整讀取在途數量（{label}），整批未開始、未加車（不當作 0）：{exc}"
+            )
+            state["inTransitCheck"] = {
+                "ok": False,
+                "error": str(exc),
+                "source": source,
+            }
+            persist_fn(state)
+            return state
+        state = restock_in_transit.apply_in_transit(state, sources)
+        persist_fn(state)
+        if not state.get("remaining"):
+            state = dict(state)
+            state["status"] = STATUS_COMPLETED
+            state["stoppedReason"] = ""
+            state["message"] = "全部型號已在途或在途無法比對，本批不加車"
+            persist_fn(state)
+            return state
     if cart_reader_fn is None:
         return _run_batch_loop_core(state, start_fn, read_fn, persist_fn, pace_fn=pace_fn, **kwargs)
     if state.get("status") not in RESUMABLE_STATUSES | {STATUS_RUNNING}:
@@ -2104,7 +2146,15 @@ def build_report(state: Dict[str, Any]) -> Dict[str, Any]:
         "skus": skus,
         "reverseAudit": state.get("reverseAudit") or {},
         "cartBefore": state.get("cartBefore") or {},
+        "inTransitCheck": state.get("inTransitCheck") or {},
+        "inTransitRows": _in_transit_rows(state),
     }
+
+
+def _in_transit_rows(state: Dict[str, Any]) -> List[Dict[str, Any]]:
+    from restock_in_transit import in_transit_rows  # lazy: keep module import-light
+
+    return in_transit_rows(state)
 
 
 def render_report_html(report: Dict[str, Any]) -> str:
@@ -2175,6 +2225,7 @@ def render_report_html(report: Dict[str, Any]) -> str:
     <thead><tr><th>商品</th><th>預期</th><th>加車結果</th><th>分類</th><th>訊息</th></tr></thead>
     <tbody>{''.join(done_rows) or '<tr><td colspan="5">尚未執行商品</td></tr>'}</tbody>
   </table>
+  {_render_in_transit_html(report, cell)}
   <h2>SKU 明細（重建 mapping 用）</h2>
   <table>
     <thead><tr><th>商品</th><th>蝦皮型號</th><th>預期件數</th><th>加車結果</th><th>阿里巴巴連結</th><th>Golden SKU</th><th>直播頁 SKU</th><th>說明</th></tr></thead>
@@ -2187,6 +2238,48 @@ def render_report_html(report: Dict[str, Any]) -> str:
 </body>
 </html>
 """
+
+
+def _render_in_transit_html(report: Dict[str, Any], cell: Callable[[Any], str]) -> str:
+    check = report.get("inTransitCheck") if isinstance(report.get("inTransitCheck"), dict) else {}
+    rows_src = report.get("inTransitRows") or []
+    rows = []
+    for row in rows_src:
+        transit = row.get("inTransit") if isinstance(row.get("inTransit"), dict) else {}
+        detail = (
+            f"合計 {cell(transit.get('total', 0))}（購物車 {cell(transit.get('cart', 0))}／"
+            f"待付款 {cell(transit.get('pending_pay', 0))}／"
+            f"待發貨 {cell(transit.get('pending_ship', 0))}／"
+            f"待收貨 {cell(transit.get('pending_receive', 0))}）"
+        )
+        if row.get("unmatched"):
+            detail = f"<strong>無法比對（需人工決定）</strong><br>{detail}"
+        rows.append(
+            "<tr>"
+            f"<td>{cell(row.get('productName'))}<br><code>{cell(row.get('productId'))}</code></td>"
+            f"<td>{cell(row.get('modelName'))}<br><code>{cell(row.get('specId'))}</code></td>"
+            f"<td>{cell(row.get('homepageSuggestedQty'))}</td>"
+            f"<td>{detail}</td>"
+            f"<td>{cell(row.get('actualAddQty'))}</td>"
+            f"<td>{cell(row.get('reason'))}</td>"
+            "</tr>"
+        )
+    parts = ["<h2>在途扣除（加車前）</h2>"]
+    if check.get("ok") is False:
+        parts.append(
+            f"<p><strong>在途數量讀取失敗：</strong>{cell(check.get('error') or '')}"
+            f"（來源 {cell(check.get('source') or '')}）；整批未加車，不當作 0。</p>"
+        )
+    if rows_src:
+        parts.append(
+            "<table>"
+            "<thead><tr><th>商品</th><th>蝦皮型號</th><th>首頁建議量</th>"
+            "<th>已在途（購物車／待付款／待發貨／待收貨）</th><th>實際加車量</th><th>說明</th></tr></thead>"
+            f"<tbody>{''.join(rows)}</tbody></table>"
+        )
+    elif not check:
+        parts.append("<p>本批未做在途扣除（舊批次或未讀取）。</p>")
+    return "".join(parts)
 
 
 def _render_reverse_audit_html(reverse_audit: Dict[str, Any], cell: Callable[[Any], str]) -> str:

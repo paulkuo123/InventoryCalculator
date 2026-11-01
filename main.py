@@ -3230,6 +3230,7 @@ def run_restock_batch_thread(run_id):
             read_full_cart_via_cdp,
             resolve_restock_cdp_endpoint,
         )
+        from restock_in_transit import read_in_transit_sources
 
         # Every product attaches to the same logged-in 1688 Chrome (default
         # 9239). 9235 is refused; no fallback port or profile Chrome. The
@@ -3245,6 +3246,7 @@ def run_restock_batch_thread(run_id):
             persister,
             should_stop=lambda: restock_batch_runtime.get("stop"),
             cart_reader_fn=lambda: read_full_cart_via_cdp(cdp_endpoint),
+            in_transit_reader_fn=lambda: read_in_transit_sources(cdp_endpoint, directory / "in_transit"),
             pace_fn=pacer.wait_before_add,
             terminate_fn=terminate_single_restock_job,
             # The legacy reverse-audit freezes reuse the user's existing tab and
