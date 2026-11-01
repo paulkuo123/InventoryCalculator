@@ -1,9 +1,10 @@
 """Read already-``in transit`` quantities before adding anything to the 1688 cart.
 
 Read-only: attaches to the shared logged-in 1688 Chrome (default 9239, refuses
-9235, no fallback ports) and reads the cart plus the three order pools. Every
-item's homepage-suggested restock quantity is reduced by what is already on the
-way. A read failure is never treated as 0: the whole batch is stopped instead.
+9235, no fallback ports) and reads the cart plus the three order pools. Any
+model with something already in transit is not added at all, and a no-skuId
+model whose offer has lines that cannot be matched by spec name is skipped for
+a manual decision. A read failure is never treated as 0: the whole batch stops.
 """
 
 from __future__ import annotations
@@ -132,9 +133,29 @@ def _line_matches(match_line: Dict[str, Any], item: Dict[str, Any]) -> bool:
     return cart_line_matches_item_exact(match_line, item)
 
 
-def in_transit_for_item(item: Dict[str, Any], sources: Dict[str, Any]) -> Dict[str, int]:
-    """Sum the cart + order quantities that exactly match one restock item."""
-    breakdown = {source: 0 for source in IN_TRANSIT_SOURCES}
+def _item_offer_id(item: Dict[str, Any]) -> str:
+    from alibaba_restocker import extract_offer_id  # lazy import
+
+    return extract_offer_id(item.get("alibabaUrl") or "")
+
+
+SKIP_REASON_IN_TRANSIT = "已在途，不補"
+SKIP_REASON_UNMATCHED = "在途無法比對"
+
+
+def in_transit_for_item(item: Dict[str, Any], sources: Dict[str, Any]) -> Dict[str, Any]:
+    """Sum the cart + order quantities that exactly match one restock item.
+
+    ``unmatched`` is True only when the item cannot be checked: it has no
+    1688 offer id, or it has no skuId while its offer has at least one line in
+    any of the four sources and none of those lines matches its spec name
+    exactly. An offer with no lines anywhere is truly 0 in transit.
+    """
+    breakdown: Dict[str, Any] = {source: 0 for source in IN_TRANSIT_SOURCES}
+    offer = _item_offer_id(item)
+    has_sku_id = bool(str(item.get("alibabaSkuId") or "").strip())
+    offer_lines = 0
+    matched_lines = 0
     for source in IN_TRANSIT_SOURCES:
         blob = (sources or {}).get(source)
         if not isinstance(blob, dict):
@@ -149,10 +170,14 @@ def in_transit_for_item(item: Dict[str, Any], sources: Dict[str, Any]) -> Dict[s
                 "skuName": line.get("skuName") or line.get("specText") or "",
                 "specText": line.get("specText") or line.get("skuName") or "",
             }
-            qty = _as_int(line.get("qty") or line.get("quantity") or 0)
-            if qty > 0 and _line_matches(match_line, item):
-                breakdown[source] += qty
+            if offer and match_line["offerId"].strip() == offer:
+                offer_lines += 1
+            if not _line_matches(match_line, item):
+                continue
+            matched_lines += 1
+            breakdown[source] += _as_int(line.get("qty") or line.get("quantity") or 0)
     breakdown["total"] = sum(breakdown[source] for source in IN_TRANSIT_SOURCES)
+    breakdown["unmatched"] = not offer or (not has_sku_id and offer_lines > 0 and matched_lines == 0)
     return breakdown
 
 
@@ -181,10 +206,11 @@ def summarize_sources(sources: Dict[str, Any]) -> Dict[str, Dict[str, int]]:
 
 
 def apply_in_transit(state: Dict[str, Any], sources: Dict[str, Any]) -> Dict[str, Any]:
-    """Return a new state with every item reduced by its in-transit quantity.
+    """Return a new state without any item that is in transit or unmatched.
 
-    Pure and idempotent: the homepage suggestion is remembered on the item so a
-    second pass subtracts from the original number, never the reduced one.
+    No partial subtraction: an item with anything in transit adds 0, and an
+    unmatched no-skuId item adds 0 for a manual decision. Everything else keeps
+    its homepage suggestion unchanged. Pure and idempotent.
     """
     state = dict(state)
     remaining: List[Dict[str, Any]] = []
@@ -210,12 +236,16 @@ def apply_in_transit(state: Dict[str, Any], sources: Dict[str, Any]) -> Dict[str
             item["homepageSuggestedQty"] = suggested
             breakdown = in_transit_for_item(item, sources)
             item["inTransit"] = breakdown
-            actual = suggested - breakdown["total"]
-            item["actualAddQty"] = max(actual, 0)
-            if actual > 0:
-                item["restockQty"] = actual
+            if breakdown["unmatched"]:
+                reason = SKIP_REASON_UNMATCHED
+            elif breakdown["total"] > 0:
+                reason = SKIP_REASON_IN_TRANSIT
+            else:
+                item["actualAddQty"] = suggested
+                item["restockQty"] = suggested
                 kept_items.append(item)
                 continue
+            item["actualAddQty"] = 0
             key = (
                 str(product.get("productId") or ""),
                 str(item.get("specId") or ""),
@@ -239,7 +269,8 @@ def apply_in_transit(state: Dict[str, Any], sources: Dict[str, Any]) -> Dict[str
                 "homepageSuggestedQty": suggested,
                 "inTransit": breakdown,
                 "actualAddQty": 0,
-                "reason": f"已在途 {breakdown['total']} ≥ 首頁建議 {suggested}，略過不加車",
+                "unmatched": bool(breakdown["unmatched"]),
+                "reason": reason,
             })
         # Products left with no items simply leave ``remaining``.
         if kept_items:
@@ -253,7 +284,7 @@ def apply_in_transit(state: Dict[str, Any], sources: Dict[str, Any]) -> Dict[str
         "checkedAt": _now_iso(),
         "sources": summarize_sources(sources),
         "skippedCount": len(skipped),
-        "rounding": "exact",
+        "rule": "skip_if_any_in_transit",
     }
     return state
 
@@ -277,6 +308,7 @@ def _row_from_item(product: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, A
         "inTransit": item.get("inTransit") or {},
         "actualAddQty": item.get("actualAddQty"),
         "skipped": False,
+        "unmatched": False,
         "reason": "",
     }
 
@@ -309,6 +341,7 @@ def in_transit_rows(state: Dict[str, Any]) -> List[Dict[str, Any]]:
             "inTransit": rec.get("inTransit") or {},
             "actualAddQty": 0,
             "skipped": True,
+            "unmatched": bool(rec.get("unmatched")),
             "reason": rec.get("reason") or "",
         })
     # A cart-full pause keeps the product in ``done`` and its leftover in

@@ -84,57 +84,49 @@ class _Persist:
 
 
 class ApplyInTransitTests(unittest.TestCase):
-    def test_cart_partial_deduction(self):
+    def _split(self, out):
+        kept = {i["alibabaSkuId"] or i["alibabaSkuName"]: i for p in out["remaining"] for i in p["items"]}
+        skipped = {r["alibabaSkuId"] or r["alibabaSkuName"]: r for r in out["inTransitSkipped"]}
+        return kept, skipped
+
+    def test_cart_partial_skips_model_entirely(self):
         state = _state([_item("s1", "红色", 10), _item("s2", "蓝色", 20)])
         sources = _sources(cart_items=[{"offerId": "111", "skuId": "s1", "qty": 4}])
-        out = apply_in_transit(state, sources)
-        items = {item["alibabaSkuId"]: item for item in out["remaining"][0]["items"]}
-        self.assertEqual(items["s1"]["restockQty"], 6)
-        self.assertEqual(items["s1"]["homepageSuggestedQty"], 10)
-        self.assertEqual(items["s1"]["inTransit"]["cart"], 4)
-        self.assertEqual(items["s1"]["inTransit"]["total"], 4)
-        self.assertEqual(items["s2"]["restockQty"], 20)
-        self.assertFalse(out["inTransitSkipped"])
+        kept, skipped = self._split(apply_in_transit(state, sources))
+        self.assertNotIn("s1", kept)
+        self.assertEqual(skipped["s1"]["actualAddQty"], 0)
+        self.assertEqual(skipped["s1"]["homepageSuggestedQty"], 10)
+        self.assertEqual(skipped["s1"]["inTransit"]["cart"], 4)
+        self.assertEqual(skipped["s1"]["reason"], "已在途，不補")
+        self.assertFalse(skipped["s1"]["unmatched"])
+        self.assertEqual(kept["s2"]["restockQty"], 20)
+        self.assertEqual(kept["s2"]["actualAddQty"], 20)
 
-    def test_pending_receive_deduction(self):
+    def test_pending_receive_skips_model_entirely(self):
         state = _state([_item("s1", "红色", 10), _item("s2", "蓝色", 20)])
         sources = _sources(orders={
-            "pending_receive": [
-                {"offerId": "111", "skuId": "s2", "qty": 15, "orderId": "o1"}
-            ]
+            "pending_receive": [{"offerId": "111", "skuId": "s2", "qty": 15, "orderId": "o1"}]
         })
-        out = apply_in_transit(state, sources)
-        items = {item["alibabaSkuId"]: item for item in out["remaining"][0]["items"]}
-        self.assertEqual(items["s2"]["restockQty"], 5)
-        self.assertEqual(items["s2"]["actualAddQty"], 5)
-        self.assertEqual(items["s2"]["inTransit"]["pending_receive"], 15)
+        kept, skipped = self._split(apply_in_transit(state, sources))
+        self.assertNotIn("s2", kept)
+        self.assertEqual(skipped["s2"]["inTransit"]["pending_receive"], 15)
+        self.assertEqual(skipped["s2"]["reason"], "已在途，不補")
+        self.assertEqual(kept["s1"]["restockQty"], 10)
 
-    def test_covered_item_is_dropped_and_product_removed(self):
-        state = _state([_item("s1", "红色", 10), _item("s2", "蓝色", 20)])
-        sources = _sources(
-            cart_items=[{"offerId": "111", "skuId": "s1", "qty": 3}],
-            orders={"pending_pay": [{"offerId": "111", "skuId": "s1", "qty": 10}]},
-        )
+    def test_model_file_quantity_is_skipped_too(self):
+        # A models-file override reaches the batch as a plain restockQty (7 here,
+        # not a homepage multiple of 5/10); 1 in transit still means add 0.
+        state = _state([_item("s1", "红色", 7)])
+        sources = _sources(orders={"pending_ship": [{"offerId": "111", "skuId": "s1", "qty": 1}]})
         out = apply_in_transit(state, sources)
-        items = {item["alibabaSkuId"]: item for item in out["remaining"][0]["items"]}
-        self.assertNotIn("s1", items)
-        self.assertIn("s2", items)
-        skipped = {rec["alibabaSkuId"]: rec for rec in out["inTransitSkipped"]}
-        self.assertEqual(skipped["s1"]["actualAddQty"], 0)
-        self.assertIn("略過不加車", skipped["s1"]["reason"])
-
-        only_s1 = _state([_item("s1", "红色", 10)])
-        covered = apply_in_transit(only_s1, _sources(orders={
-            "pending_pay": [{"offerId": "111", "skuId": "s1", "qty": 10}]
-        }))
-        self.assertEqual(covered["remaining"], [])
-        self.assertEqual(len(covered["inTransitSkipped"]), 1)
+        self.assertEqual(out["remaining"], [])
+        rec = out["inTransitSkipped"][0]
+        self.assertEqual((rec["homepageSuggestedQty"], rec["actualAddQty"]), (7, 0))
+        self.assertEqual(rec["reason"], "已在途，不補")
 
     def test_all_covered_finishes_completed_without_starting(self):
         state = _state([_item("s1", "红色", 10)])
-        sources = _sources(orders={
-            "pending_pay": [{"offerId": "111", "skuId": "s1", "qty": 10}]
-        })
+        sources = _sources(orders={"pending_pay": [{"offerId": "111", "skuId": "s1", "qty": 3}]})
         started: List[Dict[str, Any]] = []
         persist = _Persist()
         result = run_batch_loop(
@@ -145,7 +137,7 @@ class ApplyInTransitTests(unittest.TestCase):
             in_transit_reader_fn=lambda: sources,
         )
         self.assertEqual(result["status"], STATUS_COMPLETED)
-        self.assertEqual(result["message"], "全部型號已在途足量，本批不加車")
+        self.assertEqual(result["message"], "全部型號已在途或在途無法比對，本批不加車")
         self.assertEqual(started, [])
         self.assertFalse(result["remaining"])
         self.assertTrue(persist.saved)
@@ -155,20 +147,60 @@ class ApplyInTransitTests(unittest.TestCase):
         sources = _sources(cart_items=[{"offerId": "111", "skuId": "s1", "qty": 4}])
         first = apply_in_transit(state, sources)
         second = apply_in_transit(first, sources)
-        first_items = {i["alibabaSkuId"]: i["restockQty"] for i in first["remaining"][0]["items"]}
-        second_items = {i["alibabaSkuId"]: i["restockQty"] for i in second["remaining"][0]["items"]}
-        self.assertEqual(first_items, second_items)
+        self.assertEqual(self._split(first)[0].keys(), self._split(second)[0].keys())
+        self.assertEqual(second["remaining"][0]["items"][0]["restockQty"], 20)
         self.assertEqual(len(second["inTransitSkipped"]), len(first["inTransitSkipped"]))
 
-    def test_name_match_when_no_sku_id(self):
-        item = _item("", "红色", 10)
-        self.assertEqual(item["alibabaSkuId"], "")
-        sources = _sources(cart_items=[
-            {"offerId": "111", "skuId": "999", "skuName": "红色", "qty": 2}
-        ])
-        breakdown = in_transit_for_item(item, sources)
-        self.assertEqual(breakdown["cart"], 2)
-        self.assertEqual(breakdown["total"], 2)
+    def test_no_sku_id_name_match_counts_as_in_transit(self):
+        state = _state([_item("", "红色", 10)])
+        sources = _sources(cart_items=[{"offerId": "111", "skuId": "999", "skuName": "红色", "qty": 2}])
+        out = apply_in_transit(state, sources)
+        rec = out["inTransitSkipped"][0]
+        self.assertEqual(rec["inTransit"]["cart"], 2)
+        self.assertFalse(rec["unmatched"])
+        self.assertEqual(rec["reason"], "已在途，不補")
+
+    def test_no_sku_id_unmatched_is_skipped_for_manual_decision(self):
+        state = _state([_item("", "红色", 10)])
+        sources = _sources(orders={
+            "pending_ship": [{"offerId": "111", "skuId": "888", "skuName": "蓝色", "qty": 5}]
+        })
+        out = apply_in_transit(state, sources)
+        self.assertEqual(out["remaining"], [])
+        rec = out["inTransitSkipped"][0]
+        self.assertTrue(rec["unmatched"])
+        self.assertEqual(rec["actualAddQty"], 0)
+        self.assertEqual(rec["inTransit"]["total"], 0)
+        self.assertEqual(rec["reason"], "在途無法比對")
+        row = in_transit_rows(out)[0]
+        self.assertTrue(row["unmatched"])
+        self.assertIn("無法比對（需人工決定）", render_report_html(build_report(out)))
+
+    def test_no_sku_id_offer_without_lines_adds_normally(self):
+        state = _state([_item("", "红色", 10)])
+        # Lines exist, but only for another offer: offer 111 is truly 0 in transit.
+        sources = _sources(
+            cart_items=[{"offerId": "222", "skuId": "1", "skuName": "红色", "qty": 3}],
+            orders={"pending_receive": [{"offerId": "222", "skuId": "2", "qty": 1}]},
+        )
+        out = apply_in_transit(state, sources)
+        item = out["remaining"][0]["items"][0]
+        self.assertEqual((item["restockQty"], item["actualAddQty"]), (10, 10))
+        self.assertFalse(item["inTransit"]["unmatched"])
+        self.assertEqual(out["inTransitSkipped"], [])
+        self.assertFalse(in_transit_rows(out)[0]["unmatched"])
+
+    def test_sku_id_model_with_other_skus_of_offer_adds_normally(self):
+        state = _state([_item("s1", "红色", 10)])
+        sources = _sources(cart_items=[{"offerId": "111", "skuId": "s9", "skuName": "黑色", "qty": 3}])
+        item = apply_in_transit(state, sources)["remaining"][0]["items"][0]
+        self.assertEqual(item["restockQty"], 10)
+        self.assertFalse(item["inTransit"]["unmatched"])
+
+    def test_breakdown_has_unmatched_flag(self):
+        breakdown = in_transit_for_item(_item("s1", "红色", 10), _sources())
+        self.assertEqual(breakdown["total"], 0)
+        self.assertFalse(breakdown["unmatched"])
 
 
 class RunBatchInTransitTests(unittest.TestCase):
@@ -201,7 +233,7 @@ class RunBatchInTransitTests(unittest.TestCase):
         self.assertNotIn("cart", reads)
         self.assertTrue(persist.saved)
 
-    def test_success_path_reduces_qty_before_start(self):
+    def test_success_path_skips_in_transit_model_before_start(self):
         started: List[Dict[str, Any]] = []
         sources = _sources(cart_items=[{"offerId": "111", "skuId": "s1", "qty": 4}])
         persist = _Persist()
@@ -215,9 +247,8 @@ class RunBatchInTransitTests(unittest.TestCase):
                 "status": "completed",
                 "result": {
                     "status": "success",
-                    "countCheck": {"expected": 2, "confirmed": 2, "mismatch": False},
+                    "countCheck": {"expected": 1, "confirmed": 1, "mismatch": False},
                     "summary": {"succeeded": [
-                        {"specId": "spec-s1", "modelName": "型號s1", "quantity": 6},
                         {"specId": "spec-s2", "modelName": "型號s2", "quantity": 20},
                     ]},
                 },
@@ -233,7 +264,7 @@ class RunBatchInTransitTests(unittest.TestCase):
         self.assertEqual(result["status"], STATUS_COMPLETED)
         self.assertEqual(len(started), 1)
         sent = {item["alibabaSkuId"]: item["restockQty"] for item in started[0]["items"]}
-        self.assertEqual(sent, {"s1": 6, "s2": 20})
+        self.assertEqual(sent, {"s2": 20})
 
 
 class _FakeSession:

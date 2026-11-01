@@ -1625,9 +1625,9 @@ def run_batch_loop(
     login stop), then reconciled per spec into ``state["cartReconcile"]`` and
     ``cart_reconcile.json``. ``pace_fn`` runs before each product start.
 
-    With ``in_transit_reader_fn`` the cart + order pools are read first and every
-    item's homepage suggestion is reduced by what is already in transit. An
-    unreadable source stops the whole batch before anything is added.
+    With ``in_transit_reader_fn`` the cart + order pools are read first; any
+    model already in transit (or unmatched) is not added at all. An unreadable
+    source stops the whole batch before anything is added.
     """
     directory = kwargs.get("reverse_audit_dir") or getattr(persist_fn, "directory", None)
     if (
@@ -1663,7 +1663,7 @@ def run_batch_loop(
             state = dict(state)
             state["status"] = STATUS_COMPLETED
             state["stoppedReason"] = ""
-            state["message"] = "全部型號已在途足量，本批不加車"
+            state["message"] = "全部型號已在途或在途無法比對，本批不加車"
             persist_fn(state)
             return state
     if cart_reader_fn is None:
@@ -2252,6 +2252,8 @@ def _render_in_transit_html(report: Dict[str, Any], cell: Callable[[Any], str]) 
             f"待發貨 {cell(transit.get('pending_ship', 0))}／"
             f"待收貨 {cell(transit.get('pending_receive', 0))}）"
         )
+        if row.get("unmatched"):
+            detail = f"<strong>無法比對（需人工決定）</strong><br>{detail}"
         rows.append(
             "<tr>"
             f"<td>{cell(row.get('productName'))}<br><code>{cell(row.get('productId'))}</code></td>"
