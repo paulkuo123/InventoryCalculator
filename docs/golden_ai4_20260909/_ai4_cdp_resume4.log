@@ -1,0 +1,52 @@
+connected {"browser": "Chrome/151.0.7922.169", "cdp": "http://127.0.0.1:9232", "targetId": "71F962BF969E1593904E57A77E5CC6A9", "prior_url": "https://detail.1688.com/offer/740525848630.html", "prior_title": "少女心碎花折叠镜化妆镜随身旅行便携学生宿舍梳妆台式可立小镜子 - 阿里巴巴"}
+slow_nav settle>=4.2s post_sleep=3.5s
+resume loaded rows=253 blocked_pending=102 keep_with=100 keep_no=51
+
+=== resume4 blocked products 41 rows 88 priority0=15323119538
+before_counts {"with_candidate": 100, "conf_低": 49, "q_P1_no_url_with_candidate": 22, "no_candidate": 51, "q_P1_no_url_no_candidate": 33, "conf_高": 22, "blocked_captcha": 102, "q_P1_no_url_blocked_captcha": 48, "conf_中": 29, "q_AI2_off_shelf_no_candidate": 1, "q_AI2_dead_with_candidate": 27, "q_AI2_dead_no_candidate": 16, "q_AI2_dead_blocked_captcha": 40, "q_AI2_off_shelf_with_candidate": 2, "q_AI2_off_shelf_blocked_captcha": 4, "q_P3_mapping_suspect_with_candidate": 49, "q_P3_mapping_suspect_blocked_captcha": 10, "q_P3_mapping_suspect_no_candidate": 1}
+
+### resume product 15323119538 n=3 隔日到貨🔥 卡通泰迪狗 Airpods 1代 2代 pro 軟殼 保護殼 A27
+
+=== 3B search 15323119538 q=卡通泰迪狗 airpods 软壳保护壳 防摔壳附挂饰保护套耳机套 棕色泰
+  SEARCH 卡通泰迪狗 airpods 软壳保护壳 防摔壳附挂饰保护套耳机套 棕色泰
+  SEARCH 卡通泰迪狗 airpods 软壳保护壳 防摔壳附挂饰保护套耳机套 棕色泰
+  search_ok n=0 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E5%8D%A1%E9%80%9A%E6%B3%B0%E8%BF%A
+  SEARCH 卡通泰迪狗 airpods 软壳保护壳
+  SEARCH 卡通泰迪狗 airpods 软壳保护壳
+  search_ok n=20 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E5%8D%A1%E9%80%9A%E6%B3%B0%E8%BF%A
+  DETAIL 1027990286419 https://detail.1688.com/offer/1027990286419.html
+  DETAIL 803340989489 https://detail.1688.com/offer/803340989489.html
+
+### resume product 22272486965 n=1 隔日到貨🔥 ins 刺繡小熊化妝包 B18 化妝包 筆袋 超大容量 收納包 洗漱
+
+=== 3B search 22272486965 q=刺绣小熊化妆包 化妆包笔袋超大容量收纳包洗漱包铅笔盒刺绣包包 星星小熊
+  SEARCH 刺绣小熊化妆包 化妆包笔袋超大容量收纳包洗漱包铅笔盒刺绣包包 星星小熊
+  SEARCH 刺绣小熊化妆包 化妆包笔袋超大容量收纳包洗漱包铅笔盒刺绣包包 星星小熊
+  search_ok n=20 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E5%88%BA%E7%BB%A3%E5%B0%8F%E7%86%8
+  DETAIL 735343364719 https://detail.1688.com/offer/735343364719.html
+  DETAIL 1061053755176 https://detail.1688.com/offer/1061053755176.html
+
+### resume product 23244459752 n=3 隔日到貨🔥 韓系 帆布袋 B37 帆布包 單肩包 帆布袋 手提袋 單肩包 提袋 
+
+=== 3B search 23244459752 q=韩系帆布袋 帆布包单肩包帆布袋手提袋单肩包提袋环保袋购物袋收纳包简约文青
+  SEARCH 韩系帆布袋 帆布包单肩包帆布袋手提袋单肩包提袋环保袋购物袋收纳包简约文青
+  SEARCH 韩系帆布袋 帆布包单肩包帆布袋手提袋单肩包提袋环保袋购物袋收纳包简约文青
+  search_ok n=0 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E9%9F%A9%E7%B3%BB%E5%B8%86%E5%B8%8
+
+### resume product 24514999862 n=1 隔日到貨🔥 多國旅行充電器 轉接頭 二合一 Type-C+雙USB-A充電器 萬
+
+=== 3B search 24514999862 q=多国旅行充电器转接头二合一 type-c usb 充电器万国充 认证充电
+  SEARCH 多国旅行充电器转接头二合一 type-c usb 充电器万国充 认证充电
+  SEARCH 多国旅行充电器转接头二合一 type-c usb 充电器万国充 认证充电
+  search_ok n=20 url=https://s.1688.com/selloffer/offer_search.htm?keywords=%E5%A4%9A%E5%9B%BD%E6%97%85%E8%A1%8
+  DETAIL 998206849175 https://detail.1688.com/offer/998206849175.html
+
+### resume product 15007585064 n=4 隔日到貨🔥 iPhone 手機殼 14 13 12 11 pro Max XS 
+
+=== 3B search 15007585064 q=iphone 手机壳 保护壳软壳 奶咖色 11
+  SEARCH iphone 手机壳 保护壳软壳 奶咖色 11
+  SEARCH iphone 手机壳 保护壳软壳 奶咖色 11
+RESUME {"stopped_at": "2026-09-09T15:39:17Z", "round": "resume4", "last_completed_product_id": "24514999862", "last_attempted_product_id": "15007585064", "row_index": 163, "blocked_url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfTaD_OwqXctXFK6WxLKafj1m92KHRksqxBHyBrN8OyusPctQXoodXUPtKCACV6bQpdzPc3toFyBme6-Vra2_yLERpVazE4mEgpTvUKftnMJ4l7Fh_hFPQYlBNSc6WBwLRoOPRQWId3ifFKG8w6fa_sYC5vn78c1cA9_W5nMiY9iEc2_YIgU-Fg1Nvdd3Pq3zPW9Xd3KQXj6wgYFsLO88comI5WPB7yqaqPgNX7BSK3ztw-7CiY-5-jotdxMUZMGiVd6Y-KErvXiJW4FLEik4KM7rua8gfal9VMEPoyloaYyzzcXV7Y3nNGEi8u-dwS0fbg9e3EDuKohpBtgdHX_P-nkzux_IFLXU3grt-MsHFX1x61Rw4VAtiQF9jurZl3W4nnSjry8Nq9uAp6iBxDASUEusOXtYZ7mllTzqWnX_EgqcbxelmMW36GGr
+RESUME {"stopped_at": "2026-09-09T15:39:17Z", "round": "resume4", "last_completed_product_id": "24514999862", "last_attempted_product_id": "15007585064", "row_index": 253, "blocked_url": "https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfTaD_OwqXctXFK6WxLKafj1m92KHRksqxBHyBrN8OyusPctQXoodXUPtKCACV6bQpdzPc3toFyBme6-Vra2_yLERpVazE4mEgpTvUKftnMJ4l7Fh_hFPQYlBNSc6WBwLRoOPRQWId3ifFKG8w6fa_sYC5vn78c1cA9_W5nMiY9iEc2_YIgU-Fg1Nvdd3Pq3zPW9Xd3KQXj6wgYFsLO88comI5WPB7yqaqPgNX7BSK3ztw-7CiY-5-jotdxMUZMGiVd6Y-KErvXiJW4FLEik4KM7rua8gfal9VMEPoyloaYyzzcXV7Y3nNGEi8u-dwS0fbg9e3EDuKohpBtgdHX_P-nkzux_IFLXU3grt-MsHFX1x61Rw4VAtiQF9jurZl3W4nnSjry8Nq9uAp6iBxDASUEusOXtYZ7mllTzqWnX_EgqcbxelmMW36GGr
+DONE {"with_candidate": 101, "conf_低": 50, "q_P1_no_url_with_candidate": 23, "no_candidate": 55, "q_P1_no_url_no_candidate": 37, "conf_高": 22, "blocked_captcha": 97, "q_P1_no_url_blocked_captcha": 43, "conf_中": 29, "q_AI2_off_shelf_no_candidate": 1, "q_AI2_dead_with_candidate": 27, "q_AI2_dead_no_candidate": 16, "q_AI2_dead_blocked_captcha": 40, "q_AI2_off_shelf_with_candidate": 2, "q_AI2_off_shelf_blocked_captcha": 4, "q_P3_mapping_suspect_with_candidate": 49, "q_P3_mapping_suspect_blocked_captcha": 10, "q_P3_mapping_suspect_no_candidate": 1}
+stopped {'reason': 'waf', 'url': 'https://s.1688.com//selloffer/offer_search.htm/_____tmd_____/punish?x5secdata=xfTaD_OwqXctXFK6WxLKafj1m92KHRksqxBHyBrN8OyusPctQXoodXUPtKCACV6bQpdzPc3toFyBme6-Vra2_yLERpVazE4mEgpTvUKftnMJ4l7Fh_hFPQYlBNSc6WBwLRoOPRQWId3ifFKG8w6fa_sYC5vn78c1cA9_W5nMiY9iEc2_YIgU-Fg1Nvdd3Pq3zPW9Xd3KQXj6wgYFsLO88comI5WPB7yqaqPgNX7BSK3ztw-7CiY-5-jotdxMUZMGiVd6Y-KErvXiJW4FLEik4KM7rua8gfal9VMEPoyloaYyzzcXV7Y3nNGEi8u-dwS0fbg9e3EDuKohpBtgdHX_P-nkzux_IFLXU3grt-MsHFX1x61Rw4VAtiQF9jurZl3W4nnSjry8Nq9uAp6iBxDASUEusOXtYZ7mllTzqWnX_EgqcbxelmMW36GGrSAcy_HdQ9QuwZ73X5kB_UztXDkmicl6ShkDdPK1ZF3FWn2SirDwwTRAQ0gsedcXhF6xjdMGuBKwaG6kU_MU7Quj18mUt7XuCpfg1oLOgLQFzTPPrgcL09r_xO67A7hNlSj_j5oUHuCPRlJFkI7OD7rWH7KNid0HG-YUvfzpVi9tlanjUp8ySc59G-_-1zctepoJkhNbL19fVyWKN5ZNB81iT-1VqWXakEcyjydbb48AuZfFIPnvEyw223aMH6LQEfZ8jv3QQZnRa0fva3XFETMd8wMBs-ttJwE5MvFECHToHDwjqiWldYZYVm5sN-t3BapxIQR9YefM8UKfFRemutmiSTAyQTQGgOGVdyVhZILXtci2mZiz1OFEWDxdlpKbQyTSdkyAQ2z46yWO_liUl5NJPmzaoVBu5OKPTRR8z0xQe8rlAZC-jyCdtOvIqoe_V7rKCTHjEC09tvHzPslJ62FUn2XLBNWA__bx__s.1688.com%2fselloffer%2foffer_search.htm&x5step=1'}
