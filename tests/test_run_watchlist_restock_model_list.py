@@ -13,6 +13,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from run_watchlist_restock import (
     EXIT_ERROR,
     EXIT_OK,
+    LIST_QTY_ABSOLUTE_CAP,
+    LIST_QTY_MAX_RATIO,
+    list_quantity_needs_confirmation,
     build_list_from_files,
     build_visible_style_products,
     main,
@@ -124,6 +127,27 @@ class ParseModelsFileTests(unittest.TestCase):
         self.assertEqual([entry["modelId"] for entry in parsed["models"]], ["s1", "s2"])
         self.assertEqual(parsed["skipped"], [])
 
+    def test_quantity_accepts_only_ascii_digits(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "models.csv"
+            path.write_text(
+                "product_id,model_id,qty\n"
+                "1001,s1,5_000\n"
+                "1001,s2,５\n"
+                "1001,s3,+5\n"
+                "1001,s4,5.0\n"
+                "1001,s5, 12 \n"
+                "1001,s6,-3\n",
+                encoding="utf-8",
+            )
+            parsed = parse_models_file(path)
+        self.assertEqual(len(parsed["errors"]), 4)
+        self.assertTrue(all("數量不是整數" in error for error in parsed["errors"]))
+        self.assertEqual(
+            [(entry["modelId"], entry["quantity"]) for entry in parsed["models"]],
+            [("s5", 12), ("s6", -3)],
+        )
+
     def test_parse_model_ids(self):
         entries = parse_model_ids("a, b ,, c")
         self.assertEqual([entry["modelId"] for entry in entries], ["a", "b", "c"])
@@ -209,7 +233,71 @@ class BuildListModelFilterTests(unittest.TestCase):
         self.assertEqual(built["products"], [])
         report = built["modelFilter"]
         self.assertEqual(report["matched"], [])
-        self.assertEqual(report["unmatched"][0]["reason"], "清單數量為 0")
+        self.assertEqual(report["unmatched"][0]["reason"], "清單數量不是正數：0")
+
+    def test_negative_override_reports_not_positive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            built = _build(
+                root,
+                model_filter=[_entry(product_id="1001", model_id="s1", quantity=-5)],
+            )
+        self.assertEqual(built["products"], [])
+        self.assertEqual(built["modelFilter"]["unmatched"][0]["reason"], "清單數量不是正數：-5")
+
+    def test_list_qty_over_ratio_needs_confirmation_not_added(self):
+        # s1 water-level suggestion is 30 -> 60 allowed, 61 needs confirmation.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            ok = _build(root, model_filter=[_entry(product_id="1001", model_id="s1", quantity=60)])
+            typo = _build(root, model_filter=[_entry(product_id="1001", model_id="s1", quantity=3000)])
+            over = _build(root, model_filter=[_entry(product_id="1001", model_id="s1", quantity=61)])
+        self.assertEqual(ok["products"][0]["items"][0]["restockQty"], 60)
+        self.assertEqual(ok["modelFilter"]["matched"][0]["listQuantity"], 60)
+        self.assertEqual(ok["modelFilter"]["matched"][0]["suggestedQuantity"], 30)
+        for built in (typo, over):
+            self.assertEqual(built["products"], [])
+            self.assertEqual(built["modelFilter"]["matched"], [])
+            self.assertEqual(built["modelFilter"]["unmatched"], [])
+            pending = built["modelFilter"]["needsConfirmation"]
+            self.assertEqual(len(pending), 1)
+            self.assertEqual(pending[0]["suggestedQuantity"], 30)
+        self.assertEqual(typo["modelFilter"]["needsConfirmation"][0]["listQuantity"], 3000)
+        self.assertEqual(
+            over["modelFilter"]["needsConfirmation"][0]["reason"],
+            f"清單數量超過水位建議量的 {LIST_QTY_MAX_RATIO} 倍",
+        )
+
+    def test_list_qty_absolute_cap_and_zero_suggestion(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            with patch("run_watchlist_restock.suggested_restock_qty", return_value=150):
+                capped = _build(root, model_filter=[
+                    _entry(product_id="1001", model_id="s1", quantity=LIST_QTY_ABSOLUTE_CAP + 1),
+                ])
+            with patch("run_watchlist_restock.suggested_restock_qty", return_value=0):
+                zero_ok = _build(root, model_filter=[
+                    _entry(product_id="1001", model_id="s1", quantity=LIST_QTY_ABSOLUTE_CAP),
+                ])
+                zero_capped = _build(root, model_filter=[
+                    _entry(product_id="1001", model_id="s1", quantity=LIST_QTY_ABSOLUTE_CAP + 1),
+                ])
+        self.assertEqual(capped["products"], [])
+        self.assertEqual(
+            capped["modelFilter"]["needsConfirmation"][0]["reason"],
+            f"清單數量超過上限 {LIST_QTY_ABSOLUTE_CAP}",
+        )
+        self.assertEqual(zero_ok["products"][0]["items"][0]["restockQty"], LIST_QTY_ABSOLUTE_CAP)
+        self.assertEqual(zero_capped["products"], [])
+        self.assertEqual(len(zero_capped["modelFilter"]["needsConfirmation"]), 1)
+
+    def test_list_qty_guard_constants(self):
+        self.assertEqual(LIST_QTY_ABSOLUTE_CAP, 200)
+        self.assertEqual(LIST_QTY_MAX_RATIO, 2)
+        self.assertIsNone(list_quantity_needs_confirmation(60, 30))
+        self.assertIsNotNone(list_quantity_needs_confirmation(61, 30))
+        self.assertIsNone(list_quantity_needs_confirmation(200, 0))
+        self.assertIsNotNone(list_quantity_needs_confirmation(201, 0))
 
     def test_duplicate_entries_are_added_once_and_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -227,6 +315,38 @@ class BuildListModelFilterTests(unittest.TestCase):
         self.assertEqual(len(report["matched"]), 1)
         self.assertEqual(report["unmatched"][0]["reason"], "清單重複列出同一型號，只補第一筆")
 
+    def test_duplicate_after_guard_hold_is_reported_not_added(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            built = _build(
+                root,
+                model_filter=[
+                    _entry(product_id="1001", model_id="s1", quantity=3000, line=1),
+                    _entry(product_id="1001", model_id="s1", quantity=5, line=2),
+                ],
+            )
+        self.assertEqual(built["products"], [])
+        report = built["modelFilter"]
+        self.assertEqual(report["matched"], [])
+        self.assertEqual(len(report["needsConfirmation"]), 1)
+        self.assertEqual(report["needsConfirmation"][0]["listQuantity"], 3000)
+        self.assertEqual(len(report["unmatched"]), 1)
+        self.assertEqual(report["unmatched"][0]["reason"], "清單重複列出同一型號，只補第一筆")
+
+    def test_duplicate_after_rejected_first_row_is_reported_not_added(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            built = _build(
+                root,
+                model_filter=[
+                    _entry(product_id="1001", model_id="s1", quantity=-5, line=1),
+                    _entry(product_id="1001", model_id="s1", quantity=5, line=2),
+                ],
+            )
+        self.assertEqual(built["products"], [])
+        reasons = [entry["reason"] for entry in built["modelFilter"]["unmatched"]]
+        self.assertEqual(reasons, ["清單數量不是正數：-5", "清單重複列出同一型號，只補第一筆"])
+
     def test_every_requested_entry_is_matched_or_unmatched(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = _stage_root(Path(tmp))
@@ -238,7 +358,7 @@ class BuildListModelFilterTests(unittest.TestCase):
             built = _build(root, model_filter=model_filter)
         report = built["modelFilter"]
         self.assertEqual(
-            len(report["matched"]) + len(report["unmatched"]),
+            len(report["matched"]) + len(report["unmatched"]) + len(report["needsConfirmation"]),
             report["requested"],
         )
 
@@ -331,6 +451,25 @@ class StartBatchModelFilterTests(unittest.TestCase):
                     )
         self.assertEqual(started["status"], "error")
 
+    def test_duplicate_after_guard_hold_sends_nothing_to_cart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            with patch(
+                "run_watchlist_restock.start_batch",
+                side_effect=AssertionError("start_batch must not run"),
+            ):
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    started, _payload = start_watchlist_restock_batch(
+                        "http://127.0.0.1:8080", root, "", 4,
+                        model_filter=[
+                            _entry(product_id="1001", model_id="s1", quantity=3000, line=1),
+                            _entry(product_id="1001", model_id="s1", quantity=5, line=2),
+                        ],
+                    )
+        self.assertEqual(started["status"], "error")
+        self.assertIn("清單重複", out.getvalue())
+
 
 class MainModelFilterTests(unittest.TestCase):
     def test_no_filter_args_keep_existing_flow(self):
@@ -380,6 +519,22 @@ class MainModelFilterTests(unittest.TestCase):
         self.assertIn("模型清單過濾摘要", stdout)
         self.assertIn("尚未加車", stdout)
         self.assertIn("規格ID s1", stdout)
+        self.assertIn("清單數量 7／水位建議 30", stdout)
+
+    def test_summary_lists_needs_confirmation_with_both_quantities(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = _stage_root(Path(tmp))
+            models_file = root / "models.csv"
+            models_file.write_text(
+                "product_id,model_id,qty\n1001,s1,3000\n1001,s2,\n",
+                encoding="utf-8",
+            )
+            code, stdout, _stderr = self._run_gated(root, ["--models-file", str(models_file)])
+        self.assertEqual(code, EXIT_OK)
+        self.assertIn("=== 需要確認", stdout)
+        self.assertIn("清單數量 3000／水位建議 30", stdout)
+        self.assertIn("規格ID s2） x 30（水位建議 30）", stdout)
+        self.assertIn("需要確認 1 個", stdout)
 
     def test_model_ids_without_approval_returns_ok(self):
         with tempfile.TemporaryDirectory() as tmp:
